@@ -25,3 +25,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# build/test logs
+.tauri-build.log
+.tauri-dev.log
