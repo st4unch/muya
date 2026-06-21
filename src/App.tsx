@@ -37,7 +37,9 @@ import {
   ExternalLink,
   Code2,
   PanelLeft,
-  PanelRight
+  PanelRight,
+  Sun,
+  Moon
 } from "lucide-react";
 import BranchDAG from "./components/BranchDAG";
 import AgentTerminal from "./components/Terminal";
@@ -51,7 +53,7 @@ import { buildAgentCommand } from "./lib/agent";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 
 // Types matching the user's workflow model
 interface AgentSession {
@@ -272,6 +274,15 @@ export default function App() {
   const [view, setView] = useState<"control" | "sessions" | "queue">("control");
   // Right panel tab: branch matrix vs live session monitor.
   const [rightTab, setRightTab] = useState<"branch" | "sessions">("sessions");
+  // Branch picked for inspection — shown as a detail card on the Queue page.
+  const [branchInspect, setBranchInspect] = useState<{ repo: string; name: string } | null>(null);
+  // Terminal color theme (persisted). Dark by default; toggled from the top header.
+  const [termTheme, setTermTheme] = useState<"dark" | "light">(
+    () => (localStorage.getItem("apex.termTheme") as "dark" | "light") || "dark"
+  );
+  useEffect(() => {
+    localStorage.setItem("apex.termTheme", termTheme);
+  }, [termTheme]);
   // Collapsible side panels (toggle only, not resizable — focus mode).
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
@@ -292,6 +303,7 @@ export default function App() {
       void un.then((f) => f());
     };
   }, []);
+
 
   const killAgent = async (a: AgentSession) => {
     try {
@@ -321,6 +333,34 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("apex.workspaces", JSON.stringify(workspaces));
   }, [workspaces]);
+
+  // Native File > New File (⌘N): the backend menu emits "menu:new-file". Pick a path
+  // via the save dialog, create the (empty) file, and open it in an editor tab.
+  // Subscribe ONCE (empty deps) and read the latest workspaces via a ref, so adding a
+  // workspace doesn't tear down/recreate the listener (which briefly risks a double
+  // save dialog on ⌘N during the async unlisten).
+  const workspacesRef = useRef(workspaces);
+  workspacesRef.current = workspaces;
+  useEffect(() => {
+    const un = listen("menu:new-file", async () => {
+      const path = await saveDialog({
+        title: "New File",
+        defaultPath: workspacesRef.current[0],
+      });
+      if (typeof path !== "string") return;
+      try {
+        await invoke("create_file", { path });
+        openEditor(path);
+        setFsTick((t) => t + 1);
+      } catch (e) {
+        console.warn("[apex] create_file failed:", e);
+      }
+    });
+    return () => {
+      void un.then((f) => f());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     localStorage.setItem("apex.worktrees", JSON.stringify(worktrees));
   }, [worktrees]);
@@ -852,6 +892,14 @@ export const loginHandler = async (req, res) => {
           </span>
           <button
             type="button"
+            onClick={() => setTermTheme((t) => (t === "dark" ? "light" : "dark"))}
+            title={`Terminal theme: ${termTheme} (click to switch)`}
+            className="p-1 rounded cursor-pointer transition-colors text-neutral-400 hover:bg-neutral-100 hover:text-indigo-600"
+          >
+            {termTheme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </button>
+          <button
+            type="button"
             onClick={() => setRightOpen((o) => !o)}
             title="Toggle right panel"
             className={`p-1 rounded cursor-pointer transition-colors ${
@@ -864,22 +912,28 @@ export const loginHandler = async (req, res) => {
       </header>
 
       {/* ================= MAIN AREA: Sessions page OR three-panel control plane ================= */}
-      {view === "sessions" ? (
+      {view === "sessions" && (
         <SessionsPage
           onOpen={(spec) => {
             openTerminal({ ...spec, kind: "terminal" });
             setView("control");
           }}
         />
-      ) : view === "queue" ? (
+      )}
+      {view === "queue" && (
         <QueuePage
           paths={trackedPaths}
           worktrees={worktrees}
           refreshSignal={fsTick}
           onWorktreeRemoved={(p) => setWorktrees((prev) => prev.filter((x) => x !== p))}
+          inspect={branchInspect}
+          onClearInspect={() => setBranchInspect(null)}
         />
-      ) : (
-      <div className="flex-1 flex overflow-hidden">
+      )}
+      {/* Control plane — ALWAYS mounted; hidden (not unmounted) on other views so the
+          terminal PTYs and any running sessions survive page navigation. xterm guards
+          0×0 resize (Terminal.tsx), so display:none is safe. */}
+      <div className={`flex-1 flex overflow-hidden ${view !== "control" ? "hidden" : ""}`}>
 
         {/* ----------------- Panel 1: LEFT SIDEBAR (File Tree Explorer & Workspace Locker) ----------------- */}
         {leftOpen && (
@@ -1039,7 +1093,7 @@ export const loginHandler = async (req, res) => {
                         )}
                       </div>
                       <div className="flex-1 overflow-hidden p-2">
-                        <AgentTerminal cwd={tm.cwd} initialCommand={tm.initialCommand} />
+                        <AgentTerminal cwd={tm.cwd} initialCommand={tm.initialCommand} theme={termTheme} />
                       </div>
                     </div>
                   )
@@ -1140,6 +1194,8 @@ export const loginHandler = async (req, res) => {
                           `[System] Warning: Branch '${branch.name}' is registered as active PRD core. Skipping automatic agent overrides.`,
                           ""
                         ]);
+                        setBranchInspect({ repo: branchRepo, name: branch.name });
+                        setView("queue");
                       }}
                       className="p-2 border border-emerald-100 bg-emerald-50/10 hover:border-emerald-200 rounded cursor-pointer transition-colors shadow-sm"
                     >
@@ -1186,6 +1242,8 @@ export const loginHandler = async (req, res) => {
                           if (agentObj) {
                             setSelectedAgentId(agentObj.id);
                           }
+                          setBranchInspect({ repo: branchRepo, name: branch.name });
+                          setView("queue");
                         }}
                         className={`p-2 border rounded cursor-pointer transition-colors shadow-sm ${
                           agentObj?.id === selectedAgentId
@@ -1242,6 +1300,8 @@ export const loginHandler = async (req, res) => {
                           `[System] Switch checkout worktree root index to ${branch.name}.`,
                           ""
                         ]);
+                        setBranchInspect({ repo: branchRepo, name: branch.name });
+                        setView("queue");
                       }}
                       className="p-2 border border-neutral-200 bg-white hover:border-neutral-300 rounded cursor-pointer transition-colors shadow-sm"
                     >
@@ -1270,7 +1330,6 @@ export const loginHandler = async (req, res) => {
         )}
 
       </div>
-      )}
 
       {/* ================= FOOTER / STATUS TRAY BAR ================= */}
       <footer className="h-7 border-t border-neutral-200 bg-white px-3 flex items-center justify-between z-10 shrink-0 text-[10px] font-mono text-neutral-500 select-none shadow-sm">

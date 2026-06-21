@@ -11,7 +11,25 @@ import {
   X,
   Clock,
   Trash2,
+  GitCommit,
+  FileDiff,
 } from "lucide-react";
+
+interface BranchCommit {
+  hash: string;
+  subject: string;
+  author: string;
+  relDate: string;
+}
+
+interface BranchDetail {
+  name: string;
+  base: string;
+  ahead: number;
+  behind: number;
+  commits: BranchCommit[];
+  changedFiles: string[];
+}
 
 interface ProjectStatus {
   path: string;
@@ -40,11 +58,16 @@ export default function QueuePage({
   worktrees = [],
   refreshSignal,
   onWorktreeRemoved,
+  inspect,
+  onClearInspect,
 }: {
   paths: string[];
   worktrees?: string[];
   refreshSignal?: number;
   onWorktreeRemoved?: (path: string) => void;
+  /** A branch picked in the sidebar to inspect (commits / diff vs base). */
+  inspect?: { repo: string; name: string } | null;
+  onClearInspect?: () => void;
 }) {
   const [projects, setProjects] = useState<ProjectStatus[]>([]);
   const [loading, setLoading] = useState(false);
@@ -58,6 +81,30 @@ export default function QueuePage({
   const [checks, setChecks] = useState<Record<string, MergeCheck>>({});
   const [confirming, setConfirming] = useState<string>("");
   const [toast, setToast] = useState<string>("");
+  const [detail, setDetail] = useState<BranchDetail | null>(null);
+  const [detailErr, setDetailErr] = useState<string>("");
+
+  // Load the inspected branch's detail (commits + diff vs base) from git.
+  useEffect(() => {
+    if (!inspect) {
+      setDetail(null);
+      setDetailErr("");
+      return;
+    }
+    let active = true;
+    setDetail(null);
+    setDetailErr("");
+    invoke<BranchDetail>("branch_detail", { repo: inspect.repo, branch: inspect.name })
+      .then((d) => {
+        if (active) setDetail(d);
+      })
+      .catch((e) => {
+        if (active) setDetailErr(String(e));
+      });
+    return () => {
+      active = false;
+    };
+  }, [inspect, refreshSignal]);
 
   useEffect(() => {
     localStorage.setItem(QKEY, JSON.stringify(queue));
@@ -177,6 +224,81 @@ export default function QueuePage({
         <div className="mb-3 text-[11px] font-mono px-3 py-2 rounded border border-neutral-200 bg-white text-neutral-700 break-words">
           {toast}
         </div>
+      )}
+
+      {/* BRANCH DETAIL — shown when a branch is clicked in the sidebar */}
+      {inspect && (
+        <section className="mb-6">
+          <div className="bg-white border border-indigo-200 rounded-lg shadow-sm overflow-hidden">
+            <div className="flex items-center justify-between gap-2 px-3 py-2 bg-indigo-50/60 border-b border-indigo-100">
+              <span className="font-mono text-xs font-bold text-indigo-800 flex items-center gap-1.5 min-w-0">
+                <GitBranch className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">{inspect.name}</span>
+              </span>
+              <div className="flex items-center gap-2 shrink-0">
+                {detail && (
+                  <span className="text-[10px] font-mono text-neutral-500">
+                    vs <span className="font-semibold">{detail.base}</span> · ↑{detail.ahead} ↓{detail.behind}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => onClearInspect?.()}
+                  className="text-neutral-400 hover:text-rose-600 cursor-pointer"
+                  title="Close branch detail"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {detailErr ? (
+              <div className="px-3 py-3 text-[11px] font-mono text-rose-600">{detailErr}</div>
+            ) : !detail ? (
+              <div className="px-3 py-3 text-[11px] font-mono text-neutral-400">loading…</div>
+            ) : (
+              <div className="p-3 space-y-3">
+                <div>
+                  <h3 className="text-[10px] font-mono uppercase tracking-widest font-bold text-neutral-500 mb-1.5 flex items-center gap-1">
+                    <GitCommit className="h-3 w-3" /> Commits ({detail.commits.length})
+                  </h3>
+                  {detail.commits.length === 0 ? (
+                    <div className="text-[11px] font-mono text-neutral-400">
+                      No commits ahead of {detail.base}.
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      {detail.commits.map((c) => (
+                        <div key={c.hash} className="flex items-start gap-2 text-[11px] font-mono">
+                          <span className="text-indigo-600 font-semibold shrink-0">{c.hash}</span>
+                          <span className="text-neutral-700 truncate flex-1" title={c.subject}>
+                            {c.subject}
+                          </span>
+                          <span className="text-neutral-400 shrink-0">{c.author} · {c.relDate}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {detail.changedFiles.length > 0 && (
+                  <div>
+                    <h3 className="text-[10px] font-mono uppercase tracking-widest font-bold text-neutral-500 mb-1.5 flex items-center gap-1">
+                      <FileDiff className="h-3 w-3" /> Changed files ({detail.changedFiles.length})
+                    </h3>
+                    <div className="space-y-0.5">
+                      {detail.changedFiles.map((f) => (
+                        <div key={f} className="text-[10px] font-mono text-neutral-600 truncate" title={f}>
+                          {f}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </section>
       )}
 
       {/* QUEUE */}

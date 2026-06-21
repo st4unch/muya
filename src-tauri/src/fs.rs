@@ -64,6 +64,20 @@ pub fn write_file(path: String, content: String) -> Result<(), String> {
     std::fs::write(Path::new(&path), content).map_err(|e| format!("write failed: {e}"))
 }
 
+/// Create a new, empty file (File > New File). Never truncates: if the path already
+/// exists it's left untouched (the caller just opens it). Parent dirs are created.
+#[tauri::command(async)]
+pub fn create_file(path: String) -> Result<(), String> {
+    let p = Path::new(&path);
+    if p.exists() {
+        return Ok(()); // open the existing file rather than overwrite it
+    }
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {e}"))?;
+    }
+    std::fs::write(p, "").map_err(|e| format!("create failed: {e}"))
+}
+
 /// Read a file's committed (HEAD) version for diffing against the working tree.
 /// Returns the HEAD content, or an empty string if the file is untracked/new (so the
 /// diff shows it as fully added). Errors only if the path isn't inside a git repo.
@@ -230,6 +244,131 @@ pub fn list_branches(repo: String) -> Result<Vec<GitBranchState>, String> {
     }
     compute_parents(&repo, &mut branches);
     Ok(branches)
+}
+
+/// One commit row for the branch-detail card.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchCommit {
+    pub hash: String,
+    pub subject: String,
+    pub author: String,
+    pub rel_date: String,
+}
+
+/// Branch detail relative to the repo base (main/master): ahead/behind counts, recent
+/// commits unique to the branch, and the files it changed. Powers the Queue page card.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchDetail {
+    pub name: String,
+    pub base: String,
+    pub ahead: u32,
+    pub behind: u32,
+    pub commits: Vec<BranchCommit>,
+    pub changed_files: Vec<String>,
+}
+
+#[tauri::command(async)]
+pub fn branch_detail(repo: String, branch: String) -> Result<BranchDetail, String> {
+    // Validate the branch is a real local ref before feeding it to git. This both
+    // surfaces a clear error for a bad repo/branch (instead of a silently empty card)
+    // and closes git option-injection: every ref below is the fully-qualified
+    // `refs/heads/<name>` form, which can never be parsed as a `-`-leading option.
+    let bref = format!("refs/heads/{branch}");
+    if git_capture(&repo, &["rev-parse", "--verify", "--quiet", &bref]).is_none() {
+        return Err(format!("unknown branch: {branch}"));
+    }
+
+    // Compare against main, else master — but never the branch itself.
+    let base = ["main", "master"]
+        .iter()
+        .copied()
+        .find(|&b| {
+            b != branch.as_str()
+                && git_capture(
+                    &repo,
+                    &[
+                        "rev-parse",
+                        "--verify",
+                        "--quiet",
+                        &format!("refs/heads/{b}"),
+                    ],
+                )
+                .is_some()
+        })
+        .map(str::to_string)
+        .unwrap_or_default();
+    let baseref = format!("refs/heads/{base}");
+
+    // ahead/behind via the symmetric range base...branch (left = base-only = behind,
+    // right = branch-only = ahead). With no base (e.g. inspecting main itself) a branch
+    // has nothing ahead of itself → leave both at 0.
+    let (mut ahead, mut behind) = (0u32, 0u32);
+    if !base.is_empty() {
+        if let Some(counts) = git_capture(
+            &repo,
+            &[
+                "rev-list",
+                "--left-right",
+                "--count",
+                &format!("{baseref}...{bref}"),
+            ],
+        ) {
+            let mut it = counts.split_whitespace();
+            behind = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+            ahead = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+        }
+    }
+
+    // Up to 20 commits unique to the branch (or its newest commits when there's no base).
+    let range = if base.is_empty() {
+        bref.clone()
+    } else {
+        format!("{baseref}..{bref}")
+    };
+    let log = git_capture(
+        &repo,
+        &["log", "-n", "20", "--format=%h\x1f%s\x1f%an\x1f%cr", &range],
+    )
+    .unwrap_or_default();
+    let commits = log
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| {
+            let p: Vec<&str> = l.split('\x1f').collect();
+            BranchCommit {
+                hash: p.first().copied().unwrap_or("").to_string(),
+                subject: p.get(1).copied().unwrap_or("").to_string(),
+                author: p.get(2).copied().unwrap_or("").to_string(),
+                rel_date: p.get(3).copied().unwrap_or("").to_string(),
+            }
+        })
+        .collect();
+
+    // Files changed vs the merge-base with the base branch.
+    let changed_files = if base.is_empty() {
+        vec![]
+    } else {
+        git_capture(
+            &repo,
+            &["diff", "--name-only", &format!("{baseref}...{bref}")],
+        )
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|s| s.to_string())
+        .collect()
+    };
+
+    Ok(BranchDetail {
+        name: branch,
+        base,
+        ahead,
+        behind,
+        commits,
+        changed_files,
+    })
 }
 
 fn git_capture(repo: &str, args: &[&str]) -> Option<String> {
@@ -412,5 +551,53 @@ mod tests {
         assert!(String::from_utf8_lossy(&list.stdout).contains(&wt));
         remove_worktree(wt.clone()).unwrap();
         assert!(!Path::new(&wt).exists(), "worktree dir removed");
+    }
+
+    #[test]
+    fn create_file_makes_empty_then_preserves_existing() {
+        let r = init_repo();
+        let f = Path::new(&r.path)
+            .join("sub/new.txt")
+            .to_string_lossy()
+            .into_owned();
+        create_file(f.clone()).unwrap();
+        assert!(Path::new(&f).exists(), "new file created");
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "");
+        // Re-creating over an existing file must NOT truncate it.
+        std::fs::write(&f, "keep").unwrap();
+        create_file(f.clone()).unwrap();
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "keep");
+    }
+
+    #[test]
+    fn branch_detail_reports_commits_and_diff() {
+        let r = init_repo();
+        run_git(&r.path, &["switch", "-c", "feature/x"]);
+        commit_file(&r.path, "x.txt", "x", "add x");
+        run_git(&r.path, &["switch", "main"]);
+
+        let d = branch_detail(r.path.clone(), "feature/x".into()).unwrap();
+        assert_eq!(d.base, "main");
+        assert_eq!(d.ahead, 1);
+        assert_eq!(d.behind, 0);
+        assert_eq!(d.commits.len(), 1);
+        assert_eq!(d.commits[0].subject, "add x");
+        assert!(d.changed_files.contains(&"x.txt".to_string()));
+    }
+
+    #[test]
+    fn branch_detail_base_branch_has_nothing_ahead_and_errors_on_unknown() {
+        let r = init_repo();
+        commit_file(&r.path, "a.txt", "a", "c1");
+        commit_file(&r.path, "b.txt", "b", "c2");
+        // Inspecting main itself (no base above it) must not report its whole history
+        // as "ahead".
+        let d = branch_detail(r.path.clone(), "main".into()).unwrap();
+        assert_eq!(d.base, "");
+        assert_eq!(d.ahead, 0);
+        assert_eq!(d.behind, 0);
+        assert!(d.changed_files.is_empty());
+        // Unknown branch → explicit error, not a silently empty card.
+        assert!(branch_detail(r.path.clone(), "does-not-exist".into()).is_err());
     }
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Terminal as XTerm } from "@xterm/xterm";
+import { Terminal as XTerm, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Channel, invoke } from "@tauri-apps/api/core";
@@ -8,6 +8,40 @@ import "@xterm/xterm/css/xterm.css";
 // Output bytes arrive as a raw ArrayBuffer (binary fetch path — no JSON byte
 // bloat); process-exit arrives as a small JSON object. See src-tauri/src/pty.rs.
 type PtyMsg = ArrayBuffer | { type: "exit" };
+
+export type TermTheme = "dark" | "light";
+
+// Color palettes for the two themes. The light palette darkens the ANSI brights so
+// output stays readable on a white background.
+const THEMES: Record<TermTheme, ITheme> = {
+  dark: {
+    background: "#0a0a0a",
+    foreground: "#e5e5e5",
+    cursor: "#818cf8",
+  },
+  light: {
+    background: "#ffffff",
+    foreground: "#1a1a1a",
+    cursor: "#4f46e5",
+    selectionBackground: "#c7d2fe",
+    black: "#1a1a1a",
+    red: "#c0392b",
+    green: "#1e8449",
+    yellow: "#b7791f",
+    blue: "#2563eb",
+    magenta: "#9333ea",
+    cyan: "#0e7490",
+    white: "#4b5563",
+    brightBlack: "#6b7280",
+    brightRed: "#e74c3c",
+    brightGreen: "#27ae60",
+    brightYellow: "#d97706",
+    brightBlue: "#3b82f6",
+    brightMagenta: "#a855f7",
+    brightCyan: "#0891b2",
+    brightWhite: "#111827",
+  },
+};
 
 /**
  * Real interactive terminal: an xterm.js view wired to a PTY-backed login shell in
@@ -18,12 +52,16 @@ type PtyMsg = ArrayBuffer | { type: "exit" };
 export default function Terminal({
   cwd,
   initialCommand,
+  theme = "dark",
 }: {
   cwd?: string;
   /** If set, auto-run this command once the shell is ready (e.g. `claude attach <id>`). */
   initialCommand?: string;
+  /** Color theme; switches live without respawning the PTY. */
+  theme?: TermTheme;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const termRef = useRef<XTerm | null>(null);
 
   useEffect(() => {
     const el = ref.current;
@@ -33,12 +71,9 @@ export default function Terminal({
       fontFamily: '"JetBrains Mono", ui-monospace, monospace',
       fontSize: 12,
       cursorBlink: true,
-      theme: {
-        background: "#0a0a0a",
-        foreground: "#e5e5e5",
-        cursor: "#818cf8",
-      },
+      theme: THEMES[theme],
     });
+    termRef.current = term;
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(el);
@@ -123,8 +158,14 @@ export default function Terminal({
       ro.disconnect();
       if (ptyId) void invoke("pty_kill", { id: ptyId });
       term.dispose();
+      termRef.current = null;
     };
   }, [cwd]);
+
+  // Live theme switch — recolors the existing terminal without touching the PTY.
+  useEffect(() => {
+    if (termRef.current) termRef.current.options.theme = THEMES[theme];
+  }, [theme]);
 
   return <div ref={ref} className="h-full w-full overflow-hidden" />;
 }
