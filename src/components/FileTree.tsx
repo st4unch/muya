@@ -14,16 +14,20 @@ export interface Entry {
   isDirectory: boolean;
 }
 
+type ContextMenu = { x: number; y: number; path: string } | null;
+
 function TreeNode({
   entry,
   depth,
   onOpenFile,
   refreshSignal,
+  onContextMenu,
 }: {
   entry: Entry;
   depth: number;
   onOpenFile?: (path: string) => void;
   refreshSignal?: number;
+  onContextMenu?: (e: React.MouseEvent, path: string) => void;
 }) {
   const [open, setOpen] = useState(depth === 0);
   const [children, setChildren] = useState<Entry[] | null>(null);
@@ -69,6 +73,7 @@ function TreeNode({
       <button
         type="button"
         onClick={toggle}
+        onContextMenu={onContextMenu ? (e) => onContextMenu(e, entry.path) : undefined}
         style={{ paddingLeft: depth * 12 + 8 }}
         className="w-full flex items-center gap-1 py-0.5 pr-2 text-left hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded transition-colors"
       >
@@ -124,13 +129,35 @@ function TreeNode({
 /** Lazy, real file tree over user-picked workspace roots (backend `list_dir`). */
 export default function FileTree({
   roots,
+  removableRoots,
   onOpenFile,
+  onRemoveRoot,
   refreshSignal,
 }: {
   roots: string[];
+  /** Subset of roots that can be removed (manually-pinned workspaces). */
+  removableRoots?: Set<string>;
   onOpenFile?: (path: string) => void;
+  onRemoveRoot?: (path: string) => void;
   refreshSignal?: number;
 }) {
+  const [menu, setMenu] = useState<ContextMenu>(null);
+
+  // Close menu on any click outside.
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    window.addEventListener("click", close);
+    return () => window.removeEventListener("click", close);
+  }, [menu]);
+
+  const handleContextMenu = (e: React.MouseEvent, path: string) => {
+    if (!removableRoots?.has(path)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setMenu({ x: e.clientX, y: e.clientY, path });
+  };
+
   if (!roots.length)
     return (
       <div className="p-3 text-[11px] text-neutral-400 dark:text-neutral-500 font-mono leading-relaxed">
@@ -139,7 +166,7 @@ export default function FileTree({
       </div>
     );
   return (
-    <div className="font-mono text-xs py-1">
+    <div className="font-mono text-xs py-1 relative">
       {roots.map((r) => {
         const name = r.split("/").filter(Boolean).pop() || r;
         return (
@@ -149,9 +176,30 @@ export default function FileTree({
             depth={0}
             onOpenFile={onOpenFile}
             refreshSignal={refreshSignal}
+            onContextMenu={removableRoots?.has(r) ? handleContextMenu : undefined}
           />
         );
       })}
+
+      {/* Custom context menu */}
+      {menu && (
+        <div
+          style={{ position: "fixed", top: menu.y, left: menu.x, zIndex: 9999 }}
+          className="min-w-[180px] bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded shadow-lg py-1 text-xs font-mono"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="w-full text-left px-3 py-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer transition-colors"
+            onClick={() => {
+              onRemoveRoot?.(menu.path);
+              setMenu(null);
+            }}
+          >
+            Remove from Workspace
+          </button>
+        </div>
+      )}
     </div>
   );
 }
