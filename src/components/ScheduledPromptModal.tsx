@@ -14,14 +14,21 @@ interface TerminalOption {
   name: string;
 }
 
-function epochToInputValue(ms: number) {
-  const d = new Date(ms);
-  const offset = d.getTimezoneOffset() * 60000;
-  return new Date(ms - offset).toISOString().slice(0, 16);
+
+function pad(n: number) { return String(n).padStart(2, "0"); }
+
+function defaultTime() {
+  const d = new Date(Date.now() + 5 * 60_000);
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-function inputValueToEpoch(val: string): number {
-  return new Date(val).getTime();
+function defaultDate() {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function combineToEpoch(dateStr: string, timeStr: string): number {
+  return new Date(`${dateStr}T${timeStr}`).getTime();
 }
 
 export default function ScheduledPromptModal({
@@ -41,7 +48,8 @@ export default function ScheduledPromptModal({
 }) {
   const [prompt, setPrompt] = useState("");
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
-  const [dateVal, setDateVal] = useState(() => epochToInputValue(Date.now() + 5 * 60_000));
+  const [timeVal, setTimeVal] = useState(defaultTime);
+  const [dateVal, setDateVal] = useState(defaultDate);
   const [flashKey, setFlashKey] = useState<string | null>(null);
 
   if (!open) return null;
@@ -56,12 +64,13 @@ export default function ScheduledPromptModal({
 
   const handleAdd = () => {
     if (!prompt.trim() || selectedKeys.length === 0) return;
-    const scheduledAt = inputValueToEpoch(dateVal);
+    const scheduledAt = combineToEpoch(dateVal, timeVal);
     if (isNaN(scheduledAt) || scheduledAt <= Date.now()) return;
     onAdd({ prompt: prompt.trim(), terminalKeys: selectedKeys, scheduledAt });
     setPrompt("");
     setSelectedKeys([]);
-    setDateVal(epochToInputValue(Date.now() + 5 * 60_000));
+    setTimeVal(defaultTime());
+    setDateVal(defaultDate());
   };
 
   const pending = scheduled.filter(p => !p.fired);
@@ -137,19 +146,18 @@ export default function ScheduledPromptModal({
             )}
           </div>
 
-          {/* Time picker */}
+          {/* Time + Date pickers */}
           <div>
             <label className="block text-[10px] font-mono font-bold uppercase text-neutral-500 dark:text-neutral-400 mb-1.5">Zaman</label>
-            {/* "Şimdi" quick button */}
-            <button
-              type="button"
-              onClick={() => setDateVal(epochToInputValue(Date.now()))}
-              className="mb-2 px-2.5 py-1 text-[10px] font-mono rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 hover:border-indigo-300 dark:hover:border-indigo-700 text-neutral-600 dark:text-neutral-400 hover:text-indigo-700 dark:hover:text-indigo-300 transition-colors cursor-pointer flex items-center gap-1.5"
-            >
-              <Clock className="h-3 w-3" /> Şimdi
-            </button>
             <input
-              type="datetime-local"
+              type="time"
+              step="1"
+              value={timeVal}
+              onChange={e => setTimeVal(e.target.value)}
+              className="w-full px-3 py-2 text-sm font-mono tracking-widest rounded border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 text-neutral-800 dark:text-neutral-200 focus:outline-none focus:border-indigo-400 dark:focus:border-indigo-600 mb-1.5"
+            />
+            <input
+              type="date"
               value={dateVal}
               onChange={e => setDateVal(e.target.value)}
               className="w-full px-3 py-1.5 text-xs font-mono rounded border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 text-neutral-800 dark:text-neutral-200 focus:outline-none focus:border-indigo-400 dark:focus:border-indigo-600"
