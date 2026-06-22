@@ -622,6 +622,274 @@ pub fn list_claude_resources() -> Result<ClaudeResources, String> {
     })
 }
 
+// ── Marketplace ───────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketSkill {
+    pub name: String,
+    pub description: String,
+    pub stars: String,
+    pub author: String,
+    pub github_url: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketMcp {
+    pub name: String,
+    pub description: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub source: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketResult {
+    pub items: Vec<MarketMcp>,
+    pub open_browser: bool,
+}
+
+/// Fetch skill listings from skillsmp.com and filter by query.
+/// Parses the HTML listing page; returns up to 50 results.
+#[tauri::command(async)]
+pub async fn fetch_skill_marketplace(query: String) -> Result<Vec<MarketSkill>, String> {
+    use scraper::{Html, Selector};
+
+    let client = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let html = client
+        .get("https://skillsmp.com/search")
+        .query(&[("q", &query)])
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .text()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let doc = Html::parse_document(&html);
+
+    // skillsmp.com card selectors — target skill card elements
+    // Cards contain: title link, description, author, engagement count
+    let card_sel = Selector::parse("a[href*='/creators/']").unwrap();
+    let mut skills: Vec<MarketSkill> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for card in doc.select(&card_sel) {
+        let href = card.value().attr("href").unwrap_or("").to_string();
+        if href.is_empty() || seen.contains(&href) {
+            continue;
+        }
+        seen.insert(href.clone());
+
+        // Extract text content from the card
+        let text: String = card
+            .text()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        if text.is_empty() {
+            continue;
+        }
+
+        // Derive name from the href path: /creators/<author>/<org>/<skill-name>
+        let parts: Vec<&str> = href.trim_matches('/').split('/').collect();
+        let name = parts.last().copied().unwrap_or("unknown").to_string();
+        let author = parts.get(1).copied().unwrap_or("").to_string();
+
+        // Build a plausible GitHub URL from skillsmp path convention
+        // skillsmp links map to GitHub: github.com/<org>/<skill-name>
+        let github_url = if parts.len() >= 4 {
+            format!("https://github.com/{}/{}", parts[2], parts[3])
+        } else {
+            String::new()
+        };
+
+        // Stars: look for number followed by 'k' or plain number in text
+        let stars = text
+            .split_whitespace()
+            .find(|t| {
+                t.ends_with('k') && t[..t.len() - 1].parse::<f64>().is_ok()
+                    || t.parse::<u64>().is_ok()
+            })
+            .unwrap_or("—")
+            .to_string();
+
+        // Description: everything after stripping name/author/stars
+        let description = text
+            .trim_start_matches(&name)
+            .trim_start_matches(&author)
+            .trim_start_matches(&stars)
+            .trim()
+            .chars()
+            .take(120)
+            .collect::<String>();
+
+        skills.push(MarketSkill {
+            name,
+            description,
+            stars,
+            author,
+            github_url,
+        });
+
+        if skills.len() >= 50 {
+            break;
+        }
+    }
+
+    Ok(skills)
+}
+
+/// Try mcpmarket.com JSON API first; fall back to open_browser flag.
+#[tauri::command(async)]
+pub async fn fetch_mcp_marketplace(query: String) -> Result<MarketResult, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    // Try known JSON endpoints
+    let api_bases = [
+        "https://mcpmarket.com/api/servers",
+        "https://mcpmarket.com/api/search",
+    ];
+
+    for api_base in &api_bases {
+        if let Ok(resp) = client.get(*api_base).query(&[("q", &query)]).send().await {
+            if resp.status().is_success() {
+                if let Ok(body) = resp.text().await {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                        let items = parse_mcp_json(&json);
+                        if !items.is_empty() {
+                            return Ok(MarketResult {
+                                items,
+                                open_browser: false,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // API unavailable — signal UI to offer "open in browser"
+    Ok(MarketResult {
+        items: Vec::new(),
+        open_browser: true,
+    })
+}
+
+fn parse_mcp_json(json: &serde_json::Value) -> Vec<MarketMcp> {
+    let mut items = Vec::new();
+    let arr = json
+        .as_array()
+        .or_else(|| json["servers"].as_array())
+        .or_else(|| json["results"].as_array())
+        .or_else(|| json["data"].as_array());
+
+    if let Some(arr) = arr {
+        for item in arr.iter().take(50) {
+            let name = item["name"].as_str().unwrap_or("").to_string();
+            if name.is_empty() {
+                continue;
+            }
+            let description = item["description"].as_str().unwrap_or("").to_string();
+            let command = item["command"]
+                .as_str()
+                .or_else(|| item["cmd"].as_str())
+                .unwrap_or("")
+                .to_string();
+            let args = item["args"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let source = item["source"]
+                .as_str()
+                .or_else(|| item["repo"].as_str())
+                .unwrap_or("mcpmarket.com")
+                .to_string();
+            items.push(MarketMcp {
+                name,
+                description,
+                command,
+                args,
+                source,
+            });
+        }
+    }
+    items
+}
+
+/// Clone a skill from GitHub into ~/.claude/skills/<name>/.
+#[tauri::command(async)]
+pub fn install_skill(name: String, github_url: String) -> Result<(), String> {
+    if name.is_empty() || github_url.is_empty() {
+        return Err("name and github_url are required".into());
+    }
+    let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
+    let dest = Path::new(&home).join(".claude").join("skills").join(&name);
+    if dest.exists() {
+        return Err(format!("~/.claude/skills/{name} already exists"));
+    }
+    let out = Command::new("git")
+        .args(["clone", "--depth=1", &github_url, &dest.to_string_lossy()])
+        .output()
+        .map_err(|e| format!("git not found: {e}"))?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    Ok(())
+}
+
+/// Merge an MCP entry into ~/.claude/.mcp.json (user-scope, deduped by name).
+#[tauri::command(async)]
+pub fn install_mcp(name: String, command: String, args: Vec<String>) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("name is required".into());
+    }
+    let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
+    let mcp_path = Path::new(&home).join(".claude").join(".mcp.json");
+
+    let mut root: serde_json::Value = if mcp_path.exists() {
+        let content = std::fs::read_to_string(&mcp_path).map_err(|e| e.to_string())?;
+        serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({ "mcpServers": {} }))
+    } else {
+        serde_json::json!({ "mcpServers": {} })
+    };
+
+    let servers = root
+        .as_object_mut()
+        .and_then(|m| m.get_mut("mcpServers"))
+        .and_then(|v| v.as_object_mut())
+        .ok_or("malformed .mcp.json")?;
+
+    let args_json: Vec<serde_json::Value> = args.iter().map(|a| serde_json::json!(a)).collect();
+    servers.insert(
+        name,
+        serde_json::json!({ "command": command, "args": args_json }),
+    );
+
+    let out = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
+    std::fs::write(&mcp_path, out).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

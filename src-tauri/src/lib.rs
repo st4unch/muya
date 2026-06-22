@@ -100,7 +100,11 @@ pub fn run() {
             pty::pty_write,
             pty::pty_resize,
             pty::pty_kill,
-            fs::list_claude_resources
+            fs::list_claude_resources,
+            fs::fetch_skill_marketplace,
+            fs::fetch_mcp_marketplace,
+            fs::install_skill,
+            fs::install_mcp
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

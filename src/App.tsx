@@ -964,7 +964,14 @@ export const loginHandler = async (req, res) => {
           }}
         />
       )}
-      {view === "tools" && <ResourcesPage />}
+      {view === "tools" && (
+        <ResourcesPage
+          onOpenTerminal={(spec) => {
+            openTerminal({ ...spec, kind: "terminal" });
+            setView("control");
+          }}
+        />
+      )}
       {view === "queue" && (
         <QueuePage
           paths={trackedPaths}
