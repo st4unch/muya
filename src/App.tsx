@@ -408,6 +408,8 @@ export default function App() {
   const tabScrollRef = useRef<HTMLDivElement>(null);
   const tabDragFromRef = useRef<string | null>(null);
   const [tabDragOver, setTabDragOver] = useState<string | null>(null);
+  const [renamingKey, setRenamingKey] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
   // Grid resize splits (percentage)
   const [gridColSplit, setGridColSplit] = useState(50);
   const [gridRowSplit, setGridRowSplit] = useState(50);
@@ -1188,7 +1190,36 @@ export const loginHandler = async (req, res) => {
                       ) : (
                         <Terminal className="h-3.5 w-3.5 text-indigo-500 dark:text-indigo-400 shrink-0" />
                       )}
-                      <span className="text-xs font-display truncate max-w-[160px]">{tm.name}</span>
+                      {renamingKey === tm.key ? (
+                        <input
+                          autoFocus
+                          value={renameValue}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === "Escape") {
+                              if (e.key === "Enter" && renameValue.trim()) {
+                                setOpenTerminals(prev => prev.map(t => t.key === tm.key ? { ...t, name: renameValue.trim() } : t));
+                              }
+                              setRenamingKey(null);
+                            }
+                            e.stopPropagation();
+                          }}
+                          onBlur={() => {
+                            if (renameValue.trim()) {
+                              setOpenTerminals(prev => prev.map(t => t.key === tm.key ? { ...t, name: renameValue.trim() } : t));
+                            }
+                            setRenamingKey(null);
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-xs font-display bg-transparent border-b border-indigo-400 outline-none w-28 truncate"
+                        />
+                      ) : (
+                        <span
+                          className="text-xs font-display truncate max-w-[160px]"
+                          onDoubleClick={(e) => { e.stopPropagation(); setRenamingKey(tm.key); setRenameValue(tm.name); }}
+                          title="Double-click to rename"
+                        >{tm.name}</span>
+                      )}
                       {tm.initialCommand && (
                         <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" title={tm.initialCommand} />
                       )}
