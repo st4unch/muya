@@ -1005,7 +1005,7 @@ export const loginHandler = async (req, res) => {
           {/* Header Title bar */}
           <div className="p-3 border-b border-neutral-200 dark:border-neutral-700 flex items-center justify-between bg-neutral-50/50 dark:bg-neutral-900">
             <h2 className="text-[10px] font-mono tracking-widest uppercase font-bold text-neutral-500 dark:text-neutral-400 flex items-center gap-1.5">
-              <Folder className="h-3.5 w-3.5 text-indigo-500 dark:text-indigo-400" /> Workspace Files ({workspaces.length})
+              <Folder className="h-3.5 w-3.5 text-indigo-500 dark:text-indigo-400" /> Workspace Files ({trackedPaths.length})
             </h2>
             <button
               type="button"
@@ -1019,7 +1019,7 @@ export const loginHandler = async (req, res) => {
 
           {/* Real, lazy file tree over the user's workspace roots (backend list_dir) */}
           <div className="flex-1 overflow-y-auto">
-            <FileTree roots={workspaces} onOpenFile={openEditor} refreshSignal={fsTick} />
+            <FileTree roots={trackedPaths} onOpenFile={openEditor} refreshSignal={fsTick} />
           </div>
 
           {/* BOTTOM ATTACHMENT: ACTIVE CLAUDE AGENT FILE-WATCHER */}
