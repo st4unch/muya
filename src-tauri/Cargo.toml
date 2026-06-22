@@ -1,6 +1,6 @@
 [package]
 name = "apex-mission-control"
-version = "0.0.7"
+version = "0.0.8"
 description = "Apex Mission Control — control plane for parallel Claude Code agents"
 authors = ["staunch"]
 edition = "2021"

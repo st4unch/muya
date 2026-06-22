@@ -37,6 +37,7 @@ interface MarketSkill {
   stars: string;
   author: string;
   githubUrl: string;
+  featured?: boolean;
 }
 interface MarketMcp {
   name: string;
@@ -468,43 +469,58 @@ export default function ResourcesPage({
                         Sonuç bulunamadı
                       </li>
                     )}
-                    {marketSkills.map((s) => (
-                      <li key={s.name}>
-                        <button
-                          onClick={() => setSelectedMarket(s)}
-                          className={`w-full flex flex-col gap-0.5 px-4 py-3 text-left border-b border-neutral-100 dark:border-neutral-800 transition-colors ${
-                            (selectedMarket as MarketSkill)?.name === s.name ? rowActive : rowInactive
-                          }`}
-                        >
-                          <div className="flex items-center gap-2">
-                            <Puzzle className="w-3.5 h-3.5 shrink-0 text-purple-500 dark:text-purple-400" />
-                            <span className="text-xs font-medium truncate flex-1">{s.name}</span>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); installSkill(s); }}
-                              disabled={installingKey === s.name || !s.githubUrl}
-                              className="shrink-0 flex items-center gap-1 px-2 py-0.5 text-[10px] rounded border border-neutral-200 dark:border-neutral-700 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 hover:border-indigo-300 dark:hover:border-indigo-700 hover:text-indigo-700 dark:hover:text-indigo-300 disabled:opacity-40 text-neutral-500 dark:text-neutral-400 transition-colors"
-                            >
-                              {installingKey === s.name ? (
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                              ) : (
-                                <Download className="w-3 h-3" />
-                              )}
-                              Yükle
-                            </button>
-                          </div>
-                          {s.stars && s.stars !== "—" && (
-                            <div className="flex items-center gap-1 pl-5 text-[10px] text-neutral-400">
-                              <Star className="w-2.5 h-2.5" />
-                              {s.stars}
-                              {s.author && <span className="ml-1">· @{s.author}</span>}
+                    {marketSkills.map((s, idx) => {
+                      const prevFeatured = idx > 0 && marketSkills[idx - 1].featured;
+                      const showFeaturedHeader = idx === 0 && s.featured;
+                      const showDivider = idx > 0 && !s.featured && prevFeatured;
+                      return (
+                        <li key={s.name}>
+                          {showFeaturedHeader && (
+                            <div className="px-4 py-1.5 text-[10px] font-medium uppercase tracking-wider text-indigo-600 dark:text-indigo-400 bg-indigo-50/60 dark:bg-indigo-950/20 border-b border-indigo-100 dark:border-indigo-900">
+                              ✨ @st4unch
                             </div>
                           )}
-                          {s.description && (
-                            <p className="text-[11px] text-neutral-500 dark:text-neutral-400 truncate pl-5">{s.description}</p>
+                          {showDivider && (
+                            <div className="px-4 py-1.5 text-[10px] font-medium uppercase tracking-wider text-neutral-400 dark:text-neutral-500 bg-neutral-50 dark:bg-neutral-800/40 border-b border-neutral-100 dark:border-neutral-800">
+                              Tüm Skiller
+                            </div>
                           )}
-                        </button>
-                      </li>
-                    ))}
+                          <button
+                            onClick={() => setSelectedMarket(s)}
+                            className={`w-full flex flex-col gap-0.5 px-4 py-3 text-left border-b border-neutral-100 dark:border-neutral-800 transition-colors ${
+                              (selectedMarket as MarketSkill)?.name === s.name ? rowActive : rowInactive
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <Puzzle className="w-3.5 h-3.5 shrink-0 text-purple-500 dark:text-purple-400" />
+                              <span className="text-xs font-medium truncate flex-1">{s.name}</span>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); installSkill(s); }}
+                                disabled={installingKey === s.name || !s.githubUrl}
+                                className="shrink-0 flex items-center gap-1 px-2 py-0.5 text-[10px] rounded border border-neutral-200 dark:border-neutral-700 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 hover:border-indigo-300 dark:hover:border-indigo-700 hover:text-indigo-700 dark:hover:text-indigo-300 disabled:opacity-40 text-neutral-500 dark:text-neutral-400 transition-colors"
+                              >
+                                {installingKey === s.name ? (
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                ) : (
+                                  <Download className="w-3 h-3" />
+                                )}
+                                Yükle
+                              </button>
+                            </div>
+                            {s.stars && s.stars !== "—" && (
+                              <div className="flex items-center gap-1 pl-5 text-[10px] text-neutral-400">
+                                <Star className="w-2.5 h-2.5" />
+                                {s.stars}
+                                {s.author && <span className="ml-1">· @{s.author}</span>}
+                              </div>
+                            )}
+                            {s.description && (
+                              <p className="text-[11px] text-neutral-500 dark:text-neutral-400 truncate pl-5">{s.description}</p>
+                            )}
+                          </button>
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
 
@@ -514,10 +530,10 @@ export default function ResourcesPage({
                     {marketOpenBrowser && (
                       <div className="px-4 py-3 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-100 dark:border-amber-900">
                         <p className="text-[11px] text-amber-700 dark:text-amber-400 mb-2">
-                          mcpmarket.com API'sine erişilemedi.
+                          Glama.ai MCP listesi yüklenemedi.
                         </p>
                         <button
-                          onClick={() => openUrl("https://mcpmarket.com")}
+                          onClick={() => openUrl("https://glama.ai/mcp/servers")}
                           className="flex items-center gap-1.5 text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline"
                         >
                           <ExternalLink className="w-3 h-3" />
@@ -757,14 +773,24 @@ function MarketMcpDetail({
         </div>
       )}
 
-      <button
-        onClick={onInstall}
-        disabled={installing || !mcp.command}
-        className="flex items-center justify-center gap-2 w-full py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 dark:disabled:bg-indigo-800 text-white text-xs font-medium transition-colors cursor-pointer disabled:cursor-not-allowed"
-      >
-        {installing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-        {installing ? "Ekleniyor…" : "~/.claude/.mcp.json dosyasına ekle"}
-      </button>
+      {mcp.command ? (
+        <button
+          onClick={onInstall}
+          disabled={installing}
+          className="flex items-center justify-center gap-2 w-full py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 dark:disabled:bg-indigo-800 text-white text-xs font-medium transition-colors cursor-pointer disabled:cursor-not-allowed"
+        >
+          {installing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+          {installing ? "Ekleniyor…" : "~/.claude/.mcp.json dosyasına ekle"}
+        </button>
+      ) : mcp.source ? (
+        <button
+          onClick={() => openUrl(mcp.source)}
+          className="flex items-center justify-center gap-2 w-full py-2.5 rounded-lg border border-indigo-300 dark:border-indigo-700 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 text-xs font-medium transition-colors cursor-pointer"
+        >
+          <ExternalLink className="w-3.5 h-3.5" />
+          Glama.ai'da Aç
+        </button>
+      ) : null}
     </div>
   );
 }

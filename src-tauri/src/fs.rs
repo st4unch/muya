@@ -632,6 +632,7 @@ pub struct MarketSkill {
     pub stars: String,
     pub author: String,
     pub github_url: String,
+    pub featured: bool,
 }
 
 #[derive(Serialize)]
@@ -651,44 +652,60 @@ pub struct MarketResult {
     pub open_browser: bool,
 }
 
-/// Fetch skill listings from skillsmp.com and filter by query.
-/// Parses the HTML listing page; returns up to 50 results.
+/// Fetch skill listings from skillsmp.com.
+/// Always prepends @st4unch featured skills at top, then adds query results (deduped).
 #[tauri::command(async)]
 pub async fn fetch_skill_marketplace(query: String) -> Result<Vec<MarketSkill>, String> {
-    use scraper::{Html, Selector};
-
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| e.to_string())?;
 
-    let html = client
+    // 1. Always fetch @st4unch featured skills at top
+    let featured_html = fetch_skillsmp_page(&client, "st4unch").await;
+    let featured = parse_skillsmp_html(&featured_html, true);
+    let featured_names: std::collections::HashSet<String> =
+        featured.iter().map(|s| s.name.clone()).collect();
+
+    // 2. Fetch query-specific skills (skip if identical to "st4unch")
+    let mut skills = featured;
+    if !query.is_empty() && query.to_lowercase() != "st4unch" {
+        let query_html = fetch_skillsmp_page(&client, &query).await;
+        for s in parse_skillsmp_html(&query_html, false) {
+            if !featured_names.contains(&s.name) {
+                skills.push(s);
+            }
+        }
+    }
+
+    Ok(skills)
+}
+
+async fn fetch_skillsmp_page(client: &reqwest::Client, q: &str) -> String {
+    match client
         .get("https://skillsmp.com/search")
-        .query(&[("q", &query)])
+        .query(&[("q", q)])
         .send()
         .await
-        .map_err(|e| e.to_string())?
-        .text()
-        .await
-        .map_err(|e| e.to_string())?;
+    {
+        Ok(resp) => resp.text().await.unwrap_or_default(),
+        Err(_) => String::new(),
+    }
+}
 
-    let doc = Html::parse_document(&html);
-
-    // skillsmp.com card selectors — target skill card elements
-    // Cards contain: title link, description, author, engagement count
+fn parse_skillsmp_html(html: &str, featured: bool) -> Vec<MarketSkill> {
+    use scraper::{Html, Selector};
+    let doc = Html::parse_document(html);
     let card_sel = Selector::parse("a[href*='/creators/']").unwrap();
-    let mut skills: Vec<MarketSkill> = Vec::new();
+    let mut out = Vec::new();
     let mut seen = std::collections::HashSet::new();
-
     for card in doc.select(&card_sel) {
         let href = card.value().attr("href").unwrap_or("").to_string();
         if href.is_empty() || seen.contains(&href) {
             continue;
         }
         seen.insert(href.clone());
-
-        // Extract text content from the card
         let text: String = card
             .text()
             .collect::<Vec<_>>()
@@ -696,61 +713,51 @@ pub async fn fetch_skill_marketplace(query: String) -> Result<Vec<MarketSkill>, 
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ");
-
         if text.is_empty() {
             continue;
         }
-
-        // Derive name from the href path: /creators/<author>/<org>/<skill-name>
         let parts: Vec<&str> = href.trim_matches('/').split('/').collect();
         let name = parts.last().copied().unwrap_or("unknown").to_string();
         let author = parts.get(1).copied().unwrap_or("").to_string();
-
-        // Build a plausible GitHub URL from skillsmp path convention
-        // skillsmp links map to GitHub: github.com/<org>/<skill-name>
         let github_url = if parts.len() >= 4 {
             format!("https://github.com/{}/{}", parts[2], parts[3])
         } else {
             String::new()
         };
-
-        // Stars: look for number followed by 'k' or plain number in text
         let stars = text
             .split_whitespace()
             .find(|t| {
-                t.ends_with('k') && t[..t.len() - 1].parse::<f64>().is_ok()
+                (t.ends_with('k') && t[..t.len() - 1].parse::<f64>().is_ok())
                     || t.parse::<u64>().is_ok()
             })
             .unwrap_or("—")
             .to_string();
-
-        // Description: everything after stripping name/author/stars
         let description = text
-            .trim_start_matches(&name)
-            .trim_start_matches(&author)
-            .trim_start_matches(&stars)
+            .trim_start_matches(name.as_str())
+            .trim_start_matches(author.as_str())
+            .trim_start_matches(stars.as_str())
             .trim()
             .chars()
             .take(120)
             .collect::<String>();
-
-        skills.push(MarketSkill {
+        out.push(MarketSkill {
             name,
             description,
             stars,
             author,
             github_url,
+            featured,
         });
-
-        if skills.len() >= 50 {
+        if out.len() >= 50 {
             break;
         }
     }
-
-    Ok(skills)
+    out
 }
 
-/// Try mcpmarket.com JSON API first; fall back to open_browser flag.
+/// Fetch MCP listings from glama.ai public JSON API.
+/// Returns items with name/description/source (glama page URL).
+/// command/args are empty — user opens source link to get install instructions.
 #[tauri::command(async)]
 pub async fn fetch_mcp_marketplace(query: String) -> Result<MarketResult, String> {
     let client = reqwest::Client::builder()
@@ -759,76 +766,53 @@ pub async fn fetch_mcp_marketplace(query: String) -> Result<MarketResult, String
         .build()
         .map_err(|e| e.to_string())?;
 
-    // Try known JSON endpoints
-    let api_bases = [
-        "https://mcpmarket.com/api/servers",
-        "https://mcpmarket.com/api/search",
-    ];
+    let mut req = client
+        .get("https://glama.ai/api/mcp/v1/servers")
+        .query(&[("first", "40")]);
+    if !query.is_empty() {
+        req = req.query(&[("search", &query)]);
+    }
 
-    for api_base in &api_bases {
-        if let Ok(resp) = client.get(*api_base).query(&[("q", &query)]).send().await {
-            if resp.status().is_success() {
-                if let Ok(body) = resp.text().await {
-                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
-                        let items = parse_mcp_json(&json);
-                        if !items.is_empty() {
-                            return Ok(MarketResult {
-                                items,
-                                open_browser: false,
-                            });
-                        }
+    if let Ok(resp) = req.send().await {
+        if resp.status().is_success() {
+            if let Ok(body) = resp.text().await {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                    let items = parse_glama_mcp_json(&json);
+                    if !items.is_empty() {
+                        return Ok(MarketResult {
+                            items,
+                            open_browser: false,
+                        });
                     }
                 }
             }
         }
     }
 
-    // API unavailable — signal UI to offer "open in browser"
     Ok(MarketResult {
         items: Vec::new(),
         open_browser: true,
     })
 }
 
-fn parse_mcp_json(json: &serde_json::Value) -> Vec<MarketMcp> {
+fn parse_glama_mcp_json(json: &serde_json::Value) -> Vec<MarketMcp> {
     let mut items = Vec::new();
-    let arr = json
-        .as_array()
-        .or_else(|| json["servers"].as_array())
-        .or_else(|| json["results"].as_array())
-        .or_else(|| json["data"].as_array());
-
-    if let Some(arr) = arr {
+    if let Some(arr) = json["servers"].as_array() {
         for item in arr.iter().take(50) {
             let name = item["name"].as_str().unwrap_or("").to_string();
             if name.is_empty() {
                 continue;
             }
             let description = item["description"].as_str().unwrap_or("").to_string();
-            let command = item["command"]
+            let source = item["url"]
                 .as_str()
-                .or_else(|| item["cmd"].as_str())
-                .unwrap_or("")
-                .to_string();
-            let args = item["args"]
-                .as_array()
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_str())
-                        .map(|s| s.to_string())
-                        .collect()
-                })
-                .unwrap_or_default();
-            let source = item["source"]
-                .as_str()
-                .or_else(|| item["repo"].as_str())
-                .unwrap_or("mcpmarket.com")
+                .unwrap_or("https://glama.ai/mcp/servers")
                 .to_string();
             items.push(MarketMcp {
                 name,
                 description,
-                command,
-                args,
+                command: String::new(),
+                args: Vec::new(),
                 source,
             });
         }
