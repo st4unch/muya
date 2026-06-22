@@ -1030,6 +1030,27 @@ export const loginHandler = async (req, res) => {
             </button>
           </div>
 
+          {/* Manually-pinned workspace roots — each removable with × */}
+          {workspaces.length > 0 && (
+            <div className="px-2 pt-1.5 pb-1 flex flex-col gap-0.5 border-b border-neutral-100 dark:border-neutral-800">
+              {workspaces.map((ws) => (
+                <div key={ws} className="flex items-center justify-between group px-1 py-0.5 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800">
+                  <span className="text-[10px] font-mono text-neutral-500 dark:text-neutral-400 truncate" title={ws}>
+                    {ws.split("/").pop()}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setWorkspaces((prev) => prev.filter((w) => w !== ws))}
+                    title={`Remove ${ws}`}
+                    className="opacity-0 group-hover:opacity-100 text-neutral-400 hover:text-red-500 dark:hover:text-red-400 transition-all ml-1 shrink-0 cursor-pointer"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Real, lazy file tree over the user's workspace roots (backend list_dir) */}
           <div className="flex-1 overflow-y-auto">
             <FileTree roots={trackedPaths} onOpenFile={openEditor} refreshSignal={fsTick} />

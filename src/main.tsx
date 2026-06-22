@@ -13,6 +13,9 @@ const onCommit = perf
       recordCommit(actualDuration)
   : undefined;
 
+// Disable browser right-click context menu (prevents accidental devtools open).
+document.addEventListener("contextmenu", (e) => e.preventDefault());
+
 const tree = perf ? (
   <Profiler id="App" onRender={onCommit!}>
     <App />
