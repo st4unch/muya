@@ -89,6 +89,18 @@ export default function Terminal({
     let ptyId: string | null = null;
     let disposed = false;
 
+    // Shift+Enter → insert a literal newline in the shell command buffer (readline
+    // quoted-insert: Ctrl-V tells readline to take the next char literally, then \r
+    // inserts a newline). Allows multiline commands without submitting.
+    term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+      if (e.key === "Enter" && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        if (e.type === "keydown" && ptyId)
+          void invoke("pty_write", { id: ptyId, data: "\x16\r" });
+        return false;
+      }
+      return true;
+    });
+
     // Fit xterm to the element and push the resulting grid to the PTY. Bails while the
     // element is hidden (0×0) — fitting then would shrink the PTY to ~0 and corrupt a
     // full-screen TUI. Shared by the ResizeObserver, the post-spawn sync, and (via
