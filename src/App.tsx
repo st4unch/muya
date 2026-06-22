@@ -54,6 +54,7 @@ import { buildAgentCommand } from "./lib/agent";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 
 // Types matching the user's workflow model
@@ -246,6 +247,7 @@ export default function App() {
 
   const openTerminalForAgent = (a: AgentSession) => {
     const cwd = a.worktree && a.worktree.startsWith("/") ? a.worktree : undefined;
+    if (cwd) ensureWorktreeTracked(cwd);
     const initialCommand =
       a.attachable && a.attachId ? `claude attach ${a.attachId}` : undefined;
     openTerminal({ key: a.id, name: a.name, kind: "terminal", cwd, initialCommand });
@@ -299,6 +301,7 @@ export default function App() {
   }, [themeMode]);
   useEffect(() => {
     document.documentElement.classList.toggle("dark", effectiveTheme === "dark");
+    void getCurrentWindow().setTheme(effectiveTheme === "dark" ? "dark" : "light");
   }, [effectiveTheme]);
   // Collapsible side panels (toggle only, not resizable — focus mode).
   const [leftOpen, setLeftOpen] = useState(true);
@@ -339,6 +342,13 @@ export default function App() {
 
   // All paths the PM/watcher tracks: workspaces + created worktrees.
   const trackedPaths = [...new Set([...workspaces, ...worktrees])];
+
+  // Adds a session's cwd to the worktree panel if not already tracked.
+  const ensureWorktreeTracked = (cwd: string) => {
+    if (!trackedPaths.includes(cwd)) {
+      setWorktrees((prev) => [...new Set([...prev, cwd])]);
+    }
+  };
 
   // Watch tracked projects in real time (notify); refresh views on change.
   useEffect(() => {
@@ -959,6 +969,7 @@ export const loginHandler = async (req, res) => {
       {view === "sessions" && (
         <SessionsPage
           onOpen={(spec) => {
+            if (spec.cwd) ensureWorktreeTracked(spec.cwd);
             openTerminal({ ...spec, kind: "terminal" });
             setView("control");
           }}
