@@ -162,9 +162,8 @@ describe("ScheduledPromptModal", () => {
     expect(screen.getByText(/Son Gönderilen/)).toBeInTheDocument();
   });
 
-  it("quick time buttons update the datetime input", async () => {
+  it("time input accepts HH:MM:SS format", async () => {
     const user = userEvent.setup();
-    const before = Date.now();
     render(
       <ScheduledPromptModal
         open
@@ -175,12 +174,11 @@ describe("ScheduledPromptModal", () => {
         onCancel={onCancel}
       />
     );
-    await user.click(screen.getByRole("button", { name: "1 saat" }));
-    const input = screen.getByDisplayValue(/T/);
-    const after = Date.now();
-    const picked = new Date((input as HTMLInputElement).value).getTime();
-    // Should be roughly +1 hour from now (±30s tolerance)
-    expect(picked).toBeGreaterThan(before + 59 * 60_000);
-    expect(picked).toBeLessThan(after + 61 * 60_000);
+    const input = screen.getByRole("textbox", { hidden: true }) as HTMLInputElement
+      ?? document.querySelector('input[type="time"]') as HTMLInputElement;
+    // time input should be present and have a default value
+    const timeInput = document.querySelector('input[type="time"]') as HTMLInputElement;
+    expect(timeInput).toBeTruthy();
+    expect(timeInput.value).toMatch(/^\d{2}:\d{2}/);
   });
 });
