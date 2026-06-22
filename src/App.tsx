@@ -43,7 +43,8 @@ import {
   Sun,
   Moon,
   LayoutGrid,
-  GripHorizontal
+  GripHorizontal,
+  CalendarClock
 } from "lucide-react";
 import BranchDAG from "./components/BranchDAG";
 import AgentTerminal from "./components/Terminal";
@@ -54,6 +55,7 @@ import SessionMonitor from "./components/SessionMonitor";
 import NewAgentModal, { type NewAgentSpec } from "./components/NewAgentModal";
 import QueuePage from "./components/QueuePage";
 import ResourcesPage from "./components/ResourcesPage";
+import ScheduledPromptModal, { type ScheduledPrompt } from "./components/ScheduledPromptModal";
 import { buildAgentCommand } from "./lib/agent";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -467,6 +469,36 @@ export default function App() {
       return next.length === prev.length ? prev : next;
     });
   }, [openTerminals]);
+
+  // PTY id map: terminalKey → ptyId (populated by onPtyReady callbacks)
+  const [terminalPtyIds, setTerminalPtyIds] = useState<Record<string, string>>({});
+
+  // Scheduled prompts
+  const [scheduledPrompts, setScheduledPrompts] = useState<ScheduledPrompt[]>([]);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+
+  // Timer: check every 10s for due scheduled prompts
+  useEffect(() => {
+    const tick = setInterval(() => {
+      const now = Date.now();
+      setScheduledPrompts(prev => {
+        let changed = false;
+        const next = prev.map(p => {
+          if (!p.fired && p.scheduledAt <= now) {
+            changed = true;
+            p.terminalKeys.forEach(key => {
+              const ptyId = terminalPtyIds[key];
+              if (ptyId) void invoke("pty_write", { id: ptyId, data: p.prompt + "\r" });
+            });
+            return { ...p, fired: true };
+          }
+          return p;
+        });
+        return changed ? next : prev;
+      });
+    }, 10000);
+    return () => clearInterval(tick);
+  }, [terminalPtyIds]);
 
   // New-agent modal (app-managed: optional git worktree + command in a PTY).
   const [newAgentOpen, setNewAgentOpen] = useState(false);
@@ -1283,6 +1315,23 @@ export const loginHandler = async (req, res) => {
                   <span>Grid</span>
                 </button>
 
+                {/* Scheduled Prompt button */}
+                <button
+                  type="button"
+                  title="Scheduled Prompt"
+                  onClick={() => setScheduleOpen(true)}
+                  className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono font-bold transition-colors cursor-pointer relative ${
+                    scheduledPrompts.some(p => !p.fired)
+                      ? "text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+                      : "text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-800 dark:hover:text-neutral-200"
+                  }`}
+                >
+                  <CalendarClock className="h-3 w-3" />
+                  {scheduledPrompts.some(p => !p.fired) && (
+                    <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-amber-500" />
+                  )}
+                </button>
+
                 {/* Console Badge metrics */}
                 <div className="flex items-center space-x-1.5 text-[10px] font-mono text-neutral-500 dark:text-neutral-400">
                   <span>DAEMON:</span>
@@ -1443,6 +1492,7 @@ export const loginHandler = async (req, res) => {
                             initialCommand={tm.initialCommand}
                             theme={effectiveTheme}
                             active={show}
+                            onPtyReady={(ptyId) => setTerminalPtyIds(prev => ({ ...prev, [tm.key]: ptyId }))}
                           />
                         </div>
                       </div>
@@ -1715,6 +1765,15 @@ export const loginHandler = async (req, res) => {
         onClose={() => setNewAgentOpen(false)}
         workspaces={workspaces}
         onLaunch={launchAgent}
+      />
+
+      <ScheduledPromptModal
+        open={scheduleOpen}
+        onClose={() => setScheduleOpen(false)}
+        terminals={openTerminals.filter(t => t.kind === "terminal").map(t => ({ key: t.key, name: t.name }))}
+        scheduled={scheduledPrompts}
+        onAdd={(p) => setScheduledPrompts(prev => [...prev, { ...p, id: crypto.randomUUID(), fired: false }])}
+        onCancel={(id) => setScheduledPrompts(prev => prev.filter(p => p.id !== id))}
       />
     </div>
   );

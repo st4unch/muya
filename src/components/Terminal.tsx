@@ -36,20 +36,14 @@ export default function Terminal({
   initialCommand,
   theme = "dark",
   active = true,
+  onPtyReady,
 }: {
   cwd?: string;
-  /** If set, auto-run this command once the shell is ready (e.g. `claude attach <id>`). */
   initialCommand?: string;
-  /** Color theme; switches live without respawning the PTY. */
   theme?: TermTheme;
-  /**
-   * Whether this terminal is the visible/active tab. While `false` the host hides it
-   * with `display:none`, so the element is 0×0 and any window resize that happens
-   * meanwhile never reaches its PTY. On the false→true transition we re-fit, push the
-   * real size to the PTY, and focus the shell so the user can type without a stray
-   * click. Defaults to `true` for standalone use.
-   */
   active?: boolean;
+  /** Called once with the PTY id after the shell spawns — lets the parent send pty_write. */
+  onPtyReady?: (id: string) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
@@ -143,6 +137,7 @@ export default function Terminal({
           return;
         }
         ptyId = id;
+        onPtyReady?.(id);
         term.onData((d) => void invoke("pty_write", { id, data: d }));
         // The element may have been laid out (or resized) between open() and now while
         // ptyId was still null — syncSize then skipped the pty_resize. Push the real
