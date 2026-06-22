@@ -2,17 +2,12 @@ import React, { useState } from "react";
 import {
   GitBranch,
   GitCommit,
-  GitPullRequest,
   CheckCircle2,
   AlertTriangle,
-  Zap,
   Clock,
-  ShieldCheck,
-  Eye,
   Terminal,
   X,
   Search,
-  Focus
 } from "lucide-react";
 
 interface AgentSession {
@@ -374,48 +369,58 @@ export default function BranchDAG({
           )}
         </div>
       ) : (
-        <div className="p-3 border-t border-neutral-100 dark:border-neutral-800 bg-white dark:bg-neutral-900 space-y-3 font-mono text-[10px] overflow-y-auto max-h-[380px]">
-          <div className="space-y-1">
-            <span className="text-[9px] text-neutral-400 dark:text-neutral-500 font-bold uppercase block">Branch Layout Mapping Rules</span>
-            <div className="p-2.5 rounded border border-neutral-150 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-900 space-y-2">
-              <div className="flex items-start space-x-2">
-                <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-300 shrink-0 mt-0.5" />
-                <div>
-                  <strong className="text-neutral-800 dark:text-neutral-200 block leading-tight">Master & Releases (Lane 1)</strong>
-                  <span className="text-neutral-500 dark:text-neutral-400 text-[9px]">Stabilized deployment lines for customer deployments. Always locked write layers.</span>
-                </div>
-              </div>
-              <div className="flex items-start space-x-2">
-                <Zap className="h-3.5 w-3.5 text-indigo-500 dark:text-indigo-400 shrink-0 mt-0.5" />
-                <div>
-                  <strong className="text-neutral-800 dark:text-neutral-200 block leading-tight">WIP Code-Workspaces (Lane 2)</strong>
-                  <span className="text-neutral-500 dark:text-neutral-400 text-[9px]">Isolated directories bound to supervisor containers. Auto-synced logs.</span>
-                </div>
-              </div>
-              <div className="flex items-start space-x-2">
-                <GitPullRequest className="h-3.5 w-3.5 text-neutral-500 dark:text-neutral-400 shrink-0 mt-0.5" />
-                <div>
-                  <strong className="text-neutral-800 dark:text-neutral-200 block leading-tight">Feature Draft Envs (Lane 3)</strong>
-                  <span className="text-neutral-500 dark:text-neutral-400 text-[9px]">Awaiting review pull-requests. Highly susceptible to staging merges.</span>
-                </div>
-              </div>
+        <div className="border-t border-neutral-100 dark:border-neutral-800 bg-white dark:bg-neutral-900 overflow-y-auto max-h-[380px]">
+          {/* Stats row */}
+          <div className="grid grid-cols-3 divide-x divide-neutral-100 dark:divide-neutral-800 text-center font-mono text-[9px] border-b border-neutral-100 dark:border-neutral-800">
+            <div className="py-2">
+              <strong className="block text-neutral-800 dark:text-neutral-200 text-xs">{branchList.length}</strong>
+              <span className="text-neutral-400 dark:text-neutral-500 uppercase">Branches</span>
+            </div>
+            <div className="py-2">
+              <strong className="block text-amber-500 dark:text-amber-400 text-xs">
+                {branchList.filter(b => b.status === "ahead" || b.status === "diverged").length}
+              </strong>
+              <span className="text-neutral-400 dark:text-neutral-500 uppercase">Ahead</span>
+            </div>
+            <div className="py-2">
+              <strong className="block text-rose-500 dark:text-rose-400 text-xs">
+                {branchList.filter(b => b.status === "conflict").length}
+              </strong>
+              <span className="text-neutral-400 dark:text-neutral-500 uppercase">Conflict</span>
             </div>
           </div>
 
-          <div className="space-y-1">
-            <span className="text-[9px] text-neutral-400 dark:text-neutral-500 font-bold uppercase block">Current Branch Metrics</span>
-            <div className="grid grid-cols-2 gap-2 text-[9px]">
-              <div className="p-2 border border-neutral-200 dark:border-neutral-700 rounded text-center">
-                <span className="text-neutral-400 dark:text-neutral-500 block uppercase">Total Nodes</span>
-                <strong className="text-neutral-800 dark:text-neutral-200 text-xs font-bold">{nodes.length}</strong>
-              </div>
-              <div className="p-2 border border-neutral-200 dark:border-neutral-700 rounded text-center">
-                <span className="text-neutral-400 dark:text-neutral-500 block uppercase">Main Ahead</span>
-                <strong className="text-amber-500 dark:text-amber-400 text-xs font-bold">
-                  {nodes.filter((n) => n.status === "ahead" || n.status === "diverged").length} branches
-                </strong>
-              </div>
-            </div>
+          {/* Branch list */}
+          <div className="divide-y divide-neutral-50 dark:divide-neutral-800/60">
+            {branchList.length === 0 && (
+              <div className="p-4 text-center text-[10px] text-neutral-400 dark:text-neutral-500 font-mono">No branches</div>
+            )}
+            {branchList.map((b) => {
+              const agent = agents.find(a => a.branch === b.name);
+              const statusColor =
+                b.status === "conflict"  ? "text-rose-500 dark:text-rose-400 bg-rose-50 dark:bg-rose-900/20" :
+                b.status === "diverged"  ? "text-orange-500 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/20" :
+                b.status === "ahead"     ? "text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20" :
+                                           "text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20";
+              return (
+                <div key={b.name} className={`px-3 py-2 font-mono text-[10px] hover:bg-neutral-50 dark:hover:bg-neutral-800/40 cursor-default ${b.name === activeBranchName ? "bg-indigo-50/60 dark:bg-indigo-900/10" : ""}`}>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <GitBranch className="h-3 w-3 text-neutral-400 dark:text-neutral-500 shrink-0" />
+                    <span className="truncate text-neutral-800 dark:text-neutral-200 font-semibold flex-1 min-w-0">{b.name}</span>
+                    <span className={`shrink-0 px-1 py-0.5 rounded text-[8px] font-bold uppercase ${statusColor}`}>{b.status}</span>
+                  </div>
+                  <div className="mt-0.5 flex items-center gap-2 text-neutral-400 dark:text-neutral-500 pl-4.5">
+                    <GitCommit className="h-2.5 w-2.5 shrink-0" />
+                    <span className="truncate">{b.lastCommit}</span>
+                    {agent && (
+                      <span className="shrink-0 flex items-center gap-0.5 text-indigo-500 dark:text-indigo-400">
+                        <Terminal className="h-2.5 w-2.5" />{agent.name}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
