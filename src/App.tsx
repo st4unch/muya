@@ -1340,6 +1340,30 @@ export const loginHandler = async (req, res) => {
                     </div>
                   )}
 
+                  {/* Grid empty slots — show "+" placeholder for unfilled positions */}
+                  {viewMode === "grid" && (() => {
+                    const filled = validGridKeys.length;
+                    const slots = filled === 0 ? 1 : filled < 4 ? filled + 1 : 0;
+                    if (slots === 0) return null;
+                    return Array.from({ length: slots > 4 - filled ? 4 - filled : 1 }).map((_, i) => {
+                      const slotIdx = filled + i;
+                      const col = (slotIdx % 2) + 1;
+                      const row = Math.floor(slotIdx / 2) + 1;
+                      return (
+                        <button
+                          key={`empty-slot-${i}`}
+                          type="button"
+                          onClick={() => setNewAgentOpen(true)}
+                          style={{ gridColumn: col, gridRow: row }}
+                          className="flex flex-col items-center justify-center gap-2 rounded border-2 border-dashed border-neutral-700 hover:border-indigo-500 bg-neutral-900/50 hover:bg-indigo-950/20 text-neutral-600 hover:text-indigo-400 transition-colors cursor-pointer group"
+                        >
+                          <Plus className="h-6 w-6 group-hover:scale-110 transition-transform" />
+                          <span className="text-[10px] font-mono">New Agent</span>
+                        </button>
+                      );
+                    });
+                  })()}
+
                   {openTerminals.map((tm) => {
                     const gridIdx = viewMode === "grid" ? validGridKeys.indexOf(tm.key) : -1;
                     const inGrid = gridIdx !== -1;

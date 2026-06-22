@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { relTime, shortCwd } from "../lib/format";
-import { RefreshCw, Play, Plug, FolderGit2, Clock, Square } from "lucide-react";
+import { RefreshCw, Play, Plug, FolderGit2, Clock, Square, Search, X } from "lucide-react";
 
 interface AgentSession {
   id: string;
@@ -45,6 +45,7 @@ export default function SessionsPage({
   const [live, setLive] = useState<AgentSession[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const [query, setQuery] = useState("");
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -81,9 +82,27 @@ export default function SessionsPage({
 
   const liveIds = new Set(live.map((s) => s.id));
 
+  const q = query.trim().toLowerCase();
+  const filteredLive = q
+    ? live.filter(s =>
+        s.name.toLowerCase().includes(q) ||
+        s.worktree.toLowerCase().includes(q) ||
+        s.branch.toLowerCase().includes(q) ||
+        s.status.toLowerCase().includes(q)
+      )
+    : live;
+  const filteredHistory = q
+    ? history.filter(h => {
+        const name = h.cwd.split("/").filter(Boolean).pop() ?? "";
+        return name.toLowerCase().includes(q) ||
+          h.cwd.toLowerCase().includes(q) ||
+          h.sessionId.toLowerCase().includes(q);
+      })
+    : history;
+
   return (
     <div className="flex-1 overflow-y-auto bg-neutral-50/50 dark:bg-neutral-900 p-5">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-3">
         <h1 className="text-sm font-display font-bold text-neutral-800 dark:text-neutral-200 flex items-center gap-2">
           <Plug className="h-4 w-4 text-indigo-500 dark:text-indigo-400" /> Claude Sessions
         </h1>
@@ -96,18 +115,35 @@ export default function SessionsPage({
         </button>
       </div>
 
+      {/* Search */}
+      <div className="relative mb-4">
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-neutral-400 dark:text-neutral-500 pointer-events-none" />
+        <input
+          type="text"
+          placeholder="Search by name, path, branch, session ID…"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          className="w-full pl-8 pr-8 py-1.5 text-[11px] font-mono rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-800 dark:text-neutral-200 placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none focus:border-indigo-400 dark:focus:border-indigo-600"
+        />
+        {query && (
+          <button type="button" onClick={() => setQuery("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 cursor-pointer">
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+
       {/* LIVE */}
       <section className="mb-6">
         <h2 className="text-[10px] font-mono uppercase tracking-widest font-bold text-emerald-600 dark:text-emerald-300 mb-2">
-          Live sessions ({live.length})
+          Live sessions ({filteredLive.length}{q && live.length !== filteredLive.length ? `/${live.length}` : ""})
         </h2>
         <div className="space-y-1.5">
-          {live.length === 0 && (
+          {filteredLive.length === 0 && (
             <div className="text-[11px] font-mono text-neutral-400 dark:text-neutral-500 py-2">
-              No live sessions.
+              {q ? "No matching live sessions." : "No live sessions."}
             </div>
           )}
-          {live.map((s) => (
+          {filteredLive.map((s) => (
             <div
               key={s.id}
               className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-lg p-3 flex items-center justify-between gap-3 shadow-sm"
@@ -173,15 +209,15 @@ export default function SessionsPage({
       {/* HISTORY */}
       <section>
         <h2 className="text-[10px] font-mono uppercase tracking-widest font-bold text-neutral-500 dark:text-neutral-400 mb-2">
-          Past sessions ({history.length})
+          Past sessions ({filteredHistory.length}{q && history.length !== filteredHistory.length ? `/${history.length}` : ""})
         </h2>
         <div className="space-y-1.5">
-          {history.length === 0 && (
+          {filteredHistory.length === 0 && (
             <div className="text-[11px] font-mono text-neutral-400 dark:text-neutral-500 py-2">
-              No transcript history.
+              {q ? "No matching past sessions." : "No transcript history."}
             </div>
           )}
-          {history.map((h) => {
+          {filteredHistory.map((h) => {
             const isLive = liveIds.has(h.sessionId);
             const name = h.cwd.split("/").filter(Boolean).pop() || h.sessionId.slice(0, 8);
             return (
