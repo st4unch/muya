@@ -43,14 +43,16 @@ Apex puts all of it in one place — and lets you launch, attach to, and stop ag
 | Area | What it does |
 |---|---|
 | **Grid view** | Show up to 4 terminals simultaneously in a resizable 2×2 grid. Drag & drop to reorder panels. Toggle with the ⊞ Grid button — sidepanels auto-hide for full focus. |
-| **Live sessions** | Reads `claude agents --json` (interactive + background). Attach, stop, or resume any session directly from the app. |
-| **Real terminals** | PTY-backed (`portable-pty` + xterm.js). One persistent tab per session — survives tab switches. Shift+Enter inserts a literal newline without submitting. |
+| **Tab bar** | Scroll left/right when tabs overflow. Drag & drop to reorder. Double-click to rename any tab. |
+| **Live sessions** | Reads `claude agents --json` (interactive + background). Attach, stop, or resume any session directly from the app. Full-text search across live sessions and transcript history. |
+| **Real terminals** | PTY-backed (`portable-pty` + xterm.js). One persistent tab per session — survives tab switches and grid/tab mode changes. Shift+Enter inserts a literal newline without submitting. |
 | **New agent** | Launch a fresh agent into an isolated `git worktree` (auto-created, `.env` copied) running `claude --dangerously-skip-permissions`. |
-| **Editor + diff** | Monaco editor with HEAD-vs-working-tree diff view, loaded locally (no CDN). |
+| **Scheduled Prompt** | Schedule a prompt to be sent to one or more terminals at a specific date and time. Pending and recently fired prompts are tracked in the modal. |
+| **Editor + diff** | Monaco editor with HEAD-vs-working-tree diff view, loaded locally (no CDN). Unsaved files show a dot indicator in the tab; closing blocks with a native confirmation dialog. |
 | **File tree** | Lazy real file tree over workspaces you add; live-refreshes on filesystem changes. Right-click a folder to remove it from the workspace. |
 | **Push / Merge queue** | Per-project git status (ahead/behind/dirty), trial-merge conflict checks, and operator-confirmed push/merge with auto worktree cleanup. |
 | **Collision detection** | Flags the same repo-relative file edited in two or more worktrees simultaneously. |
-| **Branch topology** | Real lineage DAG — parent computed from closest divergence point. |
+| **Branch topology** | Real lineage DAG — parent computed from closest divergence point. Live branch summary with ahead/conflict counts. |
 | **Claude Resources** | Browse local Skills, Agents, Hooks, and MCPs. One-click "Create with Claude" to scaffold new resources in a terminal. Marketplace tab for discovering community skills. |
 | **File associations** | Set Apex as the default app for `.md`, `.json`, `.ts`, `.py`, `.rs`, and 15+ other text formats — files open directly in the Monaco editor. |
 | **Resource metrics** | App CPU% and RAM (RSS) in the header bar via `sysinfo`. |
@@ -99,7 +101,7 @@ npm run tauri build    # → src-tauri/target/release/bundle/macos/Apex Mission 
 cd src-tauri && cargo test
 
 # Frontend
-npm run test   # vitest — 14 tests
+npm run test   # vitest — 29 tests
 ```
 
 ---
@@ -132,7 +134,7 @@ docs/                   SYSTEM.md, PRDs, screenshots
 
 ## Status
 
-v0.1.0 — actively developed. macOS / Apple Silicon only.
+v0.1.1 — actively developed. macOS / Apple Silicon only.
 
 ## License
 
