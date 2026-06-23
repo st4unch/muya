@@ -6,6 +6,8 @@ import {
   Folder,
   FolderOpen,
   FileText,
+  Copy,
+  Trash2,
 } from "lucide-react";
 
 export interface Entry {
@@ -14,7 +16,7 @@ export interface Entry {
   isDirectory: boolean;
 }
 
-type ContextMenu = { x: number; y: number; path: string } | null;
+type ContextMenu = { x: number; y: number; path: string; isRoot: boolean } | null;
 
 function TreeNode({
   entry,
@@ -104,6 +106,7 @@ function TreeNode({
           depth={depth + 1}
           onOpenFile={onOpenFile}
           refreshSignal={refreshSignal}
+          onContextMenu={onContextMenu}
         />
       ))}
       {open && loading && (
@@ -154,7 +157,7 @@ export default function FileTree({
   const handleContextMenu = (e: React.MouseEvent, path: string) => {
     e.preventDefault();
     e.stopPropagation();
-    setMenu({ x: e.clientX, y: e.clientY, path });
+    setMenu({ x: e.clientX, y: e.clientY, path, isRoot: roots.includes(path) });
   };
 
   if (!roots.length)
@@ -184,19 +187,34 @@ export default function FileTree({
       {menu && (
         <div
           style={{ position: "fixed", top: menu.y, left: menu.x, zIndex: 9999 }}
-          className="min-w-[180px] bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded shadow-lg py-1 text-xs font-mono"
+          className="min-w-[200px] bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded shadow-lg py-1 text-xs font-mono"
           onClick={(e) => e.stopPropagation()}
         >
           <button
             type="button"
-            className="w-full text-left px-3 py-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer transition-colors"
+            className="w-full text-left px-3 py-1.5 flex items-center gap-2 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-700 cursor-pointer transition-colors"
             onClick={() => {
-              onRemoveRoot?.(menu.path);
+              void navigator.clipboard.writeText(menu.path);
               setMenu(null);
             }}
           >
-            Remove from Workspace
+            <Copy className="h-3 w-3 shrink-0" /> Copy Path
           </button>
+          {menu.isRoot && removableRoots?.has(menu.path) && (
+            <>
+              <div className="border-t border-neutral-100 dark:border-neutral-700 my-1" />
+              <button
+                type="button"
+                className="w-full text-left px-3 py-1.5 flex items-center gap-2 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer transition-colors"
+                onClick={() => {
+                  onRemoveRoot?.(menu.path);
+                  setMenu(null);
+                }}
+              >
+                <Trash2 className="h-3 w-3 shrink-0" /> Remove from Workspace
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>

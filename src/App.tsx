@@ -44,7 +44,10 @@ import {
   Moon,
   LayoutGrid,
   GripHorizontal,
-  CalendarClock
+  CalendarClock,
+  Lock,
+  Unlock,
+  Pencil,
 } from "lucide-react";
 import BranchDAG from "./components/BranchDAG";
 import AgentTerminal from "./components/Terminal";
@@ -423,6 +426,49 @@ export default function App() {
   const tabDragFromRef = useRef<string | null>(null);
   const [tabDragOver, setTabDragOver] = useState<string | null>(null);
   const [renamingKey, setRenamingKey] = useState<string | null>(null);
+  // Layout lock: true = locked (rename enabled, drag disabled), false = unlocked (drag enabled, rename disabled)
+  const [layoutLocked, setLayoutLocked] = useState(true);
+  const layoutLockedRef = useRef(true);
+  useEffect(() => { layoutLockedRef.current = layoutLocked; }, [layoutLocked]);
+
+  // Pointer-based tab drag (works in WKWebView unlike HTML5 DnD)
+  const tabDragOverRef = useRef<string | null>(null);
+  const tabDragHappenedRef = useRef(false);
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!tabDragFromRef.current) return;
+      tabDragHappenedRef.current = true;
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const tabEl = el?.closest("[data-tabkey]") as HTMLElement | null;
+      const overKey = tabEl?.dataset.tabkey ?? null;
+      const next = overKey !== tabDragFromRef.current ? overKey : null;
+      if (next !== tabDragOverRef.current) {
+        tabDragOverRef.current = next;
+        setTabDragOver(next);
+      }
+    };
+    const onUp = () => {
+      const from = tabDragFromRef.current;
+      const to = tabDragOverRef.current;
+      tabDragFromRef.current = null;
+      tabDragOverRef.current = null;
+      setTabDragOver(null);
+      if (from && to && from !== to) {
+        setOpenTerminals(prev => {
+          const next = [...prev];
+          const fi = next.findIndex(t => t.key === from);
+          const ti = next.findIndex(t => t.key === to);
+          if (fi !== -1 && ti !== -1) { const [m] = next.splice(fi, 1); next.splice(ti, 0, m); }
+          return next;
+        });
+      }
+      // Reset after click fires (click comes right after mouseup)
+      setTimeout(() => { tabDragHappenedRef.current = false; }, 0);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+  }, []);
   const [renameValue, setRenameValue] = useState("");
   // Grid resize splits (percentage)
   const [gridColSplit, setGridColSplit] = useState(50);
@@ -1196,34 +1242,24 @@ export const loginHandler = async (req, res) => {
                 )}
                 {viewMode === "tabs" && openTerminals.map((tm) => {
                   const isActive = tm.key === activeTerminalKey;
+                  const isDragging = tabDragFromRef.current === tm.key;
+                  const isDragOver = tabDragOver === tm.key && tabDragFromRef.current !== tm.key;
                   return (
                     <div
                       key={tm.key}
-                      draggable={renamingKey !== tm.key}
-                      onDragStart={(e) => { if (renamingKey === tm.key) { e.preventDefault(); return; } e.dataTransfer.effectAllowed = "move"; tabDragFromRef.current = tm.key; }}
-                      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setTabDragOver(tm.key); }}
-                      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setTabDragOver(null); }}
-                      onDrop={(e) => {
+                      data-tabkey={tm.key}
+                      onMouseDown={!layoutLocked ? (e) => {
+                        if ((e.target as HTMLElement).closest("button")) return;
                         e.preventDefault();
-                        const from = tabDragFromRef.current;
-                        if (from && from !== tm.key) {
-                          setOpenTerminals(prev => {
-                            const next = [...prev];
-                            const fromIdx = next.findIndex(t => t.key === from);
-                            const toIdx   = next.findIndex(t => t.key === tm.key);
-                            if (fromIdx !== -1 && toIdx !== -1) {
-                              const [moved] = next.splice(fromIdx, 1);
-                              next.splice(toIdx, 0, moved);
-                            }
-                            return next;
-                          });
-                        }
-                        tabDragFromRef.current = null; setTabDragOver(null);
-                      }}
-                      onDragEnd={() => { tabDragFromRef.current = null; setTabDragOver(null); }}
-                      onClick={() => setActiveTerminalKey(tm.key)}
-                      className={`group flex items-center gap-1.5 px-2.5 h-full border-b-2 transition-colors shrink-0 ${renamingKey === tm.key ? "cursor-default" : "cursor-grab active:cursor-grabbing"} ${
-                        tabDragOver === tm.key ? "border-indigo-400 bg-indigo-50 dark:bg-indigo-900/20" :
+                        tabDragFromRef.current = tm.key;
+                        setTabDragOver(null);
+                      } : undefined}
+                      onClick={() => { if (renamingKey !== tm.key && !tabDragHappenedRef.current) setActiveTerminalKey(tm.key); }}
+                      className={`group flex items-center gap-1 px-2 h-full border-b-2 transition-colors shrink-0 select-none ${
+                        !layoutLocked ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
+                      } ${
+                        isDragOver ? "border-indigo-400 bg-indigo-50 dark:bg-indigo-900/20" :
+                        isDragging ? "opacity-50 border-dashed border-indigo-300" :
                         isActive
                           ? "border-indigo-600 bg-white dark:bg-neutral-900 text-indigo-950 dark:text-indigo-300 font-semibold"
                           : "border-transparent text-neutral-500 dark:text-neutral-400 hover:text-neutral-800 dark:hover:text-neutral-200"
@@ -1234,6 +1270,7 @@ export const loginHandler = async (req, res) => {
                       ) : (
                         <Terminal className="h-3.5 w-3.5 text-indigo-500 dark:text-indigo-400 shrink-0" />
                       )}
+
                       {renamingKey === tm.key ? (
                         <input
                           autoFocus
@@ -1241,41 +1278,41 @@ export const loginHandler = async (req, res) => {
                           onChange={(e) => setRenameValue(e.target.value)}
                           onKeyDown={(e) => {
                             if (e.key === "Enter" || e.key === "Escape") {
-                              if (e.key === "Enter" && renameValue.trim()) {
+                              if (e.key === "Enter" && renameValue.trim())
                                 setOpenTerminals(prev => prev.map(t => t.key === tm.key ? { ...t, name: renameValue.trim() } : t));
-                              }
                               setRenamingKey(null);
                             }
                             e.stopPropagation();
                           }}
                           onBlur={() => {
-                            if (renameValue.trim()) {
+                            if (renameValue.trim())
                               setOpenTerminals(prev => prev.map(t => t.key === tm.key ? { ...t, name: renameValue.trim() } : t));
-                            }
                             setRenamingKey(null);
                           }}
                           onClick={(e) => e.stopPropagation()}
-                          className="text-xs font-display bg-transparent border-b border-indigo-400 outline-none w-28 truncate"
+                          className="text-xs font-display bg-transparent border-b border-indigo-400 outline-none w-28"
                         />
                       ) : (
-                        <span
-                          className="text-xs font-display truncate max-w-[160px]"
-                          onDoubleClick={(e) => { e.stopPropagation(); setRenamingKey(tm.key); setRenameValue(tm.name); }}
-                          title="Double-click to rename"
-                        >{tm.name}</span>
+                        <span className="text-xs font-display truncate max-w-[140px]">{tm.name}</span>
                       )}
-                      {tm.initialCommand && (
-                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" title={tm.initialCommand} />
+
+                      {layoutLocked && renamingKey !== tm.key && (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setRenamingKey(tm.key); setRenameValue(tm.name); }}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity text-neutral-400 hover:text-indigo-500 cursor-pointer shrink-0"
+                          title="Rename"
+                        >
+                          <Pencil className="h-2.5 w-2.5" />
+                        </button>
                       )}
-                      {dirtyTabs[tm.key] && (
-                        <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" title="Kaydedilmemiş değişiklikler" />
-                      )}
+
+                      {tm.initialCommand && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" />}
+                      {dirtyTabs[tm.key] && <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" title="Kaydedilmemiş değişiklikler" />}
+
                       <button
                         type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void closeTerminal(tm.key);
-                        }}
+                        onClick={(e) => { e.stopPropagation(); void closeTerminal(tm.key); }}
                         className="ml-0.5 text-neutral-400 dark:text-neutral-500 hover:text-rose-600 dark:hover:text-rose-300 opacity-60 group-hover:opacity-100 transition-opacity cursor-pointer"
                         title="Close tab"
                       >
@@ -1347,13 +1384,20 @@ export const loginHandler = async (req, res) => {
                   )}
                 </button>
 
-                {/* Console Badge metrics */}
-                <div className="flex items-center space-x-1.5 text-[10px] font-mono text-neutral-500 dark:text-neutral-400">
-                  <span>DAEMON:</span>
-                  <span className="bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 px-1.5 py-0.5 rounded font-bold uppercase shadow-sm">
-                    Connected
-                  </span>
-                </div>
+                {/* Layout lock button */}
+                <button
+                  type="button"
+                  title={layoutLocked ? "Layout kilitli — sürükle-bırak için kilidi aç" : "Layout kilitsiz — tab sırasını ayarla, sonra kilitle"}
+                  onClick={() => { setLayoutLocked(l => !l); setRenamingKey(null); setTabDragOver(null); tabDragFromRef.current = null; }}
+                  className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono font-bold transition-colors cursor-pointer ${
+                    layoutLocked
+                      ? "text-neutral-400 dark:text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-700 dark:hover:text-neutral-300"
+                      : "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700 hover:bg-amber-200 dark:hover:bg-amber-900/50"
+                  }`}
+                >
+                  {layoutLocked ? <Lock className="h-3 w-3" /> : <Unlock className="h-3 w-3" />}
+                  <span>Layout</span>
+                </button>
               </div>
             </header>
 

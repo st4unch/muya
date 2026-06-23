@@ -36,3 +36,6 @@ tasks/
 # Signed/notarized distribution artifacts (released via GitHub, not git)
 ApexMissionControl-*.zip
 *-arm64.zip
+
+# Local release scripts (build/sign/notarize/publish) — machine-local, not committed
+scripts/

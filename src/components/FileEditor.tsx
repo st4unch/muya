@@ -42,6 +42,9 @@ export default function FileEditor({
   const [saving, setSaving] = useState(false);
   const [mode, setMode] = useState<"edit" | "diff">("edit");
   const [head, setHead] = useState<string | null>(null);
+  const [wordWrap, setWordWrap] = useState(false);
+  const [minimap, setMinimap] = useState(false);
+  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const valueRef = useRef(value);
   valueRef.current = value;
 
@@ -84,6 +87,8 @@ export default function FileEditor({
   const save = async () => {
     setSaving(true);
     try {
+      // Format document before saving if a formatter is available
+      await editorRef.current?.getAction("editor.action.formatDocument")?.run();
       await invoke("write_file", { path, content: valueRef.current });
       setDirty(false);
       onDirtyChange?.(false);
@@ -102,6 +107,38 @@ export default function FileEditor({
         <span className="truncate">{path}</span>
         <span className="flex items-center gap-2 shrink-0">
           {dirty && <span className="text-amber-600 dark:text-amber-300">● unsaved</span>}
+          <button
+            type="button"
+            onClick={() => {
+              const next = !wordWrap;
+              setWordWrap(next);
+              editorRef.current?.updateOptions({ wordWrap: next ? "on" : "off" });
+            }}
+            className={`px-2 py-0.5 rounded border cursor-pointer transition-colors ${
+              wordWrap
+                ? "border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 font-bold"
+                : "border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+            }`}
+            title="Toggle word wrap"
+          >
+            Wrap
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const next = !minimap;
+              setMinimap(next);
+              editorRef.current?.updateOptions({ minimap: { enabled: next } });
+            }}
+            className={`px-2 py-0.5 rounded border cursor-pointer transition-colors ${
+              minimap
+                ? "border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 font-bold"
+                : "border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+            }`}
+            title="Toggle minimap"
+          >
+            Map
+          </button>
           <button
             type="button"
             onClick={() => void toggleDiff()}
@@ -157,6 +194,7 @@ export default function FileEditor({
               onDirtyChange?.(true);
             }}
             onMount={(editor) => {
+              editorRef.current = editor;
               editor.addCommand(
                 monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
                 () => void save()
@@ -165,9 +203,12 @@ export default function FileEditor({
             options={{
               fontSize: 12,
               fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-              minimap: { enabled: false },
+              minimap: { enabled: minimap },
+              wordWrap: wordWrap ? "on" : "off",
               scrollBeyondLastLine: false,
               automaticLayout: true,
+              bracketPairColorization: { enabled: true },
+              renderWhitespace: "selection",
             }}
           />
         )}

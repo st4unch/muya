@@ -83,13 +83,16 @@ export default function Terminal({
     let ptyId: string | null = null;
     let disposed = false;
 
-    // Shift+Enter → insert a literal newline in the shell command buffer (readline
-    // quoted-insert: Ctrl-V tells readline to take the next char literally, then \r
-    // inserts a newline). Allows multiline commands without submitting.
+    // Shift+Enter → newline (not submit) in the Claude prompt. Claude Code treats a
+    // bare LF (\n, the byte Ctrl+J sends) as "insert newline" and CR (\r) as "submit".
+    // Legacy terminal encoding sends \r for both Enter and Shift+Enter, so xterm can't
+    // tell them apart — we intercept Shift+Enter and write \n ourselves. This is the
+    // Ctrl+J sequence Claude accepts in every terminal without /terminal-setup; the old
+    // \x16\r (readline quoted-insert) inserted a literal ^M instead of a real newline.
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
       if (e.key === "Enter" && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
         if (e.type === "keydown" && ptyId)
-          void invoke("pty_write", { id: ptyId, data: "\x16\r" });
+          void invoke("pty_write", { id: ptyId, data: "\n" });
         return false;
       }
       return true;
