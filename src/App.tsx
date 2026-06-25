@@ -488,6 +488,26 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Cmd+T → open a blank terminal in the current active path
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "t" && e.metaKey && !e.shiftKey && !e.altKey && !e.ctrlKey) {
+        e.preventDefault();
+        // Resolve cwd: active tab's cwd → first workspace
+        const activeCwd =
+          openTerminals.find((t) => t.key === activeKeyRef.current)?.cwd ??
+          workspaces[0] ??
+          undefined;
+        const key = `terminal-${Date.now()}`;
+        openTerminal({ key, name: activeCwd ? activeCwd.split("/").pop() ?? "Terminal" : "Terminal", kind: "terminal", cwd: activeCwd });
+        setView("control");
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openTerminals, workspaces]);
+
   // File association: open files passed via "Open With" or double-click in Finder.
   useEffect(() => {
     // Files opened before webview was ready (startup).
@@ -1167,11 +1187,21 @@ export const loginHandler = async (req, res) => {
             <FileTree
               roots={trackedPaths}
               removableRoots={new Set(workspaces)}
-              onOpenFile={openEditor}
+              onOpenFile={(path) => { openEditor(path); setView("control"); }}
               onRemoveRoot={(path) => {
                 setWorkspaces((prev) => prev.filter((w) => w !== path));
                 setWorktrees((prev) => prev.filter((w) => w !== path));
               }}
+              onOpenTerminalHere={(cwd) => {
+                const key = `term-${Date.now()}`;
+                openTerminal({ key, name: cwd.split("/").pop() ?? "Terminal", kind: "terminal", cwd });
+                setView("control");
+              }}
+              onAddAtRef={(path) => {
+                void navigator.clipboard.writeText(`@${path}`);
+              }}
+              agents={agents}
+              activeCwd={openTerminals.find((t) => t.key === activeTerminalKey)?.cwd}
               refreshSignal={fsTick}
             />
           </div>

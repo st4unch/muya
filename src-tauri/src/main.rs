@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    apex_mission_control_lib::run()
+    muya_lib::run()
 }

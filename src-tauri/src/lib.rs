@@ -117,6 +117,10 @@ pub fn run() {
             fs::fetch_mcp_marketplace,
             fs::install_skill,
             fs::install_mcp,
+            fs::git_status,
+            fs::reveal_in_finder,
+            fs::rename_entry,
+            fs::delete_entry,
             get_startup_files
         ])
         .build(tauri::generate_context!())

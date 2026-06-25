@@ -465,6 +465,79 @@ pub fn remove_worktree(worktree: String) -> Result<String, String> {
     Ok(format!("removed worktree {worktree}"))
 }
 
+// ── File tree helpers ────────────────────────────────────────────────────────
+
+/// `git status --porcelain` for a workspace root. Returns `(relative_path, status_char)` pairs
+/// where status_char is "M" (modified), "A" (added/staged), or "?" (untracked).
+#[tauri::command(async)]
+pub fn git_status(root: String) -> Result<Vec<(String, String)>, String> {
+    let output = Command::new("git")
+        .args(["-C", &root, "status", "--porcelain"])
+        .output()
+        .map_err(|e| format!("git not found: {e}"))?;
+    if !output.status.success() {
+        // Not a git repo or other error — return empty list silently.
+        return Ok(vec![]);
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut result = Vec::new();
+    for line in stdout.lines() {
+        if line.len() < 3 {
+            continue;
+        }
+        let x = line.chars().next().unwrap_or(' ');
+        let y = line.chars().nth(1).unwrap_or(' ');
+        let rel = line[3..]
+            .trim_start_matches('"')
+            .trim_end_matches('"')
+            .to_string();
+        let status = if x == '?' && y == '?' {
+            "?"
+        } else if x == 'A' || x == 'C' {
+            "A"
+        } else if x == 'M' || y == 'M' || x == 'R' {
+            "M"
+        } else if x == 'D' || y == 'D' {
+            "D"
+        } else {
+            continue;
+        };
+        let abs = Path::new(&root).join(&rel).to_string_lossy().into_owned();
+        result.push((abs, status.to_string()));
+    }
+    Ok(result)
+}
+
+/// Open the given path in Finder (macOS: `open -R <path>`).
+#[tauri::command(async)]
+pub fn reveal_in_finder(path: String) -> Result<(), String> {
+    Command::new("open")
+        .args(["-R", &path])
+        .spawn()
+        .map_err(|e| format!("open -R failed: {e}"))?;
+    Ok(())
+}
+
+/// Rename a file or directory to a new name within the same parent directory.
+#[tauri::command(async)]
+pub fn rename_entry(old_path: String, new_name: String) -> Result<(), String> {
+    let p = Path::new(&old_path);
+    let parent = p.parent().ok_or("no parent directory")?;
+    let new_path = parent.join(&new_name);
+    std::fs::rename(&old_path, &new_path).map_err(|e| format!("rename failed: {e}"))
+}
+
+/// Delete a file or directory (recursive for directories).
+#[tauri::command(async)]
+pub fn delete_entry(path: String) -> Result<(), String> {
+    let p = Path::new(&path);
+    if p.is_dir() {
+        std::fs::remove_dir_all(p).map_err(|e| format!("remove dir failed: {e}"))
+    } else {
+        std::fs::remove_file(p).map_err(|e| format!("remove file failed: {e}"))
+    }
+}
+
 // ── Claude Resources Viewer ──────────────────────────────────────────────────
 
 #[derive(Serialize)]
