@@ -278,6 +278,7 @@ mod tests {
             attachable: false,
             attach_id: String::new(),
             pid: None,
+            parent_id: None,
         }
     }
 
@@ -293,6 +294,7 @@ mod tests {
             started_at: None,
             status: Some("busy".into()),
             state: None,
+            parent_session_id: None,
         };
         assert_eq!(map_status(&r), "working");
         r.state = Some("blocked".into());

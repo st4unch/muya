@@ -23,6 +23,7 @@ interface CtxMenu {
   isDir: boolean;
   isRoot: boolean;
   rootPath: string;
+  confirmDelete?: boolean;
 }
 
 type GitStatusMap = Map<string, string>;
@@ -277,6 +278,10 @@ export default function FileTree({
     setMenu(null);
   };
 
+  const requestDelete = (path: string) => {
+    setMenu((prev) => prev ? { ...prev, confirmDelete: true } : null);
+  };
+
   const MenuItem = ({ label, onClick, danger }: { label: string; onClick: () => void; danger?: boolean }) => (
     <button
       type="button"
@@ -445,9 +450,23 @@ export default function FileTree({
               <MenuItem label="Reveal in Finder" onClick={() => { void invoke("reveal_in_finder", { path: menu.path }); setMenu(null); }} />
               <Sep />
               <MenuItem label="Rename" onClick={() => { setRenamingPath(menu.path); setMenu(null); }} />
-              <MenuItem label="Delete" danger onClick={() => {
-                if (window.confirm(`Delete "${menu.path.split("/").pop()}"?`)) void deleteEntry(menu.path);
-              }} />
+              {menu.confirmDelete ? (
+                <div className="px-3 py-2 border-t border-neutral-100 dark:border-neutral-700">
+                  <p className="text-[10px] text-neutral-500 dark:text-neutral-400 mb-1.5 font-mono">Delete forever?</p>
+                  <div className="flex gap-1.5">
+                    <button type="button" onClick={() => void deleteEntry(menu.path)}
+                      className="flex-1 text-[11px] px-2 py-1 rounded bg-red-500 text-white hover:bg-red-600 cursor-pointer font-mono font-bold">
+                      Delete
+                    </button>
+                    <button type="button" onClick={() => setMenu(null)}
+                      className="flex-1 text-[11px] px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-600 cursor-pointer font-mono">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <MenuItem label="Delete" danger onClick={() => requestDelete(menu.path)} />
+              )}
             </>
           )}
 
@@ -460,9 +479,23 @@ export default function FileTree({
               <MenuItem label="Reveal in Finder" onClick={() => { void invoke("reveal_in_finder", { path: menu.path }); setMenu(null); }} />
               <Sep />
               <MenuItem label="Rename" onClick={() => { setRenamingPath(menu.path); setMenu(null); }} />
-              <MenuItem label="Delete Folder" danger onClick={() => {
-                if (window.confirm(`Delete folder "${menu.path.split("/").pop()}" and all contents?`)) void deleteEntry(menu.path);
-              }} />
+              {menu.confirmDelete ? (
+                <div className="px-3 py-2 border-t border-neutral-100 dark:border-neutral-700">
+                  <p className="text-[10px] text-neutral-500 dark:text-neutral-400 mb-1.5 font-mono">Delete folder + contents?</p>
+                  <div className="flex gap-1.5">
+                    <button type="button" onClick={() => void deleteEntry(menu.path)}
+                      className="flex-1 text-[11px] px-2 py-1 rounded bg-red-500 text-white hover:bg-red-600 cursor-pointer font-mono font-bold">
+                      Delete
+                    </button>
+                    <button type="button" onClick={() => setMenu(null)}
+                      className="flex-1 text-[11px] px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-600 cursor-pointer font-mono">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <MenuItem label="Delete Folder" danger onClick={() => requestDelete(menu.path)} />
+              )}
             </>
           )}
 

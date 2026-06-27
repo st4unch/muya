@@ -25,10 +25,13 @@ describe("NewAgentModal", () => {
       <NewAgentModal open onClose={onClose} workspaces={["/w/proj"]} onLaunch={onLaunch} />
     );
 
-    // default command is the dangerous-skip one
-    expect(screen.getByDisplayValue("claude --dangerously-skip-permissions")).toBeInTheDocument();
+    // default command is the dangerous-skip one (command preset select shows it)
+    const comboboxes = screen.getAllByRole("combobox");
+    // comboboxes[0] = workspace select, comboboxes[1] = command preset select
+    expect(comboboxes.length).toBe(2);
+    expect(comboboxes[1]).toHaveDisplayValue("claude --dangerously-skip-permissions");
 
-    await user.selectOptions(screen.getByRole("combobox"), "/w/proj");
+    await user.selectOptions(comboboxes[0], "/w/proj");
     await user.type(screen.getByPlaceholderText("feature/my-task"), "feature/x");
     await user.click(screen.getByRole("button", { name: /launch/i }));
 

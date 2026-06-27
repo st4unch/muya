@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Clock, X, Plus, Trash2, CalendarClock, Terminal, CheckSquare, Square } from "lucide-react";
 
 export interface ScheduledPrompt {
@@ -51,6 +51,14 @@ export default function ScheduledPromptModal({
   const [timeVal, setTimeVal] = useState(defaultTime);
   const [dateVal, setDateVal] = useState(defaultDate);
   const [flashKey, setFlashKey] = useState<string | null>(null);
+
+  // Refresh default time/date each time the modal opens so the default is never stale.
+  useEffect(() => {
+    if (open) {
+      setTimeVal(defaultTime());
+      setDateVal(defaultDate());
+    }
+  }, [open]);
 
   if (!open) return null;
 

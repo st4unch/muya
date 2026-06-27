@@ -259,6 +259,15 @@ pub fn pm_collisions(paths: Vec<String>) -> CollisionReport {
         let wt_name = name_of(p);
         if let Some(porc) = git_raw(p, &["status", "--porcelain"]) {
             for line in porc.lines() {
+                if line.len() < 3 {
+                    continue;
+                }
+                let xy = &line[..2];
+                // Skip untracked (??) and ignored (!!) entries — they are not real
+                // conflicts; the same untracked file in two worktrees is not a collision.
+                if xy == "??" || xy == "!!" {
+                    continue;
+                }
                 // porcelain: 2 status chars + space + path
                 let rest: String = line.chars().skip(3).collect();
                 let file = rest.trim();

@@ -48,10 +48,12 @@ import {
   Lock,
   Unlock,
   Pencil,
+  FileText,
 } from "lucide-react";
 import BranchDAG from "./components/BranchDAG";
 import AgentTerminal from "./components/Terminal";
 import FileTree from "./components/FileTree";
+import MarkdownViewer from "./components/MarkdownViewer";
 import SessionsPage from "./components/SessionsPage";
 const FileEditor = lazy(() => import("./components/FileEditor"));
 import SessionMonitor from "./components/SessionMonitor";
@@ -304,8 +306,13 @@ export default function App() {
 
   // Top-level view switch: the IDE control plane vs the full Sessions page.
   const [view, setView] = useState<"control" | "sessions" | "queue" | "tools">("control");
-  // Right panel tab: branch matrix vs live session monitor.
-  const [rightTab, setRightTab] = useState<"branch" | "sessions">("sessions");
+  // Right panel tab: branch matrix vs markdown viewer.
+  const [rightTab, setRightTab] = useState<"branch" | "markdown">("branch");
+  // Markdown file currently shown in the right panel viewer.
+  const [markdownFilePath, setMarkdownFilePath] = useState<string | undefined>();
+  // Resizable sidebar widths — persisted to localStorage.
+  const [leftWidth, setLeftWidth] = useState(() => Number(localStorage.getItem("muya.leftWidth")) || 288);
+  const [rightWidth, setRightWidth] = useState(() => Number(localStorage.getItem("muya.rightWidth")) || 320);
   // Branch picked for inspection — shown as a detail card on the Queue page.
   const [branchInspect, setBranchInspect] = useState<{ repo: string; name: string } | null>(null);
   // App-wide color theme. "system" follows the OS until the user explicitly toggles.
@@ -332,9 +339,36 @@ export default function App() {
     document.documentElement.classList.toggle("dark", effectiveTheme === "dark");
     void getCurrentWindow().setTheme(effectiveTheme === "dark" ? "dark" : "light");
   }, [effectiveTheme]);
-  // Collapsible side panels (toggle only, not resizable — focus mode).
+  // Collapsible side panels.
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
+
+  // Drag-to-resize panels. Saves widths to localStorage when drag ends.
+  const startDragPanel = (
+    side: "left" | "right",
+    startX: number,
+    startWidth: number
+  ) => {
+    const onMove = (e: MouseEvent) => {
+      const delta = e.clientX - startX;
+      if (side === "left") {
+        const w = Math.min(480, Math.max(180, startWidth + delta));
+        setLeftWidth(w);
+      } else {
+        const w = Math.min(520, Math.max(220, startWidth - delta));
+        setRightWidth(w);
+      }
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      // Persist after drag ends
+      setLeftWidth((w) => { localStorage.setItem("muya.leftWidth", String(w)); return w; });
+      setRightWidth((w) => { localStorage.setItem("muya.rightWidth", String(w)); return w; });
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
   // Worktrees created via New agent — tracked in the Queue alongside workspaces.
   const [worktrees, setWorktrees] = useState<string[]>(() => loadList("apex.worktrees"));
   // Bumped on a real filesystem change (notify) so views refresh immediately.
@@ -555,28 +589,31 @@ export default function App() {
   const [scheduledPrompts, setScheduledPrompts] = useState<ScheduledPrompt[]>([]);
   const [scheduleOpen, setScheduleOpen] = useState(false);
 
-  // Timer: check every 10s for due scheduled prompts
+  // Always-fresh refs so the timer closure never goes stale.
+  const scheduledPromptsRef = useRef(scheduledPrompts);
+  useEffect(() => { scheduledPromptsRef.current = scheduledPrompts; }, [scheduledPrompts]);
+  const terminalPtyIdsRef = useRef(terminalPtyIds);
+  useEffect(() => { terminalPtyIdsRef.current = terminalPtyIds; }, [terminalPtyIds]);
+
+  // Timer: check every 2s for due scheduled prompts.
+  // Side-effects (pty_write) run BEFORE state update — never inside a state updater.
   useEffect(() => {
     const tick = setInterval(() => {
       const now = Date.now();
-      setScheduledPrompts(prev => {
-        let changed = false;
-        const next = prev.map(p => {
-          if (!p.fired && p.scheduledAt <= now) {
-            changed = true;
-            p.terminalKeys.forEach(key => {
-              const ptyId = terminalPtyIds[key];
-              if (ptyId) void invoke("pty_write", { id: ptyId, data: p.prompt + "\r" });
-            });
-            return { ...p, fired: true };
-          }
-          return p;
-        });
-        return changed ? next : prev;
-      });
-    }, 10000);
+      const due = scheduledPromptsRef.current.filter(p => !p.fired && p.scheduledAt <= now);
+      if (due.length === 0) return;
+      for (const p of due) {
+        for (const key of p.terminalKeys) {
+          const ptyId = terminalPtyIdsRef.current[key];
+          if (ptyId) void invoke("pty_write", { id: ptyId, data: p.prompt + "\r" });
+        }
+      }
+      setScheduledPrompts(prev =>
+        prev.map(p => (p.fired || p.scheduledAt > now ? p : { ...p, fired: true }))
+      );
+    }, 2000);
     return () => clearInterval(tick);
-  }, [terminalPtyIds]);
+  }, []); // stable — reads only via refs
 
   // New-agent modal (app-managed: optional git worktree + command in a PTY).
   const [newAgentOpen, setNewAgentOpen] = useState(false);
@@ -1165,7 +1202,7 @@ export const loginHandler = async (req, res) => {
 
         {/* ----------------- Panel 1: LEFT SIDEBAR (File Tree Explorer & Workspace Locker) ----------------- */}
         {leftOpen && (
-        <aside id="tree-explorer-sidebar" className="w-72 border-r border-neutral-200 dark:border-[#3d3f44] bg-white dark:bg-[#25272b] flex flex-col shrink-0 overflow-hidden">
+        <aside id="tree-explorer-sidebar" style={{ width: leftWidth }} className="border-r border-neutral-200 dark:border-[#3d3f44] bg-white dark:bg-[#25272b] flex flex-col shrink-0 overflow-hidden relative">
           
           {/* Header Title bar */}
           <div className="p-3 border-b border-neutral-200 dark:border-[#3d3f44] flex items-center justify-between bg-neutral-50/50 dark:bg-[#1e1f23]">
@@ -1186,8 +1223,17 @@ export const loginHandler = async (req, res) => {
           <div className="flex-1 overflow-y-auto">
             <FileTree
               roots={trackedPaths}
-              removableRoots={new Set(workspaces)}
-              onOpenFile={(path) => { openEditor(path); setView("control"); }}
+              removableRoots={new Set(trackedPaths)}
+              onOpenFile={(path) => {
+                if (path.endsWith(".md")) {
+                  setMarkdownFilePath(path);
+                  setRightTab("markdown");
+                  setRightOpen(true);
+                } else {
+                  openEditor(path);
+                }
+                setView("control");
+              }}
               onRemoveRoot={(path) => {
                 setWorkspaces((prev) => prev.filter((w) => w !== path));
                 setWorktrees((prev) => prev.filter((w) => w !== path));
@@ -1197,8 +1243,8 @@ export const loginHandler = async (req, res) => {
                 openTerminal({ key, name: cwd.split("/").pop() ?? "Terminal", kind: "terminal", cwd });
                 setView("control");
               }}
-              onAddAtRef={(path) => {
-                void navigator.clipboard.writeText(`@${path}`);
+              onAddAtRef={(_path) => {
+                // clipboard already written inside FileTree
               }}
               agents={agents}
               activeCwd={openTerminals.find((t) => t.key === activeTerminalKey)?.cwd}
@@ -1246,6 +1292,13 @@ export const loginHandler = async (req, res) => {
             )}
           </div>
         </aside>
+        )}
+        {/* Left resize handle */}
+        {leftOpen && (
+          <div
+            onMouseDown={(e) => startDragPanel("left", e.clientX, leftWidth)}
+            className="w-1 shrink-0 cursor-col-resize hover:bg-indigo-400/40 active:bg-indigo-400/60 transition-colors z-10"
+          />
         )}
 
         {/* ----------------- Panel 2: CENTER WORKSPACE (Sessions Agent Board + Multi-Console PTY) ----------------- */}
@@ -1600,21 +1653,29 @@ export const loginHandler = async (req, res) => {
         </section>
 
         {/* ----------------- Panel 3: RIGHT SIDEBAR (Open Branch / WIP / PRD Release Tracker) ----------------- */}
+        {/* Right resize handle */}
         {rightOpen && (
-        <aside id="branch-wip-prd-tracker" className="w-80 border-l border-neutral-200 dark:border-[#3d3f44] bg-white dark:bg-[#25272b] flex flex-col shrink-0 overflow-y-auto">
+          <div
+            onMouseDown={(e) => startDragPanel("right", e.clientX, rightWidth)}
+            className="w-1 shrink-0 cursor-col-resize hover:bg-indigo-400/40 active:bg-indigo-400/60 transition-colors z-10"
+          />
+        )}
 
-          {/* Tabbed header: live session monitor + branch matrix */}
+        {rightOpen && (
+        <aside id="branch-wip-prd-tracker" style={{ width: rightWidth }} className="border-l border-neutral-200 dark:border-[#3d3f44] bg-white dark:bg-[#25272b] flex flex-col shrink-0 overflow-hidden">
+
+          {/* Tabbed header: markdown viewer + branch matrix */}
           <div className="flex border-b border-neutral-200 dark:border-[#3d3f44] bg-neutral-50 dark:bg-[#1e1f23] shrink-0">
             <button
               type="button"
-              onClick={() => setRightTab("sessions")}
+              onClick={() => setRightTab("markdown")}
               className={`flex-1 px-3 py-2 text-[10px] font-mono tracking-wider uppercase font-bold flex items-center justify-center gap-1.5 border-b-2 transition-colors cursor-pointer ${
-                rightTab === "sessions"
+                rightTab === "markdown"
                   ? "border-indigo-500 text-indigo-700 dark:text-white bg-white dark:bg-[#25272b]"
                   : "border-transparent text-neutral-500 dark:text-neutral-400 hover:text-neutral-800 dark:hover:text-neutral-200"
               }`}
             >
-              <Layers className="h-3.5 w-3.5" /> Sessions ({agents.length})
+              <FileText className="h-3.5 w-3.5" /> Markdown
             </button>
             <button
               type="button"
@@ -1629,30 +1690,9 @@ export const loginHandler = async (req, res) => {
             </button>
           </div>
 
-          {rightTab === "sessions" ? (
-            <div className="p-3">
-              <button
-                type="button"
-                onClick={() => setNewAgentOpen(true)}
-                className="w-full mb-3 text-[11px] font-mono font-bold px-2 py-1.5 rounded border border-indigo-200 dark:border-neutral-600 bg-indigo-50 dark:bg-neutral-700 text-indigo-700 dark:text-white hover:bg-indigo-100 dark:hover:bg-neutral-600 cursor-pointer transition-colors flex items-center justify-center gap-1.5"
-              >
-                <Plus className="h-3 w-3" /> New agent
-              </button>
-              <SessionMonitor
-                agents={agents}
-                selectedAgentId={selectedAgentId}
-                onOpen={(a) => {
-                  const full = agents.find((x) => x.id === a.id);
-                  if (full) {
-                    setSelectedAgentId(full.id);
-                    openTerminalForAgent(full);
-                  }
-                }}
-                onKill={(a) => {
-                  const full = agents.find((x) => x.id === a.id);
-                  if (full) void killAgent(full);
-                }}
-              />
+          {rightTab === "markdown" ? (
+            <div className="flex flex-col flex-1 overflow-hidden">
+              <MarkdownViewer filePath={markdownFilePath} />
             </div>
           ) : (
           <div className="p-3 space-y-4">
