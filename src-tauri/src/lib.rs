@@ -1,6 +1,13 @@
 // Apex Mission Control — Tauri backend entry point.
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use tauri::Manager;
+
+// Double-press quit guard: two ⌘Q presses within 700 ms required to quit.
+static LAST_QUIT_MS: AtomicU64 = AtomicU64::new(0);
+const QUIT_DOUBLE_PRESS_MS: u64 = 700;
 use tauri::Emitter;
 
 // Files opened via "Open With" / file association before the frontend listener is ready.
@@ -22,6 +29,7 @@ mod pm;
 mod pty;
 #[cfg(test)]
 mod testutil;
+mod vault;
 mod watcher;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -44,6 +52,12 @@ pub fn run() {
             let close_tab = MenuItemBuilder::with_id("close_tab", "Close Tab")
                 .accelerator("CmdOrCtrl+W")
                 .build(app)?;
+            // Custom quit item so we can intercept ⌘Q for double-press guard.
+            // The built-in .quit() calls NSApplication.terminate() directly,
+            // bypassing RunEvent::ExitRequested, so we must own it here.
+            let quit_item = MenuItemBuilder::with_id("quit", "Quit Muya")
+                .accelerator("CmdOrCtrl+Q")
+                .build(app)?;
             let app_menu = SubmenuBuilder::new(app, "Apex")
                 .about(None)
                 .separator()
@@ -53,7 +67,7 @@ pub fn run() {
                 .hide_others()
                 .show_all()
                 .separator()
-                .quit()
+                .item(&quit_item)
                 .build()?;
             let file_menu = SubmenuBuilder::new(app, "File")
                 .item(&new_file)
@@ -73,6 +87,13 @@ pub fn run() {
                 .items(&[&app_menu, &file_menu, &edit_menu])
                 .build()?;
             app.set_menu(menu)?;
+            // AC-1-7: Spawn vault MCP subprocess + warmup at startup.
+            // warmup_vault runs asynchronously so it never blocks the setup hook.
+            let vault_arc = app.state::<vault::VaultMcpManager>().0.clone();
+            tauri::async_runtime::spawn(async move {
+                vault::warmup_vault(vault_arc).await;
+            });
+
             Ok(())
         })
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -82,11 +103,26 @@ pub fn run() {
             "close_tab" => {
                 let _ = app.emit("menu:close-tab", ());
             }
+            "quit" => {
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                let last = LAST_QUIT_MS.load(Ordering::Relaxed);
+                if now.saturating_sub(last) < QUIT_DOUBLE_PRESS_MS {
+                    // Kill active PTY children before exit so no shells are orphaned.
+                    pty::kill_all(&*app.state::<pty::PtyManager>());
+                    app.exit(0);
+                } else {
+                    LAST_QUIT_MS.store(now, Ordering::Relaxed);
+                }
+            }
             _ => {}
         })
         .manage(pty::PtyManager::default())
         .manage(metrics::Metrics::default())
         .manage(watcher::WatchState::default())
+        .manage(vault::VaultMcpManager::default())
         .invoke_handler(tauri::generate_handler![
             agents::list_agent_sessions,
             agents::stop_agent,
@@ -121,7 +157,8 @@ pub fn run() {
             fs::reveal_in_finder,
             fs::rename_entry,
             fs::delete_entry,
-            get_startup_files
+            get_startup_files,
+            vault::vault_search
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
