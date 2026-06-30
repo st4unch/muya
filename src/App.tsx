@@ -69,6 +69,33 @@ import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog, save as saveDialog, confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
 
+// AC-1-5: Vault context block returned by the vault_search Tauri command.
+interface VaultBlock {
+  path: string;
+  similarity: number;
+  text: string;
+  lines?: string;
+}
+
+// AC-1-5: Format vault blocks into the [Vault Context] … [/Vault Context] prefix.
+// Hard cap: 2000 chars total (excluding the original prompt).
+function formatVaultContext(blocks: VaultBlock[]): string {
+  const MAX_CHARS = 2000;
+  const parts: string[] = ["[Vault Context]"];
+  let charCount = parts[0].length;
+
+  for (const block of blocks) {
+    const score = block.similarity.toFixed(2);
+    const entry = `--- ${block.path} (similarity: ${score})\n${block.text}\n---`;
+    if (charCount + 1 + entry.length > MAX_CHARS) break;
+    parts.push(entry);
+    charCount += 1 + entry.length;
+  }
+
+  parts.push("[/Vault Context]");
+  return parts.join("\n");
+}
+
 // Types matching the user's workflow model
 interface AgentSession {
   id: string;
@@ -423,10 +450,21 @@ export default function App() {
   }, []);
 
 
-  // Faz 0 stub: returns the prompt unchanged.
-  // Faz 1 will augment with vault context before the prompt reaches the PTY.
-  const handleBeforeSubmit = useCallback((prompt: string): string => {
-    return prompt;
+  // AC-1-5: Augment the prompt with vault context before it reaches the PTY.
+  // AC-1-3: On timeout or any error, fall back to the original prompt.
+  const handleBeforeSubmit = useCallback(async (prompt: string): Promise<string> => {
+    try {
+      const blocks = await invoke<VaultBlock[]>("vault_search", {
+        query: prompt,
+        maxBlocks: 3,
+        timeoutMs: 300,
+      });
+      if (!blocks.length) return prompt;
+      return formatVaultContext(blocks) + "\n\n" + prompt;
+    } catch {
+      // mcp_unavailable, timeout, no_results — always degrade gracefully (AC-1-3, AC-1-6).
+      return prompt;
+    }
   }, []);
 
   const killAgent = async (a: AgentSession) => {
