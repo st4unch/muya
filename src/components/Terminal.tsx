@@ -39,6 +39,7 @@ export default function Terminal({
   theme = "dark",
   active = true,
   onPtyReady,
+  onBeforeSubmit,
 }: {
   cwd?: string;
   initialCommand?: string;
@@ -46,6 +47,13 @@ export default function Terminal({
   active?: boolean;
   /** Called once with the PTY id after the shell spawns — lets the parent send pty_write. */
   onPtyReady?: (id: string) => void;
+  /**
+   * Called with the current keystroke-buffer content when the user presses Enter.
+   * The returned (or resolved) string is sent to the PTY after a Ctrl+U clear.
+   * Sequence: \x15 → augmented prompt → \r.
+   * If not provided, Enter passes through to the PTY unchanged.
+   */
+  onBeforeSubmit?: (prompt: string) => string | Promise<string>;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
@@ -56,6 +64,11 @@ export default function Terminal({
   const syncRef = useRef<() => void>(() => {});
   // Stable ref to the show-search setter — used inside the xterm key handler closure.
   const openSearchRef = useRef<() => void>(() => {});
+  // Keystroke buffer: accumulates printable chars typed by the user so they can be
+  // passed to onBeforeSubmit on Enter. Paste bypasses this (goes via term.onData).
+  const keystrokeBufferRef = useRef<string>("");
+  // Stable ref to onBeforeSubmit so the xterm key handler closure never goes stale.
+  const onBeforeSubmitRef = useRef<((p: string) => string | Promise<string>) | undefined>(undefined);
 
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -76,6 +89,12 @@ export default function Terminal({
     };
   }, []);
 
+  // Keep onBeforeSubmitRef in sync with the prop so the xterm key handler
+  // closure (created once per cwd mount) always calls the latest version.
+  useEffect(() => {
+    onBeforeSubmitRef.current = onBeforeSubmit;
+  }, [onBeforeSubmit]);
+
   // When search becomes visible, auto-focus the input.
   useEffect(() => {
     if (showSearch) {
@@ -91,12 +110,28 @@ export default function Terminal({
       fontFamily: '"JetBrains Mono", ui-monospace, monospace',
       fontSize: 12,
       cursorBlink: true,
+      scrollback: 5000,
       theme: THEMES[theme],
     });
     termRef.current = term;
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(el);
+
+    // When a TUI program (vim, less, htop) enables PTY mouse-tracking mode it sends
+    // escape sequences like \x1b[?1000h. xterm.js already forwards wheel events to the
+    // PTY in that case — calling term.scrollLines() on top would double-scroll.
+    // Track the active mouse-tracking state by watching for the mode-set/reset sequences
+    // in the PTY output stream, and only scroll the viewport when tracking is inactive.
+    let mouseTrackingActive = false;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault(); // always prevent browser native scroll
+      if (!mouseTrackingActive) {
+        const lines = Math.sign(e.deltaY) * Math.max(1, Math.round(Math.abs(e.deltaY) / 40));
+        term.scrollLines(lines);
+      }
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
 
     // Full-text search inside the terminal buffer (Cmd+F).
     const search = new SearchAddon();
@@ -121,6 +156,9 @@ export default function Terminal({
     let ptyId: string | null = null;
     let disposed = false;
 
+    // Reset keystroke buffer for this new PTY session.
+    keystrokeBufferRef.current = "";
+
     // Shift+Enter → newline (not submit) in the Claude prompt. Claude Code treats a
     // bare LF (\n, the byte Ctrl+J sends) as "insert newline" and CR (\r) as "submit".
     // Legacy terminal encoding sends \r for both Enter and Shift+Enter, so xterm can't
@@ -128,16 +166,62 @@ export default function Terminal({
     // Ctrl+J sequence Claude accepts in every terminal without /terminal-setup; the old
     // \x16\r (readline quoted-insert) inserted a literal ^M instead of a real newline.
     // Cmd+F → open the in-terminal search overlay.
+    // Plain Enter with onBeforeSubmit: buffer → augment → \x15 (Ctrl+U clear) → augmented\r.
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+      // AC-0-2: Shift+Enter → \n (newline, not submit). Always preserved.
       if (e.key === "Enter" && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
         if (e.type === "keydown" && ptyId)
           void invoke("pty_write", { id: ptyId, data: "\n" });
         return false;
       }
+      // Cmd+F → in-terminal search overlay.
       if (e.key === "f" && e.metaKey && !e.shiftKey && !e.ctrlKey && !e.altKey) {
         if (e.type === "keydown") openSearchRef.current();
         return false;
       }
+
+      // Only keydown events carry semantic key info for the buffer logic.
+      if (e.type !== "keydown") return true;
+
+      const beforeSubmit = onBeforeSubmitRef.current;
+      if (beforeSubmit) {
+        // AC-0-1: Plain Enter → intercept, call onBeforeSubmit, then \x15 + augmented + \r.
+        if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+          if (ptyId) {
+            const capturedPtyId = ptyId;
+            const prompt = keystrokeBufferRef.current;
+            keystrokeBufferRef.current = "";
+            void (async () => {
+              const augmented = await Promise.resolve(beforeSubmit(prompt));
+              // \x15 (Ctrl+U) clears the TUI's accumulated input buffer first,
+              // then we write the (possibly augmented) prompt followed by \r.
+              void invoke("pty_write", { id: capturedPtyId, data: "\x15" });
+              void invoke("pty_write", { id: capturedPtyId, data: augmented + "\r" });
+            })();
+          }
+          return false; // prevent xterm from sending the raw \r
+        }
+
+        // AC-0-4: Backspace (\x7f) → remove last char from buffer.
+        if (e.key === "Backspace") {
+          keystrokeBufferRef.current = keystrokeBufferRef.current.slice(0, -1);
+          return true; // let xterm echo the delete
+        }
+
+        // AC-0-4: Ctrl+U → clear entire buffer (mirrors readline kill-line).
+        if (e.key === "u" && e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) {
+          keystrokeBufferRef.current = "";
+          return true; // let xterm send \x15 to PTY so TUI also clears
+        }
+
+        // Printable characters (single char, no modifier): append to buffer.
+        // AC-0-3: paste arrives via term.onData, not here, so paste never touches
+        // the buffer and paste's \r never reaches this branch.
+        if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+          keystrokeBufferRef.current += e.key;
+        }
+      }
+
       return true;
     });
 
@@ -163,9 +247,17 @@ export default function Terminal({
       // in dev, or a fast close). Writing to a disposed xterm throws — guard it.
       if (disposed) return;
       try {
-        if (msg instanceof ArrayBuffer) term.write(new Uint8Array(msg));
-        else if (msg && msg.type === "exit")
+        if (msg instanceof ArrayBuffer) {
+          // Detect mouse-tracking mode-set/reset sequences in PTY output so the wheel
+          // handler knows whether xterm is already forwarding scroll events to the PTY.
+          const text = new TextDecoder().decode(msg);
+          if (/\x1b\[\?(?:1000|1002|1003)h/.test(text)) mouseTrackingActive = true;
+          if (/\x1b\[\?(?:1000|1002|1003)l/.test(text)) mouseTrackingActive = false;
+          term.write(new Uint8Array(msg));
+        } else if (msg && msg.type === "exit") {
+          mouseTrackingActive = false;
           term.write("\r\n\x1b[2m[process exited — close or reselect a session]\x1b[0m\r\n");
+        }
       } catch {
         /* terminal disposed mid-write */
       }
@@ -212,7 +304,9 @@ export default function Terminal({
     return () => {
       disposed = true;
       syncRef.current = () => {};
+      keystrokeBufferRef.current = "";
       ro.disconnect();
+      el.removeEventListener("wheel", onWheel);
       if (ptyId) void invoke("pty_kill", { id: ptyId });
       term.dispose();
       termRef.current = null;

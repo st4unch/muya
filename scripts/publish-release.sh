@@ -65,11 +65,17 @@ fi
 
 # --- 2. create release with notarized asset -----------------------------------
 say "Creating GitHub release $TAG..."
+DMG="$(ls "$ROOT"/src-tauri/target/release/bundle/dmg/*.dmg 2>/dev/null | head -1)"
+ASSETS=("$ZIP")
+if [ -n "$DMG" ] && [ -f "$DMG" ]; then
+  ASSETS+=("$DMG")
+  ok "will attach DMG: $(basename "$DMG")"
+fi
 gh release create "$TAG" \
   --target main \
   --title "$TAG" \
   --generate-notes \
-  "$ZIP"
+  "${ASSETS[@]}"
 ok "release created"
 
 # --- 3. verify ----------------------------------------------------------------
