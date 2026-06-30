@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, lazy, Suspense } from "react";
+import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from "react";
 import appIconUrl from "./assets/app-icon.png";
 import {
   Folder,
@@ -55,6 +55,7 @@ import AgentTerminal from "./components/Terminal";
 import FileTree from "./components/FileTree";
 import MarkdownViewer from "./components/MarkdownViewer";
 import SessionsPage from "./components/SessionsPage";
+import SessionsPanel from "./components/SessionsPanel";
 const FileEditor = lazy(() => import("./components/FileEditor"));
 import SessionMonitor from "./components/SessionMonitor";
 import NewAgentModal, { type NewAgentSpec } from "./components/NewAgentModal";
@@ -295,9 +296,11 @@ export default function App() {
     }
     setOpenTerminals((prev) => {
       const next = prev.filter((tm) => tm.key !== key);
-      setActiveTerminalKey((cur) =>
-        cur === key ? next[next.length - 1]?.key ?? null : cur
-      );
+      setActiveTerminalKey((cur) => {
+        if (cur !== key) return cur;
+        // Prefer another terminal; fall back to any remaining entry.
+        return (next.find(t => t.kind === "terminal") ?? next[next.length - 1])?.key ?? null;
+      });
       return next;
     });
     setGridKeys((prev) => prev.filter((k) => k !== key));
@@ -307,7 +310,7 @@ export default function App() {
   // Top-level view switch: the IDE control plane vs the full Sessions page.
   const [view, setView] = useState<"control" | "sessions" | "queue" | "tools">("control");
   // Right panel tab: branch matrix vs markdown viewer.
-  const [rightTab, setRightTab] = useState<"branch" | "markdown">("branch");
+  const [rightTab, setRightTab] = useState<"branch" | "markdown" | "sessions">("branch");
   // Markdown file currently shown in the right panel viewer.
   const [markdownFilePath, setMarkdownFilePath] = useState<string | undefined>();
   // Resizable sidebar widths — persisted to localStorage.
@@ -329,6 +332,38 @@ export default function App() {
     const onChange = (e: MediaQueryListEvent) => setSystemDark(e.matches);
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
+  }, []);
+
+  // Track fullscreen state in a ref so the ESC handler can check it synchronously.
+  const isFullscreenRef = useRef(false);
+  useEffect(() => {
+    const win = getCurrentWindow();
+    void win.isFullscreen().then((fs) => { isFullscreenRef.current = fs; });
+    // Resize fires on fullscreen transitions — refresh the cached state.
+    const onResize = () => void win.isFullscreen().then((fs) => { isFullscreenRef.current = fs; });
+    window.addEventListener("resize", onResize);
+
+    // Double-press ESC guard: only arms when the window is already in fullscreen.
+    // First ESC re-enters fullscreen to cancel the macOS exit animation;
+    // second ESC within 700 ms lets the exit proceed.
+    let lastEscMs = 0;
+    const THRESHOLD = 700;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (!isFullscreenRef.current) return; // not fullscreen — let ESC propagate normally
+      const now = Date.now();
+      if (now - lastEscMs < THRESHOLD) {
+        lastEscMs = 0; // second press — exit proceeds
+      } else {
+        lastEscMs = now;
+        void win.setFullscreen(true); // re-enter to cancel the first press
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("keydown", handleKeyDown, { capture: true });
+    };
   }, []);
   const effectiveTheme: "dark" | "light" =
     themeMode === "system" ? (systemDark ? "dark" : "light") : themeMode;
@@ -387,6 +422,12 @@ export default function App() {
     };
   }, []);
 
+
+  // Faz 0 stub: returns the prompt unchanged.
+  // Faz 1 will augment with vault context before the prompt reaches the PTY.
+  const handleBeforeSubmit = useCallback((prompt: string): string => {
+    return prompt;
+  }, []);
 
   const killAgent = async (a: AgentSession) => {
     try {
@@ -456,6 +497,8 @@ export default function App() {
   // then only quits via ⌘Q / the red close button). Subscribe once, read latest active
   // key via a ref — same pattern as ⌘N above.
   const activeKeyRef = useRef(activeTerminalKey);
+  const openTerminalsRef = useRef(openTerminals);
+  openTerminalsRef.current = openTerminals;
   const tabScrollRef = useRef<HTMLDivElement>(null);
   const tabDragFromRef = useRef<string | null>(null);
   const [tabDragOver, setTabDragOver] = useState<string | null>(null);
@@ -514,7 +557,9 @@ export default function App() {
   useEffect(() => {
     const un = listen("menu:close-tab", () => {
       const key = activeKeyRef.current;
-      if (key) void closeTerminal(key);
+      // Only close editor tabs via Cmd+W — terminals are managed from the Sessions panel.
+      const tab = openTerminalsRef.current.find(t => t.key === key);
+      if (key && tab?.kind === "editor") void closeTerminal(key);
     });
     return () => {
       void un.then((f) => f());
@@ -1319,12 +1364,12 @@ export const loginHandler = async (req, res) => {
                 <ChevronLeft className="h-3.5 w-3.5" />
               </button>
               <div ref={tabScrollRef} className="flex items-center space-x-0.5 h-full overflow-x-auto flex-1 min-w-0 scroll-smooth" style={{ scrollbarWidth: "none" }}>
-                {viewMode === "tabs" && openTerminals.length === 0 && (
+                {viewMode === "tabs" && openTerminals.filter(t => t.kind === "editor").length === 0 && (
                   <span className="px-2 text-[11px] font-mono text-neutral-400 dark:text-neutral-500 flex items-center gap-1.5">
-                    <Terminal className="h-3.5 w-3.5" /> Select a session to open a terminal tab
+                    <FileCode className="h-3.5 w-3.5" /> Open a file to add an editor tab
                   </span>
                 )}
-                {viewMode === "tabs" && openTerminals.map((tm) => {
+                {viewMode === "tabs" && openTerminals.filter(t => t.kind === "editor").map((tm) => {
                   const isActive = tm.key === activeTerminalKey;
                   const isDragging = tabDragFromRef.current === tm.key;
                   const isDragOver = tabDragOver === tm.key && tabDragFromRef.current !== tm.key;
@@ -1640,6 +1685,7 @@ export const loginHandler = async (req, res) => {
                             theme={effectiveTheme}
                             active={show}
                             onPtyReady={(ptyId) => setTerminalPtyIds(prev => ({ ...prev, [tm.key]: ptyId }))}
+                            onBeforeSubmit={handleBeforeSubmit}
                           />
                         </div>
                       </div>
@@ -1664,36 +1710,56 @@ export const loginHandler = async (req, res) => {
         {rightOpen && (
         <aside id="branch-wip-prd-tracker" style={{ width: rightWidth }} className="border-l border-neutral-200 dark:border-[#3d3f44] bg-white dark:bg-[#25272b] flex flex-col shrink-0 overflow-hidden">
 
-          {/* Tabbed header: markdown viewer + branch matrix */}
+          {/* Tabbed header: sessions | markdown | branch */}
           <div className="flex border-b border-neutral-200 dark:border-[#3d3f44] bg-neutral-50 dark:bg-[#1e1f23] shrink-0">
-            <button
-              type="button"
-              onClick={() => setRightTab("markdown")}
-              className={`flex-1 px-3 py-2 text-[10px] font-mono tracking-wider uppercase font-bold flex items-center justify-center gap-1.5 border-b-2 transition-colors cursor-pointer ${
-                rightTab === "markdown"
-                  ? "border-indigo-500 text-indigo-700 dark:text-white bg-white dark:bg-[#25272b]"
-                  : "border-transparent text-neutral-500 dark:text-neutral-400 hover:text-neutral-800 dark:hover:text-neutral-200"
-              }`}
-            >
-              <FileText className="h-3.5 w-3.5" /> Markdown
-            </button>
-            <button
-              type="button"
-              onClick={() => setRightTab("branch")}
-              className={`flex-1 px-3 py-2 text-[10px] font-mono tracking-wider uppercase font-bold flex items-center justify-center gap-1.5 border-b-2 transition-colors cursor-pointer ${
-                rightTab === "branch"
-                  ? "border-indigo-500 text-indigo-700 dark:text-white bg-white dark:bg-[#25272b]"
-                  : "border-transparent text-neutral-500 dark:text-neutral-400 hover:text-neutral-800 dark:hover:text-neutral-200"
-              }`}
-            >
-              <GitBranch className="h-3.5 w-3.5" /> Branch & WIP
-            </button>
+            {(["sessions", "markdown", "branch"] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setRightTab(tab)}
+                className={`flex-1 px-2 py-2 text-[9px] font-mono tracking-wider uppercase font-bold flex items-center justify-center gap-1 border-b-2 transition-colors cursor-pointer ${
+                  rightTab === tab
+                    ? "border-indigo-500 text-indigo-700 dark:text-white bg-white dark:bg-[#25272b]"
+                    : "border-transparent text-neutral-500 dark:text-neutral-400 hover:text-neutral-800 dark:hover:text-neutral-200"
+                }`}
+              >
+                {tab === "sessions" && <><TerminalSquare className="h-3 w-3" /> Sessions</>}
+                {tab === "markdown" && <><FileText className="h-3 w-3" /> Markdown</>}
+                {tab === "branch"   && <><GitBranch className="h-3 w-3" /> Branch</>}
+              </button>
+            ))}
           </div>
 
           {rightTab === "markdown" ? (
             <div className="flex flex-col flex-1 overflow-hidden">
               <MarkdownViewer filePath={markdownFilePath} />
             </div>
+          ) : rightTab === "sessions" ? (
+            <SessionsPanel
+              terminals={openTerminals.filter(t => t.kind === "terminal")}
+              activeKey={activeTerminalKey}
+              terminalPtyIds={terminalPtyIds}
+              renamingKey={renamingKey}
+              renameValue={renameValue}
+              setRenamingKey={setRenamingKey}
+              setRenameValue={setRenameValue}
+              onActivate={(key) => { setActiveTerminalKey(key); }}
+              onClose={(key) => { void closeTerminal(key); }}
+              onReorder={(from, to) => {
+                setOpenTerminals(prev => {
+                  const next = [...prev];
+                  const fi = next.findIndex(t => t.key === from);
+                  if (fi === -1) return prev;
+                  const [item] = next.splice(fi, 1);
+                  const ti = next.findIndex(t => t.key === to); // re-find after splice
+                  if (ti === -1) { next.push(item); return next; }
+                  next.splice(ti, 0, item);
+                  return next;
+                });
+              }}
+              onRename={(key, name) => setOpenTerminals(prev => prev.map(t => t.key === key ? { ...t, name } : t))}
+              onNewTerminal={() => setNewAgentOpen(true)}
+            />
           ) : (
           <div className="p-3 space-y-4">
             
