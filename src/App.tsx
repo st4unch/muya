@@ -730,24 +730,34 @@ export default function App() {
     setView("control");
   };
 
-  // LIVE: real branch topology for the selected agent's repo (else first workspace).
-  // Derive `repo` as a stable string so the poll doesn't re-subscribe on every
-  // 3s `agents` refresh — it only restarts when the actual repo path changes.
+  // LIVE: branch topology for ALL workspace repos.
+  // Each workspace that is a git repo gets its own branch list, keyed by path.
+  const [branchMap, setBranchMap] = useState<Record<string, GitBranchState[]>>({});
+  const [selectedBranchRepo, setSelectedBranchRepo] = useState<string>("");
+
+  // Derive stable repo list from workspaces (only real paths).
+  const repoList = workspaces.filter((w) => w.startsWith("/"));
+
+  // Auto-select first repo or agent's worktree if nothing selected.
   const selectedAgentWorktree = agents.find((a) => a.id === selectedAgentId)?.worktree;
   const branchRepo =
-    selectedAgentWorktree && selectedAgentWorktree.startsWith("/")
+    selectedBranchRepo ||
+    (selectedAgentWorktree && selectedAgentWorktree.startsWith("/")
       ? selectedAgentWorktree
-      : workspaces.find((w) => w.startsWith("/")) ?? "";
+      : repoList[0] ?? "");
+
   useEffect(() => {
-    if (!branchRepo) return;
+    if (!repoList.length) return;
     let active = true;
     const load = () => {
       if (document.hidden) return;
-      invoke<GitBranchState[]>("list_branches", { repo: branchRepo })
-        .then((b) => {
-          if (active) setBranchList(b);
-        })
-        .catch(() => {});
+      for (const repo of repoList) {
+        invoke<GitBranchState[]>("list_branches", { repo })
+          .then((b) => {
+            if (active) setBranchMap((prev) => ({ ...prev, [repo]: b }));
+          })
+          .catch(() => {});
+      }
     };
     load();
     const t = setInterval(load, 5000);
@@ -755,7 +765,10 @@ export default function App() {
       active = false;
       clearInterval(t);
     };
-  }, [branchRepo, fsTick]);
+  }, [repoList.join(","), fsTick]);
+
+  // branchList for the currently viewed repo (backwards compat with BranchDAG + cards).
+  const branchList = branchMap[branchRepo] ?? [];
 
   // LIVE: real, hook-free file collisions — same repo-relative file edited in 2+
   // worktrees of a repo (git working-tree based).
@@ -801,68 +814,7 @@ export default function App() {
   };
 
   // Open Branches / WIP / PRD listing
-  const [branchList, setBranchList] = useState<GitBranchState[]>([
-    {
-      name: "main",
-      type: "PRD",
-      lastCommit: "Merge pull request #452 from feature/checkout-flow",
-      author: "Senior Dev",
-      status: "synced"
-    },
-    {
-      name: "release/v1.4",
-      type: "PRD",
-      lastCommit: "Bump node workspace schema versions to 2026",
-      author: "ReleaseBot",
-      status: "synced"
-    },
-    {
-      name: "feature/stripe-webhooks",
-      type: "WIP",
-      lastCommit: "Implement domestic VAT calculator integration",
-      author: "Claude Agent (stripe)",
-      associatedAgent: "agent-stripe",
-      status: "ahead"
-    },
-    {
-      name: "feature/auth-jwt",
-      type: "WIP",
-      lastCommit: "Draft JWT middleware handler endpoints",
-      author: "Claude Agent (jwt)",
-      associatedAgent: "agent-jwt",
-      status: "diverged"
-    },
-    {
-      name: "feature/checkout-flow",
-      type: "WIP",
-      lastCommit: "Refactor total container layout coordinates",
-      author: "Claude Agent (checkout)",
-      associatedAgent: "agent-checkout",
-      status: "ahead"
-    },
-    {
-      name: "fix/eslint-warnings",
-      type: "WIP",
-      lastCommit: "Remove legacy unused framework indicators",
-      author: "Claude Agent (eslint)",
-      associatedAgent: "agent-eslint",
-      status: "synced"
-    },
-    {
-      name: "feature/redis-telemetry",
-      type: "OPEN",
-      lastCommit: "Setup redis pub/sub test scripts",
-      author: "Developer (Local)",
-      status: "diverged"
-    },
-    {
-      name: "feature/docker-supervisor-image",
-      type: "OPEN",
-      lastCommit: "Standardize Caddy proxy configurations",
-      author: "DevOps Lead",
-      status: "synced"
-    }
-  ]);
+  // branchList is now derived from branchMap[branchRepo] above (multi-repo support).
 
   // File explorer definitions
   const files: FileItem[] = [
@@ -1029,7 +981,7 @@ export const loginHandler = async (req, res) => {
       createdAt: new Date().toTimeString().split(" ")[0]
     };
 
-    setBranchList((prev) => [newWip, ...prev]);
+    setBranchMap((prev) => ({ ...prev, [branchRepo]: [newWip, ...(prev[branchRepo] ?? [])] }));
     setAgents((prev) => [newAgent, ...prev]);
     setSelectedAgentId(agentId);
 
@@ -1085,11 +1037,18 @@ export const loginHandler = async (req, res) => {
     const isSynthTab = (t: OpenTerminal) => t.key.startsWith("perf-term-");
     window.__apexPerf = {
       inflateBranches: (n: number) =>
-        setBranchList((prev) => [
-          ...prev.filter((b) => !isSynth(b)),
-          ...Array.from({ length: n }, (_, i) => synth(i)),
-        ]),
-      resetBranches: () => setBranchList((prev) => prev.filter((b) => !isSynth(b))),
+        setBranchMap((prev) => ({
+          ...prev,
+          [branchRepo]: [
+            ...(prev[branchRepo] ?? []).filter((b: GitBranchState) => !isSynth(b)),
+            ...Array.from({ length: n }, (_, i) => synth(i)),
+          ],
+        })),
+      resetBranches: () =>
+        setBranchMap((prev) => ({
+          ...prev,
+          [branchRepo]: (prev[branchRepo] ?? []).filter((b: GitBranchState) => !isSynth(b)),
+        })),
       openTerminals: (n: number) =>
         setOpenTerminals((prev) => [
           ...prev.filter((t) => !isSynthTab(t)),
@@ -1856,7 +1815,26 @@ export const loginHandler = async (req, res) => {
             />
           ) : (
           <div className="p-3 space-y-4">
-            
+
+            {/* Multi-repo selector */}
+            {repoList.length > 1 && (
+              <div className="flex items-center gap-2">
+                <GitBranch className="h-3.5 w-3.5 text-indigo-500 dark:text-indigo-400 shrink-0" />
+                <select
+                  value={branchRepo}
+                  onChange={(e) => setSelectedBranchRepo(e.target.value)}
+                  className="flex-1 text-[10px] font-mono bg-white dark:bg-[#2d2f34] border border-neutral-200 dark:border-neutral-700 rounded px-2 py-1 text-neutral-700 dark:text-neutral-300 cursor-pointer"
+                >
+                  {repoList.map((r) => (
+                    <option key={r} value={r}>
+                      {r.split("/").filter(Boolean).slice(-2).join("/")}
+                      {" "}({(branchMap[r] ?? []).length})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             {/* Visual DAG Representation showing commit lineage / status mapping */}
             <BranchDAG
               branchList={branchList}
