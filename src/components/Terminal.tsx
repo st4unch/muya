@@ -180,6 +180,41 @@ export default function Terminal({
         return false;
       }
 
+      // Cmd+Shift+C → launch claude session
+      if (e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey && e.type === "keydown" && e.key.toLowerCase() === "c" && ptyId) {
+        void invoke("pty_write", { id: ptyId, data: "claude --dangerously-skip-permissions\r" });
+        e.preventDefault();
+        return false;
+      }
+
+      // macOS terminal shortcuts — Cmd+key → Ctrl char to PTY.
+      // Tauri webview swallows these (e.g. Cmd+R = reload). We intercept
+      // and send the terminal control equivalent so they work like iTerm/Terminal.app.
+      if (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.type === "keydown" && ptyId) {
+        const cmdMap: Record<string, string> = {
+          r: "\x12",   // Ctrl+R — reverse history search
+          k: "\x0b",   // Ctrl+K — kill to end of line
+          l: "\x0c",   // Ctrl+L — clear screen
+          a: "\x01",   // Ctrl+A — beginning of line
+          e: "\x05",   // Ctrl+E — end of line
+          d: "\x04",   // Ctrl+D — EOF / delete forward
+          c: "\x03",   // Ctrl+C — SIGINT (only when no text selected)
+          u: "\x15",   // Ctrl+U — kill line (backward)
+          w: "",       // Cmd+W handled by Tauri menu — skip
+        };
+        const ctrl = cmdMap[e.key.toLowerCase()];
+        if (ctrl !== undefined && ctrl !== "") {
+          // Cmd+C: only send SIGINT if no text is selected; otherwise let webview copy
+          if (e.key.toLowerCase() === "c") {
+            const sel = termRef.current?.getSelection();
+            if (sel && sel.length > 0) return true; // let default copy happen
+          }
+          void invoke("pty_write", { id: ptyId, data: ctrl });
+          e.preventDefault();
+          return false;
+        }
+      }
+
       // Only keydown events carry semantic key info for the buffer logic.
       if (e.type !== "keydown") return true;
 

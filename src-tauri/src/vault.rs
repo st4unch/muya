@@ -102,8 +102,21 @@ fn parse_mcp_response(v: serde_json::Value) -> Result<Vec<VaultBlock>, String> {
         }
         let text = item.get("text").and_then(|t| t.as_str()).unwrap_or("");
 
-        // Try parsing as a JSON array of block objects.
-        if let Ok(json_blocks) = serde_json::from_str::<Vec<serde_json::Value>>(text) {
+        // Try parsing as JSON — could be {blocks:[...]} wrapper or a raw array.
+        let json_blocks: Vec<serde_json::Value> =
+            if let Ok(wrapper) = serde_json::from_str::<serde_json::Value>(text) {
+                if let Some(arr) = wrapper.get("blocks").and_then(|b| b.as_array()) {
+                    arr.clone()
+                } else if let Some(arr) = wrapper.as_array() {
+                    arr.clone()
+                } else {
+                    vec![wrapper]
+                }
+            } else {
+                vec![]
+            };
+
+        if !json_blocks.is_empty() {
             for block in &json_blocks {
                 let path = block
                     .get("path")
@@ -132,41 +145,7 @@ fn parse_mcp_response(v: serde_json::Value) -> Result<Vec<VaultBlock>, String> {
                     lines,
                 });
             }
-        } else if let Ok(single) = serde_json::from_str::<serde_json::Value>(text) {
-            // Try as a single JSON block object.
-            if let (Some(path), Some(sim)) = (
-                single.get("path").and_then(|p| p.as_str()),
-                single
-                    .get("similarity")
-                    .or_else(|| single.get("score"))
-                    .and_then(|s| s.as_f64()),
-            ) {
-                let block_text = single
-                    .get("text")
-                    .or_else(|| single.get("content"))
-                    .and_then(|t| t.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                blocks.push(VaultBlock {
-                    path: path.to_string(),
-                    similarity: sim as f32,
-                    text: block_text,
-                    lines: single
-                        .get("lines")
-                        .and_then(|l| l.as_str())
-                        .map(|s| s.to_string()),
-                });
-            } else {
-                // Raw JSON but no recognized schema — use text as-is.
-                blocks.push(VaultBlock {
-                    path: "vault".to_string(),
-                    similarity: 1.0,
-                    text: text.to_string(),
-                    lines: None,
-                });
-            }
-        } else {
-            // Raw text — one block per content item.
+        } else if !text.is_empty() {
             blocks.push(VaultBlock {
                 path: "vault".to_string(),
                 similarity: 1.0,
@@ -221,10 +200,17 @@ async fn spawn_vault_mcp() -> Option<VaultMcpProcess> {
     let home = std::env::var("HOME").unwrap_or_default();
     let server_path = format!("{}/smart-connections-mcp/server.py", home);
 
-    let vault_path = std::env::var("OBSIDIAN_VAULT_PATH")
-        .unwrap_or_else(|_| format!("{}/Documents/murat_work/murat-work", home));
+    let vault_path = std::env::var("OBSIDIAN_VAULT_PATH").unwrap_or_else(|_| {
+        format!(
+            "{}/Library/CloudStorage/OneDrive-Kişisel/obsidian/murat_self",
+            home
+        )
+    });
 
-    let mut child = tokio::process::Command::new("python3")
+    let python = std::env::var("VAULT_PYTHON")
+        .unwrap_or_else(|_| "/opt/homebrew/bin/python3.11".to_string());
+
+    let mut child = tokio::process::Command::new(&python)
         .arg(&server_path)
         .env("OBSIDIAN_VAULT_PATH", &vault_path)
         .stdin(Stdio::piped())
