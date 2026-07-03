@@ -1083,3 +1083,173 @@ mod tests {
         assert!(branch_detail(r.path.clone(), "does-not-exist".into()).is_err());
     }
 }
+
+// ─── PRD document scanner ───────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrdDoc {
+    pub name: String,
+    pub slug: String,
+    pub prd_path: String,
+    pub progress_path: Option<String>,
+    pub status: String,
+    pub owner: Option<String>,
+    pub started: Option<String>,
+    pub completed: Option<String>,
+    pub total_phases: u32,
+    pub done_phases: u32,
+    pub phase_summary: Vec<String>,
+}
+
+fn parse_frontmatter_field(content: &str, key: &str) -> Option<String> {
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed == "---" && !content.starts_with(trimmed) {
+            break;
+        }
+        if let Some(rest) = trimmed.strip_prefix(&format!("{key}:")) {
+            let val = rest.trim().trim_matches('"').trim();
+            if !val.is_empty() {
+                return Some(val.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn extract_status_from_prd(content: &str) -> String {
+    for line in content.lines() {
+        let lower = line.to_lowercase();
+        if lower.contains("**status:**") || lower.contains("status:") {
+            let cleaned = line
+                .replace("**Status:**", "")
+                .replace("**status:**", "")
+                .replace("status:", "")
+                .trim()
+                .to_string();
+            if !cleaned.is_empty() {
+                return cleaned;
+            }
+        }
+    }
+    "unknown".to_string()
+}
+
+fn count_phases(content: &str) -> (u32, u32, Vec<String>) {
+    let mut total = 0u32;
+    let mut done = 0u32;
+    let mut summaries = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if (trimmed.starts_with("### Faz ") || trimmed.starts_with("### Phase "))
+            && !trimmed.contains("Çıktı")
+        {
+            total += 1;
+            let is_done =
+                trimmed.contains("✅") || trimmed.contains("done") || trimmed.contains("PASS");
+            if is_done {
+                done += 1;
+            }
+            summaries.push(trimmed.trim_start_matches('#').trim().to_string());
+        }
+    }
+    (total, done, summaries)
+}
+
+#[tauri::command(async)]
+pub fn scan_prd_docs(dirs: Vec<String>) -> Vec<PrdDoc> {
+    let mut results = Vec::new();
+    for dir in &dirs {
+        let docs_dir = Path::new(dir).join("docs");
+        if !docs_dir.is_dir() {
+            continue;
+        }
+        let entries = match std::fs::read_dir(&docs_dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let mut prd_files: Vec<String> = Vec::new();
+        let mut progress_files: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with("prd-") && name.ends_with(".progress.md") {
+                let slug = name
+                    .strip_prefix("prd-")
+                    .unwrap_or(&name)
+                    .strip_suffix(".progress.md")
+                    .unwrap_or(&name)
+                    .to_string();
+                progress_files.insert(slug, entry.path().to_string_lossy().to_string());
+            } else if name.starts_with("prd-") && name.ends_with(".md") {
+                prd_files.push(entry.path().to_string_lossy().to_string());
+            }
+        }
+
+        for prd_path in prd_files {
+            let file_name = Path::new(&prd_path)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            let slug = file_name
+                .strip_prefix("prd-")
+                .unwrap_or(&file_name)
+                .strip_suffix(".md")
+                .unwrap_or(&file_name)
+                .to_string();
+
+            let prd_content = std::fs::read_to_string(&prd_path).unwrap_or_default();
+
+            let title = prd_content
+                .lines()
+                .find(|l| l.starts_with("# "))
+                .map(|l| l.trim_start_matches('#').trim().to_string())
+                .unwrap_or_else(|| slug.replace('-', " "));
+
+            let progress_path = progress_files.get(&slug).cloned();
+
+            let (status, started, completed, total_phases, done_phases, phase_summary) =
+                if let Some(pp) = &progress_path {
+                    let prog_content = std::fs::read_to_string(pp).unwrap_or_default();
+                    let st = parse_frontmatter_field(&prog_content, "status")
+                        .unwrap_or_else(|| "draft".to_string());
+                    let started = parse_frontmatter_field(&prog_content, "started");
+                    let completed = parse_frontmatter_field(&prog_content, "completed");
+                    let (total, done, sums) = count_phases(&prog_content);
+                    (st, started, completed, total, done, sums)
+                } else {
+                    let st = extract_status_from_prd(&prd_content);
+                    (st, None, None, 0, 0, Vec::new())
+                };
+
+            let owner = prd_content
+                .lines()
+                .find(|l| l.to_lowercase().contains("**owner:**"))
+                .map(|l| {
+                    l.replace("**Owner:**", "")
+                        .replace("**owner:**", "")
+                        .trim()
+                        .to_string()
+                });
+
+            results.push(PrdDoc {
+                name: title,
+                slug,
+                prd_path,
+                progress_path,
+                status,
+                owner,
+                started,
+                completed,
+                total_phases,
+                done_phases,
+                phase_summary,
+            });
+        }
+    }
+    results.sort_by(|a, b| a.name.cmp(&b.name));
+    results
+}

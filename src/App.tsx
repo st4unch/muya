@@ -61,6 +61,7 @@ import SessionMonitor from "./components/SessionMonitor";
 import NewAgentModal, { type NewAgentSpec } from "./components/NewAgentModal";
 import QueuePage from "./components/QueuePage";
 import ResourcesPage from "./components/ResourcesPage";
+import PrdBoard from "./components/PrdBoard";
 import ScheduledPromptModal, { type ScheduledPrompt } from "./components/ScheduledPromptModal";
 import { buildAgentCommand } from "./lib/agent";
 import { invoke } from "@tauri-apps/api/core";
@@ -335,7 +336,7 @@ export default function App() {
   };
 
   // Top-level view switch: the IDE control plane vs the full Sessions page.
-  const [view, setView] = useState<"control" | "sessions" | "queue" | "tools">("control");
+  const [view, setView] = useState<"control" | "sessions" | "queue" | "tools" | "prd">("control");
   // Right panel tab: branch matrix vs markdown viewer.
   const [rightTab, setRightTab] = useState<"branch" | "markdown" | "sessions">("branch");
   // Markdown file currently shown in the right panel viewer.
@@ -457,23 +458,19 @@ export default function App() {
 
   // AC-1-5: Augment the prompt with vault context before it reaches the PTY.
   // AC-1-3: On timeout or any error, fall back to the original prompt.
-  const handleBeforeSubmit = useCallback(async (prompt: string): Promise<string> => {
-    try {
-      const blocks = await invoke<VaultBlock[]>("vault_search", {
-        query: prompt,
-        maxBlocks: 3,
-        timeoutMs: 300,
-      });
+  const handlePromptSubmit = useCallback((prompt: string) => {
+    if (!prompt.trim()) return;
+    invoke<VaultBlock[]>("vault_search", {
+      query: prompt,
+      maxBlocks: 3,
+      timeoutMs: 300,
+    }).then((blocks) => {
       setVaultQuery(prompt);
       setVaultBlocks(blocks);
-      if (!blocks.length) return prompt;
-      return formatVaultContext(blocks) + "\n\n" + prompt;
-    } catch {
-      // mcp_unavailable, timeout, no_results — always degrade gracefully (AC-1-3, AC-1-6).
+    }).catch(() => {
       setVaultQuery(prompt);
       setVaultBlocks([]);
-      return prompt;
-    }
+    });
   }, []);
 
   const killAgent = async (a: AgentSession) => {
@@ -1126,7 +1123,7 @@ export const loginHandler = async (req, res) => {
           </button>
           <img src={appIconUrl} className="h-8 w-8 rounded select-none" alt="" />
           <div className="flex items-center space-x-1">
-            <span className="font-semibold text-neutral-900 dark:text-neutral-100 font-display">Apex Agent Control IDE</span>
+            <span className="font-semibold text-neutral-900 dark:text-neutral-100 font-display">Muya</span>
           </div>
         </div>
 
@@ -1175,6 +1172,17 @@ export const loginHandler = async (req, res) => {
             }`}
           >
             Resources
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("prd")}
+            className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
+              view === "prd"
+                ? "bg-indigo-50 dark:bg-neutral-700 text-indigo-700 dark:text-white font-bold border border-indigo-200 dark:border-neutral-500"
+                : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
+            }`}
+          >
+            Kanban
           </button>
         </div>
 
@@ -1246,6 +1254,16 @@ export const loginHandler = async (req, res) => {
           onClearInspect={() => setBranchInspect(null)}
         />
       )}
+      {view === "prd" && (
+        <PrdBoard
+          workspaces={workspaces.filter((w) => w.startsWith("/"))}
+          onOpenFile={(path) => {
+            setMarkdownFilePath(path);
+            setRightTab("markdown");
+            setView("control");
+          }}
+        />
+      )}
       {/* Control plane — ALWAYS mounted; hidden (not unmounted) on other views so the
           terminal PTYs and any running sessions survive page navigation. xterm guards
           0×0 resize (Terminal.tsx), so display:none is safe. */}
@@ -1303,52 +1321,58 @@ export const loginHandler = async (req, res) => {
             />
           </div>
 
-          {/* VAULT RAG CONTEXT — latest semantic search results */}
-          {vaultBlocks.length > 0 && (
-            <div className="border-t border-neutral-200 dark:border-[#3d3f44] bg-neutral-50/50 dark:bg-[#1e1f23]">
-              <button
-                type="button"
-                onClick={() => setVaultOpen((v) => !v)}
-                className="w-full p-3 flex items-center justify-between cursor-pointer hover:bg-neutral-100 dark:hover:bg-[#2a2c31] transition-colors"
-              >
-                <h3 className="text-[10px] uppercase font-mono text-neutral-500 dark:text-neutral-400 tracking-wider font-bold flex items-center gap-1.5">
-                  <Database className="h-3.5 w-3.5 text-violet-500 dark:text-violet-400" />
-                  Vault Context ({vaultBlocks.length})
-                </h3>
-                <ChevronDown className={`h-3 w-3 text-neutral-400 transition-transform ${vaultOpen ? "" : "-rotate-90"}`} />
-              </button>
-              {vaultOpen && (
-                <div className="px-3 pb-3 space-y-2">
-                  <p className="text-[9px] font-mono text-neutral-400 dark:text-neutral-500 truncate" title={vaultQuery}>
-                    query: {vaultQuery}
+          {/* VAULT RAG CONTEXT — always visible, shows results or placeholder */}
+          <div className="border-t border-neutral-200 dark:border-[#3d3f44] bg-neutral-50/50 dark:bg-[#1e1f23]">
+            <button
+              type="button"
+              onClick={() => setVaultOpen((v) => !v)}
+              className="w-full p-3 flex items-center justify-between cursor-pointer hover:bg-neutral-100 dark:hover:bg-[#2a2c31] transition-colors"
+            >
+              <h3 className="text-[10px] uppercase font-mono text-neutral-500 dark:text-neutral-400 tracking-wider font-bold flex items-center gap-1.5">
+                <Database className="h-3.5 w-3.5 text-violet-500 dark:text-violet-400" />
+                Vault Context{vaultBlocks.length > 0 ? ` (${vaultBlocks.length})` : ""}
+              </h3>
+              <ChevronDown className={`h-3 w-3 text-neutral-400 transition-transform ${vaultOpen ? "" : "-rotate-90"}`} />
+            </button>
+            {vaultOpen && (
+              <div className="px-3 pb-3 space-y-2">
+                {vaultBlocks.length === 0 ? (
+                  <p className="text-[10px] font-mono text-neutral-400 dark:text-neutral-500 italic">
+                    Type a prompt in the terminal and press Enter — related notes from your Obsidian vault will appear here.
                   </p>
-                  {vaultBlocks.map((b, i) => (
-                    <div
-                      key={`${b.path}-${i}`}
-                      className="bg-white dark:bg-[#2d2f34] rounded border border-neutral-200 dark:border-neutral-700 p-2 shadow-sm"
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-[10px] font-mono font-bold text-violet-600 dark:text-violet-400 truncate" title={b.path}>
-                          {b.path.split("/").pop()}
-                        </span>
-                        <span className="text-[9px] font-mono text-neutral-400 shrink-0 ml-1">
-                          {(b.similarity * 100).toFixed(0)}%
-                        </span>
-                      </div>
-                      {b.lines && (
-                        <p className="text-[9px] font-mono text-neutral-400 dark:text-neutral-500 mb-1">
-                          {b.path} L{b.lines}
+                ) : (
+                  <>
+                    <p className="text-[9px] font-mono text-neutral-400 dark:text-neutral-500 truncate" title={vaultQuery}>
+                      query: {vaultQuery}
+                    </p>
+                    {vaultBlocks.map((b, i) => (
+                      <div
+                        key={`${b.path}-${i}`}
+                        className="bg-white dark:bg-[#2d2f34] rounded border border-neutral-200 dark:border-neutral-700 p-2 shadow-sm"
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-[10px] font-mono font-bold text-violet-600 dark:text-violet-400 truncate" title={b.path}>
+                            {b.path.split("/").pop()}
+                          </span>
+                          <span className="text-[9px] font-mono text-neutral-400 shrink-0 ml-1">
+                            {(b.similarity * 100).toFixed(0)}%
+                          </span>
+                        </div>
+                        {b.lines && (
+                          <p className="text-[9px] font-mono text-neutral-400 dark:text-neutral-500 mb-1">
+                            {b.path} L{b.lines}
+                          </p>
+                        )}
+                        <p className="text-[10px] font-mono text-neutral-600 dark:text-neutral-300 leading-relaxed line-clamp-4 whitespace-pre-wrap">
+                          {b.text}
                         </p>
-                      )}
-                      <p className="text-[10px] font-mono text-neutral-600 dark:text-neutral-300 leading-relaxed line-clamp-4 whitespace-pre-wrap">
-                        {b.text}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+            )}
+          </div>
 
           {/* BOTTOM ATTACHMENT: ACTIVE CLAUDE AGENT FILE-WATCHER */}
           <div className="border-t border-neutral-200 dark:border-[#3d3f44] bg-neutral-50/50 dark:bg-[#1e1f23] p-3 select-none">
@@ -1738,7 +1762,7 @@ export const loginHandler = async (req, res) => {
                             theme={effectiveTheme}
                             active={show}
                             onPtyReady={(ptyId) => setTerminalPtyIds(prev => ({ ...prev, [tm.key]: ptyId }))}
-                            onBeforeSubmit={handleBeforeSubmit}
+                            onPromptSubmit={handlePromptSubmit}
                           />
                         </div>
                       </div>

@@ -39,7 +39,7 @@ export default function Terminal({
   theme = "dark",
   active = true,
   onPtyReady,
-  onBeforeSubmit,
+  onPromptSubmit,
 }: {
   cwd?: string;
   initialCommand?: string;
@@ -48,12 +48,11 @@ export default function Terminal({
   /** Called once with the PTY id after the shell spawns — lets the parent send pty_write. */
   onPtyReady?: (id: string) => void;
   /**
-   * Called with the current keystroke-buffer content when the user presses Enter.
-   * The returned (or resolved) string is sent to the PTY after a Ctrl+U clear.
-   * Sequence: \x15 → augmented prompt → \r.
-   * If not provided, Enter passes through to the PTY unchanged.
+   * Fire-and-forget callback when the user presses Enter.
+   * Receives the keystroke buffer content for sidebar updates (e.g. vault search).
+   * Does NOT intercept or modify the PTY input — Enter passes through normally.
    */
-  onBeforeSubmit?: (prompt: string) => string | Promise<string>;
+  onPromptSubmit?: (prompt: string) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
@@ -65,10 +64,10 @@ export default function Terminal({
   // Stable ref to the show-search setter — used inside the xterm key handler closure.
   const openSearchRef = useRef<() => void>(() => {});
   // Keystroke buffer: accumulates printable chars typed by the user so they can be
-  // passed to onBeforeSubmit on Enter. Paste bypasses this (goes via term.onData).
+  // Accumulates printable chars so onPromptSubmit receives the typed text on Enter.
   const keystrokeBufferRef = useRef<string>("");
-  // Stable ref to onBeforeSubmit so the xterm key handler closure never goes stale.
-  const onBeforeSubmitRef = useRef<((p: string) => string | Promise<string>) | undefined>(undefined);
+  // Stable ref to onPromptSubmit so the xterm key handler closure never goes stale.
+  const onPromptSubmitRef = useRef<((p: string) => void) | undefined>(undefined);
 
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -89,11 +88,9 @@ export default function Terminal({
     };
   }, []);
 
-  // Keep onBeforeSubmitRef in sync with the prop so the xterm key handler
-  // closure (created once per cwd mount) always calls the latest version.
   useEffect(() => {
-    onBeforeSubmitRef.current = onBeforeSubmit;
-  }, [onBeforeSubmit]);
+    onPromptSubmitRef.current = onPromptSubmit;
+  }, [onPromptSubmit]);
 
   // When search becomes visible, auto-focus the input.
   useEffect(() => {
@@ -218,40 +215,25 @@ export default function Terminal({
       // Only keydown events carry semantic key info for the buffer logic.
       if (e.type !== "keydown") return true;
 
-      const beforeSubmit = onBeforeSubmitRef.current;
-      if (beforeSubmit) {
-        // AC-0-1: Plain Enter → intercept, call onBeforeSubmit, then \x15 + augmented + \r.
+      const promptSubmit = onPromptSubmitRef.current;
+      if (promptSubmit) {
         if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
-          if (ptyId) {
-            const capturedPtyId = ptyId;
-            const prompt = keystrokeBufferRef.current;
-            keystrokeBufferRef.current = "";
-            void (async () => {
-              const augmented = await Promise.resolve(beforeSubmit(prompt));
-              // \x15 (Ctrl+U) clears the TUI's accumulated input buffer first,
-              // then we write the (possibly augmented) prompt followed by \r.
-              void invoke("pty_write", { id: capturedPtyId, data: "\x15" });
-              void invoke("pty_write", { id: capturedPtyId, data: augmented + "\r" });
-            })();
-          }
-          return false; // prevent xterm from sending the raw \r
+          const prompt = keystrokeBufferRef.current;
+          keystrokeBufferRef.current = "";
+          promptSubmit(prompt);
+          return true; // let xterm send \r normally
         }
 
-        // AC-0-4: Backspace (\x7f) → remove last char from buffer.
         if (e.key === "Backspace") {
           keystrokeBufferRef.current = keystrokeBufferRef.current.slice(0, -1);
-          return true; // let xterm echo the delete
+          return true;
         }
 
-        // AC-0-4: Ctrl+U → clear entire buffer (mirrors readline kill-line).
         if (e.key === "u" && e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) {
           keystrokeBufferRef.current = "";
-          return true; // let xterm send \x15 to PTY so TUI also clears
+          return true;
         }
 
-        // Printable characters (single char, no modifier): append to buffer.
-        // AC-0-3: paste arrives via term.onData, not here, so paste never touches
-        // the buffer and paste's \r never reaches this branch.
         if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
           keystrokeBufferRef.current += e.key;
         }

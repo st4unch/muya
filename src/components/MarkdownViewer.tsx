@@ -94,14 +94,14 @@ export default function MarkdownViewer({
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-neutral-200 dark:border-[#3d3f44] bg-[#1e1f23] shrink-0">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-neutral-200 dark:border-[#3d3f44] bg-neutral-100 dark:bg-[#1e1f23] shrink-0">
         <span className="text-[10px] font-mono text-neutral-400 truncate max-w-[200px]">
           {filePath.split("/").pop()}
         </span>
         <button
           type="button"
           onClick={() => void load(filePath)}
-          className="text-neutral-400 hover:text-neutral-200 cursor-pointer transition-colors"
+          className="text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 cursor-pointer transition-colors"
           title="Reload"
         >
           <RefreshCw className={`h-3 w-3 ${loading ? "animate-spin" : ""}`} />
@@ -122,23 +122,36 @@ export default function MarkdownViewer({
       </div>
 
       <style>{`
-        .md-body { font-size: 13px; line-height: 1.7; color: #d4d4d4; }
-        .md-body h1 { font-size: 1.5em; font-weight: 700; margin: 0.8em 0 0.4em; color: #f0f0f0; border-bottom: 1px solid #3d3f44; padding-bottom: 0.2em; }
-        .md-body h2 { font-size: 1.25em; font-weight: 700; margin: 0.8em 0 0.3em; color: #f0f0f0; }
-        .md-body h3 { font-size: 1.1em; font-weight: 600; margin: 0.6em 0 0.2em; color: #e0e0e0; }
-        .md-body h4, .md-body h5, .md-body h6 { font-weight: 600; margin: 0.5em 0 0.2em; color: #d4d4d4; }
+        .md-body { font-size: 13px; line-height: 1.7; color: #374151; }
+        .md-body h1 { font-size: 1.5em; font-weight: 700; margin: 0.8em 0 0.4em; color: #111827; border-bottom: 1px solid #e5e7eb; padding-bottom: 0.2em; }
+        .md-body h2 { font-size: 1.25em; font-weight: 700; margin: 0.8em 0 0.3em; color: #111827; }
+        .md-body h3 { font-size: 1.1em; font-weight: 600; margin: 0.6em 0 0.2em; color: #1f2937; }
+        .md-body h4, .md-body h5, .md-body h6 { font-weight: 600; margin: 0.5em 0 0.2em; color: #374151; }
         .md-body p { margin: 0.5em 0; }
-        .md-body strong { font-weight: 700; color: #f0f0f0; }
+        .md-body strong { font-weight: 700; color: #111827; }
         .md-body em { font-style: italic; }
-        .md-body a { color: #818cf8; text-decoration: underline; }
+        .md-body a { color: #4f46e5; text-decoration: underline; }
         .md-body ul { list-style: disc; padding-left: 1.4em; margin: 0.4em 0; }
         .md-body ol { list-style: decimal; padding-left: 1.4em; margin: 0.4em 0; }
         .md-body li { margin: 0.15em 0; }
-        .md-body blockquote { border-left: 3px solid #3d3f44; padding-left: 0.8em; color: #a0a0a0; margin: 0.5em 0; }
-        .md-body hr { border: none; border-top: 1px solid #3d3f44; margin: 1em 0; }
-        .md-body .md-pre { background: #1e1f23; border: 1px solid #3d3f44; border-radius: 6px; padding: 0.8em 1em; overflow-x: auto; margin: 0.6em 0; }
-        .md-body .md-code { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px; color: #e5e5e5; }
-        .md-body .md-inline-code { background: #1e1f23; border: 1px solid #3d3f44; border-radius: 3px; padding: 0.1em 0.3em; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px; color: #c084fc; }
+        .md-body blockquote { border-left: 3px solid #d1d5db; padding-left: 0.8em; color: #6b7280; margin: 0.5em 0; }
+        .md-body hr { border: none; border-top: 1px solid #e5e7eb; margin: 1em 0; }
+        .md-body .md-pre { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 0.8em 1em; overflow-x: auto; margin: 0.6em 0; }
+        .md-body .md-code { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px; color: #1f2937; }
+        .md-body .md-inline-code { background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 3px; padding: 0.1em 0.3em; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px; color: #7c3aed; }
+
+        :root.dark .md-body { color: #d4d4d4; }
+        :root.dark .md-body h1 { color: #f0f0f0; border-bottom-color: #3d3f44; }
+        :root.dark .md-body h2 { color: #f0f0f0; }
+        :root.dark .md-body h3 { color: #e0e0e0; }
+        :root.dark .md-body h4, :root.dark .md-body h5, :root.dark .md-body h6 { color: #d4d4d4; }
+        :root.dark .md-body strong { color: #f0f0f0; }
+        :root.dark .md-body a { color: #818cf8; }
+        :root.dark .md-body blockquote { border-left-color: #3d3f44; color: #a0a0a0; }
+        :root.dark .md-body hr { border-top-color: #3d3f44; }
+        :root.dark .md-body .md-pre { background: #1e1f23; border-color: #3d3f44; }
+        :root.dark .md-body .md-code { color: #e5e5e5; }
+        :root.dark .md-body .md-inline-code { background: #1e1f23; border-color: #3d3f44; color: #c084fc; }
       `}</style>
     </div>
   );

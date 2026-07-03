@@ -158,7 +158,8 @@ pub fn run() {
             fs::rename_entry,
             fs::delete_entry,
             get_startup_files,
-            vault::vault_search
+            vault::vault_search,
+            fs::scan_prd_docs
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
