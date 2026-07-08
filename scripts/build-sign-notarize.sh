@@ -20,6 +20,12 @@ cd "$ROOT"
 
 PROFILE="apex-notary"   # xcrun notarytool store-credentials apex-notary
 
+# Direct App Store Connect API key — used when the keychain profile isn't
+# accessible (e.g. login keychain locked). Overridable via env.
+NOTARY_KEY="${NOTARY_KEY:-$HOME/Downloads/AuthKey_M87Y6CK4GH.p8}"
+NOTARY_KEY_ID="${NOTARY_KEY_ID:-M87Y6CK4GH}"
+NOTARY_ISSUER="${NOTARY_ISSUER:-27d976c7-7a94-40cb-a24c-a4fb49c82be8}"
+
 say()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m  ✓\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m  ✗ %s\033[0m\n' "$*" >&2; exit 1; }
@@ -28,8 +34,19 @@ die()  { printf '\033[1;31m  ✗ %s\033[0m\n' "$*" >&2; exit 1; }
 command -v node >/dev/null        || die "node not found"
 command -v xcrun >/dev/null        || die "xcrun (Xcode CLT) not found"
 command -v ditto >/dev/null        || die "ditto not found"
-xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1 \
-  || die "notary profile '$PROFILE' missing — run: xcrun notarytool store-credentials $PROFILE"
+
+# Pick a notary auth mode: prefer the keychain profile; fall back to the raw
+# API key (survives a locked keychain, since no keychain read is needed).
+NOTARY_ARGS=()
+if xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1; then
+  NOTARY_ARGS=(--keychain-profile "$PROFILE")
+  ok "notary auth: keychain profile '$PROFILE'"
+elif [ -f "$NOTARY_KEY" ]; then
+  NOTARY_ARGS=(--key "$NOTARY_KEY" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER")
+  ok "notary auth: API key $NOTARY_KEY_ID (profile unavailable)"
+else
+  die "no notary auth — store profile '$PROFILE' or place key at $NOTARY_KEY"
+fi
 
 VERSION="$(node -p "require('$ROOT/src-tauri/tauri.conf.json').version")"
 [ -n "$VERSION" ] || die "could not read version from tauri.conf.json"
@@ -59,7 +76,7 @@ rm -f "$ZIP"
 ditto -c -k --keepParent "$APP" "$ZIP"
 
 say "Submitting to Apple notary service (waits for result)…"
-SUBMIT_OUT="$(xcrun notarytool submit "$ZIP" --keychain-profile "$PROFILE" --wait 2>&1)"
+SUBMIT_OUT="$(xcrun notarytool submit "$ZIP" "${NOTARY_ARGS[@]}" --wait 2>&1)"
 echo "$SUBMIT_OUT"
 echo "$SUBMIT_OUT" | grep -q "status: Accepted" \
   || die "notarization NOT accepted — see output above"

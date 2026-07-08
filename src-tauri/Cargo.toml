@@ -1,6 +1,6 @@
 [package]
 name = "muya"
-version = "0.1.6"
+version = "0.1.7"
 description = "Muya — control plane for parallel Claude Code agents"
 authors = ["staunch"]
 edition = "2021"
@@ -29,6 +29,8 @@ notify = "8.2.0"
 reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false }
 scraper = "0.19"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "process", "io-util", "time", "sync"] }
+tauri-plugin-updater = "2.10.1"
+tauri-plugin-process = "2.3.1"
 
 [dev-dependencies]
 tempfile = "3.27.0"

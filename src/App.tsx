@@ -69,6 +69,8 @@ import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog, save as saveDialog, confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 
 // AC-1-5: Vault context block returned by the vault_search Tauri command.
 interface VaultBlock {
@@ -439,8 +441,15 @@ export default function App() {
 
   // Real app version from tauri.conf.json (stays in sync with the build).
   const [appVersion, setAppVersion] = useState("");
+  const [updateAvailable, setUpdateAvailable] = useState<{ version: string; body: string } | null>(null);
+  const [updateProgress, setUpdateProgress] = useState<string | null>(null);
   useEffect(() => {
     getVersion().then(setAppVersion).catch(() => {});
+    check().then((update) => {
+      if (update?.available) {
+        setUpdateAvailable({ version: update.version, body: update.body ?? "" });
+      }
+    }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -490,6 +499,20 @@ export default function App() {
 
   // All paths the PM/watcher tracks: workspaces + created worktrees.
   const trackedPaths = [...new Set([...workspaces, ...worktrees])];
+
+  // Workspace root the user explicitly selected in the tree. New terminals and
+  // agents open here (falls back to the active terminal's cwd, then first workspace).
+  const [selectedRoot, setSelectedRoot] = useState<string | undefined>(
+    () => localStorage.getItem("apex.selectedRoot") || undefined
+  );
+  useEffect(() => {
+    if (selectedRoot) localStorage.setItem("apex.selectedRoot", selectedRoot);
+  }, [selectedRoot]);
+  // Drop the selection if its workspace was removed.
+  useEffect(() => {
+    if (selectedRoot && !trackedPaths.includes(selectedRoot)) setSelectedRoot(undefined);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trackedPaths.join("|")]);
 
   // Adds a session's cwd to the worktree panel if not already tracked.
   const ensureWorktreeTracked = (cwd: string) => {
@@ -611,25 +634,54 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Muya > Check for Updates menu item
+  useEffect(() => {
+    const un = listen("menu:check-update", async () => {
+      try {
+        setUpdateProgress("Checking for updates...");
+        setUpdateAvailable({ version: "", body: "" });
+        const update = await check();
+        if (update?.available) {
+          setUpdateAvailable({ version: update.version, body: update.body ?? "" });
+          setUpdateProgress(null);
+        } else {
+          setUpdateProgress("You're on the latest version.");
+          setTimeout(() => { setUpdateAvailable(null); setUpdateProgress(null); }, 3000);
+        }
+      } catch {
+        setUpdateProgress("Update check failed.");
+        setTimeout(() => { setUpdateAvailable(null); setUpdateProgress(null); }, 3000);
+      }
+    });
+    return () => { void un.then((f) => f()); };
+  }, []);
+
+  // Open a blank terminal. cwd priority: user-selected workspace root → active
+  // tab's cwd → first workspace. This is why the request "open in the selected
+  // workspace, not Documents" is honored.
+  const openBlankTerminal = useCallback(() => {
+    const cwd =
+      selectedRoot ??
+      openTerminals.find((t) => t.key === activeKeyRef.current)?.cwd ??
+      workspaces[0] ??
+      undefined;
+    const key = `terminal-${Date.now()}`;
+    openTerminal({ key, name: cwd ? cwd.split("/").pop() ?? "Terminal" : "Terminal", kind: "terminal", cwd });
+    setView("control");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openTerminals, workspaces, selectedRoot]);
+
   // Cmd+T → open a blank terminal in the current active path
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === "t" && e.metaKey && !e.shiftKey && !e.altKey && !e.ctrlKey) {
         e.preventDefault();
-        // Resolve cwd: active tab's cwd → first workspace
-        const activeCwd =
-          openTerminals.find((t) => t.key === activeKeyRef.current)?.cwd ??
-          workspaces[0] ??
-          undefined;
-        const key = `terminal-${Date.now()}`;
-        openTerminal({ key, name: activeCwd ? activeCwd.split("/").pop() ?? "Terminal" : "Terminal", kind: "terminal", cwd: activeCwd });
-        setView("control");
+        openBlankTerminal();
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openTerminals, workspaces]);
+  }, [openBlankTerminal]);
 
   // File association: open files passed via "Open With" or double-click in Finder.
   useEffect(() => {
@@ -708,7 +760,7 @@ export default function App() {
   const [newAgentOpen, setNewAgentOpen] = useState(false);
 
   const launchAgent = async (spec: NewAgentSpec) => {
-    const ws = spec.workspace || workspaces[0];
+    const ws = spec.workspace || selectedRoot || workspaces[0];
     if (!ws) throw new Error("Pick a workspace first (+ Workspace).");
     let cwd = ws;
     if (spec.type === "claude" && spec.branch.trim()) {
@@ -1226,6 +1278,49 @@ export const loginHandler = async (req, res) => {
         </div>
       </header>
 
+      {/* Update banner */}
+      {updateAvailable && (
+        <div className="px-4 py-2 bg-indigo-50 dark:bg-indigo-900/30 border-b border-indigo-200 dark:border-indigo-800 flex items-center justify-between text-[11px] font-mono">
+          <span className="text-indigo-700 dark:text-indigo-300">
+            {updateProgress ?? `New version available: v${updateAvailable.version}`}
+          </span>
+          {!updateProgress && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    setUpdateProgress("Downloading...");
+                    const update = await check();
+                    if (update?.available) {
+                      await update.downloadAndInstall((e) => {
+                        if (e.event === "Started") setUpdateProgress(`Downloading (${((e.data as { contentLength?: number }).contentLength ?? 0) / 1024 / 1024 | 0} MB)...`);
+                        else if (e.event === "Finished") setUpdateProgress("Installing...");
+                      });
+                      setUpdateProgress("Restarting...");
+                      await relaunch();
+                    }
+                  } catch (err) {
+                    setUpdateProgress(`Update failed: ${err}`);
+                    setTimeout(() => setUpdateProgress(null), 5000);
+                  }
+                }}
+                className="px-2 py-0.5 bg-indigo-600 text-white rounded cursor-pointer hover:bg-indigo-700 transition-colors"
+              >
+                Update now
+              </button>
+              <button
+                type="button"
+                onClick={() => setUpdateAvailable(null)}
+                className="text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-200 cursor-pointer"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ================= MAIN AREA: Sessions page OR three-panel control plane ================= */}
       {view === "sessions" && (
         <SessionsPage
@@ -1317,6 +1412,8 @@ export const loginHandler = async (req, res) => {
               }}
               agents={agents}
               activeCwd={openTerminals.find((t) => t.key === activeTerminalKey)?.cwd}
+              selectedRoot={selectedRoot}
+              onSelectRoot={(r) => setSelectedRoot((prev) => (prev === r ? undefined : r))}
               refreshSignal={fsTick}
             />
           </div>
@@ -1571,6 +1668,17 @@ export const loginHandler = async (req, res) => {
                 >
                   <LayoutGrid className="h-3 w-3" />
                   <span>Grid</span>
+                </button>
+
+                {/* New Terminal button */}
+                <button
+                  type="button"
+                  title="New Terminal (⌘T)"
+                  onClick={openBlankTerminal}
+                  className="flex items-center gap-0.5 px-2 py-1 rounded text-[10px] font-mono font-bold text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-800 dark:hover:text-neutral-200 transition-colors cursor-pointer"
+                >
+                  <TerminalSquare className="h-3 w-3" />
+                  <Plus className="h-2.5 w-2.5" />
                 </button>
 
                 {/* Scheduled Prompt button */}
@@ -2060,6 +2168,7 @@ export const loginHandler = async (req, res) => {
         open={newAgentOpen}
         onClose={() => setNewAgentOpen(false)}
         workspaces={[...new Set([...workspaces, ...agents.map((a) => a.worktree).filter(Boolean)])].sort()}
+        defaultWorkspace={selectedRoot}
         onLaunch={launchAgent}
       />
 

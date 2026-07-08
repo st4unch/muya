@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { X, Plus, FileText } from "lucide-react";
 
@@ -24,16 +24,24 @@ export default function NewAgentModal({
   open,
   onClose,
   workspaces,
+  defaultWorkspace,
   onLaunch,
 }: {
   open: boolean;
   onClose: () => void;
   workspaces: string[];
+  /** Pre-selected workspace (the root the user selected in the tree). */
+  defaultWorkspace?: string;
   onLaunch: (spec: NewAgentSpec) => Promise<void>;
 }) {
-  const defaultWs = workspaces[0] ?? "";
+  const defaultWs = defaultWorkspace ?? workspaces[0] ?? "";
 
   const [workspace, setWorkspace] = useState(defaultWs);
+  // Re-sync the selection to the tree's selected root each time the modal opens.
+  useEffect(() => {
+    if (open) setWorkspace(defaultWs);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, defaultWorkspace]);
   const [title, setTitle] = useState("");
   const [preset, setPreset] = useState<Preset>("skip-permissions");
   const [commandText, setCommandText] = useState(PRESETS[0].command);

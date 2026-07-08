@@ -63,13 +63,46 @@ else
   die "main has DIVERGED from origin/main — resolve manually (will NOT force-push)"
 fi
 
-# --- 2. create release with notarized asset -----------------------------------
+# --- 2. sign zip for auto-updater ---------------------------------------------
+SIGN_KEY="$HOME/.tauri/muya-update.key"
+if [ -f "$SIGN_KEY" ]; then
+  say "Signing zip for auto-updater…"
+  TAURI_SIGNING_PRIVATE_KEY_PATH="$SIGN_KEY" TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" \
+    npx tauri signer sign "$ZIP" >/dev/null 2>&1
+  SIG="$(cat "${ZIP}.sig")"
+  PUB_DATE="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  LATEST="$ROOT/latest.json"
+  cat > "$LATEST" <<EOJSON
+{
+  "version": "$VERSION",
+  "notes": "Release $TAG",
+  "pub_date": "$PUB_DATE",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "$SIG",
+      "url": "https://github.com/st4unch/muya/releases/download/$TAG/$(basename "$ZIP")"
+    }
+  }
+}
+EOJSON
+  ok "latest.json + signature generated"
+else
+  say "⚠️  No signing key at $SIGN_KEY — skipping auto-updater manifest"
+  LATEST=""
+fi
+
+# --- 3. create release with notarized asset -----------------------------------
 say "Creating GitHub release $TAG..."
 DMG="$(ls "$ROOT"/src-tauri/target/release/bundle/dmg/*.dmg 2>/dev/null | head -1)"
 ASSETS=("$ZIP")
+[ -n "$LATEST" ] && [ -f "$LATEST" ] && ASSETS+=("$LATEST")
 if [ -n "$DMG" ] && [ -f "$DMG" ]; then
-  ASSETS+=("$DMG")
-  ok "will attach DMG: $(basename "$DMG")"
+  if spctl --assess --type install "$DMG" >/dev/null 2>&1; then
+    ASSETS+=("$DMG")
+    ok "will attach DMG (notarized): $(basename "$DMG")"
+  else
+    ok "DMG found but not notarized by Gatekeeper — skipping: $(basename "$DMG")"
+  fi
 fi
 gh release create "$TAG" \
   --target main \
@@ -78,7 +111,7 @@ gh release create "$TAG" \
   "${ASSETS[@]}"
 ok "release created"
 
-# --- 3. verify ----------------------------------------------------------------
+# --- 4. verify ----------------------------------------------------------------
 say "Verifying…"
 gh release view "$TAG" --json tagName,isDraft,assets \
   --jq '"tag=\(.tagName) draft=\(.isDraft) assets=\([.assets[].name]|join(","))"'

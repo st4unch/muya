@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Muya",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "identifier": "com.staunch.muya",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -18,7 +18,15 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'; worker-src 'self' blob:; connect-src 'self' ipc: http://ipc.localhost"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/st4unch/muya/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVBN0U3REU0REI4NUFGRkEKUldUNnI0WGI1SDErNmpZQllSV09GWXY3QkZ1MEdvNHF6WE1nVElvNTU1TXBpK210c2lNQUNvYnAK"
     }
   },
   "bundle": {
@@ -33,7 +41,27 @@
     ],
     "fileAssociations": [
       {
-        "ext": ["txt", "md", "json", "yaml", "yml", "toml", "ts", "tsx", "js", "jsx", "rs", "py", "sh", "css", "html", "xml", "csv", "log", "env"],
+        "ext": [
+          "txt",
+          "md",
+          "json",
+          "yaml",
+          "yml",
+          "toml",
+          "ts",
+          "tsx",
+          "js",
+          "jsx",
+          "rs",
+          "py",
+          "sh",
+          "css",
+          "html",
+          "xml",
+          "csv",
+          "log",
+          "env"
+        ],
         "name": "Text File",
         "role": "Editor"
       }

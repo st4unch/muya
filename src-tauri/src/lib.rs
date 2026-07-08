@@ -29,6 +29,7 @@ mod pm;
 mod pty;
 #[cfg(test)]
 mod testutil;
+mod validate;
 mod vault;
 mod watcher;
 
@@ -37,6 +38,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // Native menu bar. We rebuild it explicitly (instead of the default) so we
             // can add File > New File; the Edit submenu is re-added by hand because a
@@ -58,8 +61,12 @@ pub fn run() {
             let quit_item = MenuItemBuilder::with_id("quit", "Quit Muya")
                 .accelerator("CmdOrCtrl+Q")
                 .build(app)?;
-            let app_menu = SubmenuBuilder::new(app, "Apex")
+            let check_update =
+                MenuItemBuilder::with_id("check_update", "Check for Updates...").build(app)?;
+            let app_menu = SubmenuBuilder::new(app, "Muya")
                 .about(None)
+                .separator()
+                .item(&check_update)
                 .separator()
                 .services()
                 .separator()
@@ -102,6 +109,9 @@ pub fn run() {
             }
             "close_tab" => {
                 let _ = app.emit("menu:close-tab", ());
+            }
+            "check_update" => {
+                let _ = app.emit("menu:check-update", ());
             }
             "quit" => {
                 let now = SystemTime::now()

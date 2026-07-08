@@ -61,6 +61,7 @@ pub fn read_file(path: String) -> Result<String, String> {
 /// Write text back to a file (editor save).
 #[tauri::command(async)]
 pub fn write_file(path: String, content: String) -> Result<(), String> {
+    let path = crate::validate::valid_mutable_path(&path)?;
     std::fs::write(Path::new(&path), content).map_err(|e| format!("write failed: {e}"))
 }
 
@@ -68,6 +69,7 @@ pub fn write_file(path: String, content: String) -> Result<(), String> {
 /// exists it's left untouched (the caller just opens it). Parent dirs are created.
 #[tauri::command(async)]
 pub fn create_file(path: String) -> Result<(), String> {
+    let path = crate::validate::valid_mutable_path(&path)?;
     let p = Path::new(&path);
     if p.exists() {
         return Ok(()); // open the existing file rather than overwrite it
@@ -117,10 +119,8 @@ pub fn read_head_file(path: String) -> Result<String, String> {
 /// files into it. Returns the worktree path. Requires `repo` to be inside a git repo.
 #[tauri::command(async)]
 pub fn create_worktree(repo: String, branch: String) -> Result<String, String> {
-    let branch = branch.trim();
-    if branch.is_empty() {
-        return Err("branch name required".into());
-    }
+    let branch = crate::validate::valid_branch(&branch)?;
+    let branch = branch.as_str();
     let root_out = Command::new("git")
         .args(["-C", &repo, "rev-parse", "--show-toplevel"])
         .output()
@@ -521,6 +521,10 @@ pub fn reveal_in_finder(path: String) -> Result<(), String> {
 /// Rename a file or directory to a new name within the same parent directory.
 #[tauri::command(async)]
 pub fn rename_entry(old_path: String, new_name: String) -> Result<(), String> {
+    let old_path = crate::validate::valid_mutable_path(&old_path)?;
+    // new_name is a single component joined onto the parent — block traversal so a
+    // rename can't move the entry outside its directory (e.g. "../../evil").
+    let new_name = crate::validate::valid_name(&new_name, "new_name")?;
     let p = Path::new(&old_path);
     let parent = p.parent().ok_or("no parent directory")?;
     let new_path = parent.join(&new_name);
@@ -530,6 +534,7 @@ pub fn rename_entry(old_path: String, new_name: String) -> Result<(), String> {
 /// Delete a file or directory (recursive for directories).
 #[tauri::command(async)]
 pub fn delete_entry(path: String) -> Result<(), String> {
+    let path = crate::validate::valid_mutable_path(&path)?;
     let p = Path::new(&path);
     if p.is_dir() {
         std::fs::remove_dir_all(p).map_err(|e| format!("remove dir failed: {e}"))
@@ -896,16 +901,18 @@ fn parse_glama_mcp_json(json: &serde_json::Value) -> Vec<MarketMcp> {
 /// Clone a skill from GitHub into ~/.claude/skills/<name>/.
 #[tauri::command(async)]
 pub fn install_skill(name: String, github_url: String) -> Result<(), String> {
-    if name.is_empty() || github_url.is_empty() {
-        return Err("name and github_url are required".into());
-    }
+    let name = crate::validate::valid_name(&name, "name")?;
+    let github_url = crate::validate::valid_git_url(&github_url)?;
     let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
     let dest = Path::new(&home).join(".claude").join("skills").join(&name);
     if dest.exists() {
         return Err(format!("~/.claude/skills/{name} already exists"));
     }
+    // `--` ends option parsing so the URL/dest can never be read as a git flag.
     let out = Command::new("git")
-        .args(["clone", "--depth=1", &github_url, &dest.to_string_lossy()])
+        .args(["clone", "--depth=1", "--"])
+        .arg(&github_url)
+        .arg(dest.to_string_lossy().as_ref())
         .output()
         .map_err(|e| format!("git not found: {e}"))?;
     if !out.status.success() {
@@ -917,9 +924,9 @@ pub fn install_skill(name: String, github_url: String) -> Result<(), String> {
 /// Merge an MCP entry into ~/.claude/.mcp.json (user-scope, deduped by name).
 #[tauri::command(async)]
 pub fn install_mcp(name: String, command: String, args: Vec<String>) -> Result<(), String> {
-    if name.is_empty() {
-        return Err("name is required".into());
-    }
+    let name = crate::validate::valid_name(&name, "name")?;
+    // command is executed by Claude Code later — require a non-empty, non-NUL value.
+    let command = crate::validate::clean_arg(&command, "command", true)?;
     let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
     let mcp_path = Path::new(&home).join(".claude").join(".mcp.json");
 

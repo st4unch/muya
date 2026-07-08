@@ -2,15 +2,34 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { FileText, RefreshCw } from "lucide-react";
 
+// Escape ALL HTML before any markdown transform so raw tags in the source
+// (e.g. <img onerror>, <script>) become inert text. Markdown syntax chars
+// (#, *, `, [, ]) are untouched, so the transforms below still work.
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+// Block dangerous URL schemes in links (javascript:, data:, vbscript:).
+// The href has already been HTML-escaped, so we test the decoded scheme prefix.
+function safeHref(raw: string): string {
+  const decoded = raw.replace(/&amp;/g, "&").trim();
+  if (/^(javascript|data|vbscript):/i.test(decoded)) return "#";
+  return raw;
+}
+
 // Lightweight markdown → HTML (headers, bold, italic, code blocks, inline code,
 // blockquotes, unordered/ordered lists, links, horizontal rules).
-// dangerouslySetInnerHTML is safe here: content comes only from local filesystem.
-function mdToHtml(md: string): string {
-  let html = md
-    // Fenced code blocks
-    .replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
-      const escaped = code.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-      return `<pre class="md-pre"><code class="md-code">${escaped.trimEnd()}</code></pre>`;
+// SECURITY: the entire source is HTML-escaped first (escapeHtml), so PRD files
+// from any workspace cannot inject executable markup via dangerouslySetInnerHTML.
+export function mdToHtml(md: string): string {
+  let html = escapeHtml(md)
+    // Fenced code blocks (content already escaped above)
+    .replace(/```(\w*)\n([\s\S]*?)```/g, (_, _lang, code) => {
+      return `<pre class="md-pre"><code class="md-code">${code.trimEnd()}</code></pre>`;
     })
     // Headings
     .replace(/^###### (.+)$/gm, "<h6>$1</h6>")
@@ -38,8 +57,8 @@ function mdToHtml(md: string): string {
     .replace(/_(.+?)_/g, "<em>$1</em>")
     // Inline code
     .replace(/`([^`]+)`/g, '<code class="md-inline-code">$1</code>')
-    // Links
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
+    // Links (href scheme sanitized to block javascript:/data:/vbscript:)
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, href) => `<a href="${safeHref(href)}" target="_blank" rel="noreferrer">${text}</a>`)
     // Paragraph breaks (double newline)
     .replace(/\n{2,}/g, "</p><p>")
     // Single newlines inside paragraphs

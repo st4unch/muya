@@ -175,6 +175,8 @@ export default function FileTree({
   onAddAtRef,
   agents,
   activeCwd,
+  selectedRoot,
+  onSelectRoot,
   refreshSignal,
 }: {
   roots: string[];
@@ -185,6 +187,9 @@ export default function FileTree({
   onAddAtRef?: (path: string) => void;
   agents?: Agent[];
   activeCwd?: string;
+  /** Workspace root the user explicitly selected — new terminals/agents open here. */
+  selectedRoot?: string;
+  onSelectRoot?: (root: string) => void;
   refreshSignal?: number;
 }) {
   const [menu, setMenu] = useState<CtxMenu | null>(null);
@@ -378,16 +383,22 @@ export default function FileTree({
           {roots.map((r) => {
             const name = r.split("/").filter(Boolean).pop() || r;
             const matchedAgent = agents?.find((a) => a.worktree === r || r.startsWith(a.worktree));
-            const isActive = activeCwd ? (r === activeCwd || activeCwd.startsWith(r)) : false;
+            const isSelected = selectedRoot === r;
+            const isActive = isSelected || (activeCwd ? (r === activeCwd || activeCwd.startsWith(r)) : false);
 
             return (
               <div
                 key={r}
                 className={`border-l-2 mb-1 ${isActive ? "border-indigo-500" : "border-transparent"}`}
               >
-                {/* Root header */}
+                {/* Root header — click to select as the target workspace */}
                 <div
-                  className="flex items-center gap-1.5 px-2 py-0.5 group cursor-pointer hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded"
+                  className={`flex items-center gap-1.5 px-2 py-0.5 group cursor-pointer rounded ${
+                    isSelected
+                      ? "bg-indigo-50 dark:bg-indigo-950/40"
+                      : "hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                  }`}
+                  onClick={() => onSelectRoot?.(r)}
                   onContextMenu={(e) => handleContextMenu(e, { name, path: r, isDirectory: true }, r)}
                 >
                   <FolderOpen className="h-3.5 w-3.5 text-indigo-500 dark:text-indigo-400 shrink-0" />
