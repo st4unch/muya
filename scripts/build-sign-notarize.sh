@@ -50,8 +50,10 @@ fi
 
 VERSION="$(node -p "require('$ROOT/src-tauri/tauri.conf.json').version")"
 [ -n "$VERSION" ] || die "could not read version from tauri.conf.json"
+PRODUCT="$(node -p "require('$ROOT/src-tauri/tauri.conf.json').productName")"
+[ -n "$PRODUCT" ] || die "could not read productName from tauri.conf.json"
 ARCH="$(uname -m)"   # arm64 on Apple Silicon
-say "Muya v$VERSION ($ARCH) — local release build"
+say "$PRODUCT v$VERSION ($ARCH) — local release build"
 
 # --- 1. build (frontend + rust, auto-signed) ----------------------------------
 say "Building (npm run tauri build) — this is the slow part…"
@@ -59,8 +61,10 @@ npm run tauri build
 ok "build complete"
 
 # --- 2. locate the signed .app ------------------------------------------------
-APP="$(ls -d "$ROOT"/src-tauri/target/release/bundle/macos/*.app 2>/dev/null | head -1)"
-[ -n "$APP" ] && [ -d "$APP" ] || die "no .app found under bundle/macos/"
+# Select by productName, not `ls | head -1`: a stale *.app from a prior rename
+# (e.g. "Apex Mission Control.app") would otherwise be picked and shipped.
+APP="$ROOT/src-tauri/target/release/bundle/macos/$PRODUCT.app"
+[ -d "$APP" ] || die "no $PRODUCT.app found under bundle/macos/"
 ok "app: $APP"
 
 # --- 3. verify signature ------------------------------------------------------
