@@ -1186,7 +1186,7 @@ export const loginHandler = async (req, res) => {
             onClick={() => setView("control")}
             className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
               view === "control"
-                ? "bg-indigo-50 dark:bg-neutral-700 text-indigo-700 dark:text-white font-bold border border-indigo-200 dark:border-neutral-500"
+                ? "bg-indigo-600 dark:bg-indigo-500 text-white font-bold border border-indigo-700 dark:border-indigo-400 shadow-sm"
                 : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
             }`}
           >
@@ -1197,7 +1197,7 @@ export const loginHandler = async (req, res) => {
             onClick={() => setView("sessions")}
             className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
               view === "sessions"
-                ? "bg-indigo-50 dark:bg-neutral-700 text-indigo-700 dark:text-white font-bold border border-indigo-200 dark:border-neutral-500"
+                ? "bg-indigo-600 dark:bg-indigo-500 text-white font-bold border border-indigo-700 dark:border-indigo-400 shadow-sm"
                 : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
             }`}
           >
@@ -1208,7 +1208,7 @@ export const loginHandler = async (req, res) => {
             onClick={() => setView("queue")}
             className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
               view === "queue"
-                ? "bg-indigo-50 dark:bg-neutral-700 text-indigo-700 dark:text-white font-bold border border-indigo-200 dark:border-neutral-500"
+                ? "bg-indigo-600 dark:bg-indigo-500 text-white font-bold border border-indigo-700 dark:border-indigo-400 shadow-sm"
                 : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
             }`}
           >
@@ -1219,7 +1219,7 @@ export const loginHandler = async (req, res) => {
             onClick={() => setView("tools")}
             className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
               view === "tools"
-                ? "bg-indigo-50 dark:bg-neutral-700 text-indigo-700 dark:text-white font-bold border border-indigo-200 dark:border-neutral-500"
+                ? "bg-indigo-600 dark:bg-indigo-500 text-white font-bold border border-indigo-700 dark:border-indigo-400 shadow-sm"
                 : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
             }`}
           >
@@ -1230,7 +1230,7 @@ export const loginHandler = async (req, res) => {
             onClick={() => setView("prd")}
             className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
               view === "prd"
-                ? "bg-indigo-50 dark:bg-neutral-700 text-indigo-700 dark:text-white font-bold border border-indigo-200 dark:border-neutral-500"
+                ? "bg-indigo-600 dark:bg-indigo-500 text-white font-bold border border-indigo-700 dark:border-indigo-400 shadow-sm"
                 : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
             }`}
           >
@@ -1377,7 +1377,7 @@ export const loginHandler = async (req, res) => {
               type="button"
               onClick={addWorkspace}
               title="Add project / workspace folder"
-              className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border border-indigo-200 dark:border-neutral-500 bg-indigo-50 dark:bg-neutral-700 text-indigo-700 dark:text-neutral-200 hover:bg-indigo-100 dark:hover:bg-neutral-600 cursor-pointer transition-colors"
+              className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border border-indigo-700 dark:border-indigo-400 bg-indigo-600 dark:bg-indigo-500 text-white hover:bg-indigo-700 dark:hover:bg-indigo-400 cursor-pointer transition-colors shadow-sm"
             >
               + Workspace
             </button>

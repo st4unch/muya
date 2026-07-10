@@ -356,7 +356,7 @@ export default function QueuePage({
                       className={`flex items-center gap-1 text-[11px] font-mono font-semibold px-2 py-1 rounded border cursor-pointer ${
                         confirming === `${p.path}:push`
                           ? "border-rose-300 dark:border-red-700 bg-rose-50 dark:bg-red-900/30 text-rose-700 dark:text-red-400"
-                          : "border-indigo-200 dark:border-neutral-600 bg-indigo-50 dark:bg-neutral-700 text-indigo-700 dark:text-white hover:bg-indigo-100 dark:hover:bg-neutral-600"
+                          : "border-indigo-700 dark:border-indigo-400 bg-indigo-600 dark:bg-indigo-500 text-white hover:bg-indigo-700 dark:hover:bg-indigo-400 shadow-sm"
                       }`}
                     >
                       <ArrowUp className="h-3 w-3" />
@@ -432,7 +432,7 @@ export default function QueuePage({
                   type="button"
                   onClick={() => toggle(p.path)}
                   disabled={inQueue(p.path)}
-                  className="flex items-center gap-1 text-[11px] font-mono font-semibold px-2.5 py-1 rounded border border-indigo-200 dark:border-neutral-600 bg-indigo-50 dark:bg-neutral-700 text-indigo-700 dark:text-white hover:bg-indigo-100 dark:hover:bg-neutral-600 disabled:opacity-40 disabled:cursor-default cursor-pointer"
+                  className="flex items-center gap-1 text-[11px] font-mono font-semibold px-2.5 py-1 rounded border border-indigo-700 dark:border-indigo-400 bg-indigo-600 dark:bg-indigo-500 text-white hover:bg-indigo-700 dark:hover:bg-indigo-400 shadow-sm disabled:opacity-40 disabled:cursor-default cursor-pointer"
                 >
                   <Plus className="h-3 w-3" /> {inQueue(p.path) ? "Queued" : "Add to queue"}
                 </button>

@@ -171,7 +171,7 @@ export default function CreateWithClaudeModal({
                     onClick={() => handleTypeChange(t)}
                     className={`flex flex-col items-center gap-1.5 px-3 py-3 rounded-lg border text-xs font-medium transition-colors cursor-pointer ${
                       active
-                        ? "bg-indigo-50 dark:bg-neutral-700 border-indigo-200 dark:border-neutral-500 text-indigo-700 dark:text-white"
+                        ? "bg-indigo-600 dark:bg-indigo-500 border-indigo-700 dark:border-indigo-400 text-white shadow-sm"
                         : "border-neutral-200 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800"
                     }`}
                   >

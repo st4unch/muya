@@ -9,6 +9,21 @@
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Space Grotesk", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Accent palette — replaces Tailwind's default indigo with a higher-chroma
+     electric violet-blue so active/selected elements pop instead of reading
+     as washed-out pastels. Dark surfaces (#25272b family) are untouched. */
+  --color-indigo-50:  #eef1ff;
+  --color-indigo-100: #e0e4ff;
+  --color-indigo-200: #c4cbff;
+  --color-indigo-300: #9fa6ff;
+  --color-indigo-400: #7c7bff;
+  --color-indigo-500: #655cff;
+  --color-indigo-600: #5340f5;
+  --color-indigo-700: #4530d6;
+  --color-indigo-800: #3827a8;
+  --color-indigo-900: #302685;
+  --color-indigo-950: #1d1650;
 }
 
 /* Base canvas color per theme — prevents a white flash before React paints and

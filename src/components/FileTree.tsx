@@ -395,7 +395,7 @@ export default function FileTree({
                 <div
                   className={`flex items-center gap-1.5 px-2 py-0.5 group cursor-pointer rounded ${
                     isSelected
-                      ? "bg-indigo-50 dark:bg-indigo-950/40"
+                      ? "bg-indigo-100 dark:bg-indigo-500/25 ring-1 ring-inset ring-indigo-400/60"
                       : "hover:bg-neutral-100 dark:hover:bg-neutral-800"
                   }`}
                   onClick={() => onSelectRoot?.(r)}

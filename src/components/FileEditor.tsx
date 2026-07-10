@@ -116,7 +116,7 @@ export default function FileEditor({
             }}
             className={`px-2 py-0.5 rounded border cursor-pointer transition-colors ${
               wordWrap
-                ? "border-indigo-300 dark:border-neutral-500 bg-indigo-50 dark:bg-neutral-700 text-indigo-700 dark:text-white font-bold"
+                ? "border-indigo-700 dark:border-indigo-400 bg-indigo-600 dark:bg-indigo-500 text-white font-bold shadow-sm"
                 : "border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800"
             }`}
             title="Toggle word wrap"
@@ -132,7 +132,7 @@ export default function FileEditor({
             }}
             className={`px-2 py-0.5 rounded border cursor-pointer transition-colors ${
               minimap
-                ? "border-indigo-300 dark:border-neutral-500 bg-indigo-50 dark:bg-neutral-700 text-indigo-700 dark:text-white font-bold"
+                ? "border-indigo-700 dark:border-indigo-400 bg-indigo-600 dark:bg-indigo-500 text-white font-bold shadow-sm"
                 : "border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800"
             }`}
             title="Toggle minimap"
@@ -155,7 +155,7 @@ export default function FileEditor({
             type="button"
             onClick={() => void save()}
             disabled={!dirty || saving}
-            className="px-2 py-0.5 rounded border border-indigo-200 dark:border-neutral-500 bg-indigo-50 dark:bg-neutral-700 text-indigo-700 dark:text-white font-bold disabled:opacity-40 disabled:cursor-default cursor-pointer hover:bg-indigo-100 dark:hover:bg-neutral-600 transition-colors"
+            className="px-2 py-0.5 rounded border border-indigo-700 dark:border-indigo-400 bg-indigo-600 dark:bg-indigo-500 text-white font-bold disabled:opacity-40 disabled:cursor-default cursor-pointer hover:bg-indigo-700 dark:hover:bg-indigo-400 transition-colors shadow-sm"
             title="Save (Cmd/Ctrl+S)"
           >
             {saving ? "…" : "Save"}

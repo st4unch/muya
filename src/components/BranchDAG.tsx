@@ -187,7 +187,7 @@ export default function BranchDAG({
             type="button"
             onClick={() => setActiveTab("graph")}
             className={`px-2 py-0.5 rounded transition-colors ${
-              activeTab === "graph" ? "bg-indigo-50 dark:bg-neutral-700 text-indigo-700 dark:text-white font-semibold border border-indigo-150 dark:border-neutral-500" : "text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+              activeTab === "graph" ? "bg-indigo-600 dark:bg-indigo-500 text-white font-semibold border border-indigo-700 dark:border-indigo-400 shadow-sm" : "text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800"
             }`}
           >
             DAG Graph
@@ -196,7 +196,7 @@ export default function BranchDAG({
             type="button"
             onClick={() => setActiveTab("info")}
             className={`px-2 py-0.5 rounded transition-colors ${
-              activeTab === "info" ? "bg-indigo-50 dark:bg-neutral-700 text-indigo-700 dark:text-white font-semibold border border-indigo-150 dark:border-neutral-500" : "text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+              activeTab === "info" ? "bg-indigo-600 dark:bg-indigo-500 text-white font-semibold border border-indigo-700 dark:border-indigo-400 shadow-sm" : "text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800"
             }`}
           >
             Map Details

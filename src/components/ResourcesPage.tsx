@@ -330,7 +330,7 @@ export default function ResourcesPage({
                   onClick={() => { setMarketSubTab(st); setSelectedMarket(null); }}
                   className={`px-2.5 py-1 rounded text-[11px] transition-colors cursor-pointer ${
                     marketSubTab === st
-                      ? "bg-neutral-200 dark:bg-neutral-700 text-neutral-800 dark:text-neutral-200 font-medium"
+                      ? "bg-indigo-600 dark:bg-indigo-500 text-white font-medium shadow-sm"
                       : "text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800"
                   }`}
                 >
