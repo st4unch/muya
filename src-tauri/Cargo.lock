@@ -2281,7 +2281,7 @@ dependencies = [
 
 [[package]]
 name = "muya"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "notify",
  "portable-pty",

@@ -138,6 +138,7 @@ pub fn run() {
             agents::stop_agent,
             agents::kill_session,
             history::list_session_history,
+            history::read_session_transcript,
             fs::list_dir,
             fs::read_file,
             fs::write_file,

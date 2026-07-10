@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { relTime, shortCwd } from "../lib/format";
-import { RefreshCw, Play, Plug, FolderGit2, Clock, Square, Search, X } from "lucide-react";
+import { RefreshCw, Play, Plug, FolderGit2, Clock, Square, Search, X, MessageSquare, User, Bot } from "lucide-react";
 
 interface AgentSession {
   id: string;
@@ -20,6 +20,13 @@ interface HistoryEntry {
   cwd: string;
   lastModified: number;
   sizeBytes: number;
+  path: string;
+}
+
+interface TranscriptMessage {
+  role: string;
+  text: string;
+  timestamp: string | null;
 }
 
 export interface OpenTerminalSpec {
@@ -46,6 +53,23 @@ export default function SessionsPage({
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
+  // Transcript drawer: which past session's conversation is open.
+  const [transcript, setTranscript] = useState<{ title: string; id: string; msgs: TranscriptMessage[] } | null>(null);
+  const [transcriptLoading, setTranscriptLoading] = useState(false);
+
+  const openTranscript = useCallback(async (h: HistoryEntry) => {
+    const title = h.cwd.split("/").filter(Boolean).pop() || h.sessionId.slice(0, 8);
+    setTranscriptLoading(true);
+    setTranscript({ title, id: h.sessionId, msgs: [] });
+    try {
+      const msgs = await invoke<TranscriptMessage[]>("read_session_transcript", { path: h.path });
+      setTranscript({ title, id: h.sessionId, msgs });
+    } catch (e) {
+      setTranscript({ title, id: h.sessionId, msgs: [{ role: "assistant", text: `Transcript okunamadı: ${e}`, timestamp: null }] });
+    } finally {
+      setTranscriptLoading(false);
+    }
+  }, []);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -247,26 +271,99 @@ export default function SessionsPage({
                     <span className="text-neutral-300 dark:text-neutral-600">{h.sessionId.slice(0, 8)}</span>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    onOpen({
-                      key: `resume:${h.sessionId}`,
-                      name: `↻ ${name}`,
-                      cwd: h.cwd.startsWith("/") ? h.cwd : undefined,
-                      initialCommand: `claude --resume ${h.sessionId}`,
-                    })
-                  }
-                  className="shrink-0 flex items-center gap-1.5 text-[11px] font-mono font-semibold px-2.5 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#25272b] text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer transition-colors"
-                  title="Resume this session in a new terminal"
-                >
-                  <Play className="h-3 w-3" /> Resume
-                </button>
+                <div className="shrink-0 flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => void openTranscript(h)}
+                    className="flex items-center gap-1.5 text-[11px] font-mono font-semibold px-2.5 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#25272b] text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer transition-colors"
+                    title="View this session's conversation"
+                  >
+                    <MessageSquare className="h-3 w-3" /> View
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onOpen({
+                        key: `resume:${h.sessionId}`,
+                        name: `↻ ${name}`,
+                        cwd: h.cwd.startsWith("/") ? h.cwd : undefined,
+                        initialCommand: `claude --resume ${h.sessionId}`,
+                      })
+                    }
+                    className="flex items-center gap-1.5 text-[11px] font-mono font-semibold px-2.5 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#25272b] text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer transition-colors"
+                    title="Resume this session in a new terminal"
+                  >
+                    <Play className="h-3 w-3" /> Resume
+                  </button>
+                </div>
               </div>
             );
           })}
         </div>
       </section>
+
+      {/* TRANSCRIPT DRAWER — right slide-over showing the conversation */}
+      {transcript && (
+        <>
+          <div
+            className="fixed inset-0 bg-black/40 z-40"
+            onClick={() => setTranscript(null)}
+          />
+          <div className="fixed top-0 right-0 bottom-0 w-[560px] max-w-[90vw] bg-white dark:bg-[#1e1f23] border-l border-neutral-200 dark:border-[#3d3f44] z-50 flex flex-col shadow-2xl">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200 dark:border-[#3d3f44] shrink-0">
+              <div className="min-w-0">
+                <h3 className="text-sm font-bold text-neutral-800 dark:text-neutral-100 truncate flex items-center gap-2">
+                  <MessageSquare className="h-4 w-4 text-indigo-500 shrink-0" />
+                  {transcript.title}
+                </h3>
+                <p className="text-[10px] font-mono text-neutral-400 dark:text-neutral-500">
+                  {transcript.id.slice(0, 8)} · {transcript.msgs.length} messages
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTranscript(null)}
+                className="p-1 rounded text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer transition-colors"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+              {transcriptLoading && (
+                <p className="text-[11px] font-mono text-neutral-400 animate-pulse">Loading transcript…</p>
+              )}
+              {!transcriptLoading && transcript.msgs.length === 0 && (
+                <p className="text-[11px] font-mono text-neutral-400">No displayable messages in this transcript.</p>
+              )}
+              {transcript.msgs.map((m, i) => (
+                <div key={i} className={`flex gap-2 ${m.role === "user" ? "flex-row" : "flex-row"}`}>
+                  <div className={`shrink-0 h-5 w-5 rounded flex items-center justify-center mt-0.5 ${
+                    m.role === "user"
+                      ? "bg-indigo-600 dark:bg-indigo-500 text-white"
+                      : "bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300"
+                  }`}>
+                    {m.role === "user" ? <User className="h-3 w-3" /> : <Bot className="h-3 w-3" />}
+                  </div>
+                  <div className={`min-w-0 flex-1 rounded-lg px-3 py-2 border ${
+                    m.role === "user"
+                      ? "bg-indigo-50 dark:bg-indigo-500/10 border-indigo-200 dark:border-indigo-500/30"
+                      : "bg-neutral-50 dark:bg-[#25272b] border-neutral-200 dark:border-neutral-700"
+                  }`}>
+                    <p className="text-[11px] leading-relaxed text-neutral-800 dark:text-neutral-200 whitespace-pre-wrap break-words">
+                      {m.text}
+                    </p>
+                    {m.timestamp && (
+                      <p className="text-[9px] font-mono text-neutral-400 dark:text-neutral-500 mt-1">
+                        {new Date(m.timestamp).toLocaleString()}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
