@@ -1682,11 +1682,13 @@ export const loginHandler = async (req, res) => {
                   <span>Grid</span>
                 </button>
 
-                {/* New Terminal button */}
+                {/* New Terminal button — opens the same preset picker (NewAgentModal)
+                    as the "+" button in the Sessions panel, not a blank terminal.
+                    (⌘T still opens a quick blank terminal for the fast path.) */}
                 <button
                   type="button"
-                  title="New Terminal (⌘T)"
-                  onClick={openBlankTerminal}
+                  title="New Terminal / Agent…"
+                  onClick={() => setNewAgentOpen(true)}
                   className="flex items-center gap-0.5 px-2 py-1 rounded text-[10px] font-mono font-bold text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-800 dark:hover:text-neutral-200 transition-colors cursor-pointer"
                 >
                   <TerminalSquare className="h-3 w-3" />
