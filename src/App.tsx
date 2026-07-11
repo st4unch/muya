@@ -562,10 +562,13 @@ export default function App() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  // Native File > Close Tab (⌘W): the backend owns ⌘W (so it never closes the window)
-  // and emits "menu:close-tab". Close the active tab; no-op when none is open (the app
-  // then only quits via ⌘Q / the red close button). Subscribe once, read latest active
-  // key via a ref — same pattern as ⌘N above.
+  // Native File > Close Tab (⌘W/Ctrl+W via CmdOrCtrl accelerator): the backend owns
+  // this shortcut (so it never closes the window) and emits "menu:close-tab". Closes
+  // the active tab — terminal or editor — same as clicking that tab's own X button
+  // (no confirmation for terminals, matching existing per-tab close behavior; editor
+  // tabs still get the unsaved-changes prompt via closeTerminal's dirtyTabs check).
+  // No-op when none is open (the app then only quits via ⌘Q / the red close button).
+  // Subscribe once, read latest active key via a ref — same pattern as ⌘N above.
   const activeKeyRef = useRef(activeTerminalKey);
   const openTerminalsRef = useRef(openTerminals);
   openTerminalsRef.current = openTerminals;
@@ -627,9 +630,8 @@ export default function App() {
   useEffect(() => {
     const un = listen("menu:close-tab", () => {
       const key = activeKeyRef.current;
-      // Only close editor tabs via Cmd+W — terminals are managed from the Sessions panel.
       const tab = openTerminalsRef.current.find(t => t.key === key);
-      if (key && tab?.kind === "editor") void closeTerminal(key);
+      if (key && tab) void closeTerminal(key);
     });
     return () => {
       void un.then((f) => f());
