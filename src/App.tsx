@@ -62,6 +62,7 @@ import NewAgentModal, { type NewAgentSpec } from "./components/NewAgentModal";
 import QueuePage from "./components/QueuePage";
 import ResourcesPage from "./components/ResourcesPage";
 import PrdBoard from "./components/PrdBoard";
+import VaultConfigPanel from "./components/VaultConfigPanel";
 import ScheduledPromptModal, { type ScheduledPrompt } from "./components/ScheduledPromptModal";
 import { buildAgentCommand } from "./lib/agent";
 import { invoke } from "@tauri-apps/api/core";
@@ -402,7 +403,9 @@ export default function App() {
   }, [themeMode]);
   useEffect(() => {
     document.documentElement.classList.toggle("dark", effectiveTheme === "dark");
-    void getCurrentWindow().setTheme(effectiveTheme === "dark" ? "dark" : "light");
+    getCurrentWindow()
+      .setTheme(effectiveTheme === "dark" ? "dark" : "light")
+      .catch((e) => console.warn("[apex] window setTheme failed (native title bar/menu bar may stay light):", e));
   }, [effectiveTheme]);
   // Collapsible side panels.
   const [leftOpen, setLeftOpen] = useState(true);
@@ -1420,17 +1423,24 @@ export const loginHandler = async (req, res) => {
 
           {/* VAULT RAG CONTEXT — always visible, shows results or placeholder */}
           <div className="border-t border-neutral-200 dark:border-[#3d3f44] bg-neutral-50/50 dark:bg-[#1e1f23]">
-            <button
-              type="button"
-              onClick={() => setVaultOpen((v) => !v)}
-              className="w-full p-3 flex items-center justify-between cursor-pointer hover:bg-neutral-100 dark:hover:bg-[#2a2c31] transition-colors"
-            >
-              <h3 className="text-[10px] uppercase font-mono text-neutral-500 dark:text-neutral-400 tracking-wider font-bold flex items-center gap-1.5">
-                <Database className="h-3.5 w-3.5 text-violet-500 dark:text-violet-400" />
-                Vault Context{vaultBlocks.length > 0 ? ` (${vaultBlocks.length})` : ""}
-              </h3>
-              <ChevronDown className={`h-3 w-3 text-neutral-400 transition-transform ${vaultOpen ? "" : "-rotate-90"}`} />
-            </button>
+            <div className="w-full p-3 flex items-center justify-between hover:bg-neutral-100 dark:hover:bg-[#2a2c31] transition-colors">
+              <button
+                type="button"
+                onClick={() => setVaultOpen((v) => !v)}
+                className="flex-1 flex items-center justify-between cursor-pointer min-w-0"
+              >
+                <h3 className="text-[10px] uppercase font-mono text-neutral-500 dark:text-neutral-400 tracking-wider font-bold flex items-center gap-1.5 min-w-0">
+                  <Database className="h-3.5 w-3.5 text-violet-500 dark:text-violet-400 shrink-0" />
+                  <span className="truncate">Vault Context{vaultBlocks.length > 0 ? ` (${vaultBlocks.length})` : ""}</span>
+                </h3>
+              </button>
+              <div className="flex items-center gap-1 shrink-0 ml-1">
+                <VaultConfigPanel onChanged={() => { setVaultBlocks([]); setVaultQuery(""); }} />
+                <button type="button" onClick={() => setVaultOpen((v) => !v)} className="cursor-pointer">
+                  <ChevronDown className={`h-3 w-3 text-neutral-400 transition-transform ${vaultOpen ? "" : "-rotate-90"}`} />
+                </button>
+              </div>
+            </div>
             {vaultOpen && (
               <div className="px-3 pb-3 space-y-2">
                 {vaultBlocks.length === 0 ? (

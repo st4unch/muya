@@ -170,6 +170,10 @@ pub fn run() {
             fs::delete_entry,
             get_startup_files,
             vault::vault_search,
+            vault::vault_get_status,
+            vault::vault_detect_candidates,
+            vault::vault_set_path,
+            vault::vault_restart,
             fs::scan_prd_docs
         ])
         .build(tauri::generate_context!())

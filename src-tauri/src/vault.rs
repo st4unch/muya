@@ -1,8 +1,16 @@
 // Vault MCP integration — smart-connections subprocess manager.
 // Spawns a persistent Python MCP server process and routes vault_search
 // commands through JSON-RPC over stdin/stdout.
+//
+// The vault path used to be a single hardcoded OneDrive path (this developer's
+// machine only) — it silently did nothing on any other machine. It's now
+// resolved in priority order: user-configured path (persisted to disk) →
+// OBSIDIAN_VAULT_PATH env var → auto-detected `.obsidian` folder under common
+// locations. If none resolve, the feature is cleanly disabled (no subprocess
+// spawn attempt, no repeated failures).
 
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use tauri::State;
@@ -44,6 +52,208 @@ pub struct VaultBlock {
     pub similarity: f32,
     pub text: String,
     pub lines: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// User-configurable vault path (persisted; no more hardcoded machine path)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct VaultConfig {
+    /// Absolute path to an Obsidian vault (a folder containing `.obsidian/`).
+    pub vault_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultStatus {
+    pub configured_path: Option<String>,
+    /// True if `configured_path` (or a resolved fallback) points at a real vault.
+    pub resolved_path: Option<String>,
+    /// False if `~/smart-connections-mcp/server.py` isn't present — the whole
+    /// feature is unavailable regardless of vault path in that case.
+    pub server_installed: bool,
+}
+
+fn config_file_path_under(home: &str) -> PathBuf {
+    Path::new(home).join(".claude/muya-vault-config.json")
+}
+
+fn config_file_path() -> Option<PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    Some(config_file_path_under(&home))
+}
+
+fn load_config_from(path: &Path) -> VaultConfig {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn load_config() -> VaultConfig {
+    config_file_path()
+        .map(|p| load_config_from(&p))
+        .unwrap_or_default()
+}
+
+fn save_config_to(path: &Path, cfg: &VaultConfig) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let json = serde_json::to_string_pretty(cfg).map_err(|e| e.to_string())?;
+    std::fs::write(path, json).map_err(|e| e.to_string())
+}
+
+fn save_config(cfg: &VaultConfig) -> Result<(), String> {
+    let path = config_file_path().ok_or("HOME not set")?;
+    save_config_to(&path, cfg)
+}
+
+/// A folder "is a vault" if it directly contains an `.obsidian` subdirectory.
+fn is_obsidian_vault(dir: &Path) -> bool {
+    dir.join(".obsidian").is_dir()
+}
+
+/// Scan common vault parent locations for `.obsidian` folders, depth-limited.
+/// Returns absolute paths, most-recently-modified first.
+fn detect_vaults() -> Vec<String> {
+    let home = match std::env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => return vec![],
+    };
+    let roots = vec![
+        format!("{home}/Documents"),
+        format!("{home}/Obsidian"),
+        format!("{home}/Library/Mobile Documents/iCloud~md~obsidian/Documents"),
+        format!("{home}/Library/CloudStorage"),
+        home.clone(),
+    ];
+    scan_roots_for_vaults(roots)
+}
+
+/// Depth-limited (root, root/*, root/*/*) `.obsidian` scan over explicit
+/// root directories — split out from `detect_vaults` so tests can scan a
+/// temp dir instead of the real HOME.
+fn scan_roots_for_vaults(roots: Vec<String>) -> Vec<String> {
+    let mut found: Vec<(std::time::SystemTime, String)> = Vec::new();
+    for root in roots {
+        let root_path = Path::new(&root);
+        if !root_path.is_dir() {
+            continue;
+        }
+        if is_obsidian_vault(root_path) {
+            let mtime = root_path
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::UNIX_EPOCH);
+            found.push((mtime, root.clone()));
+        }
+        // One level deep (covers CloudStorage/<provider>/<vault>, Documents/<vault>).
+        let Ok(entries) = std::fs::read_dir(root_path) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if !p.is_dir() {
+                continue;
+            }
+            if is_obsidian_vault(&p) {
+                let mtime = p
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .unwrap_or(std::time::UNIX_EPOCH);
+                found.push((mtime, p.to_string_lossy().into_owned()));
+                continue;
+            }
+            // Two levels deep for CloudStorage/<provider>/<subfolders>/<vault>.
+            let Ok(sub_entries) = std::fs::read_dir(&p) else {
+                continue;
+            };
+            for sub in sub_entries.flatten() {
+                let sp = sub.path();
+                if sp.is_dir() && is_obsidian_vault(&sp) {
+                    let mtime = sp
+                        .metadata()
+                        .and_then(|m| m.modified())
+                        .unwrap_or(std::time::UNIX_EPOCH);
+                    found.push((mtime, sp.to_string_lossy().into_owned()));
+                }
+            }
+        }
+    }
+    found.sort_by(|a, b| b.0.cmp(&a.0));
+    found.dedup_by(|a, b| a.1 == b.1);
+    found.into_iter().map(|(_, p)| p).take(10).collect()
+}
+
+/// Resolve the vault path to use, in priority order. No hardcoded fallback —
+/// if nothing resolves, the feature is simply unavailable on this machine.
+fn resolve_vault_path() -> Option<String> {
+    if let Some(p) = load_config().vault_path {
+        if is_obsidian_vault(Path::new(&p)) {
+            return Some(p);
+        }
+    }
+    if let Ok(p) = std::env::var("OBSIDIAN_VAULT_PATH") {
+        if is_obsidian_vault(Path::new(&p)) {
+            return Some(p);
+        }
+    }
+    detect_vaults().into_iter().next()
+}
+
+fn server_script_path() -> Option<PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    let p = Path::new(&home).join("smart-connections-mcp/server.py");
+    p.is_file().then_some(p)
+}
+
+/// Tauri command: current config + resolution state, for a Settings UI.
+#[tauri::command]
+pub fn vault_get_status() -> VaultStatus {
+    let cfg = load_config();
+    VaultStatus {
+        configured_path: cfg.vault_path,
+        resolved_path: resolve_vault_path(),
+        server_installed: server_script_path().is_some(),
+    }
+}
+
+/// Tauri command: list auto-detected vault candidates for a picker UI.
+#[tauri::command]
+pub fn vault_detect_candidates() -> Vec<String> {
+    detect_vaults()
+}
+
+/// Tauri command: persist a user-chosen vault path. Validates it's a real
+/// vault (contains `.obsidian/`) before saving.
+#[tauri::command]
+pub fn vault_set_path(path: String) -> Result<(), String> {
+    let p = path.trim();
+    if p.is_empty() {
+        return Err("path is required".into());
+    }
+    if !is_obsidian_vault(Path::new(p)) {
+        return Err("not an Obsidian vault (no .obsidian folder found)".into());
+    }
+    save_config(&VaultConfig {
+        vault_path: Some(p.to_string()),
+    })
+}
+
+/// Tauri command: kill the current MCP subprocess (if any) and respawn +
+/// warm up with the current resolved config. Used after the user changes the
+/// vault path, so the new path takes effect without an app restart.
+#[tauri::command]
+pub async fn vault_restart(state: State<'_, VaultMcpManager>) -> Result<(), String> {
+    let manager = state.0.clone();
+    {
+        let mut lock = manager.lock().await;
+        *lock = None; // drop = kill_on_drop kills the old subprocess
+    }
+    warmup_vault(manager).await;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -197,15 +407,11 @@ async fn call_mcp(
 // ---------------------------------------------------------------------------
 
 async fn spawn_vault_mcp() -> Option<VaultMcpProcess> {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let server_path = format!("{}/smart-connections-mcp/server.py", home);
-
-    let vault_path = std::env::var("OBSIDIAN_VAULT_PATH").unwrap_or_else(|_| {
-        format!(
-            "{}/Library/CloudStorage/OneDrive-Kişisel/obsidian/murat_self",
-            home
-        )
-    });
+    // No vault resolvable (not configured, no env var, nothing auto-detected)
+    // or the MCP server script isn't installed on this machine — disable
+    // cleanly instead of spawning a process that can only fail.
+    let server_path = server_script_path()?;
+    let vault_path = resolve_vault_path()?;
 
     let python = std::env::var("VAULT_PYTHON")
         .unwrap_or_else(|_| "/opt/homebrew/bin/python3.11".to_string());
@@ -266,7 +472,10 @@ pub async fn warmup_vault(manager: Arc<Mutex<Option<VaultMcpProcess>>>) {
     let mut proc = match spawn_vault_mcp().await {
         Some(p) => p,
         None => {
-            eprintln!("[vault] warmup: failed to spawn MCP subprocess");
+            eprintln!(
+                "[vault] not available: no vault configured/detected, or smart-connections-mcp \
+                 not installed at ~/smart-connections-mcp — set a path via vault_set_path"
+            );
             return;
         }
     };
@@ -335,5 +544,107 @@ pub async fn vault_search(
             *lock = None;
             Err("timeout".to_string())
         }
+    }
+}
+
+#[cfg(test)]
+mod vault_config_tests {
+    use super::*;
+
+    fn make_vault(root: &Path, name: &str) -> PathBuf {
+        let v = root.join(name);
+        std::fs::create_dir_all(v.join(".obsidian")).unwrap();
+        v
+    }
+
+    #[test]
+    fn is_obsidian_vault_requires_dot_obsidian_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!is_obsidian_vault(dir.path()));
+        make_vault(dir.path(), "my-vault");
+        assert!(is_obsidian_vault(&dir.path().join("my-vault")));
+        // A plain file named .obsidian doesn't count — must be a directory.
+        let fake = dir.path().join("fake-vault");
+        std::fs::create_dir_all(&fake).unwrap();
+        std::fs::write(fake.join(".obsidian"), "not a dir").unwrap();
+        assert!(!is_obsidian_vault(&fake));
+    }
+
+    #[test]
+    fn scan_finds_vault_at_root_and_one_and_two_levels_deep() {
+        let dir = tempfile::tempdir().unwrap();
+        let root_vault = make_vault(dir.path(), "at-root");
+        // One level deep, e.g. ~/Documents/my-notes.
+        let one_deep_parent = dir.path().join("Documents");
+        std::fs::create_dir_all(&one_deep_parent).unwrap();
+        let one_deep = make_vault(&one_deep_parent, "my-notes");
+        // Two levels deep, e.g. ~/Library/CloudStorage/OneDrive/obsidian.
+        let two_deep_parent = dir.path().join("CloudStorage").join("OneDrive");
+        std::fs::create_dir_all(&two_deep_parent).unwrap();
+        let two_deep = make_vault(&two_deep_parent, "obsidian");
+        // A non-vault dir mixed in should be ignored, not error out the scan.
+        std::fs::create_dir_all(dir.path().join("Downloads")).unwrap();
+
+        let roots = vec![
+            dir.path().to_string_lossy().into_owned(),
+            one_deep_parent.to_string_lossy().into_owned(),
+            two_deep_parent
+                .parent()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+        ];
+        let found = scan_roots_for_vaults(roots);
+
+        let found_set: std::collections::HashSet<_> = found.iter().cloned().collect();
+        assert!(found_set.contains(&root_vault.to_string_lossy().into_owned()));
+        assert!(found_set.contains(&one_deep.to_string_lossy().into_owned()));
+        assert!(found_set.contains(&two_deep.to_string_lossy().into_owned()));
+    }
+
+    #[test]
+    fn scan_missing_root_does_not_panic() {
+        let found = scan_roots_for_vaults(vec!["/definitely/does/not/exist/xyz".to_string()]);
+        assert!(found.is_empty());
+    }
+
+    #[test]
+    fn set_and_get_vault_path_roundtrip() {
+        // Uses injected paths (config_file_path_under / save_config_to /
+        // load_config_from) instead of the real vault_set_path command, which
+        // reads process-global HOME — mutating that would race with other
+        // tests in this crate that also read HOME concurrently.
+        let fake_home = tempfile::tempdir().unwrap();
+        let vault_dir = make_vault(fake_home.path(), "test-vault");
+        let vault_str = vault_dir.to_string_lossy().into_owned();
+        let cfg_path = config_file_path_under(&fake_home.path().to_string_lossy());
+
+        // No config saved yet → empty.
+        assert!(load_config_from(&cfg_path).vault_path.is_none());
+
+        // Save + reload round-trips.
+        save_config_to(
+            &cfg_path,
+            &VaultConfig {
+                vault_path: Some(vault_str.clone()),
+            },
+        )
+        .expect("save should succeed");
+        let loaded = load_config_from(&cfg_path);
+        assert_eq!(loaded.vault_path.as_deref(), Some(vault_str.as_str()));
+    }
+
+    #[test]
+    fn vault_set_path_rejects_non_vault_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        // No .obsidian folder inside — must be rejected.
+        let err = vault_set_path(dir.path().to_string_lossy().into_owned());
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn vault_set_path_rejects_empty_path() {
+        assert!(vault_set_path(String::new()).is_err());
+        assert!(vault_set_path("   ".to_string()).is_err());
     }
 }
