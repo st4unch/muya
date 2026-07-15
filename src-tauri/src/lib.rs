@@ -177,7 +177,10 @@ pub fn run() {
             vault::vault_set_path,
             vault::vault_restart,
             fs::scan_prd_docs,
-            bridge::bridge_local_listen
+            bridge::bridge_local_listen,
+            bridge::bridge_poll_inbound,
+            bridge::bridge_send,
+            bridge::bridge_approve
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
