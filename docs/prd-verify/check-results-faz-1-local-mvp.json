@@ -1,0 +1,11 @@
+{
+  "phase": "faz-1-local-mvp",
+  "verification_mode": "hybrid",
+  "checks": [
+    {"tool": "cargo build", "exit_code": 0, "summary": "Finished"},
+    {"tool": "cargo test", "exit_code": 0, "summary": "39 passed; 0 failed (9 bridge tests: ac1_1..ac1_5)"},
+    {"tool": "tsc --noEmit", "exit_code": 0, "summary": "no type errors"},
+    {"tool": "npm test", "exit_code": 0, "summary": "49 passed"}
+  ],
+  "bridge_tests": ["ac1_1_uds_bind_mode_owner_connect","ac1_1_permission_barrier_documented","ac1_2_frame_round_trip","ac1_2_oversize_reject_before_alloc","ac1_3_inbound_reaches_queue_not_pty","ac1_4_contract_test_peer_to_queue_to_response","ac1_5_approval_gate_shell_task","ac1_5_non_shell_no_approval_required","ac1_5_invalid_decision_rejected"]
+}

@@ -1,0 +1,4 @@
+.archived/
+.lock
+*.tmp.*
+*.log

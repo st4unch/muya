@@ -1,0 +1,10 @@
+{
+  "phase": "faz-3-task-handoff",
+  "verification_mode": "hybrid",
+  "checks": [
+    {"tool": "cargo build", "exit_code": 0, "summary": "Finished (7 warnings)"},
+    {"tool": "cargo test", "exit_code": 0, "summary": "96 passed; 0 failed (28 bridge_exec AC-3 tests)"},
+    {"tool": "tsc --noEmit", "exit_code": 0, "summary": "clean"},
+    {"tool": "npm test", "exit_code": 0, "summary": "49 passed"}
+  ]
+}

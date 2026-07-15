@@ -1,0 +1,10 @@
+{
+  "phase": "faz-0-prep",
+  "verification_mode": "hybrid",
+  "checks": [
+    {"tool": "cargo build", "exit_code": 0, "summary": "Finished dev profile"},
+    {"tool": "cargo test", "exit_code": 0, "summary": "31 passed; 0 failed; 4 ignored"},
+    {"tool": "tsc --noEmit", "exit_code": 0, "summary": "no type errors"},
+    {"tool": "npm test (vitest)", "exit_code": 0, "summary": "49 passed"}
+  ]
+}

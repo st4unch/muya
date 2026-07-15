@@ -1,0 +1,11 @@
+{
+  "phase_id": "faz-1-vault-integration",
+  "retry": 0,
+  "timestamp": "2026-06-30T10:30:00Z",
+  "tools": {
+    "tsc": { "exit_code": 0, "summary": "No errors" },
+    "vitest": { "exit_code": 0, "summary": "5 files, 29 tests passed" },
+    "cargo_check": { "exit_code": 0, "summary": "Finished dev profile" }
+  },
+  "verification_mode": "hybrid"
+}

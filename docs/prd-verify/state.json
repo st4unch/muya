@@ -1,0 +1,48 @@
+{
+  "prd_path": "docs/prd-claude-remote-bridge.md",
+  "prd_sha256": "354b2e9f3e5d1d2fabb6cf7cb9ee17b8e44a83a6a230c44d732c2d9dc6aed0be",
+  "tier_acknowledged": "sonnet",
+  "started_at": "2026-07-15T12:41:35+03:00",
+  "last_updated": "2026-07-15T19:38:15.343639+03:00",
+  "base_checkpoint": "ac6aec9ab480ec522d0f79b8328fe93ad1e7e9a5",
+  "phases": {
+    "faz-0-prep": {
+      "status": "done",
+      "retries": 0,
+      "deps": [],
+      "previous_strategy_hashes": [],
+      "wall_clock_started_at": "2026-07-15T12:42:11.182053+03:00"
+    },
+    "faz-1-local-mvp": {
+      "status": "done",
+      "retries": 0,
+      "deps": [
+        "faz-0-prep"
+      ],
+      "previous_strategy_hashes": [],
+      "wall_clock_started_at": "2026-07-15T14:12:54.377279+03:00"
+    },
+    "faz-2-remote-mtls": {
+      "status": "done",
+      "retries": 1,
+      "deps": [
+        "faz-1-local-mvp"
+      ],
+      "previous_strategy_hashes": [],
+      "wall_clock_started_at": "2026-07-15T14:20:57.551853+03:00",
+      "last_fail": "AC-2-3: invitee-side pairing handler missing (SPAKE2 state discarded at bridge_remote.rs:713); MITM protection one-sided; pinned verifier blocks unpaired dialer during pairing",
+      "note": "AC-2-3 fixed (invitee pairing handler); SPAKE2 used instead of CPace (ADR R7); minor: duplex-not-TCP test naming, dead spake2_outmsg field"
+    },
+    "faz-3-task-handoff": {
+      "status": "done",
+      "retries": 0,
+      "deps": [
+        "faz-2-remote-mtls"
+      ],
+      "previous_strategy_hashes": [],
+      "wall_clock_started_at": "2026-07-15T19:24:22.387523+03:00"
+    }
+  },
+  "tier_note": "operator chose Sonnet 4.6 (no 'Sonnet 5' exists); verification quality lower than Opus for crypto phases",
+  "result": "COMPLETE \u2014 all 4 phases done, 96 rust + 49 frontend tests pass"
+}

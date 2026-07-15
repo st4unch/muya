@@ -1,0 +1,11 @@
+{
+  "phase": "faz-2-remote-mtls",
+  "verification_mode": "hybrid",
+  "checks": [
+    {"tool": "cargo build", "exit_code": 0, "summary": "Finished (9 warnings)"},
+    {"tool": "cargo test", "exit_code": 0, "summary": "62 passed; 0 failed (23 bridge_remote AC-2 tests)"},
+    {"tool": "tsc --noEmit", "exit_code": 0, "summary": "clean"},
+    {"tool": "npm test", "exit_code": 0, "summary": "49 passed"}
+  ],
+  "deviation": "ADR D2 said CPace; impl used SPAKE2 (spake2-conflux, RFC 9382) because cpace crate unmaintained (ADR R7). Needs review."
+}

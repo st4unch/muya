@@ -1,0 +1,10 @@
+{
+  "phase_id": "faz-0-terminal-refactor",
+  "retry": 0,
+  "timestamp": "2026-06-30T10:20:00Z",
+  "tools": {
+    "tsc": { "exit_code": 0, "summary": "No errors" },
+    "vitest": { "exit_code": 0, "summary": "5 files, 29 tests passed" }
+  },
+  "verification_mode": "hybrid"
+}
