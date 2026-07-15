@@ -22,6 +22,7 @@ fn get_startup_files() -> Vec<String> {
 }
 
 mod agents;
+mod bridge;
 mod fs;
 mod history;
 mod metrics;
@@ -133,6 +134,7 @@ pub fn run() {
         .manage(metrics::Metrics::default())
         .manage(watcher::WatchState::default())
         .manage(vault::VaultMcpManager::default())
+        .manage(bridge::BridgeState::default())
         .invoke_handler(tauri::generate_handler![
             agents::list_agent_sessions,
             agents::stop_agent,
@@ -174,7 +176,8 @@ pub fn run() {
             vault::vault_detect_candidates,
             vault::vault_set_path,
             vault::vault_restart,
-            fs::scan_prd_docs
+            fs::scan_prd_docs,
+            bridge::bridge_local_listen
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
