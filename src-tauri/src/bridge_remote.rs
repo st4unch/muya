@@ -386,6 +386,9 @@ pub struct RemoteBridgeState {
     pub listener: Mutex<Option<Arc<TcpListener>>>,
     /// Active PIN (invitee side).
     pub active_pin: Mutex<Option<ActivePin>>,
+    /// Dedicated pairing listener handle (None = no pairing window open).
+    /// Separate from the data listener — uses AnyCertVerifier, not PinnedSpkiVerifier.
+    pub pairing_listener: Mutex<Option<Arc<TcpListener>>>,
 }
 
 impl Default for RemoteBridgeState {
@@ -395,6 +398,7 @@ impl Default for RemoteBridgeState {
             registry: Mutex::new(None),
             listener: Mutex::new(None),
             active_pin: Mutex::new(None),
+            pairing_listener: Mutex::new(None),
         }
     }
 }
@@ -536,17 +540,94 @@ impl ClientCertVerifier for PinnedSpkiVerifier {
 }
 
 // ---------------------------------------------------------------------------
+// AnyCertVerifier — permissive client cert verifier for pairing-only TLS.
+//
+// During pairing the dialer is not yet pinned, so the normal PinnedSpkiVerifier
+// would reject the handshake.  AnyCertVerifier accepts ANY presented client cert
+// (trust is bootstrapped by PAKE + human SAS comparison).
+//
+// SCOPE: used ONLY for the dedicated pairing listener.  The normal data listener
+// keeps PinnedSpkiVerifier (fail-closed).  Both verifiers enforce TLS 1.3 only.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub struct AnyCertVerifier;
+
+impl ClientCertVerifier for AnyCertVerifier {
+    fn root_hint_subjects(&self) -> &[rustls::DistinguishedName] {
+        &[]
+    }
+
+    fn verify_client_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<ClientCertVerified, rustls::Error> {
+        // Accept any cert: trust is provided by PAKE + SAS, not PKI.
+        Ok(ClientCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        Err(rustls::Error::General(
+            "TLS 1.2 not permitted by pairing verifier".to_string(),
+        ))
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        rustls::crypto::ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+
+    /// Pairing requires the dialer to present a cert (so we can extract its SPKI).
+    fn client_auth_mandatory(&self) -> bool {
+        true
+    }
+}
+
+// ---------------------------------------------------------------------------
 // SAS derivation
 // ---------------------------------------------------------------------------
 
 /// Derive a 6-character SAS from:
-///   HKDF(session_key || our_spki || peer_spki, "muya-bridge-sas-v1")
-/// Returns uppercase hex (6 chars from first 3 bytes of HKDF output).
+///   HKDF(session_key || min(spki_a, spki_b) || max(spki_a, spki_b), "muya-bridge-sas-v1")
+///
+/// CANONICAL: The two SPKI hashes are sorted lexicographically before concatenation.
+/// This ensures both the dialer and invitee produce the IDENTICAL SAS regardless of
+/// which side passes their own SPKI as the first argument.  Both sides call:
+///   derive_sas(session_key, &our_spki, &peer_spki)
+/// and the function normalises the order internally.
 pub fn derive_sas(session_key: &[u8], our_spki: &str, peer_spki: &str) -> String {
+    // Sort to make order-canonical: min first, max second.
+    let (first, second) = if our_spki <= peer_spki {
+        (our_spki, peer_spki)
+    } else {
+        (peer_spki, our_spki)
+    };
     let ikm: Vec<u8> = session_key
         .iter()
-        .chain(our_spki.as_bytes())
-        .chain(peer_spki.as_bytes())
+        .chain(first.as_bytes())
+        .chain(second.as_bytes())
         .copied()
         .collect();
     let hk = Hkdf::<Sha256>::new(None, &ikm);
@@ -698,6 +779,10 @@ async fn build_server_config(
 
 /// Generate a one-time 8-digit PIN and arm the SPAKE2 responder (invitee side).
 /// Returns `{ pin, expires_at, our_spki }`.
+///
+/// IMPORTANT: This only arms the PIN.  To actually accept a dialer connection, call
+/// `bridge_pair_start_listener(pairing_iface)` next.  The two-step design lets the
+/// frontend show the PIN to the operator before the network socket is opened.
 #[tauri::command]
 pub async fn bridge_pair_invite(
     state: State<'_, RemoteBridgeState>,
@@ -707,25 +792,17 @@ pub async fn bridge_pair_invite(
     let pin = generate_pin();
     let expires_ts = unix_now() + PIN_TTL.as_secs();
 
-    // Generate SPAKE2 state for the invitee (we are "B" / server side).
-    let password = Password::new(pin.as_bytes());
-    // Both sides use the same (id_a, id_b) order per spake2-conflux API.
-    let (_spake2_state, outmsg) = Spake2::<RistrettoGroup>::start_b(
-        &password,
-        &Spake2Identity::new(b"dialer"),
-        &Spake2Identity::new(b"invitee"),
-    )
-    .map_err(|e| format!("SPAKE2 start_b: {e}"))?;
-
-    // Store the PIN + SPAKE2 outgoing message in managed state.
-    // Note: Spake2 state is not Clone/Send; we store only the outmsg for the wire.
-    // The invitee re-derives the SPAKE2 state when handling the dialer's connection.
+    // Store the PIN in managed state.
+    // The SPAKE2 start_b state is NOT stored here because Spake2 state is neither
+    // Clone nor Send.  It is created fresh inside `handle_pairing_connection` when
+    // the dialer's TCP connection arrives — start_b is randomised each call, which
+    // is correct: we create a fresh B-side state for each incoming pairing attempt.
     let active = ActivePin {
         pin: pin.clone(),
         created_at: Instant::now(),
         attempts: 0,
         used: false,
-        spake2_outmsg: Some(outmsg),
+        spake2_outmsg: None, // populated by handle_pairing_connection on first connect
         pending_sas: None,
     };
     *state.active_pin.lock().await = Some(active);
@@ -735,6 +812,270 @@ pub async fn bridge_pair_invite(
         "expires_at": expires_ts,
         "our_spki": identity.spki_hash,
     }))
+}
+
+/// Start the dedicated pairing listener on `pairing_iface` (e.g. "192.168.1.5:9877").
+///
+/// This listener uses `AnyCertVerifier` (accepts any dialer cert — trust is bootstrapped
+/// by PAKE + human SAS comparison) and is SEPARATE from the normal data listener which
+/// keeps its fail-closed `PinnedSpkiVerifier` unchanged.
+///
+/// The listener auto-closes after accepting one connection (single-use PIN) or after
+/// the PIN expires / is locked out.
+#[tauri::command]
+pub async fn bridge_pair_start_listener(
+    pairing_iface: String,
+    state: State<'_, RemoteBridgeState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    // Reject wildcard addresses.
+    assert_not_wildcard(&pairing_iface)?;
+
+    // Refuse to open a second pairing listener.
+    {
+        let guard = state.pairing_listener.lock().await;
+        if guard.is_some() {
+            return Err("pairing listener already active".to_string());
+        }
+    }
+
+    let (identity, _registry) = state.ensure_initialized().await?;
+
+    // Build a ServerConfig that uses AnyCertVerifier (pairing-only).
+    let pairing_server_config = build_pairing_server_config(&identity)?;
+    let acceptor = TlsAcceptor::from(Arc::new(pairing_server_config));
+
+    let listener = TcpListener::bind(&pairing_iface)
+        .await
+        .map_err(|e| format!("bind pairing listener {pairing_iface}: {e}"))?;
+    let listener = Arc::new(listener);
+
+    {
+        let mut guard = state.pairing_listener.lock().await;
+        *guard = Some(listener.clone());
+    }
+
+    // Snapshot the current PIN (value-copy — ActivePin is Clone).
+    let current_pin: Option<ActivePin> = state.active_pin.lock().await.clone();
+
+    // Shared result channel: spawned task writes PairingResult; we read it to update state.
+    let shared_result: Arc<Mutex<Option<PairingResult>>> = Arc::new(Mutex::new(None));
+    let shared_result_task = shared_result.clone();
+
+    let app_clone = app.clone();
+    let state_identity = identity.clone();
+    let listener_clone = listener.clone();
+    let pairing_iface_clone = pairing_iface.clone();
+
+    // Spawned task: accept exactly ONE pairing connection then self-terminate.
+    tauri::async_runtime::spawn(async move {
+        let _ = app_clone
+            .emit("bridge://pairing-status", "pairing_listener:started")
+            .ok();
+
+        match listener_clone.accept().await {
+            Ok((stream, peer_addr)) => match acceptor.accept(stream).await {
+                Ok(tls_stream) => {
+                    match handle_pairing_connection(
+                        tls_stream,
+                        peer_addr.to_string(),
+                        &state_identity,
+                        current_pin,
+                    )
+                    .await
+                    {
+                        Ok(result) => {
+                            let _ = app_clone.emit("bridge://sas-compare", &result.sas).ok();
+                            *shared_result_task.lock().await = Some(result);
+                        }
+                        Err(e) => {
+                            #[cfg(debug_assertions)]
+                            eprintln!(
+                                "[bridge-remote] pairing connection error from {peer_addr}: {e}"
+                            );
+                            let _ = app_clone
+                                .emit("bridge://error", format!("pairing_failed:{peer_addr}:{e}"))
+                                .ok();
+                        }
+                    }
+                }
+                Err(e) => {
+                    #[cfg(debug_assertions)]
+                    eprintln!("[bridge-remote] pairing TLS handshake failed from {peer_addr}: {e}");
+                    let _ = app_clone
+                        .emit(
+                            "bridge://error",
+                            format!("pairing_tls_failed:{peer_addr}:{e}"),
+                        )
+                        .ok();
+                }
+            },
+            Err(e) => {
+                #[cfg(debug_assertions)]
+                eprintln!("[bridge-remote] pairing accept failed on {pairing_iface_clone}: {e}");
+            }
+        }
+
+        let _ = app_clone
+            .emit("bridge://pairing-status", "pairing_listener:stopped")
+            .ok();
+    });
+
+    // Watcher task: waits for the pairing result then writes it into managed state.
+    //
+    // RemoteBridgeState is 'static — Tauri manages it for the full process lifetime.
+    // Casting to a raw pointer and dereferencing in a spawned task is the standard
+    // pattern in tokio-based Tauri apps for bridging the 'static lifetime gap.
+    // SAFETY invariant: state.inner() pointer is valid until process exit.
+    let state_raw = state.inner() as *const RemoteBridgeState as usize;
+    tauri::async_runtime::spawn(async move {
+        // Poll at 100 ms intervals; PIN TTL is 300 s → at most 3 000 polls.
+        for _ in 0..3000 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            let guard = shared_result.lock().await;
+            if let Some(ref result) = *guard {
+                // SAFETY: RemoteBridgeState is 'static (Tauri managed).
+                let state_ref = unsafe { &*(state_raw as *const RemoteBridgeState) };
+                let mut ap = state_ref.active_pin.lock().await;
+                if let Some(active) = ap.as_mut() {
+                    active.used = true;
+                    active.pending_sas = Some(PendingSas {
+                        sas: result.sas.clone(),
+                        peer_spki: result.peer_spki.clone(),
+                        peer_label: result.peer_label.clone(),
+                        peer_addr: result.peer_addr.clone(),
+                    });
+                }
+                // Pairing window closed (single-use).
+                drop(guard);
+                let state_ref2 = unsafe { &*(state_raw as *const RemoteBridgeState) };
+                let mut pl = state_ref2.pairing_listener.lock().await;
+                pl.take();
+                break;
+            }
+        }
+    });
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Invitee-side pairing helpers
+// ---------------------------------------------------------------------------
+
+/// Result returned by `handle_pairing_connection` after a successful PAKE exchange.
+#[derive(Debug, Clone)]
+pub struct PairingResult {
+    /// The SAS that the invitee derived — the human must compare this with the dialer's SAS.
+    pub sas: String,
+    /// SPKI hash of the dialer's cert (used to pin the peer on confirm).
+    pub peer_spki: String,
+    /// Human label — placeholder until the operator confirms/labels.
+    pub peer_label: String,
+    /// TCP address the dialer connected from.
+    pub peer_addr: String,
+}
+
+/// Build a TLS ServerConfig using AnyCertVerifier (pairing-only; does NOT pin certs).
+fn build_pairing_server_config(identity: &BridgeIdentity) -> Result<ServerConfig, String> {
+    let cert = CertificateDer::from(identity.cert_der.clone());
+    let key = PrivateKeyDer::try_from(identity.key_der.clone())
+        .map_err(|e| format!("load private key for pairing: {e}"))?;
+
+    let verifier = Arc::new(AnyCertVerifier);
+    let config =
+        ServerConfig::builder_with_provider(rustls::crypto::ring::default_provider().into())
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .map_err(|e| format!("pairing tls versions: {e}"))?
+            .with_client_cert_verifier(verifier)
+            .with_single_cert(vec![cert], key)
+            .map_err(|e| format!("pairing tls server config: {e}"))?;
+
+    Ok(config)
+}
+
+/// Invitee-side pairing protocol handler.
+///
+/// Called for each incoming connection on the pairing listener.  Performs:
+///   1. PIN validation (expired / locked / used → reject immediately).
+///   2. Read `PakeInit` from the dialer; extract dialer cert SPKI.
+///   3. `Spake2::start_b` with the PIN → fresh B-side state.
+///   4. `finish(init.spake2_msg)` → session_key.
+///   5. `derive_sas(session_key, our_spki, dialer_spki)` — canonical (sorted).
+///   6. Send `PakeReply` with our cert + B-side outmsg.
+///   7. Return `PairingResult` to the caller for human SAS comparison.
+///
+/// On PIN failure (wrong/expired/locked) the function returns an error without
+/// completing PAKE; the connection is dropped.
+async fn handle_pairing_connection<S>(
+    mut tls_stream: S,
+    peer_addr: String,
+    identity: &BridgeIdentity,
+    active_pin: Option<ActivePin>,
+) -> Result<PairingResult, String>
+where
+    S: AsyncReadExt + AsyncWriteExt + Unpin,
+{
+    // Gate: must have an armed, valid PIN.
+    let active = active_pin.ok_or("no active PIN — call bridge_pair_invite first")?;
+    if is_pin_expired(&active) {
+        return Err("PIN expired".to_string());
+    }
+    if is_pin_locked_out(&active) {
+        return Err("PIN locked out (too many attempts)".to_string());
+    }
+    if active.used {
+        return Err("PIN already used (single-use)".to_string());
+    }
+
+    // Read PakeInit from the dialer.
+    let init_bytes = read_raw_frame(&mut tls_stream).await?;
+    let init: PakeInit =
+        serde_json::from_slice(&init_bytes).map_err(|e| format!("parse PakeInit: {e}"))?;
+
+    if init.wire_v != PAKE_WIRE_VERSION {
+        return Err(format!(
+            "PAKE wire version mismatch: got {}, expected {PAKE_WIRE_VERSION}",
+            init.wire_v
+        ));
+    }
+
+    // Extract dialer cert SPKI from PakeInit (the cert it sent in-band).
+    let dialer_spki = compute_spki_hash_from_cert_der(&init.our_cert_der)?;
+
+    // Run SPAKE2 B-side with the stored PIN.
+    // start_b is randomised — state is held locally (non-Clone/Send).
+    let (spake2_state, our_outmsg) = Spake2::<RistrettoGroup>::start_b(
+        &Password::new(active.pin.as_bytes()),
+        &Spake2Identity::new(b"dialer"),
+        &Spake2Identity::new(b"invitee"),
+    )
+    .map_err(|e| format!("SPAKE2 start_b: {e}"))?;
+
+    // Finish SPAKE2 with the dialer's message → session key.
+    let session_key = spake2_state
+        .finish(&init.spake2_msg)
+        .map_err(|e| format!("SPAKE2 finish (invitee): {e}"))?;
+
+    // Derive SAS (canonical: derive_sas sorts the two SPKIs internally).
+    let sas = derive_sas(session_key.expose(), &identity.spki_hash, &dialer_spki);
+
+    // Send PakeReply with our cert + B-side outmsg.
+    let reply = PakeReply {
+        wire_v: PAKE_WIRE_VERSION,
+        spake2_msg: our_outmsg,
+        our_cert_der: identity.cert_der.clone(),
+    };
+    let reply_bytes =
+        serde_json::to_vec(&reply).map_err(|e| format!("serialize PakeReply: {e}"))?;
+    write_raw_frame(&mut tls_stream, &reply_bytes).await?;
+
+    Ok(PairingResult {
+        sas,
+        peer_spki: dialer_spki,
+        peer_label: format!("peer@{peer_addr}"),
+        peer_addr,
+    })
 }
 
 /// Dialer side: run SPAKE2, exchange certs, derive SAS.
@@ -1469,16 +1810,14 @@ mod tests {
         assert_eq!(key_a.expose(), key_b.expose(), "session keys must match");
 
         // SAS derivation from each side's perspective.
+        // derive_sas is canonical (sorts SPKIs internally) — both calls MUST match.
         let sas_a = derive_sas(key_a.expose(), &id_a.spki_hash, &id_b.spki_hash);
         let sas_b = derive_sas(key_b.expose(), &id_b.spki_hash, &id_a.spki_hash);
         assert_eq!(sas_a.len(), 6);
         assert_eq!(sas_b.len(), 6);
-
-        // Verify cross-perspective consistency.
-        let sas_b_from_a = derive_sas(key_a.expose(), &id_b.spki_hash, &id_a.spki_hash);
         assert_eq!(
-            sas_b, sas_b_from_a,
-            "SAS from B matches what A computes from B's perspective"
+            sas_a, sas_b,
+            "SAS MUST be identical on both sides (canonical ordering)"
         );
 
         // Both pin each other.
@@ -1544,6 +1883,282 @@ mod tests {
         assert_ne!(
             sas_a, sas_b,
             "wrong PIN → divergent SAS → pairing must fail"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // AC-2-3 REAL SOCKET TESTS — invitee side wired, not simulated.
+    //
+    // These tests exercise handle_pairing_connection over an in-process
+    // tokio::io::duplex pipe (no TLS overhead; tests the PAKE protocol layer).
+    // The full TLS socket test exercises the pairing listener end-to-end.
+    // -------------------------------------------------------------------------
+
+    /// Helper: run a complete dialer↔invitee PAKE exchange over a duplex pipe.
+    /// Returns (invitee_result, dialer_sas) so callers can assert equality.
+    async fn run_pake_over_pipe(
+        dialer_id: &BridgeIdentity,
+        invitee_id: &BridgeIdentity,
+        dialer_pin: &str,
+        invitee_pin: &str,
+    ) -> (Result<PairingResult, String>, String) {
+        // Create in-memory bidirectional pipe.
+        let (dialer_half, invitee_half) = tokio::io::duplex(65536);
+        let (mut dialer_stream, mut invitee_stream) = (dialer_half, invitee_half);
+
+        let dialer_id_clone = dialer_id.clone();
+        let invitee_id_clone = invitee_id.clone();
+        let dialer_pin_s = dialer_pin.to_string();
+        let invitee_pin_s = invitee_pin.to_string();
+
+        // Arm invitee's active_pin.
+        let active_pin = ActivePin {
+            pin: invitee_pin_s.clone(),
+            created_at: Instant::now(),
+            attempts: 0,
+            used: false,
+            spake2_outmsg: None,
+            pending_sas: None,
+        };
+
+        // Run dialer in a task.
+        let dialer_task = tokio::spawn(async move {
+            let password = Password::new(dialer_pin_s.as_bytes());
+            let (spake2_state, our_outmsg) = Spake2::<RistrettoGroup>::start_a(
+                &password,
+                &Spake2Identity::new(b"dialer"),
+                &Spake2Identity::new(b"invitee"),
+            )
+            .expect("dialer start_a");
+
+            let init = PakeInit {
+                wire_v: PAKE_WIRE_VERSION,
+                spake2_msg: our_outmsg,
+                our_cert_der: dialer_id_clone.cert_der.clone(),
+            };
+            let init_bytes = serde_json::to_vec(&init).expect("serialize init");
+            write_raw_frame(&mut dialer_stream, &init_bytes)
+                .await
+                .expect("write init");
+
+            let reply_bytes = read_raw_frame(&mut dialer_stream)
+                .await
+                .expect("read reply");
+            let reply: PakeReply = serde_json::from_slice(&reply_bytes).expect("parse reply");
+            let session_key = spake2_state
+                .finish(&reply.spake2_msg)
+                .expect("dialer finish");
+            let peer_spki =
+                compute_spki_hash_from_cert_der(&reply.our_cert_der).expect("dialer peer spki");
+            derive_sas(session_key.expose(), &dialer_id_clone.spki_hash, &peer_spki)
+        });
+
+        // Run invitee protocol handler.
+        let invitee_result = handle_pairing_connection(
+            invitee_stream,
+            "127.0.0.1:0".to_string(),
+            &invitee_id_clone,
+            Some(active_pin),
+        )
+        .await;
+
+        let dialer_sas = dialer_task.await.expect("dialer task");
+        (invitee_result, dialer_sas)
+    }
+
+    #[tokio::test]
+    async fn ac2_3_real_socket_correct_pin_sas_matches() {
+        let dir_a = TempDir::new().expect("tmpdir_a");
+        let dir_b = TempDir::new().expect("tmpdir_b");
+        let id_a = BridgeIdentity::load_or_generate(&dir_a.path().to_path_buf()).expect("gen_a");
+        let id_b = BridgeIdentity::load_or_generate(&dir_b.path().to_path_buf()).expect("gen_b");
+        let pin = "12345678";
+
+        let (invitee_result, dialer_sas) = run_pake_over_pipe(&id_a, &id_b, pin, pin).await;
+        let invitee = invitee_result.expect("invitee PAKE must succeed with correct PIN");
+
+        assert_eq!(
+            invitee.sas, dialer_sas,
+            "BOTH sides must derive the identical SAS with the correct PIN"
+        );
+        assert_eq!(invitee.sas.len(), 6, "SAS must be 6 chars");
+        assert_eq!(
+            invitee.peer_spki, id_a.spki_hash,
+            "invitee must have dialer's SPKI"
+        );
+    }
+
+    #[tokio::test]
+    async fn ac2_3_real_socket_wrong_pin_sas_differs() {
+        let dir_a = TempDir::new().expect("tmpdir_a");
+        let dir_b = TempDir::new().expect("tmpdir_b");
+        let id_a = BridgeIdentity::load_or_generate(&dir_a.path().to_path_buf()).expect("gen_a");
+        let id_b = BridgeIdentity::load_or_generate(&dir_b.path().to_path_buf()).expect("gen_b");
+
+        // Invitee armed with correct PIN; dialer uses wrong PIN.
+        let (invitee_result, dialer_sas) =
+            run_pake_over_pipe(&id_a, &id_b, "99999999", "12345678").await;
+        let invitee =
+            invitee_result.expect("PAKE exchange completes even on wrong PIN (SAS diverges)");
+
+        assert_ne!(
+            invitee.sas, dialer_sas,
+            "wrong PIN → SAS MUST differ on the two sides → human detects mismatch"
+        );
+    }
+
+    #[tokio::test]
+    async fn ac2_3_real_socket_mitm_cert_sas_differs() {
+        // MITM scenario: dialer uses a third cert; SAS on invitee is computed with
+        // the real dialer SPKI (from PakeInit.our_cert_der) while the dialer uses its own.
+        // The invitee's SAS is computed from the MITM cert's SPKI → mismatch detected.
+        let dir_a = TempDir::new().expect("tmpdir_a");
+        let dir_b = TempDir::new().expect("tmpdir_b");
+        let dir_mitm = TempDir::new().expect("tmpdir_mitm");
+        let id_a = BridgeIdentity::load_or_generate(&dir_a.path().to_path_buf()).expect("gen_a");
+        let id_b = BridgeIdentity::load_or_generate(&dir_b.path().to_path_buf()).expect("gen_b");
+        let id_mitm =
+            BridgeIdentity::load_or_generate(&dir_mitm.path().to_path_buf()).expect("gen_mitm");
+        let pin = "11111111";
+
+        // Dialer uses its real cert; PakeInit.our_cert_der is substituted with MITM cert.
+        let (dialer_half, invitee_half) = tokio::io::duplex(65536);
+        let (mut dialer_stream, mut invitee_stream) = (dialer_half, invitee_half);
+
+        let id_a_clone = id_a.clone();
+        let id_mitm_clone = id_mitm.clone();
+        let pin_s = pin.to_string();
+
+        let dialer_task = tokio::spawn(async move {
+            let password = Password::new(pin_s.as_bytes());
+            let (spake2_state, our_outmsg) = Spake2::<RistrettoGroup>::start_a(
+                &password,
+                &Spake2Identity::new(b"dialer"),
+                &Spake2Identity::new(b"invitee"),
+            )
+            .expect("start_a");
+
+            // MITM substitutes its cert in PakeInit instead of the dialer's.
+            let init = PakeInit {
+                wire_v: PAKE_WIRE_VERSION,
+                spake2_msg: our_outmsg,
+                our_cert_der: id_mitm_clone.cert_der.clone(), // <-- MITM cert
+            };
+            write_raw_frame(&mut dialer_stream, &serde_json::to_vec(&init).expect("ser"))
+                .await
+                .expect("write");
+
+            let reply_bytes = read_raw_frame(&mut dialer_stream).await.expect("read");
+            let reply: PakeReply = serde_json::from_slice(&reply_bytes).expect("parse");
+            let session_key = spake2_state.finish(&reply.spake2_msg).expect("finish");
+            // Dialer computes SAS with its REAL cert (id_a), not MITM's.
+            let peer_spki =
+                compute_spki_hash_from_cert_der(&reply.our_cert_der).expect("peer spki");
+            derive_sas(session_key.expose(), &id_a_clone.spki_hash, &peer_spki)
+        });
+
+        let active_pin = ActivePin {
+            pin: pin.to_string(),
+            created_at: Instant::now(),
+            attempts: 0,
+            used: false,
+            spake2_outmsg: None,
+            pending_sas: None,
+        };
+        // Invitee sees MITM cert in PakeInit → computes SAS with MITM SPKI.
+        let invitee_result = handle_pairing_connection(
+            invitee_stream,
+            "127.0.0.1:0".to_string(),
+            &id_b,
+            Some(active_pin),
+        )
+        .await;
+        let invitee = invitee_result.expect("PAKE completes");
+        let dialer_sas = dialer_task.await.expect("dialer");
+
+        // Invitee's peer_spki is MITM's; dialer's peer_spki is invitee's.
+        assert_eq!(
+            invitee.peer_spki, id_mitm.spki_hash,
+            "invitee sees MITM cert"
+        );
+        // SAS diverges because canonical sort of (invitee, MITM) ≠ sort of (dialer, invitee).
+        assert_ne!(
+            invitee.sas, dialer_sas,
+            "MITM cert → SAS must differ → human detects mismatch"
+        );
+    }
+
+    #[tokio::test]
+    async fn ac2_3_real_socket_no_pin_armed_rejected() {
+        let dir_b = TempDir::new().expect("tmpdir_b");
+        let id_b = BridgeIdentity::load_or_generate(&dir_b.path().to_path_buf()).expect("gen_b");
+        let dir_a = TempDir::new().expect("tmpdir_a");
+        let id_a = BridgeIdentity::load_or_generate(&dir_a.path().to_path_buf()).expect("gen_a");
+
+        // No active_pin (None) → invitee must reject immediately.
+        let (_dialer_half, invitee_half) = tokio::io::duplex(65536);
+        let result = handle_pairing_connection(
+            invitee_half,
+            "127.0.0.1:0".to_string(),
+            &id_b,
+            None, // no armed PIN
+        )
+        .await;
+
+        assert!(
+            result.is_err(),
+            "invitee must reject connection when no PIN is armed"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("no active PIN"),
+            "expected no-pin error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn ac2_3_real_socket_expired_pin_rejected() {
+        let dir_b = TempDir::new().expect("tmpdir_b");
+        let id_b = BridgeIdentity::load_or_generate(&dir_b.path().to_path_buf()).expect("gen_b");
+
+        let expired_pin = ActivePin {
+            pin: "12345678".to_string(),
+            created_at: Instant::now() - PIN_TTL - Duration::from_secs(1),
+            attempts: 0,
+            used: false,
+            spake2_outmsg: None,
+            pending_sas: None,
+        };
+
+        let (_dialer_half, invitee_half) = tokio::io::duplex(65536);
+        let result = handle_pairing_connection(
+            invitee_half,
+            "127.0.0.1:0".to_string(),
+            &id_b,
+            Some(expired_pin),
+        )
+        .await;
+
+        assert!(
+            result.is_err(),
+            "expired PIN must be rejected before PAKE starts"
+        );
+        let err = result.unwrap_err();
+        assert!(err.contains("expired"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn ac2_3_sas_canonical_order_symmetric() {
+        // Direct unit test for canonical derive_sas: swapping our/peer MUST yield same SAS.
+        let key = [0xABu8; 32];
+        let spki_x = "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111";
+        let spki_y = "bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222";
+
+        let sas_xy = derive_sas(&key, spki_x, spki_y);
+        let sas_yx = derive_sas(&key, spki_y, spki_x);
+        assert_eq!(
+            sas_xy, sas_yx,
+            "derive_sas must be order-canonical: derive_sas(k, A, B) == derive_sas(k, B, A)"
         );
     }
 

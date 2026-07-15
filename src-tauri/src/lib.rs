@@ -185,6 +185,7 @@ pub fn run() {
             bridge::bridge_approve,
             bridge_remote::bridge_remote_listen,
             bridge_remote::bridge_pair_invite,
+            bridge_remote::bridge_pair_start_listener,
             bridge_remote::bridge_pair_connect,
             bridge_remote::bridge_pair_confirm_sas,
             bridge_remote::bridge_list_peers,
