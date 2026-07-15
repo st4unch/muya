@@ -47,6 +47,8 @@ hkdf = "0.13.0"
 rand = "0.9"
 tauri-plugin-updater = "2.10.1"
 tauri-plugin-process = "2.3.1"
+# Faz 3: sandbox TempDir for task execution cwd isolation
+tempfile = "3.27.0"
 
 [dev-dependencies]
 tempfile = "3.27.0"

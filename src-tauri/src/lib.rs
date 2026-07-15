@@ -23,6 +23,7 @@ fn get_startup_files() -> Vec<String> {
 
 mod agents;
 mod bridge;
+mod bridge_exec;
 mod bridge_remote;
 mod fs;
 mod history;
@@ -137,6 +138,7 @@ pub fn run() {
         .manage(vault::VaultMcpManager::default())
         .manage(bridge::BridgeState::default())
         .manage(bridge_remote::RemoteBridgeState::default())
+        .manage(bridge_exec::ExecState::default())
         .invoke_handler(tauri::generate_handler![
             agents::list_agent_sessions,
             agents::stop_agent,
@@ -189,7 +191,12 @@ pub fn run() {
             bridge_remote::bridge_pair_connect,
             bridge_remote::bridge_pair_confirm_sas,
             bridge_remote::bridge_list_peers,
-            bridge_remote::bridge_revoke_peer
+            bridge_remote::bridge_revoke_peer,
+            bridge_exec::bridge_set_capability,
+            bridge_exec::bridge_set_auto_run,
+            bridge_exec::bridge_audit_log,
+            bridge_exec::bridge_execute_task,
+            bridge_exec::bridge_fan_out
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
