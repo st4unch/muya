@@ -6,14 +6,18 @@ import {
 } from "lucide-react";
 
 // ─── Types mirroring the Rust bridge command surface ────────────────────────
+// NOTE: the Rust structs (PinnedPeer, InboundRequest) derive Serialize WITHOUT
+// #[serde(rename_all = "camelCase")], so Tauri returns snake_case keys. Tauri v2
+// only camelCase→snake_case-maps command ARGUMENTS, not return-struct fields —
+// so these interfaces MUST be snake_case to match the wire shape.
 interface PinnedPeer {
-  spkiHash: string;
+  spki_hash: string;
   label: string;
-  lastAddr: string | null;
-  pairedAt: number;
+  last_addr: string | null;
+  paired_at: number;
 }
 interface InboundRequest {
-  reqId: string;
+  req_id: string;
   peer: string;
   capability: string;
   kind: string;
@@ -56,7 +60,7 @@ export default function ChatView() {
       const peers = await invoke<PinnedPeer[]>("bridge_list_peers");
       setConns((prev) => {
         const remotes: Conn[] = peers.map((p) => ({
-          id: p.spkiHash, kind: "remote", label: p.label, addr: p.lastAddr,
+          id: p.spki_hash, kind: "remote", label: p.label, addr: p.last_addr,
         }));
         return [LOCAL_CONN, ...remotes];
       });
@@ -77,7 +81,7 @@ export default function ChatView() {
             const key = r.peer && r.peer !== "local" ? r.peer : "local";
             const text = typeof r.payload === "string" ? r.payload : JSON.stringify(r.payload);
             const arr = next[key] ? [...next[key]] : [];
-            arr.push({ id: r.reqId, from: "peer", text, ts: Date.now() });
+            arr.push({ id: r.req_id, from: "peer", text, ts: Date.now() });
             next[key] = arr;
           }
           return next;
@@ -87,7 +91,7 @@ export default function ChatView() {
     return () => clearInterval(t);
   }, []);
 
-  useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }); }, [messages.length, activeId]);
+  useEffect(() => { scrollRef.current?.scrollTo?.({ top: scrollRef.current.scrollHeight }); }, [messages.length, activeId]);
 
   const send = async () => {
     const text = draft.trim();
