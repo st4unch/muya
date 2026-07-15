@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, type MouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Plus, X, Wifi, HardDrive, Send, Radio, Shield, Bot, User,
-  Circle, RefreshCw, KeyRound,
+  Circle, RefreshCw, KeyRound, Check,
 } from "lucide-react";
 
 // ─── Types mirroring the Rust bridge command surface ────────────────────────
@@ -49,6 +49,16 @@ export default function ChatView() {
   const [addOpen, setAddOpen] = useState(false);
   const [listening, setListening] = useState(false);
   const [invitePin, setInvitePin] = useState<string | null>(null);
+  const [pinCopied, setPinCopied] = useState(false);
+
+  const copyPin = useCallback((e?: MouseEvent) => {
+    e?.preventDefault();
+    if (!invitePin) return;
+    void navigator.clipboard.writeText(invitePin).then(() => {
+      setPinCopied(true);
+      setTimeout(() => setPinCopied(false), 1400);
+    });
+  }, [invitePin]);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const active = conns.find((c) => c.id === activeId) ?? LOCAL_CONN;
@@ -192,10 +202,18 @@ export default function ChatView() {
             <Radio className={`h-3 w-3 ${listening ? "animate-pulse" : ""}`} /> {listening ? "Listening for peers" : "Accept connections"}
           </button>
           {invitePin && (
-            <div className="text-center bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800 rounded p-1.5">
-              <div className="text-[8px] font-mono uppercase text-violet-500 flex items-center justify-center gap-1"><KeyRound className="h-2.5 w-2.5" /> Pairing PIN</div>
+            <button
+              type="button"
+              onClick={copyPin}
+              onContextMenu={copyPin}
+              title="Kopyalamak için tıkla (veya sağ tık)"
+              className="w-full text-center bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800 rounded p-1.5 cursor-pointer hover:bg-violet-100 dark:hover:bg-violet-900/40 transition-colors"
+            >
+              <div className="text-[8px] font-mono uppercase text-violet-500 flex items-center justify-center gap-1">
+                {pinCopied ? <><Check className="h-2.5 w-2.5" /> Copied</> : <><KeyRound className="h-2.5 w-2.5" /> Pairing PIN</>}
+              </div>
               <div className="text-lg font-mono font-bold tracking-widest text-violet-700 dark:text-violet-300">{invitePin}</div>
-            </div>
+            </button>
           )}
         </div>
       </aside>

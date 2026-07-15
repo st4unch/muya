@@ -422,8 +422,7 @@ pub async fn bridge_send(
         return Err(format!("unknown kind: {kind}"));
     }
 
-    // Faz 1 stub: construct the envelope and log it (Faz 2 will dial the peer).
-    let _env = Envelope {
+    let env = Envelope {
         v: 1,
         envelope_type: EnvelopeType::Request,
         id: req_id.clone(),
@@ -436,7 +435,23 @@ pub async fn bridge_send(
         r#final: true,
     };
 
-    // In Faz 1 we don't have a dialer — return the req_id so callers can track it.
+    // Dial the local bridge socket and deliver the frame. The peer side must
+    // have "Accept connections" enabled (bridge_local_listen(true)) — its accept
+    // loop enqueues this into its broker queue. (Same window = loopback echo.)
+    let path = socket_path()?;
+    let mut stream = UnixStream::connect(&path).await.map_err(|e| {
+        format!(
+            "no local listener at {path:?} — enable 'Accept connections' on the peer first: {e}"
+        )
+    })?;
+    write_frame(&mut stream, &env).await?;
+    // Best-effort read of the ack response so delivery is confirmed; don't hang.
+    let _ack = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        read_frame(&mut stream),
+    )
+    .await;
+
     Ok(req_id)
 }
 
