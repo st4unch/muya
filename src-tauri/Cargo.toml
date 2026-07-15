@@ -28,7 +28,10 @@ sysinfo = "0.38.4"
 notify = "8.2.0"
 reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false }
 scraper = "0.19"
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "process", "io-util", "time", "sync"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "process", "io-util", "time", "sync", "net", "macros"] }
+rustls = "0.23"
+tokio-rustls = "0.26"
+dirs-next = "2"
 tauri-plugin-updater = "2.10.1"
 tauri-plugin-process = "2.3.1"
 
