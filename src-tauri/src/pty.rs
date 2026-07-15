@@ -207,6 +207,15 @@ pub fn pty_resize(
         .map_err(|e| format!("resize failed: {e}"))
 }
 
+/// Kill every active PTY session. Called before process exit so no shells are orphaned.
+pub fn kill_all(manager: &PtyManager) {
+    if let Ok(mut sessions) = manager.sessions.lock() {
+        for (_, mut h) in sessions.drain() {
+            let _ = h.child.kill();
+        }
+    }
+}
+
 /// Kill a PTY's child process and forget the session.
 #[tauri::command]
 pub fn pty_kill(state: State<PtyManager>, id: String) -> Result<(), String> {

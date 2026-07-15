@@ -51,12 +51,14 @@ export default function ScheduledPromptModal({
   const [timeVal, setTimeVal] = useState(defaultTime);
   const [dateVal, setDateVal] = useState(defaultDate);
   const [flashKey, setFlashKey] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
 
   // Refresh default time/date each time the modal opens so the default is never stale.
   useEffect(() => {
     if (open) {
       setTimeVal(defaultTime());
       setDateVal(defaultDate());
+      setFormError(null);
     }
   }, [open]);
 
@@ -70,10 +72,22 @@ export default function ScheduledPromptModal({
     setTimeout(() => setFlashKey(null), 350);
   };
 
+  // BUG FIX: this used to silently no-op when the picked time had already
+  // elapsed (e.g. the 5-min default expires while the user is still typing
+  // the prompt) — the click looked like it did nothing. Now it surfaces a
+  // visible error instead of failing invisibly.
   const handleAdd = () => {
     if (!prompt.trim() || selectedKeys.length === 0) return;
     const scheduledAt = combineToEpoch(dateVal, timeVal);
-    if (isNaN(scheduledAt) || scheduledAt <= Date.now()) return;
+    if (isNaN(scheduledAt)) {
+      setFormError("Geçersiz tarih/saat.");
+      return;
+    }
+    if (scheduledAt <= Date.now()) {
+      setFormError("Seçilen zaman geçmişte kaldı — lütfen zamanı güncelleyin.");
+      return;
+    }
+    setFormError(null);
     onAdd({ prompt: prompt.trim(), terminalKeys: selectedKeys, scheduledAt });
     setPrompt("");
     setSelectedKeys([]);
@@ -161,13 +175,13 @@ export default function ScheduledPromptModal({
               type="time"
               step="1"
               value={timeVal}
-              onChange={e => setTimeVal(e.target.value)}
+              onChange={e => { setTimeVal(e.target.value); setFormError(null); }}
               className="w-full px-3 py-2 text-sm font-mono tracking-widest rounded border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 text-neutral-800 dark:text-neutral-200 focus:outline-none focus:border-indigo-400 dark:focus:border-indigo-600 mb-1.5"
             />
             <input
               type="date"
               value={dateVal}
-              onChange={e => setDateVal(e.target.value)}
+              onChange={e => { setDateVal(e.target.value); setFormError(null); }}
               className="w-full px-3 py-1.5 text-xs font-mono rounded border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 text-neutral-800 dark:text-neutral-200 focus:outline-none focus:border-indigo-400 dark:focus:border-indigo-600"
             />
           </div>
@@ -181,6 +195,9 @@ export default function ScheduledPromptModal({
           >
             <Plus className="h-3.5 w-3.5" /> Schedule
           </button>
+          {formError && (
+            <p className="text-[11px] font-mono text-rose-600 dark:text-rose-400 -mt-2">{formError}</p>
+          )}
 
           {/* Pending list */}
           {pending.length > 0 && (
