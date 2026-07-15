@@ -62,6 +62,7 @@ import NewAgentModal, { type NewAgentSpec } from "./components/NewAgentModal";
 import QueuePage from "./components/QueuePage";
 import ResourcesPage from "./components/ResourcesPage";
 import PrdBoard from "./components/PrdBoard";
+import ChatView from "./components/ChatView";
 import VaultConfigPanel from "./components/VaultConfigPanel";
 import ScheduledPromptModal, { type ScheduledPrompt } from "./components/ScheduledPromptModal";
 import { buildAgentCommand } from "./lib/agent";
@@ -1379,38 +1380,7 @@ export const loginHandler = async (req, res) => {
           }}
         />
       )}
-      {view === "chat" && (
-        <div className="flex-1 flex flex-col overflow-hidden bg-white dark:bg-[#1e1f23] font-mono text-[12px]">
-          {/* Remote section */}
-          <div className="flex-1 flex flex-col border-b border-neutral-200 dark:border-[#3d3f44] overflow-hidden">
-            <div className="px-4 py-2 bg-neutral-50 dark:bg-[#25272b] border-b border-neutral-200 dark:border-[#3d3f44] flex items-center gap-2">
-              <span className="text-[10px] tracking-widest uppercase font-bold text-neutral-500 dark:text-neutral-400">
-                Remote
-              </span>
-              <span className="text-[10px] text-neutral-400 dark:text-neutral-500">
-                — Claude-to-Claude bridge (not yet connected)
-              </span>
-            </div>
-            <div className="flex-1 flex items-center justify-center text-neutral-400 dark:text-neutral-600">
-              Remote bridge coming in Faz 1
-            </div>
-          </div>
-          {/* Local section */}
-          <div className="flex-1 flex flex-col overflow-hidden">
-            <div className="px-4 py-2 bg-neutral-50 dark:bg-[#25272b] border-b border-neutral-200 dark:border-[#3d3f44] flex items-center gap-2">
-              <span className="text-[10px] tracking-widest uppercase font-bold text-neutral-500 dark:text-neutral-400">
-                Local
-              </span>
-              <span className="text-[10px] text-neutral-400 dark:text-neutral-500">
-                — local agent sessions
-              </span>
-            </div>
-            <div className="flex-1 flex items-center justify-center text-neutral-400 dark:text-neutral-600">
-              Local chat UI coming in Faz 1
-            </div>
-          </div>
-        </div>
-      )}
+      {view === "chat" && <ChatView />}
       {/* Control plane — ALWAYS mounted; hidden (not unmounted) on other views so the
           terminal PTYs and any running sessions survive page navigation. xterm guards
           0×0 resize (Terminal.tsx), so display:none is safe. */}
