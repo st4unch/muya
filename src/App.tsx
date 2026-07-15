@@ -339,7 +339,7 @@ export default function App() {
   };
 
   // Top-level view switch: the IDE control plane vs the full Sessions page.
-  const [view, setView] = useState<"control" | "sessions" | "queue" | "tools" | "prd">("control");
+  const [view, setView] = useState<"control" | "sessions" | "queue" | "tools" | "prd" | "chat">("control");
   // Right panel tab: branch matrix vs markdown viewer.
   const [rightTab, setRightTab] = useState<"branch" | "markdown" | "sessions">("branch");
   // Markdown file currently shown in the right panel viewer.
@@ -1245,6 +1245,17 @@ export const loginHandler = async (req, res) => {
           >
             Kanban
           </button>
+          <button
+            type="button"
+            onClick={() => setView("chat")}
+            className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
+              view === "chat"
+                ? "bg-indigo-600 dark:bg-indigo-500 text-white font-bold border border-indigo-700 dark:border-indigo-400 shadow-sm"
+                : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
+            }`}
+          >
+            Chat
+          </button>
         </div>
 
         {/* System telemetry ticks right side */}
@@ -1367,6 +1378,38 @@ export const loginHandler = async (req, res) => {
             setView("control");
           }}
         />
+      )}
+      {view === "chat" && (
+        <div className="flex-1 flex flex-col overflow-hidden bg-white dark:bg-[#1e1f23] font-mono text-[12px]">
+          {/* Remote section */}
+          <div className="flex-1 flex flex-col border-b border-neutral-200 dark:border-[#3d3f44] overflow-hidden">
+            <div className="px-4 py-2 bg-neutral-50 dark:bg-[#25272b] border-b border-neutral-200 dark:border-[#3d3f44] flex items-center gap-2">
+              <span className="text-[10px] tracking-widest uppercase font-bold text-neutral-500 dark:text-neutral-400">
+                Remote
+              </span>
+              <span className="text-[10px] text-neutral-400 dark:text-neutral-500">
+                — Claude-to-Claude bridge (not yet connected)
+              </span>
+            </div>
+            <div className="flex-1 flex items-center justify-center text-neutral-400 dark:text-neutral-600">
+              Remote bridge coming in Faz 1
+            </div>
+          </div>
+          {/* Local section */}
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <div className="px-4 py-2 bg-neutral-50 dark:bg-[#25272b] border-b border-neutral-200 dark:border-[#3d3f44] flex items-center gap-2">
+              <span className="text-[10px] tracking-widest uppercase font-bold text-neutral-500 dark:text-neutral-400">
+                Local
+              </span>
+              <span className="text-[10px] text-neutral-400 dark:text-neutral-500">
+                — local agent sessions
+              </span>
+            </div>
+            <div className="flex-1 flex items-center justify-center text-neutral-400 dark:text-neutral-600">
+              Local chat UI coming in Faz 1
+            </div>
+          </div>
+        </div>
       )}
       {/* Control plane — ALWAYS mounted; hidden (not unmounted) on other views so the
           terminal PTYs and any running sessions survive page navigation. xterm guards
