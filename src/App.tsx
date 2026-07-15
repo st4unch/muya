@@ -410,6 +410,10 @@ export default function App() {
   // Collapsible side panels.
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
+  // Hover-reveal: while the right panel is collapsed, nudging the mouse to
+  // the far right edge shows a floating Sessions flyout so terminals can be
+  // switched without permanently reopening the panel.
+  const [rightPeek, setRightPeek] = useState(false);
 
   // Drag-to-resize panels. Saves widths to localStorage when drag ends.
   const startDragPanel = (
@@ -1904,6 +1908,64 @@ export const loginHandler = async (req, res) => {
             onMouseDown={(e) => startDragPanel("right", e.clientX, rightWidth)}
             className="w-1 shrink-0 cursor-col-resize hover:bg-indigo-400/40 active:bg-indigo-400/60 transition-colors z-10"
           />
+        )}
+
+        {/* Hover-reveal Sessions flyout — right panel is collapsed, but nudging
+            the mouse to the far right edge lets you pick a session without
+            permanently reopening the panel. */}
+        {!rightOpen && (
+          <div
+            className="fixed top-10 right-0 bottom-7 z-40 flex"
+            onMouseEnter={() => setRightPeek(true)}
+            onMouseLeave={() => setRightPeek(false)}
+          >
+            {rightPeek && (
+              <aside className="w-[280px] bg-white dark:bg-[#25272b] border-l border-neutral-200 dark:border-[#3d3f44] shadow-2xl flex flex-col overflow-hidden">
+                <div className="px-3 py-2 border-b border-neutral-200 dark:border-[#3d3f44] bg-neutral-50 dark:bg-[#1e1f23] flex items-center justify-between shrink-0">
+                  <span className="text-[9px] font-mono tracking-wider uppercase font-bold text-neutral-500 dark:text-neutral-400 flex items-center gap-1">
+                    <TerminalSquare className="h-3 w-3" /> Sessions
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => { setRightOpen(true); setRightTab("sessions"); setRightPeek(false); }}
+                    title="Pin panel open"
+                    className="text-neutral-400 hover:text-indigo-500 dark:hover:text-indigo-400 cursor-pointer"
+                  >
+                    <PanelRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto">
+                  <SessionsPanel
+                    terminals={openTerminals.filter(t => t.kind === "terminal")}
+                    activeKey={activeTerminalKey}
+                    terminalPtyIds={terminalPtyIds}
+                    renamingKey={renamingKey}
+                    renameValue={renameValue}
+                    setRenamingKey={setRenamingKey}
+                    setRenameValue={setRenameValue}
+                    onActivate={(key) => { setActiveTerminalKey(key); setRightPeek(false); }}
+                    onClose={(key) => { void closeTerminal(key); }}
+                    onReorder={(from, to) => {
+                      setOpenTerminals(prev => {
+                        const next = [...prev];
+                        const fi = next.findIndex(t => t.key === from);
+                        if (fi === -1) return prev;
+                        const [item] = next.splice(fi, 1);
+                        const ti = next.findIndex(t => t.key === to);
+                        if (ti === -1) { next.push(item); return next; }
+                        next.splice(ti, 0, item);
+                        return next;
+                      });
+                    }}
+                    onRename={(key, name) => setOpenTerminals(prev => prev.map(t => t.key === key ? { ...t, name } : t))}
+                    onNewTerminal={() => setNewAgentOpen(true)}
+                  />
+                </div>
+              </aside>
+            )}
+            {/* Thin always-present edge sliver — hovering here triggers the reveal above. */}
+            <div className="w-2 h-full" />
+          </div>
         )}
 
         {rightOpen && (
