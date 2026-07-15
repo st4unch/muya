@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { X, Sparkles, Puzzle, Bot, Zap, Plug } from "lucide-react";
 
@@ -100,6 +100,17 @@ export default function CreateWithClaudeModal({
   const [wrapperPrompt, setWrapperPrompt] = useState(WRAPPER_PROMPTS.skill);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  // Esc closes the modal; a stray click outside it does NOT (this form is
+  // too easy to lose to a misclick — Esc is the deliberate-close gesture).
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
 
   if (!open) return null;
 

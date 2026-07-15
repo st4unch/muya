@@ -65,4 +65,27 @@ describe("NewAgentModal", () => {
       expect.objectContaining({ workspace: "/Users/staunch/some/other/path" })
     );
   });
+
+  // BUG REGRESSION: reported behavior was inverted — Esc did nothing, but a
+  // stray click outside the modal closed it (and lost the filled-out form).
+  it("BUG REGRESSION: Escape closes the modal", () => {
+    const onClose = vi.fn();
+    render(
+      <NewAgentModal open onClose={onClose} workspaces={["/w/proj"]} onLaunch={vi.fn()} />
+    );
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("BUG REGRESSION: clicking the backdrop does NOT close the modal", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    const { container } = render(
+      <NewAgentModal open onClose={onClose} workspaces={["/w/proj"]} onLaunch={vi.fn()} />
+    );
+    // The backdrop is the outermost fixed-inset overlay div.
+    const backdrop = container.firstElementChild as HTMLElement;
+    await user.click(backdrop);
+    expect(onClose).not.toHaveBeenCalled();
+  });
 });

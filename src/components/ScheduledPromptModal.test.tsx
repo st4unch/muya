@@ -216,4 +216,38 @@ describe("ScheduledPromptModal", () => {
     expect(timeInput.value).toMatch(/^\d{2}:\d{2}:\d{2}$/);
     expect(dateInput.value).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
+
+  // BUG REGRESSION: reported behavior was inverted — Esc did nothing, but a
+  // stray click outside the modal closed it (and lost the filled-out form).
+  it("BUG REGRESSION: Escape closes the modal", () => {
+    render(
+      <ScheduledPromptModal
+        open
+        onClose={onClose}
+        terminals={TERMINALS}
+        scheduled={[]}
+        onAdd={onAdd}
+        onCancel={onCancel}
+      />
+    );
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("BUG REGRESSION: clicking the backdrop does NOT close the modal", async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <ScheduledPromptModal
+        open
+        onClose={onClose}
+        terminals={TERMINALS}
+        scheduled={[]}
+        onAdd={onAdd}
+        onCancel={onCancel}
+      />
+    );
+    const backdrop = container.firstElementChild as HTMLElement;
+    await user.click(backdrop);
+    expect(onClose).not.toHaveBeenCalled();
+  });
 });

@@ -51,6 +51,18 @@ export default function NewAgentModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  // Esc closes the modal; a stray click outside it does NOT (a multi-field
+  // form like this is too easy to lose to a misclick — Esc is the
+  // deliberate-close gesture).
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
   if (!open) return null;
 
   // workspace state may be "" if workspaces weren't loaded when this component first mounted
@@ -100,14 +112,8 @@ export default function NewAgentModal({
     "text-[10px] font-mono uppercase tracking-wider font-bold text-neutral-500 dark:text-neutral-400";
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6"
-      onClick={onClose}
-    >
-      <div
-        className="w-[460px] max-h-[85vh] overflow-y-auto bg-white dark:bg-[#25272b] rounded-xl shadow-2xl border border-neutral-200 dark:border-neutral-700"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
+      <div className="w-[460px] max-h-[85vh] overflow-y-auto bg-white dark:bg-[#25272b] rounded-xl shadow-2xl border border-neutral-200 dark:border-neutral-700">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200 dark:border-neutral-700">
           <h2 className="text-sm font-display font-bold text-neutral-800 dark:text-neutral-200">
