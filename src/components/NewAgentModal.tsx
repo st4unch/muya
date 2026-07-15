@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { X, Plus, FileText } from "lucide-react";
+import { X, Plus, FileText, FolderSearch } from "lucide-react";
 
 export interface NewAgentSpec {
   type: "claude" | "terminal";
@@ -75,7 +75,7 @@ export default function NewAgentModal({
     try {
       await onLaunch({
         type: isBlank ? "terminal" : "claude",
-        workspace: isBlank ? defaultWs : activeWorkspace,
+        workspace: isBlank ? defaultWs : activeWorkspace.trim(),
         branch,
         title,
         command: commandText,
@@ -134,24 +134,37 @@ export default function NewAgentModal({
             />
           </div>
 
-          {/* Workspace — only for Claude commands */}
+          {/* Workspace — only for Claude commands. Free-text input (with a
+              datalist of known workspaces + a folder-picker) so a path that
+              isn't already tracked can be typed/pasted directly. */}
           {!isBlank && (
             <div className="space-y-1">
               <span className={lbl}>Workspace</span>
-              <select
-                value={activeWorkspace}
-                onChange={(e) => setWorkspace(e.target.value)}
-                className={field}
-              >
-                {workspaces.length === 0 && (
-                  <option value="">Add a workspace first (+ Workspace)</option>
-                )}
-                {workspaces.map((w) => (
-                  <option key={w} value={w}>
-                    {w}
-                  </option>
-                ))}
-              </select>
+              <div className="flex gap-1">
+                <input
+                  list="new-agent-workspace-options"
+                  value={activeWorkspace}
+                  onChange={(e) => setWorkspace(e.target.value)}
+                  placeholder={workspaces.length === 0 ? "Add a workspace first, or type/paste a path" : "/path/to/project"}
+                  className={field + " flex-1 min-w-0"}
+                />
+                <datalist id="new-agent-workspace-options">
+                  {workspaces.map((w) => (
+                    <option key={w} value={w} />
+                  ))}
+                </datalist>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const sel = await openDialog({ directory: true, multiple: false, title: "Select workspace folder" });
+                    if (typeof sel === "string") setWorkspace(sel);
+                  }}
+                  title="Browse…"
+                  className="shrink-0 px-2 rounded border border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:text-indigo-500 dark:hover:text-indigo-400 cursor-pointer transition-colors"
+                >
+                  <FolderSearch className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </div>
           )}
 

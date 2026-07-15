@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 // The modal imports the dialog plugin at module load; stub it.
@@ -25,13 +25,16 @@ describe("NewAgentModal", () => {
       <NewAgentModal open onClose={onClose} workspaces={["/w/proj"]} onLaunch={onLaunch} />
     );
 
-    // default command is the dangerous-skip one (command preset select shows it)
-    const comboboxes = screen.getAllByRole("combobox");
-    // comboboxes[0] = workspace select, comboboxes[1] = command preset select
-    expect(comboboxes.length).toBe(2);
-    expect(comboboxes[1]).toHaveDisplayValue("claude --dangerously-skip-permissions");
+    // default command is the dangerous-skip one (command preset select shows it).
+    // Note: an <input list=…> (workspace, datalist-backed) also reports role
+    // "combobox" per HTML5 semantics, alongside the actual <select> — filter
+    // to the real <select> element rather than assuming array order/length.
+    const commandSelect = screen.getAllByRole("combobox").find((el) => el.tagName === "SELECT");
+    expect(commandSelect).toHaveDisplayValue("claude --dangerously-skip-permissions");
 
-    await user.selectOptions(comboboxes[0], "/w/proj");
+    // Workspace input is pre-filled with the first known workspace.
+    expect(screen.getByPlaceholderText("/path/to/project")).toHaveValue("/w/proj");
+
     await user.type(screen.getByPlaceholderText("feature/my-task"), "feature/x");
     await user.click(screen.getByRole("button", { name: /launch/i }));
 
@@ -44,6 +47,22 @@ describe("NewAgentModal", () => {
         prompt: "",
         files: [],
       })
+    );
+  });
+
+  it("accepts a manually typed workspace path not in the known list", async () => {
+    const user = userEvent.setup();
+    const onLaunch = vi.fn().mockResolvedValue(undefined);
+    render(
+      <NewAgentModal open onClose={() => {}} workspaces={["/w/proj"]} onLaunch={onLaunch} />
+    );
+
+    const input = screen.getByPlaceholderText("/path/to/project");
+    fireEvent.change(input, { target: { value: "/Users/staunch/some/other/path" } });
+    await user.click(screen.getByRole("button", { name: /launch/i }));
+
+    expect(onLaunch).toHaveBeenCalledWith(
+      expect.objectContaining({ workspace: "/Users/staunch/some/other/path" })
     );
   });
 });
