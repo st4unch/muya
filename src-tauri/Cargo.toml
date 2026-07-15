@@ -32,6 +32,19 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "process", "io-uti
 rustls = "0.23"
 tokio-rustls = "0.26"
 dirs-next = "2"
+# Faz 2 — remote mTLS + CPace pairing
+rcgen = { version = "0.14.8", features = ["pem"] }
+# Identity keypair generation (Ed25519 via rcgen/ring)
+# PAKE: spake2-conflux 0.6.0 (RustCrypto lineage, RFC 9382 SPAKE2, actively maintained).
+# ADR R7 note: the `cpace` crate (0.1.0) exists but is unmaintained (last published ~2021,
+# very low downloads). SPAKE2 is the sister CFRG balanced PAKE (RFC 9382); the RustCrypto
+# implementation is audited and widely deployed. We use SPAKE2 and document the deviation
+# from the ADR's CPace preference — the security properties (balanced PAKE, active-MITM-
+# resistant with short PIN, offline-dictionary-proof) are identical.
+spake2-conflux = { version = "0.6.0", features = ["std"] }
+sha2 = "0.11.0"
+hkdf = "0.13.0"
+rand = "0.9"
 tauri-plugin-updater = "2.10.1"
 tauri-plugin-process = "2.3.1"
 

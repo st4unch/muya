@@ -23,6 +23,7 @@ fn get_startup_files() -> Vec<String> {
 
 mod agents;
 mod bridge;
+mod bridge_remote;
 mod fs;
 mod history;
 mod metrics;
@@ -135,6 +136,7 @@ pub fn run() {
         .manage(watcher::WatchState::default())
         .manage(vault::VaultMcpManager::default())
         .manage(bridge::BridgeState::default())
+        .manage(bridge_remote::RemoteBridgeState::default())
         .invoke_handler(tauri::generate_handler![
             agents::list_agent_sessions,
             agents::stop_agent,
@@ -180,7 +182,13 @@ pub fn run() {
             bridge::bridge_local_listen,
             bridge::bridge_poll_inbound,
             bridge::bridge_send,
-            bridge::bridge_approve
+            bridge::bridge_approve,
+            bridge_remote::bridge_remote_listen,
+            bridge_remote::bridge_pair_invite,
+            bridge_remote::bridge_pair_connect,
+            bridge_remote::bridge_pair_confirm_sas,
+            bridge_remote::bridge_list_peers,
+            bridge_remote::bridge_revoke_peer
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
