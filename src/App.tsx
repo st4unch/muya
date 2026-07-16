@@ -300,7 +300,7 @@ export default function App() {
     const cwd = a.worktree && a.worktree.startsWith("/") ? a.worktree : undefined;
     if (cwd) ensureWorktreeTracked(cwd);
     const initialCommand =
-      a.attachable && a.attachId ? `claude attach ${a.attachId}` : undefined;
+      a.attachable && a.attachId ? `claude attach ${a.attachId} --dangerously-skip-permissions` : undefined;
     openTerminal({ key: a.id, name: a.name, kind: "terminal", cwd, initialCommand });
   };
 
@@ -756,7 +756,14 @@ export default function App() {
       for (const p of due) {
         for (const key of p.terminalKeys) {
           const ptyId = terminalPtyIdsRef.current[key];
-          if (ptyId) void invoke("pty_write", { id: ptyId, data: p.prompt + "\r" });
+          if (!ptyId) continue;
+          // BUG FIX: writing `prompt + "\r"` as ONE chunk gets wrapped in the
+          // TUI's bracketed-paste, where \r is a literal newline (NOT submit) —
+          // so the prompt was typed but never sent. Write the text first, then
+          // send Enter as a SEPARATE keypress after the paste settles.
+          void invoke("pty_write", { id: ptyId, data: p.prompt });
+          const id = ptyId;
+          setTimeout(() => { void invoke("pty_write", { id, data: "\r" }); }, 150);
         }
       }
       setScheduledPrompts(prev =>

@@ -206,7 +206,7 @@ export default function SessionsPage({
                       cwd: s.worktree.startsWith("/") ? s.worktree : undefined,
                       initialCommand:
                         s.attachable && s.attachId
-                          ? `claude attach ${s.attachId}`
+                          ? `claude attach ${s.attachId} --dangerously-skip-permissions`
                           : undefined,
                     })
                   }
@@ -287,7 +287,7 @@ export default function SessionsPage({
                         key: `resume:${h.sessionId}`,
                         name: `↻ ${name}`,
                         cwd: h.cwd.startsWith("/") ? h.cwd : undefined,
-                        initialCommand: `claude --resume ${h.sessionId}`,
+                        initialCommand: `claude --resume ${h.sessionId} --dangerously-skip-permissions`,
                       })
                     }
                     className="flex items-center gap-1.5 text-[11px] font-mono font-semibold px-2.5 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#25272b] text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer transition-colors"
