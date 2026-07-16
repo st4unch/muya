@@ -508,6 +508,53 @@ pub fn git_status(root: String) -> Result<Vec<(String, String)>, String> {
     Ok(result)
 }
 
+/// Resolve a (possibly `~`- or cwd-relative) path and report what it is.
+/// Used by the terminal path-link provider to linkify only real paths.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PathKind {
+    /// Absolute, `~`/relative-expanded path.
+    pub resolved: String,
+    /// "file" | "dir" | "none"
+    pub kind: String,
+}
+
+/// Expand `~`, join a relative path onto `cwd`, and classify the target.
+#[tauri::command(async)]
+pub fn resolve_path_kind(path: String, cwd: Option<String>) -> PathKind {
+    let raw = path.trim();
+    let expanded: String = if raw == "~" {
+        std::env::var("HOME").unwrap_or_else(|_| raw.to_string())
+    } else if let Some(rest) = raw.strip_prefix("~/") {
+        std::env::var("HOME")
+            .map(|h| format!("{h}/{rest}"))
+            .unwrap_or_else(|_| raw.to_string())
+    } else {
+        raw.to_string()
+    };
+
+    let p = Path::new(&expanded);
+    let resolved_pb = if p.is_absolute() {
+        p.to_path_buf()
+    } else if let Some(c) = cwd.as_deref().filter(|c| !c.is_empty()) {
+        Path::new(c).join(&expanded)
+    } else {
+        p.to_path_buf()
+    };
+
+    let kind = if resolved_pb.is_dir() {
+        "dir"
+    } else if resolved_pb.is_file() {
+        "file"
+    } else {
+        "none"
+    };
+    PathKind {
+        resolved: resolved_pb.to_string_lossy().into_owned(),
+        kind: kind.to_string(),
+    }
+}
+
 /// Open the given path in Finder (macOS: `open -R <path>`).
 #[tauri::command(async)]
 pub fn reveal_in_finder(path: String) -> Result<(), String> {
@@ -1259,4 +1306,45 @@ pub fn scan_prd_docs(dirs: Vec<String>) -> Vec<PrdDoc> {
     }
     results.sort_by(|a, b| a.name.cmp(&b.name));
     results
+}
+
+#[cfg(test)]
+mod path_kind_tests {
+    use super::*;
+
+    #[test]
+    fn resolve_path_kind_classifies() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        // absolute dir
+        assert_eq!(
+            resolve_path_kind(d.to_string_lossy().into(), None).kind,
+            "dir"
+        );
+        // absolute file
+        let f = d.join("a.txt");
+        std::fs::write(&f, "x").unwrap();
+        let r = resolve_path_kind(f.to_string_lossy().into(), None);
+        assert_eq!(r.kind, "file");
+        assert_eq!(r.resolved, f.to_string_lossy());
+        // relative joined to cwd
+        let rel = resolve_path_kind("a.txt".into(), Some(d.to_string_lossy().into()));
+        assert_eq!(rel.kind, "file");
+        assert_eq!(rel.resolved, f.to_string_lossy());
+        // non-existent
+        assert_eq!(
+            resolve_path_kind("/no/such/path/xyz".into(), None).kind,
+            "none"
+        );
+        // trailing token that isn't a path
+        assert_eq!(resolve_path_kind("not-a-path".into(), None).kind, "none");
+    }
+
+    #[test]
+    fn resolve_path_kind_expands_tilde() {
+        // ~ expands to $HOME which exists as a dir.
+        if std::env::var("HOME").is_ok() {
+            assert_eq!(resolve_path_kind("~".into(), None).kind, "dir");
+        }
+    }
 }

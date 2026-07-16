@@ -172,6 +172,7 @@ pub fn run() {
             fs::install_mcp,
             fs::git_status,
             fs::reveal_in_finder,
+            fs::resolve_path_kind,
             fs::rename_entry,
             fs::delete_entry,
             get_startup_files,

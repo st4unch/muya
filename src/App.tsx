@@ -341,6 +341,8 @@ export default function App() {
 
   // Top-level view switch: the IDE control plane vs the full Sessions page.
   const [view, setView] = useState<"control" | "sessions" | "queue" | "tools" | "prd" | "chat">("control");
+  // Action menu for a path clicked in a terminal's output.
+  const [pathMenu, setPathMenu] = useState<{ resolved: string; kind: "file" | "dir"; x: number; y: number } | null>(null);
   // Right panel tab: branch matrix vs markdown viewer.
   const [rightTab, setRightTab] = useState<"branch" | "markdown" | "sessions">("branch");
   // Markdown file currently shown in the right panel viewer.
@@ -1909,6 +1911,7 @@ export const loginHandler = async (req, res) => {
                             active={show}
                             onPtyReady={(ptyId) => setTerminalPtyIds(prev => ({ ...prev, [tm.key]: ptyId }))}
                             onPromptSubmit={handlePromptSubmit}
+                            onPathMenu={(resolved, kind, x, y) => setPathMenu({ resolved, kind, x, y })}
                           />
                         </div>
                       </div>
@@ -2276,6 +2279,45 @@ export const loginHandler = async (req, res) => {
         onAdd={(p) => setScheduledPrompts(prev => [...prev, { ...p, id: crypto.randomUUID(), fired: false }])}
         onCancel={(id) => setScheduledPrompts(prev => prev.filter(p => p.id !== id))}
       />
+
+      {/* Action menu for a path clicked in terminal output */}
+      {pathMenu && (
+        <>
+          <div className="fixed inset-0 z-[60]" onClick={() => setPathMenu(null)} onContextMenu={(e) => { e.preventDefault(); setPathMenu(null); }} />
+          <div
+            style={{ position: "fixed", top: Math.min(pathMenu.y, window.innerHeight - 160), left: Math.min(pathMenu.x, window.innerWidth - 210), zIndex: 61 }}
+            className="min-w-[190px] bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg shadow-2xl py-1 text-xs font-mono"
+          >
+            <div className="px-3 py-1 text-[9px] text-neutral-400 dark:text-neutral-500 truncate border-b border-neutral-100 dark:border-neutral-700 mb-1" title={pathMenu.resolved}>
+              {pathMenu.kind === "dir" ? "📁" : "📄"} {pathMenu.resolved.split("/").pop()}
+            </div>
+            {pathMenu.kind === "file" && (
+              <button type="button" className="w-full text-left px-3 py-1.5 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 cursor-pointer text-neutral-700 dark:text-neutral-200"
+                onClick={() => { openEditor(pathMenu.resolved); setView("control"); setPathMenu(null); }}>
+                Open in Muya
+              </button>
+            )}
+            {pathMenu.kind === "dir" && (
+              <button type="button" className="w-full text-left px-3 py-1.5 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 cursor-pointer text-neutral-700 dark:text-neutral-200"
+                onClick={() => {
+                  ensureWorktreeTracked(pathMenu.resolved);
+                  openTerminal({ key: `term-${Date.now()}`, name: pathMenu.resolved.split("/").pop() ?? "Terminal", kind: "terminal", cwd: pathMenu.resolved });
+                  setView("control"); setPathMenu(null);
+                }}>
+                Open Terminal Here
+              </button>
+            )}
+            <button type="button" className="w-full text-left px-3 py-1.5 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 cursor-pointer text-neutral-700 dark:text-neutral-200"
+              onClick={() => { void invoke("reveal_in_finder", { path: pathMenu.resolved }); setPathMenu(null); }}>
+              Reveal in Finder
+            </button>
+            <button type="button" className="w-full text-left px-3 py-1.5 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 cursor-pointer text-neutral-700 dark:text-neutral-200"
+              onClick={() => { void navigator.clipboard.writeText(pathMenu.resolved); setPathMenu(null); }}>
+              Copy Path
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
