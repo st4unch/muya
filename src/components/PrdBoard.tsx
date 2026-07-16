@@ -9,6 +9,9 @@ import {
   RefreshCw,
   ExternalLink,
   Layers,
+  Search,
+  X,
+  FolderGit2,
 } from "lucide-react";
 
 interface PrdDoc {
@@ -49,7 +52,7 @@ const STATUS_BADGE: Record<Column, string> = {
   done: "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300",
 };
 
-function PrdCard({ doc, onOpenFile }: { doc: PrdDoc; onOpenFile: (path: string) => void }) {
+function PrdCard({ doc, project, onOpenFile }: { doc: PrdDoc; project?: string; onOpenFile: (path: string) => void }) {
   const [expanded, setExpanded] = useState(false);
   const col = classifyStatus(doc.status);
   const progress = doc.totalPhases > 0 ? (doc.donePhases / doc.totalPhases) * 100 : 0;
@@ -57,6 +60,12 @@ function PrdCard({ doc, onOpenFile }: { doc: PrdDoc; onOpenFile: (path: string) 
   return (
     <div className="bg-white dark:bg-[#2d2f34] rounded-lg border border-neutral-200 dark:border-neutral-700 shadow-sm hover:shadow-md transition-shadow">
       <div className="p-3">
+        {project && (
+          <div className="mb-1.5 flex items-center gap-1 text-[8px] font-mono uppercase tracking-wider text-indigo-500 dark:text-indigo-400">
+            <FolderGit2 className="h-2.5 w-2.5 shrink-0" />
+            <span className="truncate" title={project}>{project}</span>
+          </div>
+        )}
         <div className="flex items-start justify-between gap-2 mb-2">
           <h4 className="text-[11px] font-semibold text-neutral-800 dark:text-neutral-100 leading-tight line-clamp-2">
             {doc.name}
@@ -140,6 +149,15 @@ function PrdCard({ doc, onOpenFile }: { doc: PrdDoc; onOpenFile: (path: string) 
   );
 }
 
+// The project a PRD belongs to = the folder that contains its `docs/` dir.
+// e.g. /Users/x/Documents/claude-control-plane/docs/prd-vault-rag.md → claude-control-plane
+function projectOf(prdPath: string): string {
+  const parts = prdPath.split("/").filter(Boolean);
+  const docsIdx = parts.lastIndexOf("docs");
+  if (docsIdx > 0) return parts[docsIdx - 1];
+  return parts[parts.length - 2] ?? "—";
+}
+
 export default function PrdBoard({
   workspaces,
   onOpenFile,
@@ -149,6 +167,8 @@ export default function PrdBoard({
 }) {
   const [docs, setDocs] = useState<PrdDoc[]>([]);
   const [loading, setLoading] = useState(false);
+  const [query, setQuery] = useState("");
+  const [projectFilter, setProjectFilter] = useState<string>("all");
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -166,31 +186,103 @@ export default function PrdBoard({
     if (workspaces.length > 0) void refresh();
   }, [workspaces, refresh]);
 
+  // Distinct projects present, for the project filter pills.
+  const projects = [...new Set(docs.map((d) => projectOf(d.prdPath)))].sort();
+  // Drop a stale project filter if its project is no longer present.
+  useEffect(() => {
+    if (projectFilter !== "all" && !projects.includes(projectFilter)) setProjectFilter("all");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projects.join("|")]);
+
+  const q = query.trim().toLowerCase();
+  const filtered = docs.filter((d) => {
+    if (projectFilter !== "all" && projectOf(d.prdPath) !== projectFilter) return false;
+    if (!q) return true;
+    return (
+      d.name.toLowerCase().includes(q) ||
+      d.slug.toLowerCase().includes(q) ||
+      d.status.toLowerCase().includes(q) ||
+      (d.owner ?? "").toLowerCase().includes(q) ||
+      projectOf(d.prdPath).toLowerCase().includes(q)
+    );
+  });
+
   const grouped: Record<Column, PrdDoc[]> = { draft: [], active: [], review: [], done: [] };
-  for (const doc of docs) {
+  for (const doc of filtered) {
     grouped[classifyStatus(doc.status)].push(doc);
   }
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-neutral-100 dark:bg-[#1a1b1e]">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-neutral-200 dark:border-[#3d3f44] bg-white dark:bg-[#1e1f23] flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Layers className="h-4 w-4 text-indigo-500" />
-          <h2 className="text-sm font-bold text-neutral-800 dark:text-neutral-100">PRD Board</h2>
-          <span className="text-[10px] font-mono text-neutral-400 bg-neutral-100 dark:bg-neutral-800 px-2 py-0.5 rounded">
-            {docs.length} docs
-          </span>
+      <div className="px-6 py-3 border-b border-neutral-200 dark:border-[#3d3f44] bg-white dark:bg-[#1e1f23] space-y-2.5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Layers className="h-4 w-4 text-indigo-500" />
+            <h2 className="text-sm font-bold text-neutral-800 dark:text-neutral-100">PRD Board</h2>
+            <span className="text-[10px] font-mono text-neutral-400 bg-neutral-100 dark:bg-neutral-800 px-2 py-0.5 rounded">
+              {filtered.length}{filtered.length !== docs.length ? `/${docs.length}` : ""} docs
+            </span>
+          </div>
+          <div className="flex items-center gap-3">
+            {/* Search */}
+            <div className="relative">
+              <Search className="h-3 w-3 text-neutral-400 absolute left-2 top-1/2 -translate-y-1/2" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search PRDs…"
+                className="w-52 pl-7 pr-6 py-1 text-[11px] font-mono rounded border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 text-neutral-800 dark:text-neutral-200 focus:outline-none focus:border-indigo-400"
+              />
+              {query && (
+                <button type="button" onClick={() => setQuery("")} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 cursor-pointer">
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => void refresh()}
+              disabled={loading}
+              className="text-[10px] font-mono text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200 cursor-pointer flex items-center gap-1 transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className={`h-3 w-3 ${loading ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
+          </div>
         </div>
-        <button
-          type="button"
-          onClick={() => void refresh()}
-          disabled={loading}
-          className="text-[10px] font-mono text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200 cursor-pointer flex items-center gap-1 transition-colors disabled:opacity-50"
-        >
-          <RefreshCw className={`h-3 w-3 ${loading ? "animate-spin" : ""}`} />
-          Refresh
-        </button>
+
+        {/* Project filter pills */}
+        {projects.length > 1 && (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <FolderGit2 className="h-3 w-3 text-neutral-400 shrink-0" />
+            <button
+              type="button"
+              onClick={() => setProjectFilter("all")}
+              className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold cursor-pointer transition-colors ${
+                projectFilter === "all"
+                  ? "bg-indigo-600 text-white"
+                  : "bg-neutral-100 dark:bg-neutral-800 text-neutral-500 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-700"
+              }`}
+            >
+              All
+            </button>
+            {projects.map((p) => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => setProjectFilter(p)}
+                className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold cursor-pointer transition-colors ${
+                  projectFilter === p
+                    ? "bg-indigo-600 text-white"
+                    : "bg-neutral-100 dark:bg-neutral-800 text-neutral-500 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-700"
+                }`}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Kanban Columns */}
@@ -222,7 +314,12 @@ export default function PrdBoard({
                   </p>
                 )}
                 {grouped[col.key].map((doc) => (
-                  <PrdCard key={doc.slug} doc={doc} onOpenFile={onOpenFile} />
+                  <PrdCard
+                    key={doc.prdPath}
+                    doc={doc}
+                    project={projects.length > 1 ? projectOf(doc.prdPath) : undefined}
+                    onOpenFile={onOpenFile}
+                  />
                 ))}
               </div>
             </div>
