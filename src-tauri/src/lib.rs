@@ -173,6 +173,7 @@ pub fn run() {
             fs::git_status,
             fs::reveal_in_finder,
             fs::resolve_path_kind,
+            fs::local_ip,
             fs::rename_entry,
             fs::delete_entry,
             get_startup_files,

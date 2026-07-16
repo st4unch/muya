@@ -555,6 +555,20 @@ pub fn resolve_path_kind(path: String, cwd: Option<String>) -> PathKind {
     }
 }
 
+/// Best-effort primary non-loopback IPv4 of this machine (for the bridge's
+/// "listen on this LAN address" UI). Uses the connect-a-UDP-socket trick — no
+/// packet is actually sent; the kernel just picks the source addr it would use.
+#[tauri::command(async)]
+pub fn local_ip() -> Result<String, String> {
+    use std::net::UdpSocket;
+    let sock = UdpSocket::bind("0.0.0.0:0").map_err(|e| format!("bind: {e}"))?;
+    // 8.8.8.8 is only used to select the outbound interface; nothing is sent.
+    sock.connect("8.8.8.8:80")
+        .map_err(|e| format!("connect: {e}"))?;
+    let addr = sock.local_addr().map_err(|e| format!("local_addr: {e}"))?;
+    Ok(addr.ip().to_string())
+}
+
 /// Open the given path in Finder (macOS: `open -R <path>`).
 #[tauri::command(async)]
 pub fn reveal_in_finder(path: String) -> Result<(), String> {
