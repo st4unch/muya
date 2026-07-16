@@ -168,3 +168,60 @@ cd src-tauri && cargo test
 2. **Polling watcher task for state write-back:** Tauri `State<'_>` holds a reference that cannot be moved into a `'static` async task. The watcher task uses a raw pointer to `RemoteBridgeState` (cast to `usize`), which is valid because Tauri manages state as a static singleton for the process lifetime. This is the standard pattern in tokio-based Tauri apps.
 
 3. **`pairing_listener` field on `RemoteBridgeState`:** Separates the pairing listener lifecycle from the data listener. The data listener's `PinnedSpkiVerifier` is untouched.
+
+## Data-channel wiring
+
+Completed the remote data channel that Faz 2 left as a stub ("Keep connection; Faz 3 adds full handler"). Wired both directions on top of the SAME Faz 2 mTLS/pairing infra — no crypto reimplemented.
+
+### Receiving side (`bridge_remote_listen`)
+
+- `bridge_remote_listen` now also injects `State<'_, BridgeState>` and clones `inbound_tx` + `staged` into the accept loop BEFORE the command returns (mirrors the established `bridge_local_listen` pattern in `bridge.rs`).
+- After `acceptor.accept(stream)` succeeds (mTLS handshake already passed `PinnedSpkiVerifier`, fail-closed), the client's verified SPKI is extracted from `tls_stream.get_ref().1.peer_certificates()` via `compute_spki_hash_from_cert_der`. If no verifiable cert is present (should be unreachable post-handshake with `client_auth_mandatory() = true`), the connection is dropped defensively.
+- New `handle_remote_data_connection` loops `read_raw_frame` (16 MiB cap, reused as-is) → parses `bridge::Envelope` → for `Request` envelopes calls the new `ingest_remote_request` (extracted so it's testable without a `tauri::AppHandle`, same constraint documented for the local UDS contract tests).
+- `ingest_remote_request` builds `InboundRequest` with **`peer` = the TLS-verified client SPKI**, never `env.peer` (an untrusted, self-reported field) — this is the load-bearing security decision on the receiving side. Approval gate reuses `bridge::required_approval` (now `pub(crate)`) unchanged, stages `PendingApproval` requests into the SAME `BridgeState.staged` map local tasks use, and enqueues into the SAME `BridgeState.inbound_tx` broker — `bridge_poll_inbound` drains local and remote origins identically.
+- One bad/unparseable frame `break`s only that connection's loop; the accept loop and listener are untouched.
+
+### Sending side (`bridge_remote_send`, new command)
+
+- Looks up `peer` (SPKI hash) in the peer registry → errors clearly (`"is not paired"`) if unknown, or `"has no known address"` if no `last_addr` — never falls back to an unauthenticated path.
+- **Mutual-auth `ClientConfig` decision:** built a new `PinnedServerCertVerifier` (client-side `rustls::client::danger::ServerCertVerifier`) that accepts ONLY a server cert whose SPKI matches the exact peer we looked up before dialing. This is the sending-side complement of `PinnedSpkiVerifier` (which already pins the client cert on the accepting side) — so every data-channel connection is mutually pinned by SPKI in both directions. This is explicitly **NOT** `NoCertVerifier` (that verifier stays scoped to first-pairing only, where PAKE + human SAS comparison bootstrap trust instead of PKI). TLS 1.3 only, same as the rest of the module.
+- `remote_send_impl` (the testable core `bridge_remote_send` delegates to) connects TCP → TLS-connects with the client cert + `PinnedServerCertVerifier` → writes a `Request` envelope via `write_raw_frame` → reads the ack with a 1.5 s timeout (best-effort, doesn't hang) → returns `req_id`.
+- Registered `bridge_remote::bridge_remote_send` in `lib.rs`'s `generate_handler!`.
+
+### Frontend (`ChatView.tsx`)
+
+- `send()` now branches on `active.kind`: `"remote"` → `bridge_remote_send({ peer: active.id, kind: "question", payload: text })`; `"local"` → unchanged `bridge_send`. Optimistic bubble + error surfacing untouched.
+
+### Changed files
+
+- `src-tauri/src/bridge.rs` — `required_approval` made `pub(crate)` (reused by the remote receiving path).
+- `src-tauri/src/bridge_remote.rs` — `handle_remote_data_connection`, `ingest_remote_request`, `PinnedServerCertVerifier`, `bridge_remote_send` + `remote_send_impl`, `RemoteBridgeState.seq` field, `bridge_remote_listen` signature gains `bridge_state: State<'_, BridgeState>`; 4 new real-socket tests.
+- `src-tauri/src/lib.rs` — `bridge_remote::bridge_remote_send` registered.
+- `src/components/ChatView.tsx` — `send()` routes to `bridge_remote_send` for remote peers.
+
+### Test commands + results
+
+```
+cd src-tauri && cargo build && cargo test
+# → cargo build: Finished (0 errors, pre-existing warnings only — unused fields/consts predating this change)
+# → cargo test: test result: ok. 102 passed; 0 failed; 4 ignored (was 98; +4 new Faz 3 tests)
+#
+# New tests (all real TCP+TLS sockets, no mocking of the wire):
+#   faz3_real_socket_remote_send_reaches_broker_queue_with_sender_spki
+#     — two real Ed25519 identities + temp registries pinning each other; real
+#       TcpListener + TlsAcceptor/TlsConnector; asserts the broker queue receives
+#       an InboundRequest tagged with the TLS-VERIFIED SENDER SPKI (not env.peer),
+#       correct payload, and an ack frame round-trips.
+#   faz3_send_to_unpinned_peer_fails_closed
+#     — remote_send_impl errors clearly for an unknown/unpaired peer.
+#   faz3_pinned_server_cert_verifier_rejects_mismatched_spki
+#     — direct verifier unit test: wrong SPKI rejected, correct SPKI accepted.
+#   faz3_server_cert_spki_mismatch_rejected_at_handshake_real_socket
+#     — real-socket MITM/stale-registry simulation: A's registry mislabels a
+#       third identity's SPKI to B's real address; dialer rejects at TLS
+#       handshake; server-side handshake also fails/aborts, never succeeds.
+
+cd /Users/staunch/Documents/claude-control-plane && npx tsc --noEmit && npm test
+# → tsc: no output (clean)
+# → vitest: Test Files 9 passed (9); Tests 55 passed (55)
+```

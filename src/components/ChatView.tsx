@@ -113,11 +113,11 @@ export default function ChatView() {
       return { ...prev, [activeId]: arr };
     });
     try {
-      await invoke("bridge_send", {
-        peer: active.kind === "local" ? "local" : active.id,
-        kind: "question",
-        payload: text,
-      });
+      if (active.kind === "remote") {
+        await invoke("bridge_remote_send", { peer: active.id, kind: "question", payload: text });
+      } else {
+        await invoke("bridge_send", { peer: "local", kind: "question", payload: text });
+      }
     } catch (e) {
       setThreads((prev) => {
         const arr = prev[activeId] ? [...prev[activeId]] : [];

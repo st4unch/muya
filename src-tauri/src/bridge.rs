@@ -209,7 +209,11 @@ pub async fn read_frame(stream: &mut UnixStream) -> Result<Envelope, String> {
 /// Determine whether an incoming envelope requires operator approval.
 /// In Faz 1: `kind:task` with `capability:shell` requires approval.
 /// Other envelopes (questions, files) are pre-approved.
-fn required_approval(env: &Envelope) -> ApprovalState {
+///
+/// `pub(crate)` — Faz 3 remote data channel (bridge_remote.rs) reuses this
+/// exact gate so local and remote inbound requests are approval-gated
+/// identically (ADR D6: one broker queue, one approval state machine).
+pub(crate) fn required_approval(env: &Envelope) -> ApprovalState {
     match (&env.kind, &env.capability) {
         (Kind::Task, Capability::Shell) => ApprovalState::PendingApproval,
         _ => ApprovalState::NotRequired,

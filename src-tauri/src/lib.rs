@@ -193,6 +193,7 @@ pub fn run() {
             bridge_remote::bridge_pair_confirm_sas,
             bridge_remote::bridge_list_peers,
             bridge_remote::bridge_revoke_peer,
+            bridge_remote::bridge_remote_send,
             bridge_exec::bridge_set_capability,
             bridge_exec::bridge_set_auto_run,
             bridge_exec::bridge_audit_log,

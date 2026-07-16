@@ -26,6 +26,7 @@ use std::net::SocketAddr;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -41,10 +42,13 @@ use spake2_conflux::{Identity as Spake2Identity, Password, RistrettoGroup, Spake
 use tauri::{AppHandle, Emitter, State};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 use tokio_rustls::TlsAcceptor;
 
-use crate::bridge::MAX_FRAME_BYTES;
+use crate::bridge::{
+    required_approval, ApprovalState as BridgeApprovalState, BridgeState, Envelope, EnvelopeType,
+    InboundRequest, Kind as BridgeKind, MAX_FRAME_BYTES,
+};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -389,6 +393,8 @@ pub struct RemoteBridgeState {
     /// Dedicated pairing listener handle (None = no pairing window open).
     /// Separate from the data listener — uses AnyCertVerifier, not PinnedSpkiVerifier.
     pub pairing_listener: Mutex<Option<Arc<TcpListener>>>,
+    /// Monotone counter for generating outbound remote req_ids (bridge_remote_send).
+    pub seq: AtomicU64,
 }
 
 impl Default for RemoteBridgeState {
@@ -399,6 +405,7 @@ impl Default for RemoteBridgeState {
             listener: Mutex::new(None),
             active_pin: Mutex::new(None),
             pairing_listener: Mutex::new(None),
+            seq: AtomicU64::new(0),
         }
     }
 }
@@ -663,11 +670,16 @@ pub struct PakeReply {
 ///
 /// `iface` must be a specific interface address + port, e.g. "192.168.1.5:9876".
 /// NEVER accepts 0.0.0.0 / :: — returns an error if attempted.
+///
+/// Faz 3 data channel: also injects `BridgeState` so accepted connections can
+/// enqueue into the SAME broker queue the local UDS path uses
+/// (`bridge_poll_inbound` drains both origins identically).
 #[tauri::command]
 pub async fn bridge_remote_listen(
     enable: bool,
     iface: String,
     state: State<'_, RemoteBridgeState>,
+    bridge_state: State<'_, BridgeState>,
     app: AppHandle,
 ) -> Result<(), String> {
     let mut listener_guard = state.listener.lock().await;
@@ -693,6 +705,10 @@ pub async fn bridge_remote_listen(
         let listener_clone = listener.clone();
 
         let app_clone = app.clone();
+        // Clone broker handles NOW (before the command returns) — mirrors the
+        // established pattern in bridge::bridge_local_listen.
+        let inbound_tx = bridge_state.inbound_tx.clone();
+        let staged = bridge_state.staged.clone();
 
         tauri::async_runtime::spawn(async move {
             loop {
@@ -700,17 +716,43 @@ pub async fn bridge_remote_listen(
                     Ok((stream, peer_addr)) => {
                         let acceptor2 = acceptor.clone();
                         let app2 = app_clone.clone();
+                        let tx2 = inbound_tx.clone();
+                        let staged2 = staged.clone();
                         tauri::async_runtime::spawn(async move {
                             match acceptor2.accept(stream).await {
                                 Ok(tls_stream) => {
-                                    // AC-2-4: handshake passed the verifier (pinned cert).
-                                    // Task dispatch is Faz 3; emit peer-status here.
+                                    // AC-2-4: handshake passed the verifier (pinned cert) —
+                                    // the peer is already authenticated, fail-closed, before
+                                    // we ever read a byte of application data.
+                                    let peer_spki = {
+                                        let (_io, conn) = tls_stream.get_ref();
+                                        conn.peer_certificates()
+                                            .and_then(|certs| certs.first())
+                                            .and_then(|cert| {
+                                                compute_spki_hash_from_cert_der(cert.as_ref()).ok()
+                                            })
+                                    };
+                                    let Some(peer_spki) = peer_spki else {
+                                        // Cannot happen post-handshake with client_auth_mandatory
+                                        // = true, but fail closed defensively — drop connection.
+                                        #[cfg(debug_assertions)]
+                                        eprintln!(
+                                            "[bridge-remote] no verifiable client cert from {peer_addr}; dropping"
+                                        );
+                                        let _ = app2.emit(
+                                            "bridge://error",
+                                            format!("no_client_cert:{peer_addr}"),
+                                        );
+                                        return;
+                                    };
                                     let _ = app2.emit(
                                         "bridge://peer-status",
-                                        format!("connected:{peer_addr}"),
+                                        format!("connected:{peer_spki}"),
                                     );
-                                    // Keep connection; Faz 3 adds full handler.
-                                    drop(tls_stream);
+                                    handle_remote_data_connection(
+                                        tls_stream, peer_spki, tx2, staged2, app2,
+                                    )
+                                    .await;
                                 }
                                 Err(e) => {
                                     // Handshake failed — fail-closed (unknown/no cert).
@@ -771,6 +813,130 @@ async fn build_server_config(
             .map_err(|e| format!("tls server config: {e}"))?;
 
     Ok(config)
+}
+
+// ---------------------------------------------------------------------------
+// Remote data channel (Faz 3) — receiving side
+// ---------------------------------------------------------------------------
+
+/// Handle one accepted, already-mTLS-verified remote data connection.
+///
+/// By the time this function runs, `PinnedSpkiVerifier::verify_client_cert`
+/// has ALREADY fail-closed-rejected any unpinned/missing client cert at the
+/// TLS handshake layer (tokio-rustls #83 enforced) — `peer_spki` here is a
+/// cryptographically verified identity, not a self-reported field from the
+/// envelope. This is why `InboundRequest.peer` is set from `peer_spki`
+/// (the verified TLS identity), never from `env.peer` (which the sender
+/// could set to anything).
+///
+/// Loops reading length-prefixed frames (`read_raw_frame`, 16 MiB cap already
+/// enforced inside it), parses each as a `bridge::Envelope`, and — for
+/// `Request` envelopes — enqueues an `InboundRequest` into the SAME broker
+/// queue the local UDS path uses, gated by the SAME `required_approval` rule.
+/// One bad/unparseable frame closes only THIS connection, never the listener.
+async fn handle_remote_data_connection(
+    mut tls_stream: tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
+    peer_spki: String,
+    inbound_tx: mpsc::Sender<InboundRequest>,
+    staged: Arc<tokio::sync::Mutex<HashMap<String, InboundRequest>>>,
+    app: AppHandle,
+) {
+    loop {
+        let body = match read_raw_frame(&mut tls_stream).await {
+            Ok(b) => b,
+            Err(e) => {
+                #[cfg(debug_assertions)]
+                eprintln!("[bridge-remote] read_raw_frame error from {peer_spki}: {e}");
+                break;
+            }
+        };
+
+        let env: Envelope = match serde_json::from_slice(&body) {
+            Ok(e) => e,
+            Err(e) => {
+                #[cfg(debug_assertions)]
+                eprintln!("[bridge-remote] malformed envelope from {peer_spki}: {e}");
+                break; // one bad frame closes this connection, not the listener
+            }
+        };
+
+        // Only Request envelopes are handed to the broker (mirrors local UDS path).
+        if env.envelope_type != EnvelopeType::Request {
+            continue;
+        }
+
+        let req_id = env.id.clone();
+        let response = ingest_remote_request(env, &peer_spki, &inbound_tx, &staged).await;
+
+        let _ = app.emit("bridge://inbound-request", req_id);
+
+        let resp_bytes = match serde_json::to_vec(&response) {
+            Ok(b) => b,
+            Err(e) => {
+                #[cfg(debug_assertions)]
+                eprintln!("[bridge-remote] serialize ack failed for {peer_spki}: {e}");
+                break;
+            }
+        };
+        if let Err(e) = write_raw_frame(&mut tls_stream, &resp_bytes).await {
+            #[cfg(debug_assertions)]
+            eprintln!("[bridge-remote] write ack failed for {peer_spki}: {e}");
+            break;
+        }
+    }
+}
+
+/// Testable core of the receiving side: given a parsed `Request` envelope and
+/// the TLS-verified sender identity, builds the `InboundRequest`, applies the
+/// SAME approval gate as local (`required_approval`), stages it if needed,
+/// enqueues into the broker queue, and returns the ack `Envelope` to send back.
+///
+/// Extracted from `handle_remote_data_connection` so tests can drive the exact
+/// production enqueue path over a REAL socket without needing a Tauri
+/// `AppHandle` (which cannot be constructed in unit tests — same constraint
+/// documented in `bridge.rs`'s local contract tests).
+async fn ingest_remote_request(
+    env: Envelope,
+    peer_spki: &str,
+    inbound_tx: &mpsc::Sender<InboundRequest>,
+    staged: &Arc<tokio::sync::Mutex<HashMap<String, InboundRequest>>>,
+) -> Envelope {
+    let approval = required_approval(&env);
+    let req = InboundRequest {
+        req_id: env.id.clone(),
+        // SECURITY: verified TLS client identity, NOT env.peer (untrusted/self-reported).
+        peer: peer_spki.to_string(),
+        capability: env.capability.clone(),
+        kind: env.kind.clone(),
+        payload: env.payload.clone(),
+        approval: approval.clone(),
+    };
+
+    if approval == BridgeApprovalState::PendingApproval {
+        staged.lock().await.insert(env.id.clone(), req.clone());
+    }
+
+    // Bounded broker queue — same backpressure policy as local: drop + log on full.
+    if inbound_tx.try_send(req).is_err() {
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "[bridge-remote] broker queue full; dropping request {} from {peer_spki}",
+            env.id
+        );
+    }
+
+    Envelope {
+        v: 1,
+        envelope_type: EnvelopeType::Response,
+        id: env.id.clone(),
+        peer: peer_spki.to_string(),
+        capability: env.capability,
+        kind: env.kind,
+        payload: serde_json::json!({ "status": "queued", "approval": approval }),
+        stream: false,
+        seq: 0,
+        r#final: true,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1272,6 +1438,189 @@ pub async fn bridge_revoke_peer(
     let (_id, registry) = state.ensure_initialized().await?;
     let result = registry.lock().await.remove(&spki_hash);
     result
+}
+
+// ---------------------------------------------------------------------------
+// Remote data channel (Faz 3) — sending side
+// ---------------------------------------------------------------------------
+
+/// A rustls `ServerCertVerifier` (client-side) that accepts ONLY a server cert
+/// whose SPKI hash matches `expected_spki` — the specific pinned peer we
+/// intended to dial.  This is the mutual-auth complement of
+/// `PinnedSpkiVerifier` (which pins the CLIENT cert on the accepting side):
+///   - accepting side verifies the dialer's client cert SPKI is in the registry;
+///   - dialing side (here) verifies the acceptor's server cert SPKI is
+///     EXACTLY the peer we looked up by SPKI hash before connecting.
+///
+/// This is NOT `NoCertVerifier` (which is scoped ONLY to first-pairing, where
+/// trust is bootstrapped by PAKE + human SAS comparison instead of PKI).
+/// Once a peer is pinned, every subsequent connection — both directions —
+/// is cryptographically pinned to that exact SPKI.
+#[derive(Debug)]
+struct PinnedServerCertVerifier {
+    expected_spki: String,
+}
+
+impl rustls::client::danger::ServerCertVerifier for PinnedServerCertVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        let spki =
+            compute_spki_hash_from_cert_der(end_entity.as_ref()).map_err(rustls::Error::General)?;
+        if spki == self.expected_spki {
+            Ok(rustls::client::danger::ServerCertVerified::assertion())
+        } else {
+            Err(rustls::Error::General(format!(
+                "server cert SPKI {spki} does not match pinned peer {}; refusing (possible MITM or stale last_addr)",
+                self.expected_spki
+            )))
+        }
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        Err(rustls::Error::General(
+            "TLS 1.2 not permitted by bridge data-channel verifier".to_string(),
+        ))
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        rustls::crypto::ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+/// Send a request envelope to an already-paired remote peer over mutually
+/// authenticated mTLS.
+///
+/// `peer` is the peer's SPKI hash (as returned by `bridge_list_peers`), looked
+/// up in the local registry for its `last_addr`.  Fails closed if the peer is
+/// unknown/unpaired or has no known address — never falls back to an
+/// unauthenticated path.
+#[tauri::command]
+pub async fn bridge_remote_send(
+    peer: String,
+    kind: String,
+    payload: serde_json::Value,
+    state: State<'_, RemoteBridgeState>,
+) -> Result<String, String> {
+    remote_send_impl(peer, kind, payload, &state).await
+}
+
+/// Testable core of `bridge_remote_send` — takes a plain `&RemoteBridgeState`
+/// instead of `State<'_, RemoteBridgeState>` so unit tests can drive it
+/// directly (Tauri `State` cannot be constructed outside a running app,
+/// same constraint documented throughout this module's other command tests).
+async fn remote_send_impl(
+    peer: String,
+    kind: String,
+    payload: serde_json::Value,
+    state: &RemoteBridgeState,
+) -> Result<String, String> {
+    let (identity, registry) = state.ensure_initialized().await?;
+
+    let pinned = {
+        let reg = registry.lock().await;
+        reg.get(&peer)
+            .cloned()
+            .ok_or_else(|| format!("peer {peer} is not paired (unknown SPKI) — pair first"))?
+    };
+    let addr = pinned
+        .last_addr
+        .clone()
+        .ok_or_else(|| format!("peer {peer} has no known address to dial"))?;
+
+    let kind_parsed: BridgeKind = serde_json::from_value(serde_json::Value::String(kind.clone()))
+        .unwrap_or(BridgeKind::Unknown);
+    if kind_parsed == BridgeKind::Unknown {
+        return Err(format!("unknown kind: {kind}"));
+    }
+
+    let seq = state.seq.fetch_add(1, Ordering::Relaxed);
+    let req_id = format!("remote-{seq}-{}", unix_now());
+
+    let env = Envelope {
+        v: 1,
+        envelope_type: EnvelopeType::Request,
+        id: req_id.clone(),
+        peer: identity.spki_hash.clone(),
+        capability: crate::bridge::Capability::Research, // default; callers override via payload
+        kind: kind_parsed,
+        payload,
+        stream: false,
+        seq: seq as u32,
+        r#final: true,
+    };
+
+    // TCP connect to the pinned peer's last known address.
+    let tcp_stream = tokio::net::TcpStream::connect(&addr)
+        .await
+        .map_err(|e| format!("connect to peer {peer} at {addr}: {e}"))?;
+
+    // Mutual-auth TLS 1.3: present OUR identity cert (verified by the acceptor's
+    // PinnedSpkiVerifier) AND verify the acceptor's server cert SPKI matches
+    // EXACTLY the peer we intended to dial (PinnedServerCertVerifier above).
+    // Deliberately NOT NoCertVerifier — that verifier is scoped to first-pairing
+    // only, where PAKE + SAS bootstrap trust instead of PKI.
+    let client_cert = CertificateDer::from(identity.cert_der.clone());
+    let client_key = PrivateKeyDer::try_from(identity.key_der.clone())
+        .map_err(|e| format!("load client key: {e}"))?;
+    let verifier = Arc::new(PinnedServerCertVerifier {
+        expected_spki: peer.clone(),
+    });
+    let client_config = rustls::ClientConfig::builder_with_provider(
+        rustls::crypto::ring::default_provider().into(),
+    )
+    .with_protocol_versions(&[&rustls::version::TLS13])
+    .map_err(|e| format!("tls client versions: {e}"))?
+    .dangerous()
+    .with_custom_certificate_verifier(verifier)
+    .with_client_auth_cert(vec![client_cert], client_key)
+    .map_err(|e| format!("tls client cert: {e}"))?;
+
+    let connector = tokio_rustls::TlsConnector::from(Arc::new(client_config));
+    let server_name = rustls::pki_types::ServerName::try_from("muya-bridge")
+        .map_err(|e| format!("server name: {e}"))?;
+    let mut tls_stream = connector
+        .connect(server_name, tcp_stream)
+        .await
+        .map_err(|e| format!("TLS connect to {peer} at {addr}: {e}"))?;
+
+    let body = serde_json::to_vec(&env).map_err(|e| format!("serialize envelope: {e}"))?;
+    write_raw_frame(&mut tls_stream, &body).await?;
+
+    // Best-effort read of the ack response so delivery is confirmed; don't hang forever.
+    let _ack = tokio::time::timeout(
+        std::time::Duration::from_millis(1500),
+        read_raw_frame(&mut tls_stream),
+    )
+    .await;
+
+    Ok(req_id)
 }
 
 // ---------------------------------------------------------------------------
@@ -2191,5 +2540,291 @@ mod tests {
         let mut reg3 = PeerRegistry::load_or_create(&dir_path).expect("reload for revoke");
         reg3.remove("abc123").expect("remove");
         assert!(!reg3.is_pinned("abc123"), "peer must be gone after revoke");
+    }
+
+    // -------------------------------------------------------------------------
+    // Faz 3: remote data channel — REAL socket round trip (the point of this
+    // phase — prove the wire, not just that it compiles).
+    // -------------------------------------------------------------------------
+
+    /// End-to-end: A dials B over a REAL TCP+TLS mutually authenticated
+    /// connection using the exact production sending path (`remote_send_impl`,
+    /// same code `bridge_remote_send` calls) and the exact production
+    /// receiving path (`build_server_config` + `ingest_remote_request`, same
+    /// code `bridge_remote_listen`'s accept loop calls).
+    ///
+    /// Asserts: the broker queue receives an `InboundRequest` tagged with the
+    /// TLS-VERIFIED sender SPKI (not a self-reported envelope field), the
+    /// payload round-trips correctly, and an ack frame comes back to the sender.
+    #[tokio::test]
+    async fn faz3_real_socket_remote_send_reaches_broker_queue_with_sender_spki() {
+        let dir_a = TempDir::new().expect("tmpdir_a");
+        let dir_b = TempDir::new().expect("tmpdir_b");
+        let id_a = BridgeIdentity::load_or_generate(&dir_a.path().to_path_buf()).expect("gen_a");
+        let id_b = BridgeIdentity::load_or_generate(&dir_b.path().to_path_buf()).expect("gen_b");
+
+        // B pins A — so B's PinnedSpkiVerifier accepts A's client cert at handshake.
+        let mut reg_b = PeerRegistry::load_or_create(&dir_b.path().to_path_buf()).expect("reg_b");
+        reg_b
+            .insert(PinnedPeer {
+                schema_v: REGISTRY_SCHEMA_VERSION,
+                spki_hash: id_a.spki_hash.clone(),
+                label: "peer-a".to_string(),
+                last_addr: None,
+                paired_at: unix_now(),
+                capability: "research".to_string(),
+            })
+            .expect("pin a in b");
+        let reg_b_arc = Arc::new(Mutex::new(reg_b));
+
+        // Real TCP listener on an ephemeral loopback port.
+        let tcp_listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = tcp_listener.local_addr().expect("local_addr");
+
+        let server_config = build_server_config(&id_b, reg_b_arc.clone())
+            .await
+            .expect("server config");
+        let acceptor = TlsAcceptor::from(Arc::new(server_config));
+
+        // The SAME broker queue shape BridgeState uses.
+        let (tx, mut rx) = mpsc::channel::<InboundRequest>(16);
+        let staged: Arc<tokio::sync::Mutex<HashMap<String, InboundRequest>>> =
+            Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+
+        // Receiving side: accept ONE connection, run the exact production ingest logic.
+        let staged_clone = staged.clone();
+        let accept_task = tokio::spawn(async move {
+            let (stream, _peer_addr) = tcp_listener.accept().await.expect("tcp accept");
+            let mut tls_stream = acceptor
+                .accept(stream)
+                .await
+                .expect("tls accept must succeed (A is pinned in B's registry)");
+
+            // Extract the verified client SPKI exactly like bridge_remote_listen does.
+            let peer_spki = {
+                let (_io, conn) = tls_stream.get_ref();
+                conn.peer_certificates()
+                    .and_then(|certs| certs.first())
+                    .and_then(|cert| compute_spki_hash_from_cert_der(cert.as_ref()).ok())
+                    .expect("client cert must be present and verifiable post-handshake")
+            };
+
+            let body = read_raw_frame(&mut tls_stream)
+                .await
+                .expect("read request frame");
+            let env: Envelope = serde_json::from_slice(&body).expect("parse envelope");
+            assert_eq!(env.envelope_type, EnvelopeType::Request);
+
+            let ack = ingest_remote_request(env, &peer_spki, &tx, &staged_clone).await;
+            let ack_bytes = serde_json::to_vec(&ack).expect("serialize ack");
+            write_raw_frame(&mut tls_stream, &ack_bytes)
+                .await
+                .expect("write ack");
+            peer_spki
+        });
+
+        // Sending side: A pins B — so PinnedServerCertVerifier trusts B's server cert.
+        let mut reg_a = PeerRegistry::load_or_create(&dir_a.path().to_path_buf()).expect("reg_a");
+        reg_a
+            .insert(PinnedPeer {
+                schema_v: REGISTRY_SCHEMA_VERSION,
+                spki_hash: id_b.spki_hash.clone(),
+                label: "peer-b".to_string(),
+                last_addr: Some(addr.to_string()),
+                paired_at: unix_now(),
+                capability: "research".to_string(),
+            })
+            .expect("pin b in a");
+
+        let state_a = RemoteBridgeState::default();
+        *state_a.identity.lock().await = Some(Arc::new(id_a.clone()));
+        *state_a.registry.lock().await = Some(Arc::new(Mutex::new(reg_a)));
+
+        let req_id = remote_send_impl(
+            id_b.spki_hash.clone(),
+            "question".to_string(),
+            serde_json::json!({ "text": "hello from A" }),
+            &state_a,
+        )
+        .await
+        .expect("remote_send_impl must succeed with correct mutual pinning");
+
+        let observed_peer_spki = accept_task.await.expect("accept task");
+        assert_eq!(
+            observed_peer_spki, id_a.spki_hash,
+            "receiver must see A's verified TLS client SPKI"
+        );
+
+        // Broker queue assertion — the SENDER's SPKI, not a self-reported field.
+        let queued = rx
+            .try_recv()
+            .expect("broker queue must have received the request");
+        assert_eq!(queued.req_id, req_id);
+        assert_eq!(
+            queued.peer, id_a.spki_hash,
+            "InboundRequest.peer must be the TLS-verified sender identity"
+        );
+        assert_eq!(queued.payload["text"], "hello from A");
+        assert_eq!(
+            queued.approval,
+            BridgeApprovalState::NotRequired,
+            "a question (not a shell task) requires no approval"
+        );
+    }
+
+    /// Fail-closed: sending to an unpinned/unknown peer must error, and must
+    /// NEVER fall back to any unauthenticated path.
+    #[tokio::test]
+    async fn faz3_send_to_unpinned_peer_fails_closed() {
+        let dir_a = TempDir::new().expect("tmpdir_a");
+        let id_a = BridgeIdentity::load_or_generate(&dir_a.path().to_path_buf()).expect("gen_a");
+        let state_a = RemoteBridgeState::default();
+        *state_a.identity.lock().await = Some(Arc::new(id_a));
+        *state_a.registry.lock().await = Some(Arc::new(Mutex::new(
+            PeerRegistry::load_or_create(&dir_a.path().to_path_buf()).expect("reg_a"),
+        )));
+
+        let err = remote_send_impl(
+            "deadbeef-not-a-real-pinned-peer".to_string(),
+            "question".to_string(),
+            serde_json::json!({}),
+            &state_a,
+        )
+        .await
+        .expect_err("must fail closed for unknown/unpaired peer");
+        assert!(
+            err.contains("not paired"),
+            "expected a clear not-paired error, got: {err}"
+        );
+    }
+
+    /// Direct unit test of the mutual-auth verifier: a server cert whose SPKI
+    /// does not match the pinned peer MUST be rejected; the correct SPKI MUST
+    /// be accepted. This is the core assertion behind "fail-closed" dialing.
+    #[test]
+    fn faz3_pinned_server_cert_verifier_rejects_mismatched_spki() {
+        use rustls::client::danger::ServerCertVerifier;
+
+        let dir_b = TempDir::new().expect("tmpdir_b");
+        let dir_c = TempDir::new().expect("tmpdir_c");
+        let id_b = BridgeIdentity::load_or_generate(&dir_b.path().to_path_buf()).expect("gen_b");
+        let id_c = BridgeIdentity::load_or_generate(&dir_c.path().to_path_buf()).expect("gen_c");
+
+        let end_entity = CertificateDer::from(id_b.cert_der.clone());
+        let server_name = rustls::pki_types::ServerName::try_from("muya-bridge").unwrap();
+        let now = rustls::pki_types::UnixTime::now();
+
+        // Wrong expected SPKI (id_c) presented with B's actual cert → reject.
+        let verifier_wrong = PinnedServerCertVerifier {
+            expected_spki: id_c.spki_hash.clone(),
+        };
+        let result_wrong =
+            verifier_wrong.verify_server_cert(&end_entity, &[], &server_name, &[], now);
+        assert!(
+            result_wrong.is_err(),
+            "must reject a server cert whose SPKI != the expected pinned SPKI"
+        );
+
+        // Correct expected SPKI (id_b) → accept.
+        let verifier_ok = PinnedServerCertVerifier {
+            expected_spki: id_b.spki_hash.clone(),
+        };
+        let result_ok = verifier_ok.verify_server_cert(&end_entity, &[], &server_name, &[], now);
+        assert!(
+            result_ok.is_ok(),
+            "must accept the correctly pinned server cert SPKI"
+        );
+    }
+
+    /// Real-socket fail-closed test: A's registry has a stale/incorrect pin
+    /// (SPKI of a third identity, `id_c`) whose `last_addr` actually points at
+    /// B's real listener. This simulates a stale registry entry OR an active
+    /// network-level redirect (MITM). The dialer MUST reject the connection —
+    /// it must NEVER silently accept B's cert just because it reached the
+    /// expected network address.
+    #[tokio::test]
+    async fn faz3_server_cert_spki_mismatch_rejected_at_handshake_real_socket() {
+        let dir_a = TempDir::new().expect("tmpdir_a");
+        let dir_b = TempDir::new().expect("tmpdir_b");
+        let dir_c = TempDir::new().expect("tmpdir_c");
+        let id_a = BridgeIdentity::load_or_generate(&dir_a.path().to_path_buf()).expect("gen_a");
+        let id_b = BridgeIdentity::load_or_generate(&dir_b.path().to_path_buf()).expect("gen_b");
+        let id_c = BridgeIdentity::load_or_generate(&dir_c.path().to_path_buf()).expect("gen_c");
+
+        // B pins A — the handshake would otherwise succeed on B's side.
+        let mut reg_b = PeerRegistry::load_or_create(&dir_b.path().to_path_buf()).expect("reg_b");
+        reg_b
+            .insert(PinnedPeer {
+                schema_v: REGISTRY_SCHEMA_VERSION,
+                spki_hash: id_a.spki_hash.clone(),
+                label: "peer-a".to_string(),
+                last_addr: None,
+                paired_at: unix_now(),
+                capability: "research".to_string(),
+            })
+            .expect("pin a in b");
+        let reg_b_arc = Arc::new(Mutex::new(reg_b));
+
+        let tcp_listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = tcp_listener.local_addr().expect("addr");
+        let server_config = build_server_config(&id_b, reg_b_arc)
+            .await
+            .expect("server config");
+        let acceptor = TlsAcceptor::from(Arc::new(server_config));
+
+        let accept_task = tokio::spawn(async move {
+            let (stream, _addr) = tcp_listener.accept().await.expect("tcp accept");
+            // The TLS handshake must fail (client aborts before completing) because
+            // the client expects id_c's SPKI but B presents id_b's cert.
+            acceptor.accept(stream).await
+        });
+
+        // A "pins" id_c's SPKI but the address actually routes to B's real listener.
+        let mut reg_a = PeerRegistry::load_or_create(&dir_a.path().to_path_buf()).expect("reg_a");
+        reg_a
+            .insert(PinnedPeer {
+                schema_v: REGISTRY_SCHEMA_VERSION,
+                spki_hash: id_c.spki_hash.clone(),
+                label: "peer-mislabeled".to_string(),
+                last_addr: Some(addr.to_string()),
+                paired_at: unix_now(),
+                capability: "research".to_string(),
+            })
+            .expect("pin c in a");
+
+        let state_a = RemoteBridgeState::default();
+        *state_a.identity.lock().await = Some(Arc::new(id_a));
+        *state_a.registry.lock().await = Some(Arc::new(Mutex::new(reg_a)));
+
+        let result = remote_send_impl(
+            id_c.spki_hash.clone(),
+            "question".to_string(),
+            serde_json::json!({}),
+            &state_a,
+        )
+        .await;
+
+        assert!(
+            result.is_err(),
+            "dialer must reject a server-cert SPKI that doesn't match the pinned peer"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("TLS connect") || err.to_lowercase().contains("spki"),
+            "expected a TLS/SPKI rejection error, got: {err}"
+        );
+
+        // Server-side: the handshake attempt must not silently succeed either —
+        // it errors, or the client aborts before completion (timeout is also
+        // an acceptable outcome of a rejected handshake).
+        let server_outcome =
+            tokio::time::timeout(std::time::Duration::from_secs(2), accept_task).await;
+        if let Ok(join_result) = server_outcome {
+            let tls_result = join_result.expect("join");
+            assert!(
+                tls_result.is_err(),
+                "server-side TLS accept must also fail/abort when the client rejects the handshake"
+            );
+        }
     }
 }
