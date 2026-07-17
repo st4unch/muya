@@ -50,6 +50,12 @@ export default function ChatView() {
   const [listening, setListening] = useState(false);
   const [invitePin, setInvitePin] = useState<string | null>(null);
   const [pinCopied, setPinCopied] = useState(false);
+  // Auto-respond: when ON, an inbound QUESTION is answered by running the local
+  // Claude headlessly (bridge_run_claude) and the answer is sent back — this is
+  // what makes two Claudes converse. Opt-in (off by default) for safety.
+  const [autoRespond, setAutoRespond] = useState(false);
+  const autoRespondRef = useRef(false);
+  useEffect(() => { autoRespondRef.current = autoRespond; }, [autoRespond]);
 
   const copyPin = useCallback((e?: MouseEvent) => {
     e?.preventDefault();
@@ -79,27 +85,64 @@ export default function ChatView() {
 
   useEffect(() => { void refreshPeers(); }, [refreshPeers]);
 
-  // Poll the broker queue for inbound messages/tasks and append to threads.
+  // Reply to a peer over the same transport the request arrived on.
+  const replyTo = useCallback(async (peerKey: string, payload: unknown) => {
+    if (peerKey === "local") {
+      await invoke("bridge_send", { peer: "local", kind: "question", payload });
+    } else {
+      await invoke("bridge_remote_send", { peer: peerKey, kind: "question", payload });
+    }
+  }, []);
+
+  // Poll the broker queue for inbound messages, display them, and — when
+  // auto-respond is on — answer inbound QUESTIONS via the local Claude.
   useEffect(() => {
     const t = setInterval(async () => {
+      let inbound: InboundRequest[] = [];
       try {
-        const inbound = await invoke<InboundRequest[]>("bridge_poll_inbound");
-        if (!inbound.length) return;
+        inbound = await invoke<InboundRequest[]>("bridge_poll_inbound");
+      } catch { return; }
+      if (!inbound.length) return;
+
+      for (const r of inbound) {
+        const key = r.peer && r.peer !== "local" ? r.peer : "local";
+        // An answer we sent back is wrapped as { answer }; a question is a plain
+        // string. This split prevents an infinite answer↔answer loop.
+        const isAnswer = r.payload && typeof r.payload === "object" && "answer" in (r.payload as object);
+        const text = isAnswer
+          ? String((r.payload as { answer: unknown }).answer)
+          : typeof r.payload === "string" ? r.payload : JSON.stringify(r.payload);
+
         setThreads((prev) => {
-          const next = { ...prev };
-          for (const r of inbound) {
-            const key = r.peer && r.peer !== "local" ? r.peer : "local";
-            const text = typeof r.payload === "string" ? r.payload : JSON.stringify(r.payload);
-            const arr = next[key] ? [...next[key]] : [];
-            arr.push({ id: r.req_id, from: "peer", text, ts: Date.now() });
-            next[key] = arr;
-          }
-          return next;
+          const arr = prev[key] ? [...prev[key]] : [];
+          arr.push({ id: r.req_id, from: "peer", text, ts: Date.now() });
+          return { ...prev, [key]: arr };
         });
-      } catch { /* bridge idle */ }
+
+        // Auto-respond to a genuine inbound question.
+        if (!isAnswer && autoRespondRef.current && r.kind === "question") {
+          void (async () => {
+            try {
+              const answer = await invoke<string>("bridge_run_claude", { question: text });
+              await replyTo(key, { answer });
+              setThreads((prev) => {
+                const arr = prev[key] ? [...prev[key]] : [];
+                arr.push({ id: `resp-${r.req_id}`, from: "me", text: answer, ts: Date.now() });
+                return { ...prev, [key]: arr };
+              });
+            } catch (e) {
+              setThreads((prev) => {
+                const arr = prev[key] ? [...prev[key]] : [];
+                arr.push({ id: `resperr-${r.req_id}`, from: "me", text: `⚠️ auto-respond failed: ${e}`, ts: Date.now() });
+                return { ...prev, [key]: arr };
+              });
+            }
+          })();
+        }
+      }
     }, 1500);
     return () => clearInterval(t);
-  }, []);
+  }, [replyTo]);
 
   useEffect(() => { scrollRef.current?.scrollTo?.({ top: scrollRef.current.scrollHeight }); }, [messages.length, activeId]);
 
@@ -200,6 +243,18 @@ export default function ChatView() {
             }`}
           >
             <Radio className={`h-3 w-3 ${listening ? "animate-pulse" : ""}`} /> {listening ? "Listening for peers" : "Accept connections"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setAutoRespond((v) => !v)}
+            title="Gelen soruları yerel Claude ile otomatik yanıtla (iki Claude birbiriyle konuşur)"
+            className={`w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded text-[10px] font-mono font-bold cursor-pointer transition-colors ${
+              autoRespond
+                ? "bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-700"
+                : "text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 border border-neutral-200 dark:border-neutral-700"
+            }`}
+          >
+            <Bot className={`h-3 w-3 ${autoRespond ? "text-indigo-500" : ""}`} /> {autoRespond ? "Auto-respond: ON" : "Auto-respond: off"}
           </button>
           {invitePin && (
             <button

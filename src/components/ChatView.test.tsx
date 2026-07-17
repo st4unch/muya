@@ -105,4 +105,32 @@ describe("ChatView", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     await waitFor(() => expect(screen.queryByText("New Connection")).not.toBeInTheDocument());
   });
+
+  it("auto-respond: answers an inbound question via bridge_run_claude and sends the answer back", async () => {
+    const user = userEvent.setup();
+    let served = false;
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "bridge_list_peers") return Promise.resolve([]);
+      if (cmd === "bridge_poll_inbound") {
+        if (served) return Promise.resolve([]);
+        served = true;
+        return Promise.resolve([
+          { req_id: "q1", peer: "local", capability: "research", kind: "question", payload: "2+2?", approval: "not_required" },
+        ]);
+      }
+      if (cmd === "bridge_run_claude") return Promise.resolve("4");
+      return Promise.resolve(undefined);
+    });
+
+    render(<ChatView />);
+    // Toggle auto-respond ON.
+    await user.click(screen.getByRole("button", { name: /Auto-respond/i }));
+
+    // The inbound question is answered by the local Claude and sent back as { answer }.
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("bridge_run_claude", { question: "2+2?" });
+      expect(invokeMock).toHaveBeenCalledWith("bridge_send", { peer: "local", kind: "question", payload: { answer: "4" } });
+    }, { timeout: 4000 });
+    expect(await screen.findByText("4")).toBeInTheDocument();
+  });
 });

@@ -895,6 +895,79 @@ pub async fn bridge_fan_out(
 }
 
 // ---------------------------------------------------------------------------
+// Claude auto-responder — the "2 Claudes talking" core
+// ---------------------------------------------------------------------------
+
+/// Locate the `claude` CLI. The Muya app's PATH (esp. launched from Finder) may
+/// not include ~/.local/bin, so probe the usual install locations too.
+fn find_claude_bin() -> Option<String> {
+    if let Ok(home) = std::env::var("HOME") {
+        for p in [
+            format!("{home}/.local/bin/claude"),
+            format!("{home}/.claude/local/claude"),
+        ] {
+            if std::path::Path::new(&p).is_file() {
+                return Some(p);
+            }
+        }
+    }
+    for p in ["/opt/homebrew/bin/claude", "/usr/local/bin/claude"] {
+        if std::path::Path::new(p).is_file() {
+            return Some(p.to_string());
+        }
+    }
+    // Fall back to PATH lookup ("claude").
+    Some("claude".to_string())
+}
+
+/// Run the local Claude headlessly on an inbound question and return its answer.
+///
+/// This is what makes two Claudes actually converse: the receiving side feeds the
+/// peer's question to `claude -p` and the caller sends the answer back over the
+/// bridge. SECURITY: runs WITHOUT `--dangerously-skip-permissions` (text answer,
+/// no autonomous tool use), in a dedicated TempDir cwd with a stripped env — an
+/// inbound *question* must never become RCE. Terminal-capable *tasks* still go
+/// through the Faz 3 approval gate + sandboxed exec, not this path.
+#[tauri::command]
+pub async fn bridge_run_claude(question: String) -> Result<String, String> {
+    let q = question.trim();
+    if q.is_empty() {
+        return Err("empty question".into());
+    }
+    let bin = find_claude_bin().ok_or("claude CLI not found")?;
+    let sandbox = TempDir::new().map_err(|e| format!("sandbox cwd: {e}"))?;
+    let env = build_sandbox_env(&sandbox.path().to_string_lossy());
+
+    let child = Command::new(&bin)
+        .arg("-p")
+        .arg(q)
+        .current_dir(sandbox.path())
+        .env_clear()
+        .envs(&env)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("spawn claude: {e}"))?;
+
+    // Cap runtime so a stuck headless Claude can't hang the bridge.
+    let out = tokio::time::timeout(
+        std::time::Duration::from_secs(180),
+        child.wait_with_output(),
+    )
+    .await
+    .map_err(|_| "claude timed out (180s)".to_string())?
+    .map_err(|e| format!("claude wait: {e}"))?;
+
+    let answer = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if answer.is_empty() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("claude produced no answer: {}", err.trim()));
+    }
+    Ok(answer)
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

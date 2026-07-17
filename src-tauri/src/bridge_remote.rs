@@ -1051,7 +1051,19 @@ pub async fn bridge_pair_start_listener(
                     .await
                     {
                         Ok(result) => {
-                            let _ = app_clone.emit("bridge://sas-compare", &result.sas).ok();
+                            // Carry peer_spki + addr so the invitee UI can confirm the
+                            // pairing (bridge_pair_confirm_sas needs the SPKI) and then
+                            // start the data listener on the same iface.
+                            let _ = app_clone
+                                .emit(
+                                    "bridge://sas-compare",
+                                    serde_json::json!({
+                                        "sas": result.sas,
+                                        "peerSpki": result.peer_spki,
+                                        "peerAddr": peer_addr.to_string(),
+                                    }),
+                                )
+                                .ok();
                             *shared_result_task.lock().await = Some(result);
                         }
                         Err(e) => {

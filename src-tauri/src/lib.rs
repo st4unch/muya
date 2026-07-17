@@ -199,7 +199,8 @@ pub fn run() {
             bridge_exec::bridge_set_auto_run,
             bridge_exec::bridge_audit_log,
             bridge_exec::bridge_execute_task,
-            bridge_exec::bridge_fan_out
+            bridge_exec::bridge_fan_out,
+            bridge_exec::bridge_run_claude
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
