@@ -3,6 +3,9 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: () => Promise.resolve(() => {}),
+}));
 
 const invokeMock = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({
@@ -62,12 +65,12 @@ describe("ChatView", () => {
     expect(screen.getByText(/No IP, port, or PIN/i)).toBeInTheDocument();
   });
 
-  it("Remote connect composes addr ip:port and confirms SAS", async () => {
+  it("Remote connect composes addr ip:port and shows the SAS to confirm (no auto-confirm)", async () => {
     const user = userEvent.setup();
     invokeMock.mockImplementation((cmd: string) => {
       if (cmd === "bridge_list_peers") return Promise.resolve(PEERS);
       if (cmd === "bridge_poll_inbound") return Promise.resolve([]);
-      if (cmd === "bridge_pair_connect") return Promise.resolve({ sas: "123456", peer_spki: "newpeer" });
+      if (cmd === "bridge_pair_connect") return Promise.resolve({ sas: "428195", peer_spki: "newpeer" });
       return Promise.resolve(undefined);
     });
     render(<ChatView />);
@@ -77,11 +80,19 @@ describe("ChatView", () => {
     await user.type(screen.getByPlaceholderText("8-digit PIN"), "11223344");
     await user.click(screen.getByRole("button", { name: /^Connect$/i }));
 
+    // pair_connect is called with the composed addr; the SAS is shown for the
+    // human to compare — NOT auto-confirmed (MITM protection, PRD R3).
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("bridge_pair_connect", {
         addr: "10.0.0.9:7420", pin: "11223344", label: "10.0.0.9:7420",
       });
-      expect(invokeMock).toHaveBeenCalledWith("bridge_pair_confirm_sas", { peer: "newpeer", sasOk: true });
+    });
+    expect(await screen.findByText("428195")).toBeInTheDocument();
+    expect(screen.getByText(/SAS/i)).toBeInTheDocument();
+    // Confirming pins the peer.
+    await user.click(screen.getByRole("button", { name: /Onayla/i }));
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("bridge_pair_confirm_sas", { peerSpki: "newpeer", sasOk: true, label: "10.0.0.9:7420" });
     });
   });
 

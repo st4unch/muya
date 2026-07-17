@@ -1,9 +1,12 @@
 import { useState, useEffect, useRef, useCallback, type MouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import {
   Plus, X, Wifi, HardDrive, Send, Radio, Shield, Bot, User,
-  Circle, RefreshCw, KeyRound, Check,
+  Circle, RefreshCw, KeyRound, Check, Network,
 } from "lucide-react";
+
+const BRIDGE_PORT = 7420;
 
 // ─── Types mirroring the Rust bridge command surface ────────────────────────
 // NOTE: the Rust structs (PinnedPeer, InboundRequest) derive Serialize WITHOUT
@@ -56,6 +59,12 @@ export default function ChatView() {
   const [autoRespond, setAutoRespond] = useState(false);
   const autoRespondRef = useRef(false);
   useEffect(() => { autoRespondRef.current = autoRespond; }, [autoRespond]);
+  // LAN address shown while accepting remote connections (so the dialer knows where to dial).
+  const [listenAddr, setListenAddr] = useState<string | null>(null);
+  // SAS-compare prompt — the human confirms the 6-digit code matches on both ends.
+  const [sasPrompt, setSasPrompt] = useState<{ sas: string; peerSpki: string; label: string; side: "dialer" | "invitee" } | null>(null);
+  const listenAddrRef = useRef<string | null>(null);
+  useEffect(() => { listenAddrRef.current = listenAddr; }, [listenAddr]);
 
   const copyPin = useCallback((e?: MouseEvent) => {
     e?.preventDefault();
@@ -171,16 +180,55 @@ export default function ChatView() {
   };
 
   // Toggle accepting incoming connections (remote listener + show pairing PIN).
+  // Invitee side: when a dialer completes the PAKE handshake, the backend emits
+  // the SAS + the dialer's SPKI. Show it for the human to compare & confirm.
+  useEffect(() => {
+    const un = listen<{ sas: string; peerSpki: string; peerAddr?: string }>("bridge://sas-compare", (e) => {
+      setSasPrompt({ sas: e.payload.sas, peerSpki: e.payload.peerSpki, label: e.payload.peerAddr ?? "peer", side: "invitee" });
+    });
+    return () => { void un.then((f) => f()); };
+  }, []);
+
+  // Human confirmed the SAS matches → pin the peer. On the invitee side, also
+  // start the data listener (same port) now that pairing succeeded.
+  const confirmSas = async (ok: boolean) => {
+    const p = sasPrompt;
+    setSasPrompt(null);
+    if (!p) return;
+    try {
+      await invoke("bridge_pair_confirm_sas", { peerSpki: p.peerSpki, sasOk: ok, label: p.label });
+      if (ok) {
+        await refreshPeers();
+        if (p.side === "invitee" && listenAddrRef.current) {
+          // Pairing listener was single-use; now serve the mTLS data channel on the same addr.
+          await invoke("bridge_remote_listen", { enable: true, iface: listenAddrRef.current }).catch(() => {});
+        }
+      }
+    } catch (e) {
+      alert(`SAS confirm failed: ${e}`);
+    }
+  };
+
   const toggleListen = async () => {
     try {
       if (!listening) {
         await invoke("bridge_local_listen", { enable: true });
+        // Start REMOTE pairing on the machine's LAN address so a peer can dial in.
+        let addr: string | null = null;
+        try {
+          const ip = await invoke<string>("local_ip");
+          addr = `${ip}:${BRIDGE_PORT}`;
+          await invoke("bridge_pair_start_listener", { pairingIface: addr });
+          setListenAddr(addr);
+        } catch { /* remote listen unavailable — local still works */ }
         const res = await invoke<{ pin: string }>("bridge_pair_invite").catch(() => null);
         if (res?.pin) setInvitePin(res.pin);
         setListening(true);
       } else {
         await invoke("bridge_local_listen", { enable: false });
+        await invoke("bridge_remote_listen", { enable: false, iface: listenAddr ?? "" }).catch(() => {});
         setInvitePin(null);
+        setListenAddr(null);
         setListening(false);
       }
     } catch (e) {
@@ -256,6 +304,12 @@ export default function ChatView() {
           >
             <Bot className={`h-3 w-3 ${autoRespond ? "text-indigo-500" : ""}`} /> {autoRespond ? "Auto-respond: ON" : "Auto-respond: off"}
           </button>
+          {listenAddr && (
+            <div className="text-center bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded p-1.5">
+              <div className="text-[8px] font-mono uppercase text-neutral-500 flex items-center justify-center gap-1"><Network className="h-2.5 w-2.5" /> Bu adrese bağlan</div>
+              <div className="text-[11px] font-mono font-bold text-neutral-700 dark:text-neutral-300">{listenAddr}</div>
+            </div>
+          )}
           {invitePin && (
             <button
               type="button"
@@ -339,14 +393,40 @@ export default function ChatView() {
           }}
           onRemote={async (ip, port, pin, label) => {
             const addr = `${ip}:${port}`;
-            const res = await invoke<{ sas: string; peer_spki: string }>("bridge_pair_connect", { addr, pin, label });
-            // Auto-confirm SAS in this MVP flow; a stricter flow would show it for comparison.
-            await invoke("bridge_pair_confirm_sas", { peer: res.peer_spki, sasOk: true }).catch(() => {});
-            await refreshPeers();
-            setActiveId(res.peer_spki);
+            const lbl = label || addr;
+            const res = await invoke<{ sas: string; peer_spki: string }>("bridge_pair_connect", { addr, pin, label: lbl });
+            // Show the SAS for the human to COMPARE with the invitee's — do NOT
+            // auto-confirm (auto-confirm defeats the MITM protection, PRD R3).
+            setSasPrompt({ sas: res.sas, peerSpki: res.peer_spki, label: lbl, side: "dialer" });
             setAddOpen(false);
           }}
         />
+      )}
+
+      {sasPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-6">
+          <div className="w-[400px] max-w-full bg-white dark:bg-[#25272b] rounded-xl shadow-2xl border border-neutral-200 dark:border-neutral-700 p-5 text-center space-y-3">
+            <div className="flex items-center justify-center gap-2 text-sm font-display font-bold text-neutral-800 dark:text-neutral-200">
+              <Shield className="h-4 w-4 text-violet-500" /> Güvenlik Doğrulaması (SAS)
+            </div>
+            <p className="text-[11px] font-mono text-neutral-500 dark:text-neutral-400">
+              Bu kod {sasPrompt.side === "dialer" ? "karşı taraftaki (davet eden)" : "bağlanan taraftaki"} kodla <b>aynı mı</b>? Aynıysa onayla — farklıysa reddet (MITM olabilir).
+            </p>
+            <div className="text-3xl font-mono font-bold tracking-[0.3em] text-violet-700 dark:text-violet-300 py-2 bg-violet-50 dark:bg-violet-950/30 rounded-lg">
+              {sasPrompt.sas}
+            </div>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => void confirmSas(false)}
+                className="flex-1 px-3 py-2 rounded-lg text-xs font-mono font-bold border border-rose-300 dark:border-rose-700 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 cursor-pointer transition-colors">
+                Farklı — Reddet
+              </button>
+              <button type="button" onClick={() => void confirmSas(true)}
+                className="flex-1 px-3 py-2 rounded-lg text-xs font-mono font-bold bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer transition-colors flex items-center justify-center gap-1">
+                <Check className="h-3.5 w-3.5" /> Aynı — Onayla
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
