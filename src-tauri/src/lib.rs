@@ -104,6 +104,20 @@ pub fn run() {
                 vault::warmup_vault(vault_arc).await;
             });
 
+            // Headless auto-listen for dev/test instances: bind the local bridge
+            // socket at startup without a UI toggle. Gated by env (inert in prod).
+            // Pair with MUYA_BRIDGE_SOCK to isolate from the primary instance.
+            if std::env::var("MUYA_BRIDGE_AUTOLISTEN").is_ok() {
+                let bridge_state = app.state::<bridge::BridgeState>();
+                let handle = app.handle().clone();
+                if let Err(e) = tauri::async_runtime::block_on(bridge::enable_local_listener(
+                    &bridge_state,
+                    handle,
+                )) {
+                    eprintln!("[bridge] auto-listen failed: {e}");
+                }
+            }
+
             Ok(())
         })
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -165,6 +179,8 @@ pub fn run() {
             pty::pty_write,
             pty::pty_resize,
             pty::pty_kill,
+            pty::pty_cwds,
+            pty::pty_session_ids,
             fs::list_claude_resources,
             fs::fetch_skill_marketplace,
             fs::fetch_mcp_marketplace,
@@ -190,6 +206,8 @@ pub fn run() {
             bridge_remote::bridge_remote_listen,
             bridge_remote::bridge_pair_invite,
             bridge_remote::bridge_pair_start_listener,
+            bridge_remote::bridge_pair_stop_listener,
+            bridge_remote::bridge_check_port,
             bridge_remote::bridge_pair_connect,
             bridge_remote::bridge_pair_confirm_sas,
             bridge_remote::bridge_list_peers,

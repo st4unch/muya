@@ -86,6 +86,13 @@ pub struct Envelope {
     pub seq: u32,
     #[serde(default)]
     pub r#final: bool,
+    /// When true, the local socket handler answers the question inline with
+    /// headless Claude (`claude -p`) and returns the answer on the SAME
+    /// connection, instead of enqueuing to the broker. Lets a CLI client get a
+    /// synchronous two-way reply over the owner-only socket. Default false =
+    /// legacy send-only (enqueue + ack) behavior.
+    #[serde(default)]
+    pub respond_inline: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -252,6 +259,43 @@ async fn handle_connection(
             continue;
         }
 
+        // Inline two-way query: a CLI client asks a question and wants the
+        // answer back on THIS connection. Only honored for questions (never
+        // tasks — respond_inline must not drive execution). Runs headless
+        // Claude (`claude -p`, no --dangerously-skip-permissions = text only).
+        if env.respond_inline && env.kind == Kind::Question {
+            let question = env
+                .payload
+                .as_str()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| env.payload.to_string());
+            // Surface the exchange in the chat UI too (question in, answer out).
+            let _ = app.emit("bridge://inbound-request", env.id.clone());
+            let answer_payload = match crate::bridge_exec::run_claude_headless(&question).await {
+                Ok(ans) => serde_json::json!({ "answer": ans }),
+                Err(e) => serde_json::json!({ "error": e }),
+            };
+            let response = Envelope {
+                v: 1,
+                envelope_type: EnvelopeType::Response,
+                id: env.id.clone(),
+                peer: "local".to_string(),
+                capability: env.capability.clone(),
+                kind: env.kind.clone(),
+                payload: answer_payload,
+                stream: false,
+                seq: 0,
+                r#final: true,
+                respond_inline: false,
+            };
+            if let Err(e) = write_frame(&mut stream, &response).await {
+                #[cfg(debug_assertions)]
+                eprintln!("[bridge] inline write_frame error: {e}");
+                break;
+            }
+            continue;
+        }
+
         let approval = required_approval(&env);
         let req = InboundRequest {
             req_id: env.id.clone(),
@@ -288,6 +332,7 @@ async fn handle_connection(
             stream: false,
             seq: 0,
             r#final: true,
+            respond_inline: false,
         };
         if let Err(e) = write_frame(&mut stream, &response).await {
             #[cfg(debug_assertions)]
@@ -303,6 +348,20 @@ async fn handle_connection(
 
 /// Return the path to the owner-only UDS socket in the per-user app-data dir.
 fn socket_path() -> Result<PathBuf, String> {
+    // Explicit override — lets a second (test/dev) instance bind an ISOLATED
+    // socket instead of stealing the primary one. Mirrors the CLI helper's
+    // MUYA_BRIDGE_SOCK. Its parent dir is created + locked to 0700.
+    if let Ok(p) = std::env::var("MUYA_BRIDGE_SOCK") {
+        let path = PathBuf::from(p);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("create bridge dir: {e}"))?;
+            // Best-effort: a shared parent like /tmp can't be chmod'd by a
+            // non-owner. The socket file's own 0600 (set after bind) is the real
+            // owner-only barrier, so a failed dir chmod must NOT abort listen.
+            let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+        }
+        return Ok(path);
+    }
     let base = dirs_next::data_local_dir()
         .or_else(dirs_next::home_dir)
         .ok_or("cannot determine app-data directory")?;
@@ -330,8 +389,24 @@ pub async fn bridge_local_listen(
     state: State<'_, BridgeState>,
     app: AppHandle,
 ) -> Result<(), String> {
-    let mut guard = state.listener.lock().await;
     if enable {
+        return enable_local_listener(&state, app).await;
+    }
+    let mut guard = state.listener.lock().await;
+    if let Some((_listener, path)) = guard.take() {
+        // Drop the Arc<UnixListener> — this closes the fd and makes the accept
+        // loop's next `accept()` return an error, causing it to exit cleanly.
+        let _ = fs::remove_file(&path);
+    }
+    Ok(())
+}
+
+/// Bind the local bridge socket + start the accept loop. Shared by the Tauri
+/// command and the headless auto-listen path (MUYA_BRIDGE_AUTOLISTEN) so a
+/// dev/test instance can come up listening without a UI toggle.
+pub async fn enable_local_listener(state: &BridgeState, app: AppHandle) -> Result<(), String> {
+    let mut guard = state.listener.lock().await;
+    {
         if guard.is_some() {
             return Ok(()); // already listening
         }
@@ -375,12 +450,6 @@ pub async fn bridge_local_listen(
         });
 
         *guard = Some((listener, path));
-    } else {
-        if let Some((_listener, path)) = guard.take() {
-            // Drop the Arc<UnixListener> — this closes the fd and makes the accept
-            // loop's next `accept()` return an error, causing it to exit cleanly.
-            let _ = fs::remove_file(&path);
-        }
     }
     Ok(())
 }
@@ -437,6 +506,7 @@ pub async fn bridge_send(
         stream: false,
         seq: seq as u32,
         r#final: true,
+        respond_inline: false,
     };
 
     // Dial the local bridge socket and deliver the frame. The peer side must
@@ -589,6 +659,7 @@ mod tests {
                 stream: false,
                 seq: 0,
                 r#final: true,
+                respond_inline: false,
             };
             write_frame(&mut client, &env).await.expect("write_frame");
         });
@@ -605,6 +676,27 @@ mod tests {
         assert_eq!(received.capability, Capability::Research);
         assert_eq!(received.kind, Kind::Question);
         assert_eq!(received.payload["q"], "hello?");
+        // Default when producer omits it (legacy send-only frame).
+        assert!(!received.respond_inline);
+    }
+
+    /// Backward-compat: a frame WITHOUT `respond_inline` still parses (serde
+    /// default false), and a frame WITH it round-trips true. Guards the
+    /// two-way CLI path's wire contract.
+    #[test]
+    fn respond_inline_serde_default_and_roundtrip() {
+        // Legacy frame — field absent entirely.
+        let legacy = r#"{"v":1,"type":"request","id":"x","peer":"local",
+            "capability":"research","kind":"question","payload":"2+2?"}"#;
+        let env: Envelope = serde_json::from_str(legacy).expect("parse legacy");
+        assert!(!env.respond_inline, "absent → false (send-only)");
+
+        // Inline query frame — field present, true.
+        let inline = r#"{"v":1,"type":"request","id":"y","peer":"local",
+            "capability":"research","kind":"question","payload":"2+2?",
+            "respond_inline":true}"#;
+        let env2: Envelope = serde_json::from_str(inline).expect("parse inline");
+        assert!(env2.respond_inline, "present true → inline two-way");
     }
 
     /// A frame whose declared length > MAX_FRAME_BYTES is rejected BEFORE body alloc.
@@ -671,6 +763,7 @@ mod tests {
                 stream: false,
                 seq: 0,
                 r#final: true,
+                respond_inline: false,
             };
             write_frame(&mut client, &env).await.expect("write_frame");
             // Read the response frame back.
@@ -711,6 +804,7 @@ mod tests {
             stream: false,
             seq: 0,
             r#final: true,
+            respond_inline: false,
         };
         write_frame(&mut stream, &response)
             .await
@@ -760,6 +854,7 @@ mod tests {
                 stream: false,
                 seq: 0,
                 r#final: true,
+                respond_inline: false,
             };
             write_frame(&mut client, &request)
                 .await
@@ -811,6 +906,7 @@ mod tests {
             stream: false,
             seq: 0,
             r#final: true,
+            respond_inline: false,
         };
         write_frame(&mut stream, &response)
             .await
@@ -852,6 +948,7 @@ mod tests {
             stream: false,
             seq: 0,
             r#final: true,
+            respond_inline: false,
         };
 
         // Required approval for shell task must be PendingApproval.
@@ -900,6 +997,7 @@ mod tests {
             stream: false,
             seq: 0,
             r#final: true,
+            respond_inline: false,
         };
         let req2 = InboundRequest {
             req_id: shell_env2.id.clone(),
@@ -934,6 +1032,7 @@ mod tests {
             stream: false,
             seq: 0,
             r#final: true,
+            respond_inline: false,
         };
         assert_eq!(required_approval(&research_env), ApprovalState::NotRequired);
 
@@ -948,6 +1047,7 @@ mod tests {
             stream: false,
             seq: 0,
             r#final: true,
+            respond_inline: false,
         };
         assert_eq!(required_approval(&file_env), ApprovalState::NotRequired);
     }

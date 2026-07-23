@@ -440,7 +440,9 @@ export default function FileTree({
           {/* File-only */}
           {!menu.isDir && (
             <>
-              <MenuItem label="Open in Monaco" onClick={() => { onOpenFile?.(menu.path); setMenu(null); }} />
+              {/* Opens EDITABLE in Muya's centre editor — every file type,
+                  markdown included (there is no separate preview panel). */}
+              <MenuItem label="Open in Muya" onClick={() => { onOpenFile?.(menu.path); setMenu(null); }} />
               <MenuItem label="Open in Terminal Here" onClick={() => {
                 const dir = menu.path.split("/").slice(0, -1).join("/");
                 onOpenTerminalHere?.(dir); setMenu(null);

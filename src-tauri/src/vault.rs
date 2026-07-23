@@ -203,10 +203,69 @@ fn resolve_vault_path() -> Option<String> {
     detect_vaults().into_iter().next()
 }
 
-fn server_script_path() -> Option<PathBuf> {
+/// Directory where the smart-connections MCP server lives. Overridable with
+/// `VAULT_MCP_DIR` so the app doesn't hard-require exactly `~/smart-connections-mcp`.
+fn mcp_dir() -> Option<PathBuf> {
+    if let Ok(d) = std::env::var("VAULT_MCP_DIR") {
+        let p = PathBuf::from(d);
+        if p.is_dir() {
+            return Some(p);
+        }
+    }
     let home = std::env::var("HOME").ok()?;
-    let p = Path::new(&home).join("smart-connections-mcp/server.py");
+    let p = Path::new(&home).join("smart-connections-mcp");
+    p.is_dir().then_some(p)
+}
+
+fn server_script_path() -> Option<PathBuf> {
+    let p = mcp_dir()?.join("server.py");
     p.is_file().then_some(p)
+}
+
+/// Does this venv have `sentence_transformers` installed? Fast filesystem check
+/// (`<venv>/lib/python*/site-packages/sentence_transformers`) — no subprocess,
+/// no heavy import. Guards against selecting an empty/broken venv.
+fn venv_has_deps(venv_dir: &Path) -> bool {
+    let lib = venv_dir.join("lib");
+    let Ok(entries) = std::fs::read_dir(&lib) else {
+        return false;
+    };
+    for e in entries.flatten() {
+        // e = lib/python3.X
+        if e.path()
+            .join("site-packages/sentence_transformers")
+            .is_dir()
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Resolve the Python interpreter to run the MCP server, in priority order:
+///   1. `VAULT_PYTHON` env — explicit override (always wins, trusted as-is).
+///   2. `<mcp_dir>/.venv/bin/python` — the venv `install.sh` creates, but ONLY
+///      if it actually has the deps (guards a broken/empty venv from shadowing
+///      a working global install). This is the portable path: clone + install.sh.
+///   3. `/opt/homebrew/bin/python3.11` — legacy fallback (works when the heavy
+///      deps are installed globally there, as on the original dev machine).
+///   4. `python3` on PATH — last resort.
+fn resolve_python() -> String {
+    if let Ok(p) = std::env::var("VAULT_PYTHON") {
+        if !p.trim().is_empty() {
+            return p;
+        }
+    }
+    if let Some(dir) = mcp_dir() {
+        let venv_py = dir.join(".venv/bin/python");
+        if venv_py.is_file() && venv_has_deps(&dir.join(".venv")) {
+            return venv_py.to_string_lossy().into_owned();
+        }
+    }
+    if Path::new("/opt/homebrew/bin/python3.11").is_file() {
+        return "/opt/homebrew/bin/python3.11".to_string();
+    }
+    "python3".to_string()
 }
 
 /// Tauri command: current config + resolution state, for a Settings UI.
@@ -413,8 +472,7 @@ async fn spawn_vault_mcp() -> Option<VaultMcpProcess> {
     let server_path = server_script_path()?;
     let vault_path = resolve_vault_path()?;
 
-    let python = std::env::var("VAULT_PYTHON")
-        .unwrap_or_else(|_| "/opt/homebrew/bin/python3.11".to_string());
+    let python = resolve_python();
 
     let mut child = tokio::process::Command::new(&python)
         .arg(&server_path)
@@ -555,6 +613,42 @@ mod vault_config_tests {
         let v = root.join(name);
         std::fs::create_dir_all(v.join(".obsidian")).unwrap();
         v
+    }
+
+    #[test]
+    fn venv_has_deps_detects_installed_and_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let venv = dir.path().join(".venv");
+        // Empty venv → no deps.
+        std::fs::create_dir_all(venv.join("lib/python3.11/site-packages")).unwrap();
+        assert!(!venv_has_deps(&venv), "empty venv must report no deps");
+        // Install the marker package dir → detected.
+        std::fs::create_dir_all(venv.join("lib/python3.11/site-packages/sentence_transformers"))
+            .unwrap();
+        assert!(
+            venv_has_deps(&venv),
+            "venv with the package dir must be detected"
+        );
+    }
+
+    #[test]
+    fn resolve_python_skips_broken_venv() {
+        // A venv without deps must NOT be selected — resolution falls through to
+        // the global fallback (regression guard for the working dev machine).
+        let dir = tempfile::tempdir().unwrap();
+        let mcp = dir.path().join("smart-connections-mcp");
+        std::fs::create_dir_all(mcp.join(".venv/bin")).unwrap();
+        std::fs::write(mcp.join(".venv/bin/python"), "#!/bin/sh\n").unwrap();
+        std::fs::create_dir_all(mcp.join(".venv/lib/python3.11/site-packages")).unwrap();
+        // Point VAULT_MCP_DIR at our fixture; ensure VAULT_PYTHON is unset.
+        std::env::set_var("VAULT_MCP_DIR", &mcp);
+        std::env::remove_var("VAULT_PYTHON");
+        let py = resolve_python();
+        assert!(
+            !py.contains(".venv"),
+            "broken venv (no deps) must be skipped, got: {py}"
+        );
+        std::env::remove_var("VAULT_MCP_DIR");
     }
 
     #[test]

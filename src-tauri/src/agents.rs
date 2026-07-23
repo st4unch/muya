@@ -217,7 +217,24 @@ pub fn list_agent_sessions(include_all: Option<bool>) -> Result<Vec<AgentSession
         .map_err(|e| format!("failed to parse claude agents JSON: {e}"))?;
     let mut sessions: Vec<AgentSession> = raw.into_iter().map(map_agent).collect();
     disambiguate_names(&mut sessions);
+    sort_newest_first(&mut sessions);
     Ok(sessions)
+}
+
+/// Order sessions most-recently-started first. `created_at` holds the start time
+/// as a millisecond-epoch string (empty when the CLI didn't report one); entries
+/// without a timestamp sort last so live, dated sessions stay on top.
+fn sort_newest_first(sessions: &mut [AgentSession]) {
+    sessions.sort_by(|a, b| {
+        let ka = a.created_at.parse::<i64>().ok();
+        let kb = b.created_at.parse::<i64>().ok();
+        match (ka, kb) {
+            (Some(x), Some(y)) => y.cmp(&x), // newest first
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
+    });
 }
 
 /// Stop any session: background → `claude stop <id>`; interactive (no background id)
@@ -280,6 +297,25 @@ mod tests {
             pid: None,
             parent_id: None,
         }
+    }
+
+    #[test]
+    fn sort_newest_first_orders_by_start_time_desc() {
+        let mut older = session("a", "older");
+        older.created_at = "1000".into();
+        let mut newer = session("b", "newer");
+        newer.created_at = "5000".into();
+        let undated = session("c", "undated"); // created_at stays ""
+
+        let mut list = vec![older, undated, newer];
+        sort_newest_first(&mut list);
+
+        let order: Vec<&str> = list.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(
+            order,
+            vec!["newer", "older", "undated"],
+            "newest first; undated entries sink to the bottom"
+        );
     }
 
     #[test]

@@ -226,8 +226,210 @@ pub fn pty_kill(state: State<PtyManager>, id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Parse `lsof -Fpn` output into (pid → cwd). The format is a record stream:
+/// `p<pid>` starts a process block, `n<path>` gives a path within it. We asked
+/// for `-d cwd` so the only path per block is that process's working directory.
+fn parse_lsof_cwds(out: &str) -> HashMap<u32, String> {
+    let mut map = HashMap::new();
+    let mut cur: Option<u32> = None;
+    for line in out.lines() {
+        let (tag, rest) = match line.split_at_checked(1) {
+            Some(v) => v,
+            None => continue,
+        };
+        match tag {
+            "p" => cur = rest.trim().parse::<u32>().ok(),
+            "n" => {
+                if let Some(pid) = cur {
+                    // First path wins; -d cwd yields exactly one per process.
+                    map.entry(pid).or_insert_with(|| rest.trim().to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    map
+}
+
+/// Live working directory of each requested PTY's shell.
+///
+/// The list shows where a terminal *currently* is, not where it was spawned — so
+/// this reads each shell process's actual cwd. All pids go into ONE `lsof` call,
+/// so cost is constant regardless of how many terminals are open (polling one
+/// process per terminal would spawn N subprocesses per tick).
+///
+/// Ids with no live process, or whose cwd can't be read, are simply omitted.
+#[tauri::command]
+pub fn pty_cwds(
+    state: State<PtyManager>,
+    ids: Vec<String>,
+) -> Result<HashMap<String, String>, String> {
+    // id → pid for the requested, still-running sessions.
+    let id_pids: Vec<(String, u32)> = {
+        let sessions = state.sessions.lock().unwrap();
+        ids.iter()
+            .filter_map(|id| {
+                sessions
+                    .get(id)
+                    .and_then(|h| h.child.process_id().map(|p| (id.clone(), p)))
+            })
+            .collect()
+    };
+    if id_pids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let pid_csv = id_pids
+        .iter()
+        .map(|(_, p)| p.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+
+    let output = std::process::Command::new("/usr/sbin/lsof")
+        .args(["-a", "-p", &pid_csv, "-d", "cwd", "-Fpn"])
+        .output()
+        .map_err(|e| format!("lsof failed: {e}"))?;
+    // lsof exits non-zero when *some* pids are gone; parse whatever it produced.
+    let by_pid = parse_lsof_cwds(&String::from_utf8_lossy(&output.stdout));
+
+    Ok(id_pids
+        .into_iter()
+        .filter_map(|(id, pid)| by_pid.get(&pid).map(|cwd| (id, cwd.clone())))
+        .collect())
+}
+
+/// Parse `ps -Ao pid=,ppid=` into a child→parent map.
+fn parse_ppid_map(out: &str) -> HashMap<u32, u32> {
+    let mut map = HashMap::new();
+    for line in out.lines() {
+        let mut it = line.split_whitespace();
+        if let (Some(pid), Some(ppid)) = (it.next(), it.next()) {
+            if let (Ok(p), Ok(pp)) = (pid.parse::<u32>(), ppid.parse::<u32>()) {
+                map.insert(p, pp);
+            }
+        }
+    }
+    map
+}
+
+/// Walk up from `pid` and return the first ancestor present in `roots`.
+/// Bounded so a cycle or a very deep tree can't spin forever.
+fn owning_root(pid: u32, roots: &HashMap<u32, String>, ppid: &HashMap<u32, u32>) -> Option<String> {
+    let mut cur = pid;
+    for _ in 0..64 {
+        if let Some(owner) = roots.get(&cur) {
+            return Some(owner.clone());
+        }
+        match ppid.get(&cur) {
+            Some(&parent) if parent != cur && parent != 0 => cur = parent,
+            _ => break,
+        }
+    }
+    None
+}
+
+/// Map each requested PTY to the Claude session id running **inside that tab**.
+///
+/// A tab must resume ITS OWN prior conversation, not merely the newest session in
+/// the same folder (two tabs can share a folder). We therefore resolve identity by
+/// process ancestry: `claude agents --json` reports each live session with its pid;
+/// whichever session's process descends from a tab's shell belongs to that tab.
+/// The frontend persists the result so the tab can `--resume` exactly it later.
+#[tauri::command]
+pub fn pty_session_ids(
+    state: State<PtyManager>,
+    ids: Vec<String>,
+) -> Result<HashMap<String, String>, String> {
+    // shell pid → tab id
+    let roots: HashMap<u32, String> = {
+        let sessions = state.sessions.lock().unwrap();
+        ids.iter()
+            .filter_map(|id| {
+                sessions
+                    .get(id)
+                    .and_then(|h| h.child.process_id())
+                    .map(|p| (p, id.clone()))
+            })
+            .collect()
+    };
+    if roots.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let ps = std::process::Command::new("/bin/ps")
+        .args(["-Ao", "pid=,ppid="])
+        .output()
+        .map_err(|e| format!("ps failed: {e}"))?;
+    let ppid = parse_ppid_map(&String::from_utf8_lossy(&ps.stdout));
+
+    // Live Claude sessions carry the session id we want to resume later.
+    let agents = crate::agents::list_agent_sessions(Some(true)).unwrap_or_default();
+
+    let mut out = HashMap::new();
+    for a in agents {
+        let (Some(pid), false) = (a.pid, a.id.is_empty()) else {
+            continue;
+        };
+        if pid <= 0 {
+            continue;
+        }
+        if let Some(tab) = owning_root(pid as u32, &roots, &ppid) {
+            out.insert(tab, a.id.clone());
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn parse_ppid_map_reads_pid_parent_pairs() {
+        let m = super::parse_ppid_map("  100  1\n  201  100\n 302   201\nbogus\n");
+        assert_eq!(m.get(&201), Some(&100));
+        assert_eq!(m.get(&302), Some(&201));
+        assert_eq!(m.len(), 3);
+    }
+
+    #[test]
+    fn owning_root_finds_the_tab_that_owns_a_descendant() {
+        // shell 100 (tab A) → zsh 201 → claude 302
+        let mut roots = std::collections::HashMap::new();
+        roots.insert(100u32, "pty-A".to_string());
+        let ppid = super::parse_ppid_map("100 1\n201 100\n302 201\n900 1\n");
+        assert_eq!(super::owning_root(302, &roots, &ppid).as_deref(), Some("pty-A"));
+        // An unrelated process must not be attributed to the tab.
+        assert_eq!(super::owning_root(900, &roots, &ppid), None);
+    }
+
+    #[test]
+    fn owning_root_terminates_on_cycles() {
+        let mut roots = std::collections::HashMap::new();
+        roots.insert(1u32, "pty-Z".to_string());
+        // 5 → 6 → 5 cycle, never reaching a root: must return, not hang.
+        let ppid = super::parse_ppid_map("5 6\n6 5\n");
+        assert_eq!(super::owning_root(5, &roots, &ppid), None);
+    }
+
+    #[test]
+    fn parse_lsof_cwds_maps_each_pid_to_its_cwd() {
+        // Real `lsof -Fpn -d cwd` shape: p<pid> block header, n<path> record.
+        let out = "p101\nfcwd\nn/Users/me/projects/alpha\np202\nfcwd\nn/tmp/beta\n";
+        let map = super::parse_lsof_cwds(out);
+        assert_eq!(
+            map.get(&101).map(String::as_str),
+            Some("/Users/me/projects/alpha")
+        );
+        assert_eq!(map.get(&202).map(String::as_str), Some("/tmp/beta"));
+        assert_eq!(map.len(), 2);
+    }
+
+    #[test]
+    fn parse_lsof_cwds_tolerates_empty_and_garbage() {
+        assert!(super::parse_lsof_cwds("").is_empty());
+        // A path with no preceding pid header must not panic or be attributed.
+        assert!(super::parse_lsof_cwds("n/orphan/path\n").is_empty());
+    }
     use super::*;
 
     /// Proves the PTY layer works on this machine end to end (without the Tauri

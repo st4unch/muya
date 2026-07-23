@@ -928,8 +928,10 @@ fn find_claude_bin() -> Option<String> {
 /// no autonomous tool use), in a dedicated TempDir cwd with a stripped env — an
 /// inbound *question* must never become RCE. Terminal-capable *tasks* still go
 /// through the Faz 3 approval gate + sandboxed exec, not this path.
-#[tauri::command]
-pub async fn bridge_run_claude(question: String) -> Result<String, String> {
+/// Core: run headless Claude on a question, return its answer. Reused by the
+/// Tauri command AND the local bridge's inline-query path (bridge.rs), so a CLI
+/// client can get a synchronous answer over the owner-only socket.
+pub async fn run_claude_headless(question: &str) -> Result<String, String> {
     let q = question.trim();
     if q.is_empty() {
         return Err("empty question".into());
@@ -965,6 +967,11 @@ pub async fn bridge_run_claude(question: String) -> Result<String, String> {
         return Err(format!("claude produced no answer: {}", err.trim()));
     }
     Ok(answer)
+}
+
+#[tauri::command]
+pub async fn bridge_run_claude(question: String) -> Result<String, String> {
+    run_claude_headless(&question).await
 }
 
 // ---------------------------------------------------------------------------

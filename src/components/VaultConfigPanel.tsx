@@ -96,10 +96,14 @@ export default function VaultConfigPanel({ onChanged }: { onChanged?: () => void
 
             <div className="p-4 space-y-3">
               {status && !status.serverInstalled && (
-                <p className="text-[11px] font-mono text-amber-600 dark:text-amber-400 flex items-start gap-1.5 bg-amber-50 dark:bg-amber-950/30 rounded p-2">
+                <div className="text-[11px] font-mono text-amber-600 dark:text-amber-400 flex items-start gap-1.5 bg-amber-50 dark:bg-amber-950/30 rounded p-2">
                   <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                  smart-connections-mcp not installed at ~/smart-connections-mcp — vault search will stay unavailable regardless of path.
-                </p>
+                  <div className="space-y-1.5">
+                    <p>Vault search server not installed — run this once, then Restart below:</p>
+                    <code className="block bg-amber-100 dark:bg-amber-900/40 rounded px-1.5 py-1 select-all">./scripts/setup-vault.sh</code>
+                    <p className="text-amber-500/90">(from the Muya repo. Installs the semantic-search engine + its Python deps.)</p>
+                  </div>
+                </div>
               )}
 
               <div>

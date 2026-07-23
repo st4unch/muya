@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { relTime, shortCwd } from "../lib/format";
-import { RefreshCw, Play, Plug, FolderGit2, Clock, Square, Search, X, MessageSquare, User, Bot } from "lucide-react";
+import { RefreshCw, Play, Plug, FolderGit2, Clock, Square, Search, X, MessageSquare, User, Bot, Copy, Check } from "lucide-react";
 
 interface AgentSession {
   id: string;
@@ -53,6 +53,8 @@ export default function SessionsPage({
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
+  // Resume id just copied — shows a transient "copied" confirmation.
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   // Transcript drawer: which past session's conversation is open.
   const [transcript, setTranscript] = useState<{ title: string; id: string; msgs: TranscriptMessage[] } | null>(null);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
@@ -268,7 +270,18 @@ export default function SessionsPage({
                     <span className="flex items-center gap-1">
                       <Clock className="h-3 w-3" /> {relTime(h.lastModified)}
                     </span>
-                    <span className="text-neutral-300 dark:text-neutral-600">{h.sessionId.slice(0, 8)}</span>
+                    {/* Full resume id — click to copy. Truncating it made the id
+                        unusable for `claude --resume <id>`, so show it in full. */}
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); void navigator.clipboard.writeText(h.sessionId); setCopiedId(h.sessionId); setTimeout(() => setCopiedId(null), 1400); }}
+                      title={`Resume id — click to copy\n${h.sessionId}`}
+                      className="flex items-center gap-1 font-mono text-neutral-400 dark:text-neutral-500 hover:text-indigo-600 dark:hover:text-indigo-400 cursor-pointer transition-colors"
+                    >
+                      {copiedId === h.sessionId
+                        ? <><Check className="h-3 w-3" /> copied</>
+                        : <><Copy className="h-3 w-3" /> <span className="select-all">{h.sessionId}</span></>}
+                    </button>
                   </div>
                 </div>
                 <div className="shrink-0 flex items-center gap-1.5">

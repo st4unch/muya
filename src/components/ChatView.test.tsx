@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
@@ -49,19 +49,51 @@ describe("ChatView", () => {
     expect(screen.getByText("192.168.1.42:7420")).toBeInTheDocument();
   });
 
+  it("ending a session revokes the peer via bridge_revoke_peer and drops it from the rail", async () => {
+    const user = userEvent.setup();
+    let revoked = false;
+    invokeMock.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === "bridge_list_peers") {
+        return Promise.resolve(revoked ? [PEERS[1]] : PEERS); // lab-mac gone after revoke
+      }
+      if (cmd === "bridge_poll_inbound") return Promise.resolve([]);
+      if (cmd === "bridge_revoke_peer") { revoked = true; void args; return Promise.resolve(undefined); }
+      return Promise.resolve(undefined);
+    });
+
+    render(<ChatView />);
+    expect(await screen.findByText("lab-mac")).toBeInTheDocument();
+    // The end-session (X) button is labelled per-peer; clicking it opens the
+    // in-app confirm modal (NOT a native window.confirm).
+    await user.click(screen.getByRole("button", { name: /End session with lab-mac/i }));
+    const dialog = within(await screen.findByRole("dialog", { name: "End session" }));
+    // Confirm inside the modal actually revokes.
+    await user.click(dialog.getByRole("button", { name: /End session/i }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("bridge_revoke_peer", { spkiHash: "aabbcc" });
+    });
+    // After revoke the rail no longer lists that peer.
+    await waitFor(() => expect(screen.queryByText("lab-mac")).not.toBeInTheDocument());
+    expect(screen.getByText("build-box")).toBeInTheDocument();
+  });
+
   it("+ opens New Connection; Remote shows IP/Port/PIN, Local hides them", async () => {
     const user = userEvent.setup();
     render(<ChatView />);
     await user.click(screen.getByTitle("New connection"));
     expect(screen.getByText("New Connection")).toBeInTheDocument();
+    // Scope to the modal — the listen editor in the rail reuses the same
+    // 192.168.1.42 / 7420 placeholders, so unscoped queries would be ambiguous.
+    const dialog = within(screen.getByRole("dialog", { name: "New Connection" }));
     // Remote is default
-    expect(screen.getByPlaceholderText("192.168.1.42")).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("7420")).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("8-digit PIN")).toBeInTheDocument();
+    expect(dialog.getByPlaceholderText("192.168.1.42")).toBeInTheDocument();
+    expect(dialog.getByPlaceholderText("7420")).toBeInTheDocument();
+    expect(dialog.getByPlaceholderText("8-digit PIN")).toBeInTheDocument();
     // switch to Local → fields gone (exact name targets the modal toggle,
     // not the rail's "Local (this machine)" connection button)
-    await user.click(screen.getByRole("button", { name: "Local" }));
-    expect(screen.queryByPlaceholderText("192.168.1.42")).not.toBeInTheDocument();
+    await user.click(dialog.getByRole("button", { name: "Local" }));
+    expect(dialog.queryByPlaceholderText("192.168.1.42")).not.toBeInTheDocument();
     expect(screen.getByText(/No IP, port, or PIN/i)).toBeInTheDocument();
   });
 
@@ -75,10 +107,11 @@ describe("ChatView", () => {
     });
     render(<ChatView />);
     await user.click(screen.getByTitle("New connection"));
-    await user.type(screen.getByPlaceholderText("192.168.1.42"), "10.0.0.9");
-    await user.type(screen.getByPlaceholderText("7420"), "7420");
-    await user.type(screen.getByPlaceholderText("8-digit PIN"), "11223344");
-    await user.click(screen.getByRole("button", { name: /^Connect$/i }));
+    const dialog = within(screen.getByRole("dialog", { name: "New Connection" }));
+    await user.type(dialog.getByPlaceholderText("192.168.1.42"), "10.0.0.9");
+    await user.type(dialog.getByPlaceholderText("7420"), "7420");
+    await user.type(dialog.getByPlaceholderText("8-digit PIN"), "11223344");
+    await user.click(dialog.getByRole("button", { name: /^Connect$/i }));
 
     // pair_connect is called with the composed addr; the SAS is shown for the
     // human to compare — NOT auto-confirmed (MITM protection, PRD R3).
@@ -90,7 +123,7 @@ describe("ChatView", () => {
     expect(await screen.findByText("428195")).toBeInTheDocument();
     expect(screen.getByText(/SAS/i)).toBeInTheDocument();
     // Confirming pins the peer.
-    await user.click(screen.getByRole("button", { name: /Onayla/i }));
+    await user.click(screen.getByRole("button", { name: /Confirm/i }));
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("bridge_pair_confirm_sas", { peerSpki: "newpeer", sasOk: true, label: "10.0.0.9:7420" });
     });
@@ -143,5 +176,82 @@ describe("ChatView", () => {
       expect(invokeMock).toHaveBeenCalledWith("bridge_send", { peer: "local", kind: "question", payload: { answer: "4" } });
     }, { timeout: 4000 });
     expect(await screen.findByText("4")).toBeInTheDocument();
+  });
+
+  it("listen: validates the port via bridge_check_port and shows failure without binding", async () => {
+    const user = userEvent.setup();
+    let startCalled = false;
+    invokeMock.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === "bridge_list_peers") return Promise.resolve([]);
+      if (cmd === "bridge_poll_inbound") return Promise.resolve([]);
+      if (cmd === "local_ip") return Promise.resolve("192.168.1.42");
+      if (cmd === "bridge_check_port") {
+        // Reject the port so we can assert the listener is NOT started.
+        return Promise.resolve({ ok: false, listening: false, detail: "Port is in use by another app on this machine" });
+      }
+      if (cmd === "bridge_pair_start_listener") { startCalled = true; void args; return Promise.resolve(undefined); }
+      return Promise.resolve(undefined);
+    });
+
+    render(<ChatView />);
+    // IP is prefilled from local_ip; click Accept → runs the pre-flight check.
+    await user.click(screen.getByRole("button", { name: /Accept connections/i }));
+
+    // The failure detail is surfaced and the pairing listener is never bound.
+    expect(await screen.findByText(/in use by another app/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("bridge_check_port", { addr: "192.168.1.42:7420" });
+    });
+    expect(startCalled).toBe(false);
+  });
+
+  it("listen: an editable IP:port composes the addr passed to bridge_check_port", async () => {
+    const user = userEvent.setup();
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "bridge_list_peers") return Promise.resolve([]);
+      if (cmd === "bridge_poll_inbound") return Promise.resolve([]);
+      if (cmd === "local_ip") return Promise.resolve("192.168.1.42");
+      if (cmd === "bridge_check_port") return Promise.resolve({ ok: true, listening: false, detail: "Port available" });
+      return Promise.resolve(undefined);
+    });
+
+    render(<ChatView />);
+    // Wait for the IP prefill, then edit the port and click the Test button.
+    const portInput = await screen.findByLabelText("Listen port");
+    await user.clear(portInput);
+    await user.type(portInput, "9000");
+    await user.click(screen.getByTitle(/Test port/i));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("bridge_check_port", { addr: "192.168.1.42:9000" });
+    });
+    expect(await screen.findByText("Port available")).toBeInTheDocument();
+  });
+
+  it("listen: stopping calls bridge_pair_stop_listener to actually tear down the port (L10)", async () => {
+    const user = userEvent.setup();
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "bridge_list_peers") return Promise.resolve([]);
+      if (cmd === "bridge_poll_inbound") return Promise.resolve([]);
+      if (cmd === "local_ip") return Promise.resolve("192.168.1.42");
+      if (cmd === "bridge_check_port") return Promise.resolve({ ok: true, listening: true, detail: "Listening" });
+      if (cmd === "bridge_pair_invite") return Promise.resolve({ pin: "12345678" });
+      return Promise.resolve(undefined);
+    });
+
+    render(<ChatView />);
+    // Start listening → button flips to "Listening for peers".
+    await user.click(screen.getByRole("button", { name: /Accept connections/i }));
+    const stopBtn = await screen.findByRole("button", { name: /Listening for peers/i });
+
+    // Stop → MUST call the real teardown (not just flip UI state). This is the
+    // regression guard for the "port stays bound after stop" bug.
+    await user.click(stopBtn);
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("bridge_pair_stop_listener");
+      expect(invokeMock).toHaveBeenCalledWith("bridge_local_listen", { enable: false });
+    });
+    // UI returns to the idle "Accept connections" affordance.
+    expect(await screen.findByRole("button", { name: /Accept connections/i })).toBeInTheDocument();
   });
 });

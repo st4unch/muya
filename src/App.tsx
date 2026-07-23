@@ -13,7 +13,6 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronLeft,
-  Database,
   Play,
   Pause,
   RefreshCw,
@@ -48,12 +47,10 @@ import {
   Lock,
   Unlock,
   Pencil,
-  FileText,
 } from "lucide-react";
 import BranchDAG from "./components/BranchDAG";
 import AgentTerminal from "./components/Terminal";
 import FileTree from "./components/FileTree";
-import MarkdownViewer from "./components/MarkdownViewer";
 import SessionsPage from "./components/SessionsPage";
 import SessionsPanel from "./components/SessionsPanel";
 const FileEditor = lazy(() => import("./components/FileEditor"));
@@ -62,8 +59,6 @@ import NewAgentModal, { type NewAgentSpec } from "./components/NewAgentModal";
 import QueuePage from "./components/QueuePage";
 import ResourcesPage from "./components/ResourcesPage";
 import PrdBoard from "./components/PrdBoard";
-import ChatView from "./components/ChatView";
-import VaultConfigPanel from "./components/VaultConfigPanel";
 import ScheduledPromptModal, { type ScheduledPrompt } from "./components/ScheduledPromptModal";
 import { buildAgentCommand } from "./lib/agent";
 import { invoke } from "@tauri-apps/api/core";
@@ -73,33 +68,6 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog, save as saveDialog, confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-
-// AC-1-5: Vault context block returned by the vault_search Tauri command.
-interface VaultBlock {
-  path: string;
-  similarity: number;
-  text: string;
-  lines?: string;
-}
-
-// AC-1-5: Format vault blocks into the [Vault Context] … [/Vault Context] prefix.
-// Hard cap: 2000 chars total (excluding the original prompt).
-function formatVaultContext(blocks: VaultBlock[]): string {
-  const MAX_CHARS = 2000;
-  const parts: string[] = ["[Vault Context]"];
-  let charCount = parts[0].length;
-
-  for (const block of blocks) {
-    const score = block.similarity.toFixed(2);
-    const entry = `--- ${block.path} (similarity: ${score})\n${block.text}\n---`;
-    if (charCount + 1 + entry.length > MAX_CHARS) break;
-    parts.push(entry);
-    charCount += 1 + entry.length;
-  }
-
-  parts.push("[/Vault Context]");
-  return parts.join("\n");
-}
 
 // Types matching the user's workflow model
 interface AgentSession {
@@ -128,6 +96,13 @@ interface OpenTerminal {
   cwd?: string;
   initialCommand?: string; // terminals: auto-run on spawn, e.g. `claude attach <id>`
   filePath?: string; // editors: absolute file path
+  /** This tab runs a Claude session (vs a plain shell) — drives the icon + resume. */
+  isClaude?: boolean;
+  /** The Claude session THIS tab was running, captured live and persisted so a
+   *  restored tab resumes its own conversation (not merely the newest one). */
+  sessionId?: string;
+  /** Restored tab whose Claude session hasn't been resumed yet — resume on click. */
+  needsResume?: boolean;
 }
 
 interface GitBranchState {
@@ -167,7 +142,11 @@ function loadTabs(): OpenTerminal[] {
     const v = JSON.parse(localStorage.getItem("apex.openTabs") || "[]");
     if (!Array.isArray(v)) return [];
     return (v as OpenTerminal[]).map((t) =>
-      t.kind === "terminal" ? { ...t, initialCommand: undefined } : t
+      t.kind === "terminal"
+        // Never auto-run on startup; but remember this was a Claude tab and which
+        // session it held, so clicking it resumes exactly that conversation.
+        ? { ...t, initialCommand: undefined, needsResume: Boolean(t.isClaude && t.sessionId) }
+        : t
     );
   } catch {
     return [];
@@ -290,10 +269,31 @@ export default function App() {
   // Open (or focus) a persistent terminal tab. Used by session cards and the
   // Sessions page (attach / resume).
   const openTerminal = (spec: OpenTerminal) => {
+    const withKind: OpenTerminal = spec.isClaude === undefined && spec.kind === "terminal"
+      ? { ...spec, isClaude: /(^|\s)claude(\s|$)/.test(spec.initialCommand ?? "") }
+      : spec;
     setOpenTerminals((prev) =>
-      prev.some((tm) => tm.key === spec.key) ? prev : [...prev, spec]
+      prev.some((tm) => tm.key === withKind.key) ? prev : [...prev, withKind]
     );
-    setActiveTerminalKey(spec.key);
+    setActiveTerminalKey(withKind.key);
+  };
+
+  /** Activate a tab; if it was restored from a previous run, resume ITS OWN
+   *  Claude session (with --dangerously-skip-permissions) instead of leaving an
+   *  empty shell. Runs once per tab — the flag clears after the command is sent. */
+  const activateTerminal = (key: string) => {
+    setActiveTerminalKey(key);
+    const tab = openTerminalsRef.current.find((t) => t.key === key);
+    if (!tab?.needsResume || !tab.sessionId) return;
+    const ptyId = terminalPtyIdsRef.current[key];
+    if (!ptyId) return; // shell not ready yet — try again on the next click
+    setOpenTerminals((prev) =>
+      prev.map((t) => (t.key === key ? { ...t, needsResume: false } : t))
+    );
+    void invoke("pty_write", {
+      id: ptyId,
+      data: `claude --resume ${tab.sessionId} --dangerously-skip-permissions\r`,
+    }).catch(() => {});
   };
 
   const openTerminalForAgent = (a: AgentSession) => {
@@ -340,13 +340,12 @@ export default function App() {
   };
 
   // Top-level view switch: the IDE control plane vs the full Sessions page.
-  const [view, setView] = useState<"control" | "sessions" | "queue" | "tools" | "prd" | "chat">("control");
+  const [view, setView] = useState<"control" | "sessions" | "queue" | "tools" | "prd">("control");
   // Action menu for a path clicked in a terminal's output.
   const [pathMenu, setPathMenu] = useState<{ resolved: string; kind: "file" | "dir"; x: number; y: number } | null>(null);
   // Right panel tab: branch matrix vs markdown viewer.
-  const [rightTab, setRightTab] = useState<"branch" | "markdown" | "sessions">("branch");
+  const [rightTab, setRightTab] = useState<"branch" | "sessions">("branch");
   // Markdown file currently shown in the right panel viewer.
-  const [markdownFilePath, setMarkdownFilePath] = useState<string | undefined>();
   // Resizable sidebar widths — persisted to localStorage.
   const [leftWidth, setLeftWidth] = useState(() => Number(localStorage.getItem("muya.leftWidth")) || 288);
   const [rightWidth, setRightWidth] = useState(() => Number(localStorage.getItem("muya.rightWidth")) || 320);
@@ -385,6 +384,18 @@ export default function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       if (!isFullscreenRef.current) return; // not fullscreen — let ESC propagate normally
+      // A modal/dialog is open → this ESC is meant to close IT, not exit
+      // fullscreen. Re-enter fullscreen to cancel macOS's exit and let the
+      // modal's own ESC handler close it. Do NOT arm the double-press exit, so
+      // a following ESC still needs two presses to leave fullscreen.
+      // Detect BOTH the semantic marker (role="dialog") and the app-wide modal
+      // backdrop convention (a full-screen `fixed inset-0 z-50` overlay), so
+      // every modal is covered without tagging each one.
+      if (document.querySelector('[role="dialog"], .fixed.inset-0.z-50')) {
+        void win.setFullscreen(true);
+        lastEscMs = 0;
+        return;
+      }
       const now = Date.now();
       if (now - lastEscMs < THRESHOLD) {
         lastEscMs = 0; // second press — exit proceeds
@@ -469,28 +480,6 @@ export default function App() {
     };
   }, []);
 
-
-  // Vault RAG context — latest search results shown in the left sidebar.
-  const [vaultBlocks, setVaultBlocks] = useState<VaultBlock[]>([]);
-  const [vaultQuery, setVaultQuery] = useState<string>("");
-  const [vaultOpen, setVaultOpen] = useState(true);
-
-  // AC-1-5: Augment the prompt with vault context before it reaches the PTY.
-  // AC-1-3: On timeout or any error, fall back to the original prompt.
-  const handlePromptSubmit = useCallback((prompt: string) => {
-    if (!prompt.trim()) return;
-    invoke<VaultBlock[]>("vault_search", {
-      query: prompt,
-      maxBlocks: 3,
-      timeoutMs: 300,
-    }).then((blocks) => {
-      setVaultQuery(prompt);
-      setVaultBlocks(blocks);
-    }).catch(() => {
-      setVaultQuery(prompt);
-      setVaultBlocks([]);
-    });
-  }, []);
 
   const killAgent = async (a: AgentSession) => {
     try {
@@ -747,6 +736,59 @@ export default function App() {
   useEffect(() => { scheduledPromptsRef.current = scheduledPrompts; }, [scheduledPrompts]);
   const terminalPtyIdsRef = useRef(terminalPtyIds);
   useEffect(() => { terminalPtyIdsRef.current = terminalPtyIds; }, [terminalPtyIds]);
+
+  // Live working directory per terminal key. The list must show where each shell
+  // IS now (after the user `cd`s), not the directory it was spawned in. One
+  // backend call covers every shell, so polling cost doesn't grow with tab count.
+  const [liveCwds, setLiveCwds] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      const entries = Object.entries(terminalPtyIdsRef.current);
+      if (entries.length === 0) return;
+      try {
+        const byPty = await invoke<Record<string, string>>("pty_cwds", {
+          ids: entries.map(([, ptyId]) => ptyId),
+        });
+        if (cancelled) return;
+        const byKey: Record<string, string> = {};
+        for (const [key, ptyId] of entries) {
+          const cwd = byPty[ptyId];
+          if (cwd) byKey[key] = cwd;
+        }
+        setLiveCwds(byKey);
+
+        // Capture which Claude session each tab is running, so a restored tab can
+        // resume ITS OWN conversation later. Persisted with the tab.
+        const byPtySession = await invoke<Record<string, string>>("pty_session_ids", {
+          ids: entries.map(([, ptyId]) => ptyId),
+        });
+        if (cancelled) return;
+        const sessionByKey: Record<string, string> = {};
+        for (const [key, ptyId] of entries) {
+          const sid = byPtySession[ptyId];
+          if (sid) sessionByKey[key] = sid;
+        }
+        if (Object.keys(sessionByKey).length > 0) {
+          setOpenTerminals((prev) => {
+            let changed = false;
+            const next = prev.map((t) => {
+              const sid = sessionByKey[t.key];
+              if (!sid || (t.sessionId === sid && t.isClaude)) return t;
+              changed = true;
+              return { ...t, sessionId: sid, isClaude: true };
+            });
+            return changed ? next : prev;
+          });
+        }
+      } catch {
+        /* probe unavailable — list falls back to the spawn cwd, resume stays as-is */
+      }
+    };
+    void tick();
+    const t = setInterval(() => { if (!document.hidden) void tick(); }, 3000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
 
   // Timer: check every 2s for due scheduled prompts.
   // Side-effects (pty_write) run BEFORE state update — never inside a state updater.
@@ -1255,17 +1297,6 @@ export const loginHandler = async (req, res) => {
           >
             Kanban
           </button>
-          <button
-            type="button"
-            onClick={() => setView("chat")}
-            className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
-              view === "chat"
-                ? "bg-indigo-600 dark:bg-indigo-500 text-white font-bold border border-indigo-700 dark:border-indigo-400 shadow-sm"
-                : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
-            }`}
-          >
-            Chat
-          </button>
         </div>
 
         {/* System telemetry ticks right side */}
@@ -1331,8 +1362,11 @@ export const loginHandler = async (req, res) => {
                       await relaunch();
                     }
                   } catch (err) {
-                    setUpdateProgress(`Update failed: ${err}`);
-                    setTimeout(() => setUpdateProgress(null), 5000);
+                    // Keep the failure on screen (no auto-dismiss) and log it —
+                    // a 5s toast hid the only clue about why updates fail.
+                    console.error("[muya] update failed:", err);
+                    const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+                    setUpdateProgress(`Update failed — ${detail}`);
                   }
                 }}
                 className="px-2 py-0.5 bg-indigo-600 text-white rounded cursor-pointer hover:bg-indigo-700 transition-colors"
@@ -1383,13 +1417,11 @@ export const loginHandler = async (req, res) => {
         <PrdBoard
           workspaces={workspaces.filter((w) => w.startsWith("/"))}
           onOpenFile={(path) => {
-            setMarkdownFilePath(path);
-            setRightTab("markdown");
+            openEditor(path);
             setView("control");
           }}
         />
       )}
-      {view === "chat" && <ChatView />}
       {/* Control plane — ALWAYS mounted; hidden (not unmounted) on other views so the
           terminal PTYs and any running sessions survive page navigation. xterm guards
           0×0 resize (Terminal.tsx), so display:none is safe. */}
@@ -1420,13 +1452,9 @@ export const loginHandler = async (req, res) => {
               roots={trackedPaths}
               removableRoots={new Set(trackedPaths)}
               onOpenFile={(path) => {
-                if (path.endsWith(".md")) {
-                  setMarkdownFilePath(path);
-                  setRightTab("markdown");
-                  setRightOpen(true);
-                } else {
-                  openEditor(path);
-                }
+                // Every file — markdown included — opens EDITABLE in the centre
+                // editor. The old read-only markdown side panel is gone.
+                openEditor(path);
                 setView("control");
               }}
               onRemoveRoot={(path) => {
@@ -1449,65 +1477,6 @@ export const loginHandler = async (req, res) => {
             />
           </div>
 
-          {/* VAULT RAG CONTEXT — always visible, shows results or placeholder */}
-          <div className="border-t border-neutral-200 dark:border-[#3d3f44] bg-neutral-50/50 dark:bg-[#1e1f23]">
-            <div className="w-full p-3 flex items-center justify-between hover:bg-neutral-100 dark:hover:bg-[#2a2c31] transition-colors">
-              <button
-                type="button"
-                onClick={() => setVaultOpen((v) => !v)}
-                className="flex-1 flex items-center justify-between cursor-pointer min-w-0"
-              >
-                <h3 className="text-[10px] uppercase font-mono text-neutral-500 dark:text-neutral-400 tracking-wider font-bold flex items-center gap-1.5 min-w-0">
-                  <Database className="h-3.5 w-3.5 text-violet-500 dark:text-violet-400 shrink-0" />
-                  <span className="truncate">Vault Context{vaultBlocks.length > 0 ? ` (${vaultBlocks.length})` : ""}</span>
-                </h3>
-              </button>
-              <div className="flex items-center gap-1 shrink-0 ml-1">
-                <VaultConfigPanel onChanged={() => { setVaultBlocks([]); setVaultQuery(""); }} />
-                <button type="button" onClick={() => setVaultOpen((v) => !v)} className="cursor-pointer">
-                  <ChevronDown className={`h-3 w-3 text-neutral-400 transition-transform ${vaultOpen ? "" : "-rotate-90"}`} />
-                </button>
-              </div>
-            </div>
-            {vaultOpen && (
-              <div className="px-3 pb-3 space-y-2">
-                {vaultBlocks.length === 0 ? (
-                  <p className="text-[10px] font-mono text-neutral-400 dark:text-neutral-500 italic">
-                    Type a prompt in the terminal and press Enter — related notes from your Obsidian vault will appear here.
-                  </p>
-                ) : (
-                  <>
-                    <p className="text-[9px] font-mono text-neutral-400 dark:text-neutral-500 truncate" title={vaultQuery}>
-                      query: {vaultQuery}
-                    </p>
-                    {vaultBlocks.map((b, i) => (
-                      <div
-                        key={`${b.path}-${i}`}
-                        className="bg-white dark:bg-[#2d2f34] rounded border border-neutral-200 dark:border-neutral-700 p-2 shadow-sm"
-                      >
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-[10px] font-mono font-bold text-violet-600 dark:text-violet-400 truncate" title={b.path}>
-                            {b.path.split("/").pop()}
-                          </span>
-                          <span className="text-[9px] font-mono text-neutral-400 shrink-0 ml-1">
-                            {(b.similarity * 100).toFixed(0)}%
-                          </span>
-                        </div>
-                        {b.lines && (
-                          <p className="text-[9px] font-mono text-neutral-400 dark:text-neutral-500 mb-1">
-                            {b.path} L{b.lines}
-                          </p>
-                        )}
-                        <p className="text-[10px] font-mono text-neutral-600 dark:text-neutral-300 leading-relaxed line-clamp-4 whitespace-pre-wrap">
-                          {b.text}
-                        </p>
-                      </div>
-                    ))}
-                  </>
-                )}
-              </div>
-            )}
-          </div>
 
           {/* BOTTOM ATTACHMENT: ACTIVE CLAUDE AGENT FILE-WATCHER */}
           <div className="border-t border-neutral-200 dark:border-[#3d3f44] bg-neutral-50/50 dark:bg-[#1e1f23] p-3 select-none">
@@ -1910,7 +1879,6 @@ export const loginHandler = async (req, res) => {
                             theme={effectiveTheme}
                             active={show}
                             onPtyReady={(ptyId) => setTerminalPtyIds(prev => ({ ...prev, [tm.key]: ptyId }))}
-                            onPromptSubmit={handlePromptSubmit}
                             onPathMenu={(resolved, kind, x, y) => setPathMenu({ resolved, kind, x, y })}
                           />
                         </div>
@@ -1962,11 +1930,12 @@ export const loginHandler = async (req, res) => {
                     terminals={openTerminals.filter(t => t.kind === "terminal")}
                     activeKey={activeTerminalKey}
                     terminalPtyIds={terminalPtyIds}
+                    liveCwds={liveCwds}
                     renamingKey={renamingKey}
                     renameValue={renameValue}
                     setRenamingKey={setRenamingKey}
                     setRenameValue={setRenameValue}
-                    onActivate={(key) => { setActiveTerminalKey(key); setRightPeek(false); }}
+                    onActivate={(key) => { activateTerminal(key); setRightPeek(false); }}
                     onClose={(key) => { void closeTerminal(key); }}
                     onReorder={(from, to) => {
                       setOpenTerminals(prev => {
@@ -1996,7 +1965,7 @@ export const loginHandler = async (req, res) => {
 
           {/* Tabbed header: sessions | markdown | branch */}
           <div className="flex border-b border-neutral-200 dark:border-[#3d3f44] bg-neutral-50 dark:bg-[#1e1f23] shrink-0">
-            {(["sessions", "markdown", "branch"] as const).map((tab) => (
+            {(["sessions", "branch"] as const).map((tab) => (
               <button
                 key={tab}
                 type="button"
@@ -2008,26 +1977,22 @@ export const loginHandler = async (req, res) => {
                 }`}
               >
                 {tab === "sessions" && <><TerminalSquare className="h-3 w-3" /> Sessions</>}
-                {tab === "markdown" && <><FileText className="h-3 w-3" /> Markdown</>}
                 {tab === "branch"   && <><GitBranch className="h-3 w-3" /> Branch</>}
               </button>
             ))}
           </div>
 
-          {rightTab === "markdown" ? (
-            <div className="flex flex-col flex-1 overflow-hidden">
-              <MarkdownViewer filePath={markdownFilePath} />
-            </div>
-          ) : rightTab === "sessions" ? (
+          {rightTab === "sessions" ? (
             <SessionsPanel
               terminals={openTerminals.filter(t => t.kind === "terminal")}
               activeKey={activeTerminalKey}
               terminalPtyIds={terminalPtyIds}
+                    liveCwds={liveCwds}
               renamingKey={renamingKey}
               renameValue={renameValue}
               setRenamingKey={setRenamingKey}
               setRenameValue={setRenameValue}
-              onActivate={(key) => { setActiveTerminalKey(key); }}
+              onActivate={(key) => { activateTerminal(key); }}
               onClose={(key) => { void closeTerminal(key); }}
               onReorder={(from, to) => {
                 setOpenTerminals(prev => {

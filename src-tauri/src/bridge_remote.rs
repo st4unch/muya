@@ -393,6 +393,12 @@ pub struct RemoteBridgeState {
     /// Dedicated pairing listener handle (None = no pairing window open).
     /// Separate from the data listener — uses AnyCertVerifier, not PinnedSpkiVerifier.
     pub pairing_listener: Mutex<Option<Arc<TcpListener>>>,
+    /// Accept task for the pairing listener. Kept so `bridge_pair_stop_listener`
+    /// can `.abort()` it — the task parks in `accept()` holding its own Arc clone,
+    /// so dropping the listener Arc alone never unblocks it (the socket won't
+    /// close while the parked task still holds a reference). Abort is the only
+    /// way to free the port on an explicit stop.
+    pub pairing_task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
     /// Monotone counter for generating outbound remote req_ids (bridge_remote_send).
     pub seq: AtomicU64,
 }
@@ -405,6 +411,7 @@ impl Default for RemoteBridgeState {
             listener: Mutex::new(None),
             active_pin: Mutex::new(None),
             pairing_listener: Mutex::new(None),
+            pairing_task: Mutex::new(None),
             seq: AtomicU64::new(0),
         }
     }
@@ -936,6 +943,7 @@ async fn ingest_remote_request(
         stream: false,
         seq: 0,
         r#final: true,
+        respond_inline: false,
     }
 }
 
@@ -980,6 +988,109 @@ pub async fn bridge_pair_invite(
     }))
 }
 
+/// Result of pre-flight port validation (surfaced in the Chat listen UI).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PortCheck {
+    /// The port is usable for listening (bindable now, or already ours).
+    pub ok: bool,
+    /// OUR pairing listener is already bound to this exact address.
+    pub listening: bool,
+    /// Echoed back so the UI can match the result to the field it validated.
+    pub addr: String,
+    /// Human-readable (Turkish) explanation for the status line.
+    pub detail: String,
+}
+
+/// Pre-flight validation for the pairing listen address (IP:port the user
+/// entered). Runs a throwaway `TcpListener::bind` probe — proves the IP is one
+/// of THIS machine's addresses and the port is free — WITHOUT consuming the
+/// single-use pairing listener's one accept. Never binds a wildcard.
+///
+/// NOTE: A successful bind proves LOCAL openability only. Whether a peer on the
+/// network can actually reach it also depends on the router/firewall between
+/// them — that cannot be proven from this host alone, so the UI must phrase the
+/// success as "reachable by a peer on the same network", not a guarantee.
+#[tauri::command]
+pub async fn bridge_check_port(
+    addr: String,
+    state: State<'_, RemoteBridgeState>,
+) -> Result<PortCheck, String> {
+    let addr = addr.trim().to_string();
+
+    // Address must parse and must not be a wildcard (0.0.0.0 / ::).
+    if let Err(e) = assert_not_wildcard(&addr) {
+        return Ok(PortCheck {
+            ok: false,
+            listening: false,
+            addr,
+            detail: format!("Invalid address: {e}"),
+        });
+    }
+
+    // If our pairing listener is already bound here, the port IS open (ours).
+    if let Some(l) = state.pairing_listener.lock().await.as_ref() {
+        if let Ok(la) = l.local_addr() {
+            if la.to_string() == addr {
+                return Ok(PortCheck {
+                    ok: true,
+                    listening: true,
+                    addr,
+                    detail: "Listening — a peer on the same network can connect here".to_string(),
+                });
+            }
+        }
+    }
+
+    // Probe: can we bind this address right now? (Pure, no shared state.)
+    Ok(probe_port_bindable(&addr))
+}
+
+/// Pure bind-probe: assumes `addr` already passed `assert_not_wildcard`. Tries a
+/// throwaway `TcpListener::bind`, drops it immediately, and classifies failures
+/// into user-facing guidance. Extracted from `bridge_check_port` so it can be
+/// unit-tested without a Tauri `State`.
+fn probe_port_bindable(addr: &str) -> PortCheck {
+    match std::net::TcpListener::bind(addr) {
+        Ok(l) => {
+            drop(l);
+            PortCheck {
+                ok: true,
+                listening: false,
+                addr: addr.to_string(),
+                // Honest pre-flight wording: this only proves the port is bindable
+                // right now. The authoritative "listening/reachable" state comes
+                // from actually starting the listener (Accept connections).
+                detail: "Pre-flight passed — port is currently available".to_string(),
+            }
+        }
+        Err(e) => {
+            use std::io::ErrorKind;
+            let detail = match e.kind() {
+                ErrorKind::AddrInUse => {
+                    "Port is in use by another app on this machine — pick a different port"
+                        .to_string()
+                }
+                ErrorKind::AddrNotAvailable => {
+                    "This IP is not assigned to this machine — use the detected IP below"
+                        .to_string()
+                }
+                ErrorKind::PermissionDenied => {
+                    "Permission denied for this port (ports below 1024 need privileges) — pick a port \u{2265} 1024"
+                        .to_string()
+                }
+                _ => format!("Could not open port: {e}"),
+            };
+            PortCheck {
+                ok: false,
+                listening: false,
+                addr: addr.to_string(),
+                detail,
+            }
+        }
+    }
+}
+
 /// Start the dedicated pairing listener on `pairing_iface` (e.g. "192.168.1.5:9877").
 ///
 /// This listener uses `AnyCertVerifier` (accepts any dialer cert — trust is bootstrapped
@@ -1021,8 +1132,11 @@ pub async fn bridge_pair_start_listener(
         *guard = Some(listener.clone());
     }
 
-    // Snapshot the current PIN (value-copy — ActivePin is Clone).
-    let current_pin: Option<ActivePin> = state.active_pin.lock().await.clone();
+    // Raw 'static pointer to the Tauri-managed state so the spawned accept +
+    // watcher tasks can read LIVE state (not a stale snapshot). SAFETY:
+    // RemoteBridgeState is managed by Tauri for the whole process lifetime, so
+    // this pointer stays valid until exit. `usize` is Copy → both tasks capture it.
+    let state_raw = state.inner() as *const RemoteBridgeState as usize;
 
     // Shared result channel: spawned task writes PairingResult; we read it to update state.
     let shared_result: Arc<Mutex<Option<PairingResult>>> = Arc::new(Mutex::new(None));
@@ -1034,7 +1148,7 @@ pub async fn bridge_pair_start_listener(
     let pairing_iface_clone = pairing_iface.clone();
 
     // Spawned task: accept exactly ONE pairing connection then self-terminate.
-    tauri::async_runtime::spawn(async move {
+    let pairing_task = tauri::async_runtime::spawn(async move {
         let _ = app_clone
             .emit("bridge://pairing-status", "pairing_listener:started")
             .ok();
@@ -1042,6 +1156,17 @@ pub async fn bridge_pair_start_listener(
         match listener_clone.accept().await {
             Ok((stream, peer_addr)) => match acceptor.accept(stream).await {
                 Ok(tls_stream) => {
+                    // Read the armed PIN LIVE at accept time. The UI calls
+                    // bridge_pair_invite AFTER bridge_pair_start_listener, so a
+                    // snapshot taken at start time was always None → the handler
+                    // rejected every dialer with "no active PIN", surfacing on the
+                    // dialer as a raw TLS "unexpected EOF". Reading live here makes
+                    // pairing order-independent and actually work.
+                    // SAFETY: RemoteBridgeState is 'static (Tauri-managed).
+                    let current_pin = {
+                        let state_ref = unsafe { &*(state_raw as *const RemoteBridgeState) };
+                        state_ref.active_pin.lock().await.clone()
+                    };
                     match handle_pairing_connection(
                         tls_stream,
                         peer_addr.to_string(),
@@ -1099,13 +1224,11 @@ pub async fn bridge_pair_start_listener(
             .ok();
     });
 
+    // Keep the accept task handle so an explicit stop can abort it.
+    *state.pairing_task.lock().await = Some(pairing_task);
+
     // Watcher task: waits for the pairing result then writes it into managed state.
-    //
-    // RemoteBridgeState is 'static — Tauri manages it for the full process lifetime.
-    // Casting to a raw pointer and dereferencing in a spawned task is the standard
-    // pattern in tokio-based Tauri apps for bridging the 'static lifetime gap.
-    // SAFETY invariant: state.inner() pointer is valid until process exit.
-    let state_raw = state.inner() as *const RemoteBridgeState as usize;
+    // Reuses `state_raw` (defined above) — the same 'static pointer pattern.
     tauri::async_runtime::spawn(async move {
         // Poll at 100 ms intervals; PIN TTL is 300 s → at most 3 000 polls.
         for _ in 0..3000 {
@@ -1134,6 +1257,27 @@ pub async fn bridge_pair_start_listener(
         }
     });
 
+    Ok(())
+}
+
+/// Stop the pairing listener and free its port — the counterpart to
+/// `bridge_pair_start_listener` (the UI's "stop listening" path).
+///
+/// The accept task parks in `accept()` holding its own Arc clone of the
+/// listener, so dropping the state's Arc alone can never close the socket. We
+/// therefore `.abort()` the task first (which drops its clone), then take the
+/// listener Arc and clear any armed PIN. Idempotent: a no-op when nothing is
+/// listening. Verified by the OS releasing the TCP port after this returns.
+#[tauri::command]
+pub async fn bridge_pair_stop_listener(state: State<'_, RemoteBridgeState>) -> Result<(), String> {
+    // Abort the parked accept task so it releases its listener Arc.
+    if let Some(handle) = state.pairing_task.lock().await.take() {
+        handle.abort();
+    }
+    // Drop the listener Arc → with the task's clone gone, the socket closes.
+    state.pairing_listener.lock().await.take();
+    // Clear any armed PIN so a fresh start re-arms cleanly.
+    state.active_pin.lock().await.take();
     Ok(())
 }
 
@@ -1331,7 +1475,16 @@ pub async fn bridge_pair_connect(
     let init_bytes = serde_json::to_vec(&init).map_err(|e| format!("serialize PakeInit: {e}"))?;
     write_raw_frame(&mut tls_stream, &init_bytes).await?;
 
-    let reply_bytes = read_raw_frame(&mut tls_stream).await?;
+    // If the peer drops here (no clean reply), it rejected the pairing before
+    // replying — almost always: PIN wrong / expired / already used, or the peer
+    // isn't accepting. Translate the raw TLS "unexpected EOF" into that.
+    let reply_bytes = read_raw_frame(&mut tls_stream).await.map_err(|e| {
+        format!(
+            "Pairing rejected by the peer (the PIN may be wrong, expired, or already used, \
+             or the peer isn't accepting connections). Ask the peer to enable \
+             \"Accept connections\" and share a fresh PIN, then try again. [{e}]"
+        )
+    })?;
     let reply: PakeReply =
         serde_json::from_slice(&reply_bytes).map_err(|e| format!("parse PakeReply: {e}"))?;
 
@@ -1586,6 +1739,7 @@ async fn remote_send_impl(
         stream: false,
         seq: seq as u32,
         r#final: true,
+        respond_inline: false,
     };
 
     // TCP connect to the pinned peer's last known address.
@@ -1882,6 +2036,82 @@ mod tests {
     fn ac2_2_invalid_addr_rejected() {
         let err = assert_not_wildcard("not_an_addr").unwrap_err();
         assert!(err.contains("invalid address"), "got: {err}");
+    }
+
+    // -------------------------------------------------------------------------
+    // Port pre-flight validation (bridge_check_port core).
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn check_port_free_loopback_is_ok() {
+        // Port 0 = OS picks a free port → always bindable.
+        let r = probe_port_bindable("127.0.0.1:0");
+        assert!(r.ok, "a free port must probe ok: {}", r.detail);
+        assert!(!r.listening);
+    }
+
+    #[test]
+    fn check_port_in_use_reports_conflict() {
+        // Hold a port, then probe the SAME address → AddrInUse guidance.
+        let held = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = held.local_addr().expect("addr").to_string();
+        let r = probe_port_bindable(&addr);
+        assert!(!r.ok, "an in-use port must not be ok");
+        assert!(
+            r.detail.contains("in use"),
+            "expected in-use guidance, got: {}",
+            r.detail
+        );
+    }
+
+    #[test]
+    fn check_port_wrong_ip_not_available() {
+        // 192.0.2.0/24 (TEST-NET-1, RFC 5737) is never a local interface.
+        let r = probe_port_bindable("192.0.2.1:7420");
+        assert!(!r.ok, "an unassigned IP must not be bindable");
+        assert!(
+            r.detail.contains("not assigned") || r.detail.contains("Could not open"),
+            "expected not-available guidance, got: {}",
+            r.detail
+        );
+    }
+
+    /// Stop mechanism: a parked `accept()` task holding an Arc clone must be
+    /// ABORTED for the port to free — dropping the state Arc alone deadlocks
+    /// against the parked task. This mirrors what bridge_pair_stop_listener does
+    /// and proves the port is reusable afterwards. (Regression for the
+    /// "listener stays bound after stop" bug.)
+    #[tokio::test]
+    async fn pairing_listener_abort_frees_port() {
+        let listener = Arc::new(TcpListener::bind("127.0.0.1:0").await.expect("bind"));
+        let addr = listener.local_addr().expect("addr");
+        let task_listener = listener.clone();
+        // Park in accept() holding its own Arc — same shape as the real task.
+        let task = tauri::async_runtime::spawn(async move {
+            let _ = task_listener.accept().await;
+        });
+
+        // Sanity: the port is in use while the listener lives.
+        assert!(
+            std::net::TcpListener::bind(addr).is_err(),
+            "port must be occupied while listening"
+        );
+
+        // Stop the way bridge_pair_stop_listener does: abort task, drop Arc.
+        task.abort();
+        let _ = task.await; // let the abort settle
+        drop(listener);
+
+        // The OS should now let us re-bind the exact same address.
+        let mut freed = false;
+        for _ in 0..50 {
+            if std::net::TcpListener::bind(addr).is_ok() {
+                freed = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert!(freed, "port must be released after abort+drop (stop)");
     }
 
     // -------------------------------------------------------------------------

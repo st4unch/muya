@@ -558,15 +558,26 @@ pub fn resolve_path_kind(path: String, cwd: Option<String>) -> PathKind {
 /// Best-effort primary non-loopback IPv4 of this machine (for the bridge's
 /// "listen on this LAN address" UI). Uses the connect-a-UDP-socket trick — no
 /// packet is actually sent; the kernel just picks the source addr it would use.
+///
+/// The candidate is only returned if it is actually **bindable** (an assigned,
+/// listenable interface address). If the trick yields nothing bindable — no
+/// route, VPN quirk, stale addr — we fall back to `127.0.0.1` rather than
+/// suggesting a phantom IP the user can't actually listen on.
 #[tauri::command(async)]
 pub fn local_ip() -> Result<String, String> {
-    use std::net::UdpSocket;
-    let sock = UdpSocket::bind("0.0.0.0:0").map_err(|e| format!("bind: {e}"))?;
-    // 8.8.8.8 is only used to select the outbound interface; nothing is sent.
-    sock.connect("8.8.8.8:80")
-        .map_err(|e| format!("connect: {e}"))?;
-    let addr = sock.local_addr().map_err(|e| format!("local_addr: {e}"))?;
-    Ok(addr.ip().to_string())
+    use std::net::{TcpListener, UdpSocket};
+    const LOOPBACK: &str = "127.0.0.1";
+    let candidate = (|| {
+        let sock = UdpSocket::bind("0.0.0.0:0").ok()?;
+        // 8.8.8.8 is only used to select the outbound interface; nothing is sent.
+        sock.connect("8.8.8.8:80").ok()?;
+        Some(sock.local_addr().ok()?.ip())
+    })();
+    match candidate {
+        // Verify it's a real, bindable interface address before suggesting it.
+        Some(ip) if TcpListener::bind((ip, 0)).is_ok() => Ok(ip.to_string()),
+        _ => Ok(LOOPBACK.to_string()),
+    }
 }
 
 /// Open the given path in Finder (macOS: `open -R <path>`).
