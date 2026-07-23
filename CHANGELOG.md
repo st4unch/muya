@@ -10,10 +10,11 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **UI stutter introduced in 0.2.1.** The terminal-directory and Claude-session
   probes ran as synchronous Tauri commands, so every poll executed on the main
   thread and froze the interface. Both now run off the main thread.
-- **Update never installed — "invalid gzip header".** Releases shipped a `.zip`,
-  but the macOS updater always unpacks the downloaded artifact with gzip + tar.
+- **Update never installed.** Releases shipped a `.zip`, but the macOS updater
+  always unpacks the downloaded artifact with gzip + tar ("invalid gzip header").
   Releases now publish `Muya-<version>-<arch>.app.tar.gz` (the `.zip` remains for
-  manual download).
+  manual download), built without macOS AppleDouble sidecars — those appear as a
+  stray top-level `._Muya.app` entry that the updater cannot unpack.
 - **Every file reported as a conflict.** The "Lock/Edit File Telemetry" panel
   flagged each changed file as edited in two worktrees when a repository *and* a
   folder inside it were both added as workspaces. Worktree identity now comes

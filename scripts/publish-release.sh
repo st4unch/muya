@@ -81,8 +81,34 @@ if [ -f "$SIGN_KEY" ]; then
   say "Building updater archive (.app.tar.gz)…"
   # -C so the archive root is exactly "Muya.app", which is what the updater
   # expects to unpack in place of the running bundle.
-  tar -czf "$TARGZ" -C "$(dirname "$APP")" "$(basename "$APP")"
-  ok "updater archive: $(basename "$TARGZ") ($(du -h "$TARGZ" | cut -f1))"
+  # COPYFILE_DISABLE stops macOS tar from emitting AppleDouble "._" sidecars.
+  # They matter because the updater strips each entry's FIRST path component
+  # (updater.rs: `entry.path()?.iter().skip(1)`), so a top-level file like
+  # "._Muya.app" collapses to an empty path and unpacking it over the temp dir
+  # fails with: failed to unpack `._Muya.app`.
+  COPYFILE_DISABLE=1 tar -czf "$TARGZ" -C "$(dirname "$APP")" "$(basename "$APP")"
+
+  # Guard: every entry must live under the single top-level bundle dir, or the
+  # updater's skip(1) will produce an empty destination path.
+  # NOTE: macOS `tar -tzf` HIDES the AppleDouble entries it wrote itself, so it
+  # cannot be used to audit this — read the archive with a foreign reader
+  # (python tarfile), the same way the updater's Rust tar crate sees it.
+  BAD="$(python3 - "$TARGZ" "$(basename "$APP")" <<'PYEOF'
+import sys, tarfile, pathlib
+archive, root = sys.argv[1], sys.argv[2]
+bad = []
+for m in tarfile.open(archive).getmembers():
+    parts = pathlib.PurePath(m.name).parts
+    if not parts or parts[0] != root or any(p.startswith("._") for p in parts):
+        bad.append(m.name)
+print("\n".join(bad))
+PYEOF
+)"
+  if [ -n "$BAD" ]; then
+    die "updater archive has stray/AppleDouble entries (updater would fail to unpack):
+$BAD"
+  fi
+  ok "updater archive: $(basename "$TARGZ") ($(du -h "$TARGZ" | cut -f1)), single-root verified"
 
   say "Signing updater archive…"
   TAURI_SIGNING_PRIVATE_KEY_PATH="$SIGN_KEY" TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" \
