@@ -34,6 +34,11 @@ VERSION="$(node -p "require('$ROOT/src-tauri/tauri.conf.json').version")"
 ARCH="$(uname -m)"
 TAG="v${VERSION}"
 ZIP="$ROOT/Muya-${VERSION}-${ARCH}.zip"
+# macOS's Tauri updater ALWAYS extracts the downloaded artifact with GzDecoder +
+# tar (tauri-plugin-updater src/updater.rs: macOS path). A .zip therefore fails
+# with "invalid gzip header" — the updater needs a .app.tar.gz.
+APP="$ROOT/src-tauri/target/release/bundle/macos/Muya.app"
+TARGZ="$ROOT/Muya-${VERSION}-${ARCH}.app.tar.gz"
 
 say "Publishing Muya $TAG"
 
@@ -66,10 +71,17 @@ fi
 # --- 2. sign zip for auto-updater ---------------------------------------------
 SIGN_KEY="$HOME/.tauri/muya-update.key"
 if [ -f "$SIGN_KEY" ]; then
-  say "Signing zip for auto-updater…"
+  [ -d "$APP" ] || die "stapled app missing: $APP — run scripts/build-sign-notarize.sh first"
+  say "Building updater archive (.app.tar.gz)…"
+  # -C so the archive root is exactly "Muya.app", which is what the updater
+  # expects to unpack in place of the running bundle.
+  tar -czf "$TARGZ" -C "$(dirname "$APP")" "$(basename "$APP")"
+  ok "updater archive: $(basename "$TARGZ") ($(du -h "$TARGZ" | cut -f1))"
+
+  say "Signing updater archive…"
   TAURI_SIGNING_PRIVATE_KEY_PATH="$SIGN_KEY" TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" \
-    npx tauri signer sign "$ZIP" >/dev/null 2>&1
-  SIG="$(cat "${ZIP}.sig")"
+    npx tauri signer sign "$TARGZ" >/dev/null 2>&1
+  SIG="$(cat "${TARGZ}.sig")"
   PUB_DATE="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   LATEST="$ROOT/latest.json"
   cat > "$LATEST" <<EOJSON
@@ -80,7 +92,7 @@ if [ -f "$SIGN_KEY" ]; then
   "platforms": {
     "darwin-aarch64": {
       "signature": "$SIG",
-      "url": "https://github.com/st4unch/muya/releases/download/$TAG/$(basename "$ZIP")"
+      "url": "https://github.com/st4unch/muya/releases/download/$TAG/$(basename "$TARGZ")"
     }
   }
 }
@@ -95,6 +107,9 @@ fi
 say "Creating GitHub release $TAG..."
 DMG="$(ls "$ROOT"/src-tauri/target/release/bundle/dmg/*.dmg 2>/dev/null | head -1)"
 ASSETS=("$ZIP")
+# The .app.tar.gz is what the auto-updater downloads (latest.json points at it);
+# the .zip stays for manual download.
+[ -f "$TARGZ" ] && ASSETS+=("$TARGZ")
 [ -n "$LATEST" ] && [ -f "$LATEST" ] && ASSETS+=("$LATEST")
 if [ -n "$DMG" ] && [ -f "$DMG" ]; then
   if spctl --assess --type install "$DMG" >/dev/null 2>&1; then
