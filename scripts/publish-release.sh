@@ -51,7 +51,13 @@ BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 if git rev-parse "$TAG" >/dev/null 2>&1 || gh release view "$TAG" >/dev/null 2>&1; then
   die "$TAG already exists (tag or release) — bump version in tauri.conf.json first"
 fi
-ok "guards passed (on main, zip present, $TAG free)"
+# A release without a changelog entry gives the operator no way to see what
+# changed — refuse to publish one (operator standing rule).
+CHANGELOG="$ROOT/CHANGELOG.md"
+[ -f "$CHANGELOG" ] || die "CHANGELOG.md missing — add it before releasing"
+grep -qE "^## \\[${VERSION}\\]" "$CHANGELOG" \
+  || die "CHANGELOG.md has no '## [${VERSION}]' section — write the entry before releasing"
+ok "guards passed (on main, zip present, $TAG free, changelog entry present)"
 
 # --- 1. fast-forward push -----------------------------------------------------
 git fetch origin main --quiet
@@ -119,11 +125,21 @@ if [ -n "$DMG" ] && [ -f "$DMG" ]; then
     ok "DMG found but not notarized by Gatekeeper — skipping: $(basename "$DMG")"
   fi
 fi
+# Release notes come from this version's CHANGELOG section, so GitHub and the
+# repo never tell different stories.
+NOTES_FILE="$(mktemp)"
+awk -v ver="## [$VERSION]" '
+  index($0, ver) == 1 { inside = 1; next }
+  inside && /^## \[/ { exit }
+  inside { print }
+' "$CHANGELOG" > "$NOTES_FILE"
+[ -s "$NOTES_FILE" ] || die "could not extract CHANGELOG section for $VERSION"
 gh release create "$TAG" \
   --target main \
   --title "$TAG" \
-  --generate-notes \
+  --notes-file "$NOTES_FILE" \
   "${ASSETS[@]}"
+rm -f "$NOTES_FILE"
 ok "release created"
 
 # --- 4. verify ----------------------------------------------------------------
