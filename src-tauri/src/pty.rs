@@ -259,7 +259,7 @@ fn parse_lsof_cwds(out: &str) -> HashMap<u32, String> {
 /// process per terminal would spawn N subprocesses per tick).
 ///
 /// Ids with no live process, or whose cwd can't be read, are simply omitted.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pty_cwds(
     state: State<PtyManager>,
     ids: Vec<String>,
@@ -328,18 +328,28 @@ fn owning_root(pid: u32, roots: &HashMap<u32, String>, ppid: &HashMap<u32, u32>)
     None
 }
 
-/// Map each requested PTY to the Claude session id running **inside that tab**.
+/// Identity of the Claude session running inside a tab.
+#[derive(serde::Serialize)]
+pub struct TabSession {
+    /// Session id — what `claude --resume <id>` needs.
+    pub id: String,
+    /// The session's own name (e.g. a `/rename`d "muya-all"), so the tab label can
+    /// match what Claude calls itself instead of just the folder name.
+    pub name: String,
+}
+
+/// Map each requested PTY to the Claude session running **inside that tab**.
 ///
 /// A tab must resume ITS OWN prior conversation, not merely the newest session in
 /// the same folder (two tabs can share a folder). We therefore resolve identity by
 /// process ancestry: `claude agents --json` reports each live session with its pid;
 /// whichever session's process descends from a tab's shell belongs to that tab.
 /// The frontend persists the result so the tab can `--resume` exactly it later.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pty_session_ids(
     state: State<PtyManager>,
     ids: Vec<String>,
-) -> Result<HashMap<String, String>, String> {
+) -> Result<HashMap<String, TabSession>, String> {
     // shell pid → tab id
     let roots: HashMap<u32, String> = {
         let sessions = state.sessions.lock().unwrap();
@@ -374,7 +384,13 @@ pub fn pty_session_ids(
             continue;
         }
         if let Some(tab) = owning_root(pid as u32, &roots, &ppid) {
-            out.insert(tab, a.id.clone());
+            out.insert(
+                tab,
+                TabSession {
+                    id: a.id.clone(),
+                    name: a.name.clone(),
+                },
+            );
         }
     }
     Ok(out)

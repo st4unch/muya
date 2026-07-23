@@ -103,6 +103,9 @@ interface OpenTerminal {
   sessionId?: string;
   /** Restored tab whose Claude session hasn't been resumed yet — resume on click. */
   needsResume?: boolean;
+  /** The operator renamed this tab by hand — never overwrite it with the
+   *  Claude session's own name. */
+  userRenamed?: boolean;
 }
 
 interface GitBranchState {
@@ -741,6 +744,10 @@ export default function App() {
   // IS now (after the user `cd`s), not the directory it was spawned in. One
   // backend call covers every shell, so polling cost doesn't grow with tab count.
   const [liveCwds, setLiveCwds] = useState<Record<string, string>>({});
+  // The cwd probe is cheap (~10ms); the Claude-session probe spawns the CLI
+  // (~180ms), so it only runs on every SESSION_EVERY-th tick.
+  const SESSION_EVERY = 5; // 5 × 3s = ~15s
+  const sessionTickRef = useRef(0);
   useEffect(() => {
     let cancelled = false;
     const tick = async () => {
@@ -756,27 +763,40 @@ export default function App() {
           const cwd = byPty[ptyId];
           if (cwd) byKey[key] = cwd;
         }
-        setLiveCwds(byKey);
-
-        // Capture which Claude session each tab is running, so a restored tab can
-        // resume ITS OWN conversation later. Persisted with the tab.
-        const byPtySession = await invoke<Record<string, string>>("pty_session_ids", {
-          ids: entries.map(([, ptyId]) => ptyId),
+        // Only write when a path actually changed — a fresh object every tick
+        // would re-render this whole (large) component every 3s for nothing.
+        setLiveCwds((prev) => {
+          const keys = Object.keys(byKey);
+          const same =
+            keys.length === Object.keys(prev).length &&
+            keys.every((k) => prev[k] === byKey[k]);
+          return same ? prev : byKey;
         });
+
+        // The session probe shells out to the Claude CLI (~180ms), so it must NOT
+        // ride the fast cwd tick — run it every SESSION_EVERY ticks instead.
+        sessionTickRef.current = (sessionTickRef.current + 1) % SESSION_EVERY;
+        if (sessionTickRef.current !== 0) return;
+        const byPtySession = await invoke<Record<string, { id: string; name: string }>>(
+          "pty_session_ids", { ids: entries.map(([, ptyId]) => ptyId) });
         if (cancelled) return;
-        const sessionByKey: Record<string, string> = {};
+        const sessionByKey: Record<string, { id: string; name: string }> = {};
         for (const [key, ptyId] of entries) {
-          const sid = byPtySession[ptyId];
-          if (sid) sessionByKey[key] = sid;
+          const info = byPtySession[ptyId];
+          if (info?.id) sessionByKey[key] = info;
         }
         if (Object.keys(sessionByKey).length > 0) {
           setOpenTerminals((prev) => {
             let changed = false;
             const next = prev.map((t) => {
-              const sid = sessionByKey[t.key];
-              if (!sid || (t.sessionId === sid && t.isClaude)) return t;
+              const info = sessionByKey[t.key];
+              if (!info) return t;
+              // Adopt the session's own name so the tab matches what Claude calls
+              // itself — unless the operator renamed the tab by hand.
+              const name = !t.userRenamed && info.name ? info.name : t.name;
+              if (t.sessionId === info.id && t.isClaude && t.name === name) return t;
               changed = true;
-              return { ...t, sessionId: sid, isClaude: true };
+              return { ...t, sessionId: info.id, isClaude: true, name };
             });
             return changed ? next : prev;
           });
@@ -1949,7 +1969,7 @@ export const loginHandler = async (req, res) => {
                         return next;
                       });
                     }}
-                    onRename={(key, name) => setOpenTerminals(prev => prev.map(t => t.key === key ? { ...t, name } : t))}
+                    onRename={(key, name) => setOpenTerminals(prev => prev.map(t => t.key === key ? { ...t, name, userRenamed: true } : t))}
                     onNewTerminal={() => setNewAgentOpen(true)}
                   />
                 </div>
@@ -2006,7 +2026,7 @@ export const loginHandler = async (req, res) => {
                   return next;
                 });
               }}
-              onRename={(key, name) => setOpenTerminals(prev => prev.map(t => t.key === key ? { ...t, name } : t))}
+              onRename={(key, name) => setOpenTerminals(prev => prev.map(t => t.key === key ? { ...t, name, userRenamed: true } : t))}
               onNewTerminal={() => setNewAgentOpen(true)}
             />
           ) : (

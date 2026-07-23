@@ -247,16 +247,26 @@ pub fn pm_collisions(paths: Vec<String>) -> CollisionReport {
     // repo common-dir -> (repo-relative file -> worktree names that changed it)
     let mut map: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
     let mut edited = 0u32;
+    // A worktree's identity is its ROOT, not the path the operator happened to add.
+    // Adding both a repo and a folder inside it would otherwise look like two
+    // worktrees reporting the same `git status`, flagging every dirty file as a
+    // collision. Scan each distinct root once.
+    let mut seen_roots: std::collections::HashSet<String> = std::collections::HashSet::new();
     for p in &paths {
         if git(p, &["rev-parse", "--is-inside-work-tree"]).as_deref() != Some("true") {
             continue;
+        }
+        let root = git(p, &["rev-parse", "--show-toplevel"]).unwrap_or_else(|| p.clone());
+        if !seen_roots.insert(root.clone()) {
+            continue; // same worktree already scanned via another entry
         }
         let common = git(
             p,
             &["rev-parse", "--path-format=absolute", "--git-common-dir"],
         )
         .unwrap_or_else(|| p.clone());
-        let wt_name = name_of(p);
+        // Name from the worktree root so two entries into the same tree agree.
+        let wt_name = name_of(&root);
         if let Some(porc) = git_raw(p, &["status", "--porcelain"]) {
             for line in porc.lines() {
                 if line.len() < 3 {
@@ -351,6 +361,26 @@ mod tests {
         assert!(clean.clean, "clean branch should merge: {}", clean.detail);
         let conflict = pm_check_merge(r.path.clone(), "feature/conflict".into()).unwrap();
         assert!(!conflict.clean, "should conflict: {}", conflict.detail);
+    }
+
+    #[test]
+    fn pm_collisions_ignores_repo_added_twice_as_subdir() {
+        // REGRESSION: the operator adds a repo AND a folder inside it as separate
+        // workspaces. Both resolve to the same worktree and report the same
+        // `git status`, which used to mark every dirty file as a collision.
+        let r = init_repo();
+        commit_file(&r.path, "app.txt", "orig\n", "base");
+        std::fs::create_dir_all(format!("{}/sub", r.path)).unwrap();
+        commit_file(&r.path, "sub/inner.txt", "x\n", "sub");
+        // one real edit in the single worktree
+        put_file(&r.path, "app.txt", "changed\n");
+
+        let report = pm_collisions(vec![r.path.clone(), format!("{}/sub", r.path)]);
+        assert!(
+            report.collisions.is_empty(),
+            "same worktree added twice must not collide with itself: {:?}",
+            report.collisions
+        );
     }
 
     #[test]
