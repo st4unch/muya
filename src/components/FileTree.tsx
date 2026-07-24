@@ -172,6 +172,7 @@ export default function FileTree({
   onOpenFile,
   onRemoveRoot,
   onOpenTerminalHere,
+  onOpenClaudeHere,
   onAddAtRef,
   agents,
   activeCwd,
@@ -184,6 +185,7 @@ export default function FileTree({
   onOpenFile?: (path: string) => void;
   onRemoveRoot?: (path: string) => void;
   onOpenTerminalHere?: (cwd: string) => void;
+  onOpenClaudeHere?: (cwd: string) => void;
   onAddAtRef?: (path: string) => void;
   agents?: Agent[];
   activeCwd?: string;
@@ -447,6 +449,10 @@ export default function FileTree({
                 const dir = menu.path.split("/").slice(0, -1).join("/");
                 onOpenTerminalHere?.(dir); setMenu(null);
               }} />
+              <MenuItem label="Open Claude Here" onClick={() => {
+                const dir = menu.path.split("/").slice(0, -1).join("/");
+                onOpenClaudeHere?.(dir); setMenu(null);
+              }} />
               <Sep />
               <MenuItem label="Add as @ Reference" onClick={() => {
                 void navigator.clipboard.writeText(`@${menu.path}`);
@@ -487,6 +493,7 @@ export default function FileTree({
           {menu.isDir && !menu.isRoot && (
             <>
               <MenuItem label="Open in Terminal Here" onClick={() => { onOpenTerminalHere?.(menu.path); setMenu(null); }} />
+              <MenuItem label="Open Claude Here" onClick={() => { onOpenClaudeHere?.(menu.path); setMenu(null); }} />
               <Sep />
               <MenuItem label="Copy Path" onClick={() => { void navigator.clipboard.writeText(menu.path); setMenu(null); }} />
               <MenuItem label="Reveal in Finder" onClick={() => { void invoke("reveal_in_finder", { path: menu.path }); setMenu(null); }} />
@@ -516,6 +523,7 @@ export default function FileTree({
           {menu.isRoot && (
             <>
               <MenuItem label="Open in Terminal Here" onClick={() => { onOpenTerminalHere?.(menu.path); setMenu(null); }} />
+              <MenuItem label="Open Claude Here" onClick={() => { onOpenClaudeHere?.(menu.path); setMenu(null); }} />
               <MenuItem label="Reveal in Finder" onClick={() => { void invoke("reveal_in_finder", { path: menu.path }); setMenu(null); }} />
               <MenuItem label="Copy Path" onClick={() => { void navigator.clipboard.writeText(menu.path); setMenu(null); }} />
               {removableRoots?.has(menu.path) && (

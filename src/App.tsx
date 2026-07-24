@@ -1532,6 +1532,19 @@ export const loginHandler = async (req, res) => {
                 openTerminal({ key, name: cwd.split("/").pop() ?? "Terminal", kind: "terminal", cwd });
                 setView("control");
               }}
+              onOpenClaudeHere={(cwd) => {
+                // Open a terminal in the folder and launch Claude straight away.
+                // isClaude is derived from the command by openTerminal.
+                const key = `claude-${Date.now()}`;
+                openTerminal({
+                  key,
+                  name: cwd.split("/").pop() ?? "Claude",
+                  kind: "terminal",
+                  cwd,
+                  initialCommand: "claude --dangerously-skip-permissions",
+                });
+                setView("control");
+              }}
               onAddAtRef={(_path) => {
                 // clipboard already written inside FileTree
               }}

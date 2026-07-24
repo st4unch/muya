@@ -4,6 +4,20 @@ All notable changes to Muya are documented here, newest first.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **"Open Claude Here"** in a folder's right-click menu (below "Open in Terminal
+  Here"): opens a terminal in that folder and launches Claude straight away.
+
+### Fixed
+- **Option+Arrow no longer prints `;3C` / `;3D` noise.** Option+Left/Right now move
+  by word (readline meta-b/meta-f) and Option+Up/Down act as plain history arrows,
+  like Terminal.app / iTerm2.
+
+_Not yet verified live in the dev app (webview flake in the working session); the
+code, tsc, and 78 frontend tests are green._
+
 ## [0.2.3] - 2026-07-24
 
 ### Added
