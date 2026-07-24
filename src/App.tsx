@@ -1,4 +1,6 @@
-import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
+import { nextAcked, deriveBlinkKeys } from "./lib/blink";
+import { pickNextActiveKey } from "./lib/tabs";
 import appIconUrl from "./assets/app-icon.png";
 import {
   Folder,
@@ -330,13 +332,10 @@ export default function App() {
       if (!ok) return;
     }
     setOpenTerminals((prev) => {
-      const next = prev.filter((tm) => tm.key !== key);
-      setActiveTerminalKey((cur) => {
-        if (cur !== key) return cur;
-        // Prefer another terminal; fall back to any remaining entry.
-        return (next.find(t => t.kind === "terminal") ?? next[next.length - 1])?.key ?? null;
-      });
-      return next;
+      // Focus a neighbouring tab of the SAME kind — closing a file must not jump
+      // focus onto a terminal (where the next ⌘W would kill a Claude session). L19.
+      setActiveTerminalKey((cur) => (cur === key ? pickNextActiveKey(prev, key) : cur));
+      return prev.filter((tm) => tm.key !== key);
     });
     setGridKeys((prev) => prev.filter((k) => k !== key));
     setDirtyTabs((prev) => { const n = { ...prev }; delete n[key]; return n; });
@@ -638,6 +637,20 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // First ⌘Q shows a transient "press ⌘Q again to quit" hint (VS Code style); the
+  // backend's double-press guard does the actual quitting. The hint auto-hides so
+  // the window match the ~700ms quit window loosely (kept longer for readability).
+  const [quitHint, setQuitHint] = useState(false);
+  const quitHintTimer = useRef<number | null>(null);
+  useEffect(() => {
+    const un = listen("menu:quit-hint", () => {
+      setQuitHint(true);
+      if (quitHintTimer.current) window.clearTimeout(quitHintTimer.current);
+      quitHintTimer.current = window.setTimeout(() => setQuitHint(false), 2200);
+    });
+    return () => { void un.then((f) => f()); };
+  }, []);
+
   // Muya > Check for Updates menu item
   useEffect(() => {
     const un = listen("menu:check-update", async () => {
@@ -748,6 +761,26 @@ export default function App() {
   // (~180ms), so it only runs on every SESSION_EVERY-th tick.
   const SESSION_EVERY = 5; // 5 × 3s = ~15s
   const sessionTickRef = useRef(0);
+  // Tab keys whose Claude session is waiting-for-input (needs an operator decision).
+  const [waitingKeys, setWaitingKeys] = useState<Set<string>>(new Set());
+  // Waiting tabs the operator has already opened this episode — acknowledged, so
+  // they stop blinking even before the ~15s poll notices the answer. Cleared for a
+  // tab once it leaves the waiting set, so the NEXT prompt blinks again.
+  const [ackedWaiting, setAckedWaiting] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    setAckedWaiting((prev) => {
+      const next = nextAcked(prev, activeTerminalKey, waitingKeys);
+      const same = next.size === prev.size && [...next].every((k) => prev.has(k));
+      return same ? prev : next;
+    });
+  }, [activeTerminalKey, waitingKeys]);
+  // A tab blinks only while it needs a decision AND hasn't been opened yet: the
+  // active tab and any acknowledged tab are excluded. Blink persists until the
+  // operator makes that terminal active (i.e. goes to answer it).
+  const blinkKeys = useMemo(
+    () => deriveBlinkKeys(waitingKeys, activeTerminalKey, ackedWaiting),
+    [waitingKeys, activeTerminalKey, ackedWaiting],
+  );
   useEffect(() => {
     let cancelled = false;
     const tick = async () => {
@@ -777,30 +810,43 @@ export default function App() {
         // ride the fast cwd tick — run it every SESSION_EVERY ticks instead.
         sessionTickRef.current = (sessionTickRef.current + 1) % SESSION_EVERY;
         if (sessionTickRef.current !== 0) return;
-        const byPtySession = await invoke<Record<string, { id: string; name: string }>>(
+        const byPtySession = await invoke<Record<string, { id: string; name: string; status: string }>>(
           "pty_session_ids", { ids: entries.map(([, ptyId]) => ptyId) });
         if (cancelled) return;
-        const sessionByKey: Record<string, { id: string; name: string }> = {};
+        // Tabs whose Claude session is paused waiting for the operator — the
+        // TERMINALS panel blinks these so a decision isn't missed.
+        const waiting = new Set<string>();
+        for (const [key, ptyId] of entries) {
+          if (byPtySession[ptyId]?.status === "waiting-for-input") waiting.add(key);
+        }
+        setWaitingKeys((prev) => {
+          const same = prev.size === waiting.size && [...waiting].every((k) => prev.has(k));
+          return same ? prev : waiting;
+        });
+        const sessionByKey: Record<string, { id: string; name: string; status: string }> = {};
         for (const [key, ptyId] of entries) {
           const info = byPtySession[ptyId];
           if (info?.id) sessionByKey[key] = info;
         }
-        if (Object.keys(sessionByKey).length > 0) {
-          setOpenTerminals((prev) => {
-            let changed = false;
-            const next = prev.map((t) => {
-              const info = sessionByKey[t.key];
-              if (!info) return t;
-              // Adopt the session's own name so the tab matches what Claude calls
-              // itself — unless the operator renamed the tab by hand.
-              const name = !t.userRenamed && info.name ? info.name : t.name;
-              if (t.sessionId === info.id && t.isClaude && t.name === name) return t;
-              changed = true;
-              return { ...t, sessionId: info.id, isClaude: true, name };
-            });
-            return changed ? next : prev;
+        // `isClaude` reflects whether Claude is RUNNING in the tab RIGHT NOW —
+        // it drives the icon. A polled tab with no live session flips back to the
+        // terminal icon (Claude exited). `sessionId` is kept regardless so the tab
+        // can still resume that conversation. Tabs not yet spawned are untouched.
+        const polled = new Set(entries.map(([k]) => k));
+        setOpenTerminals((prev) => {
+          let changed = false;
+          const next = prev.map((t) => {
+            if (!polled.has(t.key)) return t;
+            const info = sessionByKey[t.key];
+            const running = Boolean(info);
+            const name = running && info!.name && !t.userRenamed ? info!.name : t.name;
+            const sessionId = running ? info!.id : t.sessionId;
+            if (t.isClaude === running && t.name === name && t.sessionId === sessionId) return t;
+            changed = true;
+            return { ...t, isClaude: running, name, sessionId };
           });
-        }
+          return changed ? next : prev;
+        });
       } catch {
         /* probe unavailable — list falls back to the spawn cwd, resume stays as-is */
       }
@@ -1951,6 +1997,7 @@ export const loginHandler = async (req, res) => {
                     activeKey={activeTerminalKey}
                     terminalPtyIds={terminalPtyIds}
                     liveCwds={liveCwds}
+                    waitingKeys={blinkKeys}
                     renamingKey={renamingKey}
                     renameValue={renameValue}
                     setRenamingKey={setRenamingKey}
@@ -2008,6 +2055,7 @@ export const loginHandler = async (req, res) => {
               activeKey={activeTerminalKey}
               terminalPtyIds={terminalPtyIds}
                     liveCwds={liveCwds}
+                    waitingKeys={blinkKeys}
               renamingKey={renamingKey}
               renameValue={renameValue}
               setRenamingKey={setRenamingKey}
@@ -2262,8 +2310,17 @@ export const loginHandler = async (req, res) => {
         terminals={openTerminals.filter(t => t.kind === "terminal").map(t => ({ key: t.key, name: t.name }))}
         scheduled={scheduledPrompts}
         onAdd={(p) => setScheduledPrompts(prev => [...prev, { ...p, id: crypto.randomUUID(), fired: false }])}
+        onEdit={(id, p) => setScheduledPrompts(prev => prev.map(sp => sp.id === id ? { ...sp, ...p, fired: false } : sp))}
         onCancel={(id) => setScheduledPrompts(prev => prev.filter(p => p.id !== id))}
       />
+
+      {/* Transient "press ⌘Q again to quit" hint. NOT a full-screen overlay (no
+          `fixed inset-0 z-50`) so it never blocks terminal input. */}
+      {quitHint && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[80] px-3 py-1.5 rounded-lg bg-neutral-900/90 dark:bg-neutral-100/90 text-neutral-100 dark:text-neutral-900 text-[11px] font-mono font-semibold shadow-2xl pointer-events-none">
+          Press ⌘Q again to quit
+        </div>
+      )}
 
       {/* Action menu for a path clicked in terminal output */}
       {pathMenu && (

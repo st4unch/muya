@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Clock, X, Plus, Trash2, CalendarClock, Terminal, CheckSquare, Square } from "lucide-react";
+import { Clock, X, Plus, Trash2, CalendarClock, Terminal, CheckSquare, Square, Pencil, Save } from "lucide-react";
 
 export interface ScheduledPrompt {
   id: string;
@@ -37,6 +37,7 @@ export default function ScheduledPromptModal({
   terminals,
   scheduled,
   onAdd,
+  onEdit,
   onCancel,
 }: {
   open: boolean;
@@ -44,6 +45,7 @@ export default function ScheduledPromptModal({
   terminals: TerminalOption[];
   scheduled: ScheduledPrompt[];
   onAdd: (p: Omit<ScheduledPrompt, "id" | "fired">) => void;
+  onEdit?: (id: string, p: Omit<ScheduledPrompt, "id" | "fired">) => void;
   onCancel: (id: string) => void;
 }) {
   const [prompt, setPrompt] = useState("");
@@ -52,15 +54,39 @@ export default function ScheduledPromptModal({
   const [dateVal, setDateVal] = useState(defaultDate);
   const [flashKey, setFlashKey] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  // The pending prompt currently loaded into the form for editing (null = create).
+  const [editingId, setEditingId] = useState<string | null>(null);
 
-  // Refresh default time/date each time the modal opens so the default is never stale.
+  const resetForm = () => {
+    setEditingId(null);
+    setPrompt("");
+    setSelectedKeys([]);
+    setTimeVal(defaultTime());
+    setDateVal(defaultDate());
+    setFormError(null);
+  };
+
+  // Load a pending prompt into the form to edit it in place.
+  const startEdit = (p: ScheduledPrompt) => {
+    setEditingId(p.id);
+    setPrompt(p.prompt);
+    setSelectedKeys(p.terminalKeys);
+    const d = new Date(p.scheduledAt);
+    setTimeVal(`${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`);
+    setDateVal(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+    setFormError(null);
+  };
+
+  // Refresh default time/date each time the modal opens so the default is never
+  // stale — but never clobber an in-progress edit.
   useEffect(() => {
-    if (open) {
+    if (open && !editingId) {
       setTimeVal(defaultTime());
       setDateVal(defaultDate());
       setFormError(null);
     }
-  }, [open]);
+    if (!open) setEditingId(null);
+  }, [open, editingId]);
 
   // Esc closes the modal; a stray click outside it does NOT (this form is
   // too easy to lose to a misclick — Esc is the deliberate-close gesture).
@@ -87,7 +113,7 @@ export default function ScheduledPromptModal({
   // elapsed (e.g. the 5-min default expires while the user is still typing
   // the prompt) — the click looked like it did nothing. Now it surfaces a
   // visible error instead of failing invisibly.
-  const handleAdd = () => {
+  const handleSubmit = () => {
     if (!prompt.trim() || selectedKeys.length === 0) return;
     const scheduledAt = combineToEpoch(dateVal, timeVal);
     if (isNaN(scheduledAt)) {
@@ -99,11 +125,10 @@ export default function ScheduledPromptModal({
       return;
     }
     setFormError(null);
-    onAdd({ prompt: prompt.trim(), terminalKeys: selectedKeys, scheduledAt });
-    setPrompt("");
-    setSelectedKeys([]);
-    setTimeVal(defaultTime());
-    setDateVal(defaultDate());
+    const payload = { prompt: prompt.trim(), terminalKeys: selectedKeys, scheduledAt };
+    if (editingId) onEdit?.(editingId, payload);
+    else onAdd(payload);
+    resetForm();
   };
 
   const pending = scheduled.filter(p => !p.fired);
@@ -194,15 +219,28 @@ export default function ScheduledPromptModal({
             />
           </div>
 
-          {/* Add button */}
-          <button
-            type="button"
-            onClick={handleAdd}
-            disabled={!prompt.trim() || selectedKeys.length === 0}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-neutral-200 dark:disabled:bg-neutral-800 text-white disabled:text-neutral-400 dark:disabled:text-neutral-600 text-xs font-mono font-bold transition-colors cursor-pointer disabled:cursor-not-allowed"
-          >
-            <Plus className="h-3.5 w-3.5" /> Schedule
-          </button>
+          {/* Submit — schedules a new prompt or saves edits to the loaded one */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={!prompt.trim() || selectedKeys.length === 0}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-neutral-200 dark:disabled:bg-neutral-800 text-white disabled:text-neutral-400 dark:disabled:text-neutral-600 text-xs font-mono font-bold transition-colors cursor-pointer disabled:cursor-not-allowed"
+            >
+              {editingId
+                ? <><Save className="h-3.5 w-3.5" /> Save changes</>
+                : <><Plus className="h-3.5 w-3.5" /> Schedule</>}
+            </button>
+            {editingId && (
+              <button
+                type="button"
+                onClick={resetForm}
+                className="px-3 py-2 rounded-lg border border-neutral-200 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-xs font-mono cursor-pointer"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
           {formError && (
             <p className="text-[11px] font-mono text-rose-600 dark:text-rose-400 -mt-2">{formError}</p>
           )}
@@ -215,7 +253,11 @@ export default function ScheduledPromptModal({
               </label>
               <div className="space-y-1.5">
                 {pending.map(p => (
-                  <div key={p.id} className="flex items-start gap-2 px-2.5 py-2 rounded border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20">
+                  <div key={p.id} className={`flex items-start gap-2 px-2.5 py-2 rounded border ${
+                    editingId === p.id
+                      ? "border-indigo-400 dark:border-indigo-500 bg-indigo-50 dark:bg-indigo-950/30"
+                      : "border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20"
+                  }`}>
                     <Clock className="h-3 w-3 text-amber-500 shrink-0 mt-0.5" />
                     <div className="flex-1 min-w-0">
                       <p className="text-[11px] font-mono text-neutral-800 dark:text-neutral-200 truncate">{p.prompt}</p>
@@ -223,7 +265,10 @@ export default function ScheduledPromptModal({
                         {new Date(p.scheduledAt).toLocaleString()} · {p.terminalKeys.length} terminal
                       </p>
                     </div>
-                    <button type="button" onClick={() => onCancel(p.id)} className="text-neutral-400 hover:text-rose-500 cursor-pointer shrink-0">
+                    <button type="button" onClick={() => startEdit(p)} title="Düzenle" className="text-neutral-400 hover:text-indigo-500 cursor-pointer shrink-0">
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                    <button type="button" onClick={() => { if (editingId === p.id) resetForm(); onCancel(p.id); }} title="Sil" className="text-neutral-400 hover:text-rose-500 cursor-pointer shrink-0">
                       <Trash2 className="h-3 w-3" />
                     </button>
                   </div>

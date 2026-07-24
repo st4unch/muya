@@ -169,13 +169,27 @@ export default function SessionsPage({
               {q ? "No matching live sessions." : "No live sessions."}
             </div>
           )}
-          {filteredLive.map((s) => (
+          {filteredLive.map((s) => {
+            // A live session Claude has paused on — it needs the operator to
+            // approve/answer before it can continue. Blink the whole row so it's
+            // impossible to miss among idle/working sessions.
+            const needsDecision = s.status === "waiting-for-input";
+            return (
             <div
               key={s.id}
-              className="bg-white dark:bg-[#25272b] border border-neutral-200 dark:border-neutral-700 rounded-lg p-3 flex items-center justify-between gap-3 shadow-sm"
+              className={`rounded-lg p-3 flex items-center justify-between gap-3 shadow-sm border ${
+                needsDecision
+                  ? "session-needs-decision border-amber-400 dark:border-amber-500 bg-amber-50 dark:bg-amber-950/30"
+                  : "bg-white dark:bg-[#25272b] border-neutral-200 dark:border-neutral-700"
+              }`}
             >
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
+                  {needsDecision && (
+                    <span className="text-[9px] font-mono font-bold text-amber-600 dark:text-amber-400 animate-pulse shrink-0" title="Waiting for your decision">
+                      ● NEEDS YOU
+                    </span>
+                  )}
                   <span className="font-mono text-xs font-bold text-neutral-900 dark:text-neutral-100 truncate max-w-[260px]">
                     {s.name}
                   </span>
@@ -228,7 +242,8 @@ export default function SessionsPage({
                 )}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 

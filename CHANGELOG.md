@@ -4,6 +4,32 @@ All notable changes to Muya are documented here, newest first.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-07-24
+
+### Added
+- **Sessions that need your decision now blink.** When a Claude session pauses on
+  a permission/confirmation prompt, its row in the Sessions page and its tab in
+  the TERMINALS panel pulse amber with a "NEEDS YOU" marker. A tab stops blinking
+  the moment you open it (opening it counts as "I'm answering"); a later prompt
+  blinks again. Honours reduced-motion.
+- **Edit a scheduled prompt.** The pencil on a pending prompt loads it back into
+  the form; the button becomes "Save changes".
+
+### Changed
+- **Terminal tabs show their live directory** and adopt their Claude session's own
+  name; the icon reflects whether Claude is running (Claude mark) or the tab is a
+  plain shell (terminal glyph), switching back when Claude exits.
+- **First ⌘Q shows a "press ⌘Q again to quit" hint** instead of doing nothing, so
+  a real quit is a deliberate double-press.
+
+### Fixed
+- **Closing files no longer jumps focus onto a terminal.** Closing a file tab now
+  moves focus to a neighbouring file, so a rapid string of ⌘W closes can't land on
+  a terminal and accidentally kill a running Claude session.
+- **Esc at an open dialog closes the dialog, not the terminal.** A modal (New
+  Terminal, Scheduled Prompt, …) now swallows keystrokes so Esc can no longer slip
+  into the focused terminal and interrupt Claude.
+
 ## [0.2.2] - 2026-07-23
 
 ### Fixed

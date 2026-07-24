@@ -30,3 +30,14 @@
    covers any area not explicitly themed. */
 html { background: #ffffff; }
 html.dark { background: #25272b; color-scheme: dark; }
+
+/* Live sessions that need the operator's decision (waiting-for-input) pulse an
+   amber glow so they stand out among idle/working rows. Respects reduced-motion. */
+@keyframes session-decision-blink {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.0); border-color: rgba(245, 158, 11, 0.45); }
+  50%      { box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.35); border-color: rgba(245, 158, 11, 1); }
+}
+.session-needs-decision { animation: session-decision-blink 1.15s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .session-needs-decision { animation: none; border-color: rgba(245, 158, 11, 1); }
+}

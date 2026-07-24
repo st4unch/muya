@@ -15,6 +15,8 @@ interface Props {
   terminalPtyIds: Record<string, string>;
   /** terminalKey → the shell's CURRENT working directory (polled). Falls back to the spawn cwd. */
   liveCwds?: Record<string, string>;
+  /** Tab keys whose Claude session is waiting for the operator's decision — these blink. */
+  waitingKeys?: Set<string>;
   renamingKey: string | null;
   renameValue: string;
   setRenamingKey: (k: string | null) => void;
@@ -27,7 +29,7 @@ interface Props {
 }
 
 export default function SessionsPanel({
-  terminals, activeKey, terminalPtyIds, liveCwds,
+  terminals, activeKey, terminalPtyIds, liveCwds, waitingKeys,
   renamingKey, renameValue, setRenamingKey, setRenameValue,
   onActivate, onClose, onReorder, onRename, onNewTerminal,
 }: Props) {
@@ -101,6 +103,7 @@ export default function SessionsPanel({
             const isActive = t.key === activeKey;
             const isDragOver = dragOver === t.key;
             const hasPty = Boolean(terminalPtyIds[t.key]);
+            const needsDecision = Boolean(waitingKeys?.has(t.key));
 
             return (
               <div
@@ -108,7 +111,9 @@ export default function SessionsPanel({
                 onMouseEnter={() => handleDragEnter(t.key)}
                 onMouseUp={() => handleDrop(t.key)}
                 className={`group flex items-center gap-1 rounded border text-[10px] font-mono transition-colors ${
-                  isDragOver
+                  needsDecision
+                    ? "session-needs-decision border-amber-400 dark:border-amber-500 bg-amber-50 dark:bg-amber-950/30"
+                    : isDragOver
                     ? "border-indigo-400 bg-indigo-50 dark:bg-indigo-900/20"
                     : isActive
                     ? "border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-950/30"
@@ -166,9 +171,13 @@ export default function SessionsPanel({
                       </span>
                     )}
 
-                    {hasPty && renamingKey !== t.key && (
+                    {needsDecision && renamingKey !== t.key ? (
+                      <span className="ml-auto shrink-0 flex items-center gap-1 text-[8px] font-mono font-bold text-amber-600 dark:text-amber-400 animate-pulse" title="Waiting for your decision">
+                        NEEDS YOU <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                      </span>
+                    ) : hasPty && renamingKey !== t.key ? (
                       <span className="ml-auto shrink-0 w-1.5 h-1.5 rounded-full bg-emerald-400" title="PTY active" />
-                    )}
+                    ) : null}
                   </div>
 
                   {/* Show where the shell IS now (live cwd), not where it was

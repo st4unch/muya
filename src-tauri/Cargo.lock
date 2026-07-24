@@ -2565,7 +2565,7 @@ dependencies = [
 
 [[package]]
 name = "muya"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "dirs-next",
  "hkdf 0.13.0",

@@ -142,6 +142,10 @@ pub fn run() {
                     app.exit(0);
                 } else {
                     LAST_QUIT_MS.store(now, Ordering::Relaxed);
+                    // First press — tell the UI to show a transient "press ⌘Q again
+                    // to quit" hint (VS Code style), so an accidental ⌘Q doesn't
+                    // silently do nothing and a real quit is a deliberate double-press.
+                    let _ = app.emit("menu:quit-hint", ());
                 }
             }
             _ => {}

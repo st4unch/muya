@@ -336,6 +336,9 @@ pub struct TabSession {
     /// The session's own name (e.g. a `/rename`d "muya-all"), so the tab label can
     /// match what Claude calls itself instead of just the folder name.
     pub name: String,
+    /// Mapped status ("working" | "waiting-for-input" | "idle" | "stopped") — lets
+    /// the UI flag a tab whose session is paused waiting for the operator.
+    pub status: String,
 }
 
 /// Map each requested PTY to the Claude session running **inside that tab**.
@@ -389,6 +392,7 @@ pub fn pty_session_ids(
                 TabSession {
                     id: a.id.clone(),
                     name: a.name.clone(),
+                    status: a.status.clone(),
                 },
             );
         }
@@ -413,7 +417,10 @@ mod tests {
         let mut roots = std::collections::HashMap::new();
         roots.insert(100u32, "pty-A".to_string());
         let ppid = super::parse_ppid_map("100 1\n201 100\n302 201\n900 1\n");
-        assert_eq!(super::owning_root(302, &roots, &ppid).as_deref(), Some("pty-A"));
+        assert_eq!(
+            super::owning_root(302, &roots, &ppid).as_deref(),
+            Some("pty-A")
+        );
         // An unrelated process must not be attributed to the tab.
         assert_eq!(super::owning_root(900, &roots, &ppid), None);
     }

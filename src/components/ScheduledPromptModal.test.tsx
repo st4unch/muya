@@ -111,6 +111,36 @@ describe("ScheduledPromptModal", () => {
     );
   });
 
+  it("editing a pending prompt loads it and Save calls onEdit (not onAdd)", async () => {
+    const user = userEvent.setup();
+    const onEdit = vi.fn();
+    render(
+      <ScheduledPromptModal
+        open
+        onClose={onClose}
+        terminals={TERMINALS}
+        scheduled={[PENDING]}
+        onAdd={onAdd}
+        onEdit={onEdit}
+        onCancel={onCancel}
+      />
+    );
+
+    // Click the pencil on the pending row → form loads with its prompt.
+    await user.click(screen.getByTitle("Düzenle"));
+    expect(screen.getByPlaceholderText(/claude/i)).toHaveValue("git status");
+    // The submit button becomes "Save changes".
+    const save = screen.getByRole("button", { name: /save changes/i });
+    // Change the prompt and save.
+    await user.clear(screen.getByPlaceholderText(/claude/i));
+    await user.type(screen.getByPlaceholderText(/claude/i), "git log");
+    await user.click(save);
+
+    expect(onEdit).toHaveBeenCalledTimes(1);
+    expect(onEdit).toHaveBeenCalledWith("s1", expect.objectContaining({ prompt: "git log" }));
+    expect(onAdd).not.toHaveBeenCalled();
+  });
+
   it("shows pending prompts list", () => {
     render(
       <ScheduledPromptModal
