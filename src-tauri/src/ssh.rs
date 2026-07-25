@@ -56,6 +56,12 @@ pub struct Server {
     pub psmp_profile_id: Option<String>,
     #[serde(rename = "credentialSource", default)]
     pub credential_source: CredentialSource,
+    /// Per-server opt-in (default false): may the `muya-ssh` MCP broker expose
+    /// this server to Claude agents (list + open by alias)? Secrets never cross
+    /// to the agent regardless — this only gates visibility/open. Old config JSON
+    /// lacking `agentAccess` deserializes to `false` (serde `default`).
+    #[serde(rename = "agentAccess", default)]
+    pub agent_access: bool,
     /// Extra raw `ssh` CLI options inserted before the destination, e.g.
     /// `-X -L 8080:localhost:80 -J jump@host`. Split on whitespace (no shell).
     #[serde(
@@ -538,10 +544,35 @@ mod tests {
                 kind: "prompt".into(),
                 ..Default::default()
             },
+            agent_access: false,
             ssh_options: None,
             last_connected_at: None,
             tags: vec![],
         }
+    }
+
+    // AC1 (agent-broker) — old config JSON without `agentAccess` loads as false;
+    // an explicit `true` round-trips. Guards backward compatibility of the store.
+    #[test]
+    fn agent_access_defaults_false_when_absent() {
+        let legacy = r#"{
+            "id":"s1","label":"box","host":"h","port":22,"username":"u",
+            "connectionType":"direct","credentialSource":{"kind":"prompt"},"tags":[]
+        }"#;
+        let s: Server = serde_json::from_str(legacy).unwrap();
+        assert!(!s.agent_access, "missing agentAccess must default to false");
+
+        let opt_in = r#"{
+            "id":"s2","label":"box","host":"h","port":22,"username":"u",
+            "connectionType":"direct","credentialSource":{"kind":"prompt"},
+            "agentAccess":true,"tags":[]
+        }"#;
+        let s2: Server = serde_json::from_str(opt_in).unwrap();
+        assert!(s2.agent_access);
+        // Serializes under the camelCase key.
+        assert!(serde_json::to_string(&s2)
+            .unwrap()
+            .contains("\"agentAccess\":true"));
     }
 
     // AC1.2 — adding (host,port,user) twice → second is a duplicate; list has 1.

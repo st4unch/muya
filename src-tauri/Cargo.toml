@@ -14,6 +14,18 @@ edition = "2021"
 name = "muya_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# The Tauri app binary.
+[[bin]]
+name = "muya"
+path = "src/main.rs"
+
+# Thin stdio MCP proxy Claude Code spawns for the `muya-ssh` server. Builds
+# alongside the app; holds NO secrets and does NO ssh — it forwards requests to
+# the running app over the owner-only broker UDS (see src/broker.rs).
+[[bin]]
+name = "muya-ssh-mcp"
+path = "src/bin/muya_ssh_mcp.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -58,6 +70,8 @@ tempfile = "3.27.0"
 aes-gcm = "0.10"
 argon2 = "0.5"
 zeroize = { version = "1", features = ["zeroize_derive"] }
+# SSH agent broker: getpeereid(2) peer-uid check on the owner-only broker socket.
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3.27.0"

@@ -25,6 +25,7 @@ mod agents;
 mod bridge;
 mod bridge_exec;
 mod bridge_remote;
+mod broker;
 mod credstore;
 mod cyberark;
 mod fs;
@@ -148,6 +149,23 @@ pub fn run() {
                 }
             }
 
+            // SSH agent broker (PRD ssh-agent-broker, Faz 1): start the owner-only
+            // UDS listener (0600 + getpeereid uid check) and register the muya-ssh
+            // MCP proxy in ~/.claude/.mcp.json. Both are idempotent + secret-free.
+            {
+                let broker_state = app.state::<broker::BrokerState>();
+                let handle = app.handle().clone();
+                if let Err(e) = tauri::async_runtime::block_on(broker::enable_broker_listener(
+                    &broker_state,
+                    handle,
+                )) {
+                    log::warn!("[ssh-broker] listener start failed: {e}");
+                }
+                if let Err(e) = broker::register_mcp() {
+                    log::warn!("[ssh-broker] mcp registration failed: {e}");
+                }
+            }
+
             Ok(())
         })
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -187,6 +205,7 @@ pub fn run() {
         .manage(bridge::BridgeState::default())
         .manage(bridge_remote::RemoteBridgeState::default())
         .manage(bridge_exec::ExecState::default())
+        .manage(broker::BrokerState::default())
         .manage(credstore::CredStore::default())
         .manage(cyberark::CyberarkState::default())
         .invoke_handler(tauri::generate_handler![

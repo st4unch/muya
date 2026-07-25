@@ -44,6 +44,8 @@ type Server = {
   connectionType: "direct" | "psmp";
   psmpProfileId?: string | null;
   credentialSource: CredentialSource;
+  /** Opt-in: may the muya-ssh MCP broker expose this server to Claude agents? */
+  agentAccess?: boolean;
   /** Extra raw ssh CLI options, e.g. `-X -L 8080:localhost:80 -J jump@host`. */
   sshOptions?: string | null;
   lastConnectedAt?: string | null;
@@ -94,6 +96,7 @@ const emptyServer = (): Server => ({
   connectionType: "direct",
   psmpProfileId: null,
   credentialSource: { kind: "prompt" },
+  agentAccess: false,
   tags: [],
 });
 
@@ -353,6 +356,16 @@ function ServersTab({
                 value={draft.sshOptions ?? ""}
                 onChange={(e) => setDraft({ ...draft, sshOptions: e.target.value || null })}
               />
+            </label>
+            <label className="text-xs flex items-center gap-2 col-span-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!!draft.agentAccess}
+                onChange={(e) => setDraft({ ...draft, agentAccess: e.target.checked })}
+              />
+              <span className="text-neutral-500">
+                Agent may use this server (exposes it by alias to Claude via the muya-ssh MCP; the password is never shared)
+              </span>
             </label>
           </div>
           <div className="flex gap-2 justify-end">

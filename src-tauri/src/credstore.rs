@@ -541,6 +541,13 @@ pub(crate) fn secret_for(store: &CredStore, id: &str) -> Result<Zeroizing<String
     Ok(Zeroizing::new(cred.secret.clone()))
 }
 
+/// Cheap unlock probe for the SSH broker's `open` gate: true when the store is
+/// currently unlocked. Never touches secrets, so it is safe to call from the
+/// broker before deciding whether a `local`-sourced server can be opened.
+pub(crate) fn is_unlocked(store: &CredStore) -> bool {
+    store.0.lock().map(|g| g.is_some()).unwrap_or(false)
+}
+
 pub(crate) fn new_id() -> String {
     // Non-cryptographic unique id (128 random bits, hex) — no uuid crate needed.
     format!(

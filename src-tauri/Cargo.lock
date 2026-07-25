@@ -2774,12 +2774,13 @@ dependencies = [
 
 [[package]]
 name = "muya"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "aes-gcm",
  "argon2",
  "dirs-next",
  "hkdf 0.13.0",
+ "libc",
  "log",
  "notify",
  "portable-pty",

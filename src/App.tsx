@@ -722,6 +722,30 @@ export default function App() {
     return () => { void un.then((f) => f()); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Open an SSH server in a fresh terminal tab (fresh key per attempt so React
+  // remounts a live PTY that actually re-runs ssh). Shared by the SSH page's
+  // Connect button and the muya-ssh MCP broker's `ssh-broker-open` event.
+  const openSshServer = useCallback((serverId: string, label: string) => {
+    const key = `ssh:${serverId}:${Date.now()}`;
+    setOpenTerminals((prev) => [
+      ...prev.filter((t) => t.key !== `ssh:${serverId}` && !t.key.startsWith(`ssh:${serverId}:`)),
+      { key, name: label, kind: "terminal", sshServerId: serverId },
+    ]);
+    setActiveTerminalKey(key);
+    setView("control");
+  }, []);
+
+  // muya-ssh MCP → app: agent asked to open a server by alias. Rust validated
+  // opt-in + store-unlock and resolved the id; the password stays Rust-side.
+  useEffect(() => {
+    const un = listen<{ serverId: string; label?: string }>("ssh-broker-open", (e) => {
+      const { serverId, label } = e.payload;
+      openSshServer(serverId, label || serverId);
+    });
+    return () => { void un.then((f) => f()); };
+  }, [openSshServer]);
+
   useEffect(() => {
     localStorage.setItem("apex.worktrees", JSON.stringify(worktrees));
   }, [worktrees]);
@@ -1511,20 +1535,7 @@ export const loginHandler = async (req, res) => {
           add/edit-server form (or CyberArk session) survives navigation to other
           tabs and back. Same always-mount pattern as the control plane below. */}
       <div className={`flex-1 flex overflow-hidden ${view !== "ssh" ? "hidden" : ""}`}>
-        <SshPage
-          onConnect={(serverId, label) => {
-            // Fresh unique key per attempt: React remounts a new Terminal (fresh
-            // PTY that actually re-runs ssh) instead of re-activating a dead tab.
-            // Also drop any prior tab for this server so they don't accumulate. (bug 4)
-            const key = `ssh:${serverId}:${Date.now()}`;
-            setOpenTerminals((prev) => [
-              ...prev.filter((t) => t.key !== `ssh:${serverId}` && !t.key.startsWith(`ssh:${serverId}:`)),
-              { key, name: label, kind: "terminal", sshServerId: serverId },
-            ]);
-            setActiveTerminalKey(key);
-            setView("control");
-          }}
-        />
+        <SshPage onConnect={openSshServer} />
       </div>
       {/* Control plane — ALWAYS mounted; hidden (not unmounted) on other views so the
           terminal PTYs and any running sessions survive page navigation. xterm guards
