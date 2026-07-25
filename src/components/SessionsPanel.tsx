@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Terminal, GripHorizontal, Pencil, X, Plus, Sparkles } from "lucide-react";
+import { Terminal, GripHorizontal, Pencil, X, Plus, Sparkles, Copy, FolderOpen } from "lucide-react";
 
 interface TerminalEntry {
   key: string;
@@ -26,15 +26,22 @@ interface Props {
   onReorder: (fromKey: string, toKey: string) => void;
   onRename: (key: string, name: string) => void;
   onNewTerminal?: () => void;
+  /** Duplicate a terminal into a new tab, re-running its command (ssh/claude reconnect). */
+  onDuplicate?: (key: string) => void;
+  /** Reveal the terminal's current working directory in Finder. */
+  onRevealInFinder?: (key: string) => void;
 }
 
 export default function SessionsPanel({
   terminals, activeKey, terminalPtyIds, liveCwds, waitingKeys,
   renamingKey, renameValue, setRenamingKey, setRenameValue,
   onActivate, onClose, onReorder, onRename, onNewTerminal,
+  onDuplicate, onRevealInFinder,
 }: Props) {
   const dragFromRef = useRef<string | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
+  // Right-click context menu for a terminal row (key + viewport position).
+  const [menu, setMenu] = useState<{ key: string; x: number; y: number } | null>(null);
 
   useEffect(() => {
     const onGlobalMouseUp = () => {
@@ -110,6 +117,11 @@ export default function SessionsPanel({
                 key={t.key}
                 onMouseEnter={() => handleDragEnter(t.key)}
                 onMouseUp={() => handleDrop(t.key)}
+                onContextMenu={(e) => {
+                  if (!onDuplicate && !onRevealInFinder) return;
+                  e.preventDefault();
+                  setMenu({ key: t.key, x: e.clientX, y: e.clientY });
+                }}
                 className={`group flex items-center gap-1 rounded border text-[10px] font-mono transition-colors ${
                   needsDecision
                     ? "session-needs-decision border-amber-400 dark:border-amber-500 bg-amber-50 dark:bg-amber-950/30"
@@ -223,6 +235,49 @@ export default function SessionsPanel({
           })}
         </div>
       )}
+
+      {/* Right-click context menu — Duplicate + Reveal in Finder */}
+      {menu && (() => {
+        const t = terminals.find((x) => x.key === menu.key);
+        const hasCwd = Boolean(liveCwds?.[menu.key] ?? t?.cwd);
+        return (
+          <>
+            <div
+              className="fixed inset-0 z-[60]"
+              onClick={() => setMenu(null)}
+              onContextMenu={(e) => { e.preventDefault(); setMenu(null); }}
+            />
+            <div
+              style={{ position: "fixed", top: Math.min(menu.y, window.innerHeight - 96), left: Math.min(menu.x, window.innerWidth - 200), zIndex: 61 }}
+              className="w-48 rounded-md border border-neutral-200 dark:border-[#3d3f44] bg-white dark:bg-[#25272b] shadow-lg py-1 text-xs"
+            >
+              <div className="px-3 py-1 text-[9px] text-neutral-400 dark:text-neutral-500 truncate border-b border-neutral-100 dark:border-neutral-700 mb-1" title={t?.name}>
+                {t?.name ?? "Terminal"}
+              </div>
+              {onDuplicate && (
+                <button
+                  type="button"
+                  className="w-full text-left px-3 py-1.5 flex items-center gap-2 hover:bg-neutral-100 dark:hover:bg-[#2f3136] cursor-pointer text-neutral-700 dark:text-neutral-200"
+                  onClick={() => { onDuplicate(menu.key); setMenu(null); }}
+                >
+                  <Copy className="h-3.5 w-3.5 text-indigo-500" /> Duplicate
+                </button>
+              )}
+              {onRevealInFinder && (
+                <button
+                  type="button"
+                  disabled={!hasCwd}
+                  className="w-full text-left px-3 py-1.5 flex items-center gap-2 hover:bg-neutral-100 dark:hover:bg-[#2f3136] cursor-pointer text-neutral-700 dark:text-neutral-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                  title={hasCwd ? undefined : "No working directory to reveal"}
+                  onClick={() => { onRevealInFinder(menu.key); setMenu(null); }}
+                >
+                  <FolderOpen className="h-3.5 w-3.5 text-amber-500" /> Reveal in Finder
+                </button>
+              )}
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 }

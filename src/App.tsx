@@ -309,6 +309,37 @@ export default function App() {
     }).catch(() => {});
   };
 
+  /** Duplicate a terminal tab into a fresh tab, re-running its command so an SSH
+   *  tab reconnects and a Claude tab re-resumes (operator chose "re-run command").
+   *  Opens at the shell's CURRENT cwd (liveCwds) when known. */
+  const duplicateTerminal = (key: string) => {
+    const t = openTerminalsRef.current.find((x) => x.key === key);
+    if (!t) return;
+    const ts = Date.now();
+    // A restored Claude tab has its initialCommand stripped (needsResume); rebuild
+    // the resume command from its session id so "re-run" actually reconnects.
+    let initialCommand = t.initialCommand;
+    if (!initialCommand && t.isClaude && t.sessionId)
+      initialCommand = `claude --resume ${t.sessionId} --dangerously-skip-permissions`;
+    const newKey = t.sshServerId ? `ssh:${t.sshServerId}:${ts}` : `term-copy-${ts}`;
+    openTerminal({
+      key: newKey,
+      name: `${t.name} (copy)`,
+      kind: "terminal",
+      cwd: liveCwds[key] ?? t.cwd,
+      initialCommand,
+      sshServerId: t.sshServerId,
+      isClaude: t.isClaude,
+    });
+  };
+
+  /** Reveal a terminal's current working directory in Finder. */
+  const revealTerminalInFinder = (key: string) => {
+    const t = openTerminalsRef.current.find((x) => x.key === key);
+    const cwd = liveCwds[key] ?? t?.cwd;
+    if (cwd) void invoke("reveal_in_finder", { path: cwd }).catch(() => {});
+  };
+
   const openTerminalForAgent = (a: AgentSession) => {
     const cwd = a.worktree && a.worktree.startsWith("/") ? a.worktree : undefined;
     if (cwd) ensureWorktreeTracked(cwd);
@@ -2081,6 +2112,8 @@ export const loginHandler = async (req, res) => {
                     }}
                     onRename={(key, name) => setOpenTerminals(prev => prev.map(t => t.key === key ? { ...t, name, userRenamed: true } : t))}
                     onNewTerminal={() => setNewAgentOpen(true)}
+                    onDuplicate={duplicateTerminal}
+                    onRevealInFinder={revealTerminalInFinder}
                   />
                 </div>
               </aside>
@@ -2139,6 +2172,8 @@ export const loginHandler = async (req, res) => {
               }}
               onRename={(key, name) => setOpenTerminals(prev => prev.map(t => t.key === key ? { ...t, name, userRenamed: true } : t))}
               onNewTerminal={() => setNewAgentOpen(true)}
+              onDuplicate={duplicateTerminal}
+              onRevealInFinder={revealTerminalInFinder}
             />
           ) : (
           <div className="p-3 space-y-4">
