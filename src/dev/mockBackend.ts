@@ -24,7 +24,7 @@ type Server = {
   lastConnectedAt?: string | null;
   tags: string[];
 };
-type Cred = { id: string; label: string; username: string; secretKind: "password" | "key"; secret: string };
+type Cred = { id: string; label: string; username: string; secretKind: "password" | "key" | "token"; secret: string; description?: string };
 
 type State = {
   ssh: { version: number; servers: Server[]; psmpProfiles: any[]; cyberark: Json | null };
@@ -145,6 +145,7 @@ export async function mockInvoke(cmd: string, payload: Json = {}): Promise<unkno
         label: c.label,
         username: c.username,
         secretKind: c.secretKind,
+        description: c.description ?? "",
       }));
     case "credstore_cred_upsert": {
       if (!state.store.unlocked) throw "store is locked";

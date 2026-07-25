@@ -70,6 +70,36 @@ başvurur, şifre Rust tarafında çözülüp sunucu-tarafında kullanılır.
 - [x] AC10: `BrokerState.run_slots` tokio Semaphore N=4, `try_acquire_owned` hızlı
   reddeder (hang yok). Test: N al, N+1 reddet, boşalanı yeniden kullan.
 
+**Faz 3.1 — Secret-operation ALTYAPISI (operatör: "önce altyapı, gerçek op'lar sonra"):**
+> architect GO (opus): std::process::Command argv-only + env_clear().envs, çıktı MCP
+> text + 256KB cap, ops `~/.claude/muya-agent-ops.json`'da operatör-tanımlı, arg-policy
+> fail-closed Rust'ta. Faz 3.1 = motor + boş registry; gerçek op tanımı YOK.
+- [x] AC11: `Credential`'a `description` alanı (serde `default`, eski config yüklenir);
+  `secret_kind` doğrulaması `"password"|"key"|"token"` kabul eder. `CredMeta`/`CredInput`
+  da `description` taşır. Test: eski JSON (description yok) yüklenir; token kind geçer.
+- [x] AC12: `list_secrets` MCP tool'u — her sırrın **ad + açıklama + kind**'ını döner,
+  **secret değeri ASLA**. Test: yanıt JSON'unda `secret`/`password` yok; 2 cred → 2 meta.
+- [x] AC13: `agent_ops.rs` — `~/.claude/muya-agent-ops.json` load/save (`atomic_write`,
+  boş default). `OpDefinition {name, description, program(mutlak yol), pinnedArgv,
+  argPolicy{allowedFlags,deniedFlags}, secretId, envMap}`. Boş registry'de `run_operation`
+  → "no such operation".
+- [x] AC14: **arg-policy fail-closed** (güvenlik kilidi, Rust-tarafı) — `enforce_arg_policy`
+  saf fonksiyon: pozisyonel slotta `-` ile başlayanı, denylist bayrakları (`-c`,
+  `--endpoint-url`, `--kubeconfig`, `--output`, `-o`), ve pinnedArgv dışı alt-komutu
+  REDDEDER; bilinmeyen bayrak → reddet (permissive-by-default DEĞİL). Unit test: temiz
+  argsler geçer; `-c`, `--endpoint-url`, lider-`-` pozisyonel reddedilir.
+- [x] AC15: `run_operation(opName, args)` motoru — op'u bul, arg-policy uygula, sırrı
+  Rust'ta çöz → `envMap` ile env'e koy, `std::process::Command` (env_clear + envs,
+  argv, shell YOK) çalıştır, stdout+stderr+exit yakala, 256KB cap, MCP text döndür.
+  Test: `/bin/echo` op'u ile capture çalışır + env-injection saf-fn'i doğru env üretir;
+  yanıtta sır değeri yok. `list_operations` tool'u op ad+açıklama döner (program yolu +
+  sır YOK).
+- [x] AC16: UI — Password Store'da credential ekle/düzenle'ye **description** alanı;
+  `token` kind seçilebilir. tsc + vitest render testi.
+
+**Faz 3.2 (sonraya):** gerçek op tanımları (aws/git/gh), yazma-op'lar, `kubectl exec`,
+üretilen-sır-yakalama (D7). Bu run'da HARİÇ.
+
 ## 4. Koruma Listesi (dokunulmayacak)
 
 - **Sır invariant'ı (PRD ssh-cyberark §9):** şifre Rust'ta çözülür, PTY'ye enjekte

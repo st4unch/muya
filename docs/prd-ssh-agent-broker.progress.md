@@ -38,10 +38,29 @@ started: 2026-07-26
   `broker::handle_run` + N=4 semaphore, `assemble_run_args` (tek argv, verbose off),
   proxy `ssh_run` tool. prompt-source sunucu ssh_run'da reddedilir (enjekte edilecek sır yok).
 
+- **Faz 3.1 impl — DONE 2026-07-26 (mcp-developer opus):** Secret-operation ALTYAPISI
+  (operatör: "önce altyapı"). AC11-AC16 PASS, bağımsız doğrulandı: 168 rust test (+16),
+  86 vitest, tsc temiz, 6 MCP tool kayıtlı. Yeni `agent_ops.rs`: `OpDefinition` +
+  `~/.claude/muya-agent-ops.json` registry (boş default), **`enforce_arg_policy`
+  fail-closed** (hard-denylist `-c`/`--endpoint-url`/`--kubeconfig`/`--output`/`-o`/`--query`
+  allowlist'ten ÖNCE; unknown flag/leading-dash/non-pinned subcommand reddedilir — kodu
+  bağımsız okudum), `build_op_env` (`{{secret}}`/`{{secret.json:FIELD}}`/literal),
+  `execute_op` (abs-path-only, `env_clear().envs()`, shell YOK, 256KB cap). 3 yeni MCP
+  tool: `list_secrets` (ad+açıklama+kind, değer YOK), `list_operations` (ad+açıklama),
+  `run_operation`. credstore'a `description` + `token` kind. UI: description alanı + token.
+  **AÇIK GAP (dürüst):** `run_operation` canlı app UDS üzerinden headless smoke-test
+  edilmedi (broker GUI setup'ta başlıyor); `execute_op` gerçek `/bin/echo` subprocess ile
+  unit-test'li, arg-policy unit-test'li, wiring canlı-doğrulanmış ssh_open/ssh_run yolunu
+  aynalıyor. In-app smoke Faz 3.2 öncesi önerilir.
+
 ## Değişiklikler
 | Tarih | Dosya | Ne değişti | AC |
 |-------|-------|-----------|-----|
 | 2026-07-26 | docs/prd-ssh-agent-broker.md | Mini-PRD oluşturuldu (architect GO) | — |
+| 2026-07-26 | src-tauri/src/agent_ops.rs (yeni) | op registry + fail-closed arg-policy + env inject + runner | AC13-AC15 |
+| 2026-07-26 | src-tauri/src/credstore.rs | description + token kind + list_meta | AC11-AC12 |
+| 2026-07-26 | src-tauri/src/{broker.rs,bin/muya_ssh_mcp.rs} | list_secrets/list_operations/run_operation | AC12,AC15 |
+| 2026-07-26 | src/components/SshPage.tsx | description alanı + token kind | AC16 |
 | 2026-07-26 | src-tauri/Cargo.toml | default-run="muya" (2. binary dev-run fix) | — |
 | 2026-07-26 | src-tauri/src/pty.rs | run_with_injection (capture+inject variant) | AC8 |
 | 2026-07-26 | src-tauri/src/broker.rs | handle_run + run_slots semaphore | AC8-AC10 |

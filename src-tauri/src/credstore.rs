@@ -50,8 +50,13 @@ pub struct Credential {
     pub label: String,
     pub username: String,
     #[serde(rename = "secretKind")]
-    pub secret_kind: String, // "password" | "key"
+    pub secret_kind: String, // "password" | "key" | "token"
     pub secret: String,
+    /// Free-text operator note (e.g. "prod AWS deploy key"). Non-secret; surfaced
+    /// to agents via `list_secrets` so they can pick the right secret BY NAME.
+    /// Old store JSON lacking `description` loads as empty (serde `default`).
+    #[serde(default)]
+    pub description: String,
     #[serde(rename = "keyPassphrase", skip_serializing_if = "Option::is_none")]
     pub key_passphrase: Option<String>,
 }
@@ -64,6 +69,8 @@ pub struct CredMeta {
     pub username: String,
     #[serde(rename = "secretKind")]
     pub secret_kind: String,
+    #[serde(default)]
+    pub description: String,
 }
 
 /// Input for upsert. Empty/absent `id` = create; otherwise update in place.
@@ -76,8 +83,16 @@ pub struct CredInput {
     #[serde(rename = "secretKind")]
     pub secret_kind: String,
     pub secret: String,
+    #[serde(default)]
+    pub description: String,
     #[serde(rename = "keyPassphrase", default)]
     pub key_passphrase: Option<String>,
+}
+
+/// The secret kinds the store accepts. `token` (AC11) covers API tokens/JSON
+/// credential blobs used by the agent-ops engine, alongside SSH passwords/keys.
+pub(crate) fn valid_secret_kind(kind: &str) -> bool {
+    matches!(kind, "password" | "key" | "token")
 }
 
 /// The decrypted store contents.
@@ -379,6 +394,7 @@ pub fn credstore_import_key(
         username,
         secret_kind: "key".into(),
         secret: key_text,
+        description: String::new(),
         key_passphrase: None,
     });
     seal_to_path(&path, &u.key, &u.kdf, &u.data)?;
@@ -464,6 +480,28 @@ pub fn credstore_cred_list(state: State<'_, CredStore>) -> Result<Vec<CredMeta>,
             label: c.label.clone(),
             username: c.username.clone(),
             secret_kind: c.secret_kind.clone(),
+            description: c.description.clone(),
+        })
+        .collect())
+}
+
+/// AC12 — non-secret metadata for the SSH broker's `list_secrets` op. Gated on an
+/// unlocked store (locked → clear error, never a metadata dump). Returns the same
+/// `CredMeta` the UI sees — never the secret. Used by `broker::handle_request`.
+pub(crate) fn list_meta(store: &CredStore) -> Result<Vec<CredMeta>, String> {
+    let guard = store.0.lock().map_err(|_| "state poisoned")?;
+    let u = guard
+        .as_ref()
+        .ok_or("password store is locked — unlock it in the Password Store tab")?;
+    Ok(u.data
+        .credentials
+        .iter()
+        .map(|c| CredMeta {
+            id: c.id.clone(),
+            label: c.label.clone(),
+            username: c.username.clone(),
+            secret_kind: c.secret_kind.clone(),
+            description: c.description.clone(),
         })
         .collect())
 }
@@ -476,8 +514,8 @@ pub fn credstore_cred_upsert(
     let path = default_store_path()?;
     let mut guard = state.0.lock().map_err(|_| "state poisoned")?;
     let u = guard.as_mut().ok_or("store is locked")?;
-    if cred.secret_kind != "password" && cred.secret_kind != "key" {
-        return Err("secretKind must be 'password' or 'key'".into());
+    if !valid_secret_kind(&cred.secret_kind) {
+        return Err("secretKind must be 'password', 'key', or 'token'".into());
     }
     let id = match cred.id.filter(|s| !s.is_empty()) {
         Some(existing) => {
@@ -491,6 +529,7 @@ pub fn credstore_cred_upsert(
             slot.username = cred.username;
             slot.secret_kind = cred.secret_kind;
             slot.secret = cred.secret;
+            slot.description = cred.description;
             slot.key_passphrase = cred.key_passphrase;
             existing
         }
@@ -502,6 +541,7 @@ pub fn credstore_cred_upsert(
                 username: cred.username,
                 secret_kind: cred.secret_kind,
                 secret: cred.secret,
+                description: cred.description,
                 key_passphrase: cred.key_passphrase,
             });
             id
@@ -589,6 +629,7 @@ mod tests {
             username: "root".into(),
             secret_kind: "password".into(),
             secret: "s3cr3t-x".into(),
+            description: String::new(),
             key_passphrase: None,
         });
         seal_to_path(&path, &u.key, &u.kdf, &u.data).unwrap();
@@ -648,6 +689,7 @@ mod tests {
             username: "u".into(),
             secret_kind: "password".into(),
             secret: "keepme".into(),
+            description: String::new(),
             key_passphrase: None,
         });
         seal_to_path(&path, &u.key, &u.kdf, &u.data).unwrap();
@@ -674,6 +716,45 @@ mod tests {
         assert_ne!(*k1, *k3, "different salt must derive a different key");
     }
 
+    // AC11 — a Credential JSON lacking `description` deserializes (empty string),
+    // so pre-AC11 stores still load unchanged.
+    #[test]
+    fn ac11_credential_without_description_deserializes() {
+        let json = r#"{"id":"1","label":"l","username":"u","secretKind":"password","secret":"x"}"#;
+        let c: Credential = serde_json::from_str(json).unwrap();
+        assert_eq!(c.description, "");
+        assert_eq!(c.secret_kind, "password");
+    }
+
+    // AC11 — the `token` kind is now accepted alongside password/key; garbage is not.
+    #[test]
+    fn ac11_token_kind_is_valid() {
+        assert!(valid_secret_kind("token"));
+        assert!(valid_secret_kind("password"));
+        assert!(valid_secret_kind("key"));
+        assert!(!valid_secret_kind("shell"));
+        assert!(!valid_secret_kind(""));
+    }
+
+    // AC12 — CredMeta (the projection returned to agents/UI) carries no secret.
+    #[test]
+    fn ac12_credmeta_has_no_secret_field() {
+        let meta = CredMeta {
+            id: "1".into(),
+            label: "prod-aws".into(),
+            username: "deploy".into(),
+            secret_kind: "token".into(),
+            description: "prod deploy token".into(),
+        };
+        let json = serde_json::to_string(&meta).unwrap();
+        // `secretKind` is a legitimate non-secret label; the banned tokens are the
+        // actual secret-bearing keys.
+        for banned in ["\"secret\"", "\"password\"", "keyPassphrase"] {
+            assert!(!json.contains(banned), "CredMeta leaked `{banned}`: {json}");
+        }
+        assert!(json.contains("prod-aws") && json.contains("prod deploy token"));
+    }
+
     // The store file never contains the plaintext secret in cleartext.
     #[test]
     fn blob_has_no_plaintext_secret() {
@@ -687,6 +768,7 @@ mod tests {
             username: "u".into(),
             secret_kind: "password".into(),
             secret: "TOPSECRETVALUE".into(),
+            description: String::new(),
             key_passphrase: None,
         });
         seal_to_path(&path, &u.key, &u.kdf, &u.data).unwrap();

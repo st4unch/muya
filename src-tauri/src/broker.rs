@@ -101,6 +101,14 @@ struct BrokerReq {
     /// The remote command for `run` (a SINGLE argv element passed to ssh; AC9).
     #[serde(default)]
     command: Option<String>,
+    /// The operation name for `run_operation` (Faz 3.1 — looked up in the
+    /// operator-authored `~/.claude/muya-agent-ops.json` registry).
+    #[serde(default)]
+    operation: Option<String>,
+    /// Agent-supplied args for `run_operation`, policed by `enforce_arg_policy`
+    /// before they reach the fixed program.
+    #[serde(default)]
+    args: Option<Vec<String>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -268,7 +276,105 @@ async fn handle_request(app: &AppHandle, line: &str) -> String {
             }
         }
         "run" => handle_run(app, &servers, &req).await,
+        // Faz 3.1 — secret-operation broker (AC12/AC15). These do not touch SSH
+        // servers; they surface stored-secret metadata + operator-defined ops.
+        "list_secrets" => {
+            let store: State<crate::credstore::CredStore> = app.state();
+            match crate::credstore::list_meta(&store) {
+                Ok(metas) => {
+                    // Project to name (= label) + description + kind. NEVER the secret.
+                    let secrets: Vec<_> = metas
+                        .iter()
+                        .map(|m| {
+                            json!({
+                                "name": m.label,
+                                "description": m.description,
+                                "kind": m.secret_kind,
+                            })
+                        })
+                        .collect();
+                    json!({"ok": true, "secrets": secrets}).to_string()
+                }
+                Err(e) => err_resp(e),
+            }
+        }
+        "list_operations" => match crate::agent_ops::load_ops() {
+            Ok(ops) => {
+                let metas = crate::agent_ops::op_metas(&ops);
+                json!({"ok": true, "operations": metas}).to_string()
+            }
+            Err(e) => err_resp(e),
+        },
+        "run_operation" => handle_run_operation(app, &req).await,
         other => err_resp(format!("unknown op '{other}'")),
+    }
+}
+
+/// AC15 — run one operator-defined operation by name. Resolve the op, police the
+/// agent args (fail-closed), resolve its secret in Rust, inject it into the CHILD
+/// process env, run the fixed program, and return only stdout/stderr/exitCode. The
+/// secret is NEVER serialized, logged, or placed in the outer argv.
+async fn handle_run_operation(app: &AppHandle, req: &BrokerReq) -> String {
+    let name = match req.operation.as_deref() {
+        Some(n) if !n.trim().is_empty() => n.to_string(),
+        _ => return err_resp("`run_operation` requires an `operation` name"),
+    };
+    let args = req.args.clone().unwrap_or_default();
+
+    let ops = match crate::agent_ops::load_ops() {
+        Ok(o) => o,
+        Err(e) => return err_resp(e),
+    };
+    let op = match crate::agent_ops::resolve_op(&ops, &name) {
+        Ok(o) => o.clone(),
+        Err(e) => return err_resp(e),
+    };
+
+    // AC10 reuse — bound concurrency with the same permit pool as `ssh_run`.
+    let broker: State<BrokerState> = app.state();
+    let _permit = match broker.run_slots.clone().try_acquire_owned() {
+        Ok(p) => p,
+        Err(_) => {
+            return err_resp(format!(
+                "too many concurrent operations (limit {MAX_CONCURRENT_RUNS}); try again shortly"
+            ))
+        }
+    };
+
+    // Resolve the secret entirely in Rust (only when the op declares one). The
+    // store must be unlocked — a locked store yields a clear error, no secret.
+    let secret: Option<Zeroizing<String>> = match op.secret_id.as_deref() {
+        Some(id) if !id.is_empty() => {
+            let store: State<crate::credstore::CredStore> = app.state();
+            if !crate::credstore::is_unlocked(&store) {
+                return err_resp("password store is locked — unlock it in the Password Store tab");
+            }
+            match crate::credstore::secret_for(&store, id) {
+                Ok(s) => Some(s),
+                Err(e) => return err_resp(e),
+            }
+        }
+        _ => None,
+    };
+
+    // Run the (blocking) fixed program off the async runtime. The secret moves into
+    // the closure and is dropped (zeroized) when the closure returns.
+    let result = tokio::task::spawn_blocking(move || {
+        let secret_ref = secret.as_ref().map(|s| s.as_str());
+        crate::agent_ops::execute_op(&op, &args, secret_ref)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(out)) => json!({
+            "ok": true,
+            "stdout": out.stdout,
+            "stderr": out.stderr,
+            "exitCode": out.exit_code,
+        })
+        .to_string(),
+        Ok(Err(e)) => err_resp(e),
+        Err(e) => err_resp(format!("operation task failed: {e}")),
     }
 }
 

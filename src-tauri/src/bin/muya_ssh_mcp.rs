@@ -104,6 +104,33 @@ fn tools_list() -> Value {
                     "required": ["alias", "command"],
                     "additionalProperties": false
                 }
+            },
+            {
+                "name": "list_secrets",
+                "description": "List the names of stored secrets the operator has saved (name, description, kind). The secret VALUES are never returned — you reference a secret only BY NAME when running an operation. Use this to discover which credential to pick for a run_operation call.",
+                "inputSchema": { "type": "object", "additionalProperties": false }
+            },
+            {
+                "name": "list_operations",
+                "description": "List the fixed operations the operator has defined that agents may run (name + description only). Each operation is a pinned program+subcommand (e.g. an aws/kubectl/git command) that uses a stored secret WITHOUT revealing it. Use the returned name with run_operation.",
+                "inputSchema": { "type": "object", "additionalProperties": false }
+            },
+            {
+                "name": "run_operation",
+                "description": "Run one operator-defined operation by name (from list_operations). Muya injects the associated secret into the program's environment (never exposed to you), runs the fixed program with your (policed) arguments, and returns stdout/stderr/exit code. Arguments are restricted by a fail-closed policy: only allow-listed flags and operand values are accepted — pass flag values as --flag=value. The subcommand is fixed by the operator and cannot be changed.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "operation": { "type": "string", "description": "Operation name from list_operations." },
+                        "args": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Additional arguments appended after the operation's pinned command, e.g. [\"--region=us-east-1\", \"s3://bucket/key\"]. Subject to the operation's allow-list."
+                        }
+                    },
+                    "required": ["operation"],
+                    "additionalProperties": false
+                }
             }
         ]
     })
@@ -195,6 +222,98 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                     resp.get("error")
                         .and_then(Value::as_str)
                         .unwrap_or("run failed")
+                        .to_string(),
+                ))
+            }
+        }
+        "list_secrets" => {
+            let resp = app_call(&json!({ "op": "list_secrets" })).map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                let secrets = resp.get("secrets").cloned().unwrap_or_else(|| json!([]));
+                let text = serde_json::to_string_pretty(&secrets).unwrap_or_else(|_| "[]".into());
+                Ok(tool_ok(text, Some(json!({ "secrets": secrets }))))
+            } else {
+                Ok(tool_error(
+                    resp.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("list_secrets failed")
+                        .to_string(),
+                ))
+            }
+        }
+        "list_operations" => {
+            let resp = app_call(&json!({ "op": "list_operations" })).map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                let ops = resp.get("operations").cloned().unwrap_or_else(|| json!([]));
+                let text = serde_json::to_string_pretty(&ops).unwrap_or_else(|_| "[]".into());
+                Ok(tool_ok(text, Some(json!({ "operations": ops }))))
+            } else {
+                Ok(tool_error(
+                    resp.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("list_operations failed")
+                        .to_string(),
+                ))
+            }
+        }
+        "run_operation" => {
+            let operation = match args.get("operation").and_then(Value::as_str) {
+                Some(o) if !o.trim().is_empty() => o.to_string(),
+                _ => return Ok(tool_error("missing required argument 'operation'")),
+            };
+            // Optional string array; anything non-string is rejected up-front.
+            let op_args: Vec<String> = match args.get("args") {
+                None | Some(Value::Null) => vec![],
+                Some(Value::Array(items)) => {
+                    let mut out = Vec::with_capacity(items.len());
+                    for it in items {
+                        match it.as_str() {
+                            Some(s) => out.push(s.to_string()),
+                            None => return Ok(tool_error("'args' must be an array of strings")),
+                        }
+                    }
+                    out
+                }
+                Some(_) => return Ok(tool_error("'args' must be an array of strings")),
+            };
+            let resp = app_call(&json!({
+                "op": "run_operation",
+                "operation": operation,
+                "args": op_args,
+            }))
+            .map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                let stdout = resp.get("stdout").and_then(Value::as_str).unwrap_or("");
+                let stderr = resp.get("stderr").and_then(Value::as_str).unwrap_or("");
+                let exit_note = match resp.get("exitCode").and_then(Value::as_i64) {
+                    Some(code) => format!("[exit code: {code}]"),
+                    None => "[exit code: unknown]".to_string(),
+                };
+                let mut text = stdout.to_string();
+                if !text.is_empty() && !text.ends_with('\n') {
+                    text.push('\n');
+                }
+                if !stderr.is_empty() {
+                    text.push_str("[stderr]\n");
+                    text.push_str(stderr);
+                    if !text.ends_with('\n') {
+                        text.push('\n');
+                    }
+                }
+                text.push_str(&exit_note);
+                Ok(tool_ok(
+                    text,
+                    Some(json!({
+                        "stdout": stdout,
+                        "stderr": stderr,
+                        "exitCode": resp.get("exitCode").cloned().unwrap_or(Value::Null),
+                    })),
+                ))
+            } else {
+                Ok(tool_error(
+                    resp.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("run_operation failed")
                         .to_string(),
                 ))
             }

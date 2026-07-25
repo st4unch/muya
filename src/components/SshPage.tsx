@@ -73,7 +73,8 @@ type SshConfig = {
   psmpProfiles: PsmpProfile[];
   cyberark?: CyberarkConfig | null;
 };
-type CredMeta = { id: string; label: string; username: string; secretKind: "password" | "key" };
+type SecretKind = "password" | "key" | "token";
+type CredMeta = { id: string; label: string; username: string; secretKind: SecretKind; description: string };
 type CredStoreStatus = { initialized: boolean; unlocked: boolean };
 
 type Tab = "servers" | "cyberark" | "store";
@@ -713,7 +714,7 @@ function StoreTab({
   const [master, setMaster] = useState("");
   const [busy, setBusy] = useState(false);
   const [showMaster, setShowMaster] = useState(false);
-  const [draft, setDraft] = useState<{ label: string; username: string; secretKind: "password" | "key"; secret: string } | null>(null);
+  const [draft, setDraft] = useState<{ label: string; username: string; secretKind: SecretKind; secret: string; description: string } | null>(null);
   const [importDraft, setImportDraft] = useState<{ label: string; username: string } | null>(null);
 
   const doInit = async () => {
@@ -880,7 +881,7 @@ function StoreTab({
           <Unlock className="h-4 w-4" /> Unlocked · {creds.length} item(s)
         </span>
         <div className="flex gap-2">
-          <button type="button" className={BTN} onClick={() => setDraft({ label: "", username: "", secretKind: "password", secret: "" })}>
+          <button type="button" className={BTN} onClick={() => setDraft({ label: "", username: "", secretKind: "password", secret: "", description: "" })}>
             <Plus className="h-4 w-4 inline -mt-0.5 mr-1" /> Add credential
           </button>
           <button type="button" className={BTN_GHOST} onClick={() => setImportDraft({ label: "", username: "" })}>
@@ -900,8 +901,9 @@ function StoreTab({
           <div className="text-sm">
             <span className="font-medium">{c.label}</span>{" "}
             <span className="text-xs text-neutral-500 font-mono">
-              {c.username} · {c.secretKind === "key" ? "SSH key" : "password"}
+              {c.username} · {c.secretKind === "key" ? "SSH key" : c.secretKind === "token" ? "token" : "password"}
             </span>
+            {c.description && <div className="text-xs text-neutral-400 mt-0.5">{c.description}</div>}
           </div>
           <div className="flex gap-1 shrink-0">
             <button type="button" className={BTN_GHOST} onClick={() => exportCred(c)} title={`Export ${c.secretKind}`}>
@@ -935,15 +937,19 @@ function StoreTab({
           <div className="grid grid-cols-2 gap-2">
             <input className={INPUT} placeholder="Label" value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} />
             <input className={INPUT} placeholder="Username" value={draft.username} onChange={(e) => setDraft({ ...draft, username: e.target.value })} />
-            <select className={INPUT} value={draft.secretKind} onChange={(e) => setDraft({ ...draft, secretKind: e.target.value as "password" | "key" })}>
+            <select className={INPUT} value={draft.secretKind} onChange={(e) => setDraft({ ...draft, secretKind: e.target.value as SecretKind })}>
               <option value="password">Password</option>
               <option value="key">SSH private key</option>
+              <option value="token">Token / API key</option>
             </select>
             {draft.secretKind === "password" ? (
               <input type="password" className={INPUT} placeholder="Password" value={draft.secret} onChange={(e) => setDraft({ ...draft, secret: e.target.value })} />
+            ) : draft.secretKind === "token" ? (
+              <input type="password" className={INPUT} placeholder="Token / API key (or compact JSON)" value={draft.secret} onChange={(e) => setDraft({ ...draft, secret: e.target.value })} />
             ) : (
               <textarea className={`${INPUT} col-span-2 font-mono h-24`} placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" value={draft.secret} onChange={(e) => setDraft({ ...draft, secret: e.target.value })} />
             )}
+            <input className={`${INPUT} col-span-2`} placeholder="Description (optional — shown to agents by name)" value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
           </div>
           <div className="flex gap-2 justify-end">
             <button type="button" className={BTN_GHOST} onClick={() => setDraft(null)}>Cancel</button>

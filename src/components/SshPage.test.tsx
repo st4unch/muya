@@ -69,6 +69,34 @@ describe("SshPage — credential reuse", () => {
   });
 });
 
+describe("SshPage — credential description + token kind (AC16)", () => {
+  it("adds a token credential with a description and shows it", async () => {
+    const user = userEvent.setup();
+    render(<SshPage />);
+
+    await user.click(screen.getByText("Password Store"));
+    await user.type(screen.getByPlaceholderText("Master password"), "hunter2");
+    await user.click(screen.getByText("Create"));
+    await screen.findByText(/Unlocked ·/);
+
+    await user.click(screen.getByText("Add credential"));
+    await user.type(screen.getByPlaceholderText("Label"), "prod-aws");
+    await user.type(screen.getByPlaceholderText("Username"), "deploy");
+    // The token option exists in the secretKind select.
+    await user.selectOptions(screen.getByRole("combobox"), "token");
+    await user.type(screen.getByPlaceholderText(/Token \/ API key/), "ghp_secret");
+    await user.type(
+      screen.getByPlaceholderText(/Description/),
+      "prod deploy token",
+    );
+    await user.click(screen.getByText("Save"));
+
+    // The credential renders with its description + token kind label.
+    expect(await screen.findByText(/prod deploy token/)).toBeTruthy();
+    expect(await screen.findByText(/deploy · token/)).toBeTruthy();
+  });
+});
+
 describe("SshPage — Password Store", () => {
   it("creates the store, locks it, rejects a wrong master, then unlocks", async () => {
     const user = userEvent.setup();

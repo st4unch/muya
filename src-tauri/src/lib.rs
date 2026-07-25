@@ -21,6 +21,7 @@ fn get_startup_files() -> Vec<String> {
         .unwrap_or_default()
 }
 
+mod agent_ops;
 mod agents;
 mod bridge;
 mod bridge_exec;
@@ -300,6 +301,8 @@ pub fn run() {
             cyberark::cyberark_list_accounts,
             cyberark::cyberark_logoff,
             cyberark::cyberark_status,
+            agent_ops::agent_ops_list,
+            agent_ops::agent_ops_upsert,
             frontend_log
         ])
         .build(tauri::generate_context!())
