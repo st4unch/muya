@@ -6,17 +6,36 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-07-25
+
 ### Added
+- **SSH Configuration** — a new "SSH" tab in the main area to manage remote SSH
+  connections:
+  - **Servers** — add / edit / remove SSH targets, with duplicate protection on
+    host + port + user. One-click **Connect** opens the session in a terminal tab.
+  - **PSMP jump-server** profiles for CyberArk Privileged Session Manager for SSH.
+  - **CyberArk PAM** connection settings (URL, auth method, TLS, internal CA path).
+  - **Password Store** — your own AES-256-GCM encrypted credential store, unlocked
+    by an Argon2id master password. Show/hide the master password, export the master
+    password or an encrypted backup, and import / export SSH keys.
+  - **Reuse credentials** — pick a stored credential (or save a new one) wherever a
+    password is needed, e.g. the CyberArk login.
 - **"Open Claude Here"** in a folder's right-click menu (below "Open in Terminal
   Here"): opens a terminal in that folder and launches Claude straight away.
+- **Error logging to a file** — the app now writes logs to its App log directory and
+  captures panics and uncaught frontend errors, so problems can be diagnosed after
+  the fact (useful when continuing on another machine).
 
 ### Fixed
 - **Option+Arrow no longer prints `;3C` / `;3D` noise.** Option+Left/Right now move
   by word (readline meta-b/meta-f) and Option+Up/Down act as plain history arrows,
   like Terminal.app / iTerm2.
 
-_Not yet verified live in the dev app (webview flake in the working session); the
-code, tsc, and 78 frontend tests are green._
+### Notes
+- SSH is a work in progress. Server management, the encrypted store, credential
+  reuse, and Connect are done and verified live. Still to come: Touch-ID
+  auto-unlock, direct-SSH password injection / ssh-agent key auth, and the live
+  CyberArk logon + connection test.
 
 ## [0.2.3] - 2026-07-24
 

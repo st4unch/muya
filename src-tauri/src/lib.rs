@@ -25,20 +25,49 @@ mod agents;
 mod bridge;
 mod bridge_exec;
 mod bridge_remote;
+mod credstore;
 mod fs;
 mod history;
 mod metrics;
 mod pm;
 mod pty;
+mod ssh;
 #[cfg(test)]
 mod testutil;
 mod validate;
 mod vault;
 mod watcher;
 
+/// Frontend errors (window.onerror / unhandledrejection) are forwarded here so
+/// they land in the same persistent log file as the Rust logs.
+#[tauri::command]
+fn frontend_log(level: String, message: String) {
+    match level.as_str() {
+        "error" => log::error!("[frontend] {message}"),
+        "warn" => log::warn!("[frontend] {message}"),
+        _ => log::info!("[frontend] {message}"),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Route panics to the log (and stderr) instead of silently losing them.
+    std::panic::set_hook(Box::new(|info| {
+        log::error!("PANIC: {info}");
+        eprintln!("PANIC: {info}");
+    }));
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(log::LevelFilter::Info)
+                .targets([
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                        file_name: Some("muya".into()),
+                    }),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                ])
+                .build(),
+        )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -157,6 +186,7 @@ pub fn run() {
         .manage(bridge::BridgeState::default())
         .manage(bridge_remote::RemoteBridgeState::default())
         .manage(bridge_exec::ExecState::default())
+        .manage(credstore::CredStore::default())
         .invoke_handler(tauri::generate_handler![
             agents::list_agent_sessions,
             agents::stop_agent,
@@ -222,7 +252,28 @@ pub fn run() {
             bridge_exec::bridge_audit_log,
             bridge_exec::bridge_execute_task,
             bridge_exec::bridge_fan_out,
-            bridge_exec::bridge_run_claude
+            bridge_exec::bridge_run_claude,
+            credstore::credstore_status,
+            credstore::credstore_init,
+            credstore::credstore_unlock,
+            credstore::credstore_lock,
+            credstore::credstore_cred_list,
+            credstore::credstore_cred_upsert,
+            credstore::credstore_cred_remove,
+            credstore::credstore_rekey,
+            credstore::credstore_export,
+            credstore::credstore_export_master,
+            credstore::credstore_import_key,
+            credstore::credstore_export_cred,
+            ssh::ssh_get_config,
+            ssh::ssh_list_servers,
+            ssh::ssh_upsert_server,
+            ssh::ssh_remove_server,
+            ssh::ssh_upsert_psmp_profile,
+            ssh::ssh_remove_psmp_profile,
+            ssh::ssh_set_cyberark_config,
+            ssh::ssh_build_connect_cmd,
+            frontend_log
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

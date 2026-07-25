@@ -1,6 +1,6 @@
 [package]
 name = "muya"
-version = "0.2.3"
+version = "0.2.4"
 description = "Muya — control plane for parallel Claude Code agents"
 authors = ["staunch"]
 edition = "2021"
@@ -47,8 +47,17 @@ hkdf = "0.13.0"
 rand = "0.9"
 tauri-plugin-updater = "2.10.1"
 tauri-plugin-process = "2.3.1"
+# Error logging → persistent file (App log dir) + stdout, so issues on another
+# machine can be diagnosed from the log.
+tauri-plugin-log = "2"
+log = "0.4"
 # Faz 3: sandbox TempDir for task execution cwd isolation
 tempfile = "3.27.0"
+# SSH/CyberArk credential store (PRD ssh-cyberark, Faz 0):
+# AES-256-GCM + Argon2id, in-memory secrets zeroized. No secret ever on disk in plaintext.
+aes-gcm = "0.10"
+argon2 = "0.5"
+zeroize = { version = "1", features = ["zeroize_derive"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"

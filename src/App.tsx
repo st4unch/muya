@@ -60,6 +60,7 @@ import SessionMonitor from "./components/SessionMonitor";
 import NewAgentModal, { type NewAgentSpec } from "./components/NewAgentModal";
 import QueuePage from "./components/QueuePage";
 import ResourcesPage from "./components/ResourcesPage";
+import SshPage from "./components/SshPage";
 import PrdBoard from "./components/PrdBoard";
 import ScheduledPromptModal, { type ScheduledPrompt } from "./components/ScheduledPromptModal";
 import { buildAgentCommand } from "./lib/agent";
@@ -342,7 +343,7 @@ export default function App() {
   };
 
   // Top-level view switch: the IDE control plane vs the full Sessions page.
-  const [view, setView] = useState<"control" | "sessions" | "queue" | "tools" | "prd">("control");
+  const [view, setView] = useState<"control" | "sessions" | "queue" | "tools" | "prd" | "ssh">("control");
   // Action menu for a path clicked in a terminal's output.
   const [pathMenu, setPathMenu] = useState<{ resolved: string; kind: "file" | "dir"; x: number; y: number } | null>(null);
   // Right panel tab: branch matrix vs markdown viewer.
@@ -1363,6 +1364,17 @@ export const loginHandler = async (req, res) => {
           >
             Kanban
           </button>
+          <button
+            type="button"
+            onClick={() => setView("ssh")}
+            className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
+              view === "ssh"
+                ? "bg-indigo-600 dark:bg-indigo-500 text-white font-bold border border-indigo-700 dark:border-indigo-400 shadow-sm"
+                : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
+            }`}
+          >
+            SSH
+          </button>
         </div>
 
         {/* System telemetry ticks right side */}
@@ -1485,6 +1497,24 @@ export const loginHandler = async (req, res) => {
           onOpenFile={(path) => {
             openEditor(path);
             setView("control");
+          }}
+        />
+      )}
+      {view === "ssh" && (
+        <SshPage
+          onConnect={async (serverId, label) => {
+            try {
+              const cmd = await invoke<{ program: string; args: string[]; needsPasswordInjection: boolean }>(
+                "ssh_build_connect_cmd",
+                { id: serverId },
+              );
+              // No secret is in args (PSMP injects; direct-inject via PTY is a later step).
+              const commandStr = [cmd.program, ...cmd.args].join(" ");
+              openTerminal({ key: `ssh:${serverId}`, name: label, kind: "terminal", initialCommand: commandStr });
+              setView("control");
+            } catch (e) {
+              console.error("ssh connect failed", e);
+            }
           }}
         />
       )}
