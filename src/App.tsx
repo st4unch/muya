@@ -109,6 +109,11 @@ interface OpenTerminal {
   /** The operator renamed this tab by hand — never overwrite it with the
    *  Claude session's own name. */
   userRenamed?: boolean;
+  /** SSH tab: the server id to connect to. When set, the terminal spawns the
+   *  `ssh` process directly via `ssh_pty_connect` (Rust builds the command and
+   *  injects the stored/CyberArk password into the PTY — the secret never
+   *  reaches JS) instead of running a login shell + initialCommand. */
+  sshServerId?: string;
 }
 
 interface GitBranchState {
@@ -151,7 +156,9 @@ function loadTabs(): OpenTerminal[] {
       t.kind === "terminal"
         // Never auto-run on startup; but remember this was a Claude tab and which
         // session it held, so clicking it resumes exactly that conversation.
-        ? { ...t, initialCommand: undefined, needsResume: Boolean(t.isClaude && t.sessionId) }
+        // sshServerId dropped too: a restored SSH tab is an inert shell, never an
+        // auto-reconnect on startup (which would re-prompt / re-inject unexpectedly).
+        ? { ...t, initialCommand: undefined, sshServerId: undefined, needsResume: Boolean(t.isClaude && t.sessionId) }
         : t
     );
   } catch {
@@ -1500,24 +1507,25 @@ export const loginHandler = async (req, res) => {
           }}
         />
       )}
-      {view === "ssh" && (
+      {/* SSH config page — ALWAYS mounted, hidden when off-view, so an in-progress
+          add/edit-server form (or CyberArk session) survives navigation to other
+          tabs and back. Same always-mount pattern as the control plane below. */}
+      <div className={`flex-1 flex overflow-hidden ${view !== "ssh" ? "hidden" : ""}`}>
         <SshPage
-          onConnect={async (serverId, label) => {
-            try {
-              const cmd = await invoke<{ program: string; args: string[]; needsPasswordInjection: boolean }>(
-                "ssh_build_connect_cmd",
-                { id: serverId },
-              );
-              // No secret is in args (PSMP injects; direct-inject via PTY is a later step).
-              const commandStr = [cmd.program, ...cmd.args].join(" ");
-              openTerminal({ key: `ssh:${serverId}`, name: label, kind: "terminal", initialCommand: commandStr });
-              setView("control");
-            } catch (e) {
-              console.error("ssh connect failed", e);
-            }
+          onConnect={(serverId, label) => {
+            // Fresh unique key per attempt: React remounts a new Terminal (fresh
+            // PTY that actually re-runs ssh) instead of re-activating a dead tab.
+            // Also drop any prior tab for this server so they don't accumulate. (bug 4)
+            const key = `ssh:${serverId}:${Date.now()}`;
+            setOpenTerminals((prev) => [
+              ...prev.filter((t) => t.key !== `ssh:${serverId}` && !t.key.startsWith(`ssh:${serverId}:`)),
+              { key, name: label, kind: "terminal", sshServerId: serverId },
+            ]);
+            setActiveTerminalKey(key);
+            setView("control");
           }}
         />
-      )}
+      </div>
       {/* Control plane — ALWAYS mounted; hidden (not unmounted) on other views so the
           terminal PTYs and any running sessions survive page navigation. xterm guards
           0×0 resize (Terminal.tsx), so display:none is safe. */}
@@ -1985,6 +1993,7 @@ export const loginHandler = async (req, res) => {
                           <AgentTerminal
                             cwd={tm.cwd}
                             initialCommand={tm.initialCommand}
+                            sshServerId={tm.sshServerId}
                             theme={effectiveTheme}
                             active={show}
                             onPtyReady={(ptyId) => setTerminalPtyIds(prev => ({ ...prev, [tm.key]: ptyId }))}

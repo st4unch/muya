@@ -6,6 +6,33 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-07-25
+
+### Added
+- **CyberArk actually connects now** — a real "Test connection & browse accounts"
+  panel in the CyberArk tab: enter the PVWA URL, vault username and password, test
+  the login (CyberArk / LDAP / RADIUS with push, plus older-PVWA fallback), then
+  search and browse your vault accounts. A tested account can be assigned to a
+  server as its credential.
+- **Passwords are now sent to the server for you** — when a server's credential is
+  a stored password or a CyberArk account, connecting logs in automatically instead
+  of leaving you at the server's own password prompt. The secret is handled entirely
+  inside the app and never exposed to the interface.
+- **Extra SSH options per server** — a field to pass raw `ssh` flags such as
+  `-X`, `-L 8080:localhost:80` or `-J jump@host` on connect.
+- **Pick a stored/CyberArk credential when adding a server** — the server form now
+  uses the same credential picker as the CyberArk tab.
+
+### Fixed
+- **Editing a server no longer resets when you switch tabs** — the SSH page keeps
+  your in-progress add/edit form (and CyberArk session) while you move to Control,
+  Sessions, Queue and back.
+- **Reconnecting after a failed SSH works** — each Connect opens a fresh terminal
+  that actually re-runs `ssh`, instead of reusing a dead tab where nothing happened.
+- **CyberArk settings now confirm they saved** — a "Saved" indicator appears after
+  saving.
+- **PSMP jump-server profiles are editable** — not just add and delete.
+
 ## [0.2.4] - 2026-07-25
 
 ### Added

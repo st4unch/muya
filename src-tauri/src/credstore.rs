@@ -524,6 +524,23 @@ pub fn credstore_cred_remove(id: String, state: State<'_, CredStore>) -> Result<
     seal_to_path(&path, &u.key, &u.kdf, &u.data)
 }
 
+/// Read a stored credential's secret from the unlocked in-memory store for
+/// in-process use (SSH PTY password injection). The secret is returned wrapped
+/// in `Zeroizing` and MUST NOT be forwarded to the JS/webview layer (§9).
+pub(crate) fn secret_for(store: &CredStore, id: &str) -> Result<Zeroizing<String>, String> {
+    let guard = store.0.lock().map_err(|_| "state poisoned")?;
+    let u = guard
+        .as_ref()
+        .ok_or("password store is locked — unlock it in the Password Store tab")?;
+    let cred = u
+        .data
+        .credentials
+        .iter()
+        .find(|c| c.id == id)
+        .ok_or("stored credential not found")?;
+    Ok(Zeroizing::new(cred.secret.clone()))
+}
+
 pub(crate) fn new_id() -> String {
     // Non-cryptographic unique id (128 random bits, hex) — no uuid crate needed.
     format!(

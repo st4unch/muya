@@ -9,6 +9,7 @@ import { Plus } from "lucide-react";
 // to the JS/webview layer.
 
 export type CredMeta = { id: string; label: string; username: string; secretKind: "password" | "key" };
+export type CyberarkAccountRef = { id: string; name: string; username: string; address: string };
 export type CredentialSource = {
   kind: "prompt" | "local" | "cyberark";
   localCredId?: string | null;
@@ -24,6 +25,9 @@ const BTN_GHOST =
 
 const PROMPT = "__prompt__";
 
+const CYBER = "cyber:";
+const LOCAL = "local:";
+
 export default function CredentialPicker({
   creds,
   unlocked,
@@ -32,6 +36,7 @@ export default function CredentialPicker({
   onRefresh,
   setErr,
   promptLabel = "Ask each time (session-only)",
+  cyberarkAccounts,
 }: {
   creds: CredMeta[];
   unlocked: boolean;
@@ -40,8 +45,18 @@ export default function CredentialPicker({
   onRefresh: () => Promise<void>;
   setErr: (e: string | null) => void;
   promptLabel?: string;
+  /** When provided, the picker also offers CyberArk accounts (server credential source). */
+  cyberarkAccounts?: CyberarkAccountRef[];
 }) {
   const [adding, setAdding] = useState<{ label: string; username: string; secret: string } | null>(null);
+
+  // Single select carries prompt / local:<id> / cyber:<id>; prefixes avoid id collisions.
+  const selectValue =
+    value.kind === "local" && value.localCredId
+      ? `${LOCAL}${value.localCredId}`
+      : value.kind === "cyberark" && value.cyberarkAccountId
+        ? `${CYBER}${value.cyberarkAccountId}`
+        : PROMPT;
 
   const saveNew = async () => {
     if (!adding) return;
@@ -62,21 +77,27 @@ export default function CredentialPicker({
       <div className="flex gap-2 items-center">
         <select
           className={INPUT}
-          value={value.kind === "local" ? value.localCredId ?? "" : PROMPT}
+          value={selectValue}
           onChange={(e) => {
             const v = e.target.value;
             if (v === PROMPT) onChange({ kind: "prompt" });
-            else onChange({ kind: "local", localCredId: v });
+            else if (v.startsWith(CYBER)) onChange({ kind: "cyberark", cyberarkAccountId: v.slice(CYBER.length) });
+            else onChange({ kind: "local", localCredId: v.startsWith(LOCAL) ? v.slice(LOCAL.length) : v });
           }}
         >
           <option value={PROMPT}>{promptLabel}</option>
           {creds
             .filter((c) => c.secretKind === "password")
             .map((c) => (
-              <option key={c.id} value={c.id}>
+              <option key={c.id} value={`${LOCAL}${c.id}`}>
                 From store: {c.label} ({c.username})
               </option>
             ))}
+          {cyberarkAccounts?.map((a) => (
+            <option key={a.id} value={`${CYBER}${a.id}`}>
+              CyberArk: {a.name || a.address} ({a.username})
+            </option>
+          ))}
         </select>
         {unlocked && (
           <button type="button" className={BTN_GHOST} title="Save a new credential to the store" onClick={() => setAdding({ label: "", username: "", secret: "" })}>

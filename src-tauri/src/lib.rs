@@ -26,6 +26,7 @@ mod bridge;
 mod bridge_exec;
 mod bridge_remote;
 mod credstore;
+mod cyberark;
 mod fs;
 mod history;
 mod metrics;
@@ -187,6 +188,7 @@ pub fn run() {
         .manage(bridge_remote::RemoteBridgeState::default())
         .manage(bridge_exec::ExecState::default())
         .manage(credstore::CredStore::default())
+        .manage(cyberark::CyberarkState::default())
         .invoke_handler(tauri::generate_handler![
             agents::list_agent_sessions,
             agents::stop_agent,
@@ -273,6 +275,12 @@ pub fn run() {
             ssh::ssh_remove_psmp_profile,
             ssh::ssh_set_cyberark_config,
             ssh::ssh_build_connect_cmd,
+            ssh::ssh_pty_connect,
+            cyberark::cyberark_logon,
+            cyberark::cyberark_test_connection,
+            cyberark::cyberark_list_accounts,
+            cyberark::cyberark_logoff,
+            cyberark::cyberark_status,
             frontend_log
         ])
         .build(tauri::generate_context!())

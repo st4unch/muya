@@ -7,6 +7,9 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use tauri::ipc::{Channel, InvokeResponseBody};
+use tauri::State;
+use zeroize::Zeroizing;
 
 const CONFIG_VERSION: u32 = 1;
 const DEFAULT_PORT: u16 = 22;
@@ -53,6 +56,14 @@ pub struct Server {
     pub psmp_profile_id: Option<String>,
     #[serde(rename = "credentialSource", default)]
     pub credential_source: CredentialSource,
+    /// Extra raw `ssh` CLI options inserted before the destination, e.g.
+    /// `-X -L 8080:localhost:80 -J jump@host`. Split on whitespace (no shell).
+    #[serde(
+        rename = "sshOptions",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub ssh_options: Option<String>,
     #[serde(
         rename = "lastConnectedAt",
         skip_serializing_if = "Option::is_none",
@@ -82,6 +93,10 @@ pub struct PsmpProfile {
 pub struct CyberarkConfig {
     #[serde(rename = "baseUrl")]
     pub base_url: String,
+    /// Vault username used for PVWA logon (non-secret; persisted). The password is
+    /// supplied per-session and never stored.
+    #[serde(default)]
+    pub username: String,
     #[serde(rename = "authMethod")]
     pub auth_method: String,
     #[serde(rename = "tlsVerify", default = "tls_default")]
@@ -275,9 +290,27 @@ pub struct ConnectCommand {
     pub needs_password_injection: bool,
 }
 
+/// Extra user-supplied ssh options, whitespace-split into individual args (no
+/// shell interpretation). Inserted before the destination. Empty when unset.
+fn extra_ssh_opts(server: &Server) -> Vec<String> {
+    server
+        .ssh_options
+        .as_deref()
+        .unwrap_or("")
+        .split_whitespace()
+        .map(str::to_string)
+        .collect()
+}
+
+/// Whether the connection needs the credential injected into the PTY after the
+/// password prompt (stored or CyberArk source). "prompt" lets the user type it.
+fn needs_injection(server: &Server) -> bool {
+    matches!(server.credential_source.kind.as_str(), "local" | "cyberark")
+}
+
 /// Build the `ssh` invocation for a server (pure, testable). PSMP syntax
 /// (verified 2026-07-24): `vaultUser@targetUser@targetAddress[#port]@psmpAddress`
-/// with configurable `@`/`#` delimiters. Direct: `ssh [-p port] user@host`.
+/// with configurable `@`/`#` delimiters. Direct: `ssh [-p port] [opts] user@host`.
 fn build_connect_command(
     server: &Server,
     psmp: Option<&PsmpProfile>,
@@ -308,10 +341,12 @@ fn build_connect_command(
             px = p.psmp_address,
             ud = ud
         );
+        let mut args = extra_ssh_opts(server);
+        args.push(dest);
         return Ok(ConnectCommand {
             program: "ssh".into(),
-            args: vec![dest],
-            needs_password_injection: false,
+            args,
+            needs_password_injection: needs_injection(server),
         });
     }
     // direct
@@ -320,13 +355,73 @@ fn build_connect_command(
         args.push("-p".to_string());
         args.push(server.port.to_string());
     }
+    args.extend(extra_ssh_opts(server));
     args.push(format!("{}@{}", server.username, server.host));
-    let needs = matches!(server.credential_source.kind.as_str(), "local" | "cyberark");
     Ok(ConnectCommand {
         program: "ssh".into(),
         args,
-        needs_password_injection: needs,
+        needs_password_injection: needs_injection(server),
     })
+}
+
+/// Open an SSH connection for `server_id` in a new PTY, streaming to `on_event`.
+/// The command is built here; when the server's credential source is a stored
+/// password or a CyberArk account, the secret is resolved IN RUST and injected
+/// into the PTY at the password prompt — it never crosses into JS (§9). Returns
+/// the PTY session id for pty_write/pty_resize/pty_kill.
+#[tauri::command(async)]
+pub async fn ssh_pty_connect(
+    pty: State<'_, crate::pty::PtyManager>,
+    cred: State<'_, crate::credstore::CredStore>,
+    cyber: State<'_, crate::cyberark::CyberarkState>,
+    on_event: Channel<InvokeResponseBody>,
+    server_id: String,
+    cols: Option<u16>,
+    rows: Option<u16>,
+) -> Result<String, String> {
+    let cfg = load()?;
+    let server = cfg
+        .servers
+        .iter()
+        .find(|s| s.id == server_id)
+        .ok_or("server not found")?
+        .clone();
+    let psmp = server
+        .psmp_profile_id
+        .as_ref()
+        .and_then(|pid| cfg.psmp_profiles.iter().find(|p| &p.id == pid));
+    let cmd = build_connect_command(&server, psmp)?;
+
+    // Resolve the injectable secret (Rust-only). "prompt" injects nothing — the
+    // user types the password in the terminal.
+    let secret: Option<Zeroizing<String>> = match server.credential_source.kind.as_str() {
+        "local" => {
+            let id = server.credential_source.local_cred_id.as_deref().ok_or(
+                "credential source is 'Local password store' but no credential is selected",
+            )?;
+            Some(crate::credstore::secret_for(&cred, id)?)
+        }
+        "cyberark" => {
+            let acct = server
+                .credential_source
+                .cyberark_account_id
+                .as_deref()
+                .ok_or("credential source is 'CyberArk account' but no account is selected")?;
+            Some(crate::cyberark::fetch_password(&cyber, acct).await?)
+        }
+        _ => None,
+    };
+
+    crate::pty::spawn_process(
+        pty.inner(),
+        on_event,
+        &cmd.program,
+        &cmd.args,
+        None,
+        cols,
+        rows,
+        secret,
+    )
 }
 
 #[tauri::command]
@@ -443,6 +538,7 @@ mod tests {
                 kind: "prompt".into(),
                 ..Default::default()
             },
+            ssh_options: None,
             last_connected_at: None,
             tags: vec![],
         }
@@ -590,6 +686,23 @@ mod tests {
                 .unwrap()
                 .needs_password_injection
         );
+    }
+
+    // Extra ssh options are whitespace-split and inserted before the destination.
+    #[test]
+    fn extra_ssh_options_precede_destination() {
+        let mut s = srv("h", 22, "u");
+        s.ssh_options = Some("-X -L 8080:localhost:80 -J jump@host".into());
+        let cmd = build_connect_command(&s, None).unwrap();
+        assert_eq!(
+            cmd.args,
+            vec!["-X", "-L", "8080:localhost:80", "-J", "jump@host", "u@h"]
+        );
+        // With a non-standard port, `-p N` comes first, then the extra opts, then dest.
+        let mut s2 = srv("h", 2222, "u");
+        s2.ssh_options = Some("-v".into());
+        let cmd2 = build_connect_command(&s2, None).unwrap();
+        assert_eq!(cmd2.args, vec!["-p", "2222", "-v", "u@h"]);
     }
 
     // A PSMP server with no profile is a clear error, not a broken string.

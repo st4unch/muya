@@ -44,6 +44,8 @@ type Server = {
   connectionType: "direct" | "psmp";
   psmpProfileId?: string | null;
   credentialSource: CredentialSource;
+  /** Extra raw ssh CLI options, e.g. `-X -L 8080:localhost:80 -J jump@host`. */
+  sshOptions?: string | null;
   lastConnectedAt?: string | null;
   tags: string[];
 };
@@ -57,6 +59,7 @@ type PsmpProfile = {
 };
 type CyberarkConfig = {
   baseUrl: string;
+  username: string;
   authMethod: "Cyberark" | "LDAP" | "RADIUS" | "Windows";
   tlsVerify: boolean;
   caCertPath?: string | null;
@@ -99,6 +102,9 @@ export default function SshPage({ onConnect }: { onConnect?: (serverId: string, 
   const [cfg, setCfg] = useState<SshConfig>({ version: 1, servers: [], psmpProfiles: [], cyberark: null });
   const [store, setStore] = useState<CredStoreStatus>({ initialized: false, unlocked: false });
   const [creds, setCreds] = useState<CredMeta[]>([]);
+  // CyberArk accounts fetched after logon (lifted here so the Servers form's
+  // credential picker can offer them too). Cleared on logoff.
+  const [cyberAccounts, setCyberAccounts] = useState<CyberarkAccount[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -158,10 +164,26 @@ export default function SshPage({ onConnect }: { onConnect?: (serverId: string, 
         )}
 
         {tab === "servers" && (
-          <ServersTab cfg={cfg} creds={creds} onChange={refresh} setErr={setErr} onConnect={onConnect} />
+          <ServersTab
+            cfg={cfg}
+            creds={creds}
+            unlocked={store.unlocked}
+            cyberAccounts={cyberAccounts}
+            onChange={refresh}
+            setErr={setErr}
+            onConnect={onConnect}
+          />
         )}
         {tab === "cyberark" && (
-          <CyberarkTab cfg={cfg} creds={creds} unlocked={store.unlocked} onChange={refresh} setErr={setErr} />
+          <CyberarkTab
+            cfg={cfg}
+            creds={creds}
+            unlocked={store.unlocked}
+            cyberAccounts={cyberAccounts}
+            setCyberAccounts={setCyberAccounts}
+            onChange={refresh}
+            setErr={setErr}
+          />
         )}
         {tab === "store" && (
           <StoreTab store={store} creds={creds} onChange={refresh} setErr={setErr} />
@@ -177,12 +199,16 @@ export default function SshPage({ onConnect }: { onConnect?: (serverId: string, 
 function ServersTab({
   cfg,
   creds,
+  unlocked,
+  cyberAccounts,
   onChange,
   setErr,
   onConnect,
 }: {
   cfg: SshConfig;
   creds: CredMeta[];
+  unlocked: boolean;
+  cyberAccounts: CyberarkAccount[];
   onChange: () => Promise<void>;
   setErr: (e: string | null) => void;
   onConnect?: (serverId: string, label: string) => void;
@@ -307,42 +333,27 @@ function ServersTab({
                 </select>
               </label>
             )}
-            <label className="text-xs space-y-1">
+            <label className="text-xs space-y-1 col-span-2">
               <span className="text-neutral-500">Credential source</span>
-              <select
-                className={INPUT}
-                value={draft.credentialSource.kind}
-                onChange={(e) =>
-                  setDraft({ ...draft, credentialSource: { kind: e.target.value as CredentialSource["kind"] } })
-                }
-              >
-                <option value="prompt">Ask each time</option>
-                <option value="local">Local password store</option>
-                <option value="cyberark">CyberArk account</option>
-              </select>
+              <CredentialPicker
+                creds={creds}
+                unlocked={unlocked}
+                cyberarkAccounts={cyberAccounts}
+                value={draft.credentialSource}
+                onChange={(cs) => setDraft({ ...draft, credentialSource: cs })}
+                onRefresh={onChange}
+                setErr={setErr}
+              />
             </label>
-            {draft.credentialSource.kind === "local" && (
-              <label className="text-xs space-y-1">
-                <span className="text-neutral-500">Local credential</span>
-                <select
-                  className={INPUT}
-                  value={draft.credentialSource.localCredId ?? ""}
-                  onChange={(e) =>
-                    setDraft({
-                      ...draft,
-                      credentialSource: { kind: "local", localCredId: e.target.value || null },
-                    })
-                  }
-                >
-                  <option value="">— select —</option>
-                  {creds.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.label} ({c.username})
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
+            <label className="text-xs space-y-1 col-span-2">
+              <span className="text-neutral-500">Extra SSH options (optional)</span>
+              <input
+                className={`${INPUT} font-mono`}
+                placeholder="-X -L 8080:localhost:80 -J jump@host"
+                value={draft.sshOptions ?? ""}
+                onChange={(e) => setDraft({ ...draft, sshOptions: e.target.value || null })}
+              />
+            </label>
           </div>
           <div className="flex gap-2 justify-end">
             <button type="button" className={BTN_GHOST} onClick={() => setDraft(null)}>
@@ -390,24 +401,35 @@ function PsmpProfiles({
         </button>
       </div>
       {cfg.psmpProfiles.map((p) => (
-        <div key={p.id} className="text-xs font-mono text-neutral-500 flex justify-between">
-          <span>
+        <div key={p.id} className="text-xs font-mono text-neutral-500 flex justify-between items-center">
+          <span className="truncate">
             {p.label}: {p.vaultUser}@…@{p.psmpAddress}
           </span>
-          <button
-            type="button"
-            className="text-rose-600 cursor-pointer"
-            onClick={async () => {
-              try {
-                await invoke("ssh_remove_psmp_profile", { id: p.id });
-                await onChange();
-              } catch (e) {
-                setErr(String(e));
-              }
-            }}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
+          <div className="flex gap-1 shrink-0 items-center">
+            <button
+              type="button"
+              className="text-neutral-500 hover:text-indigo-500 cursor-pointer"
+              title="Edit profile"
+              onClick={() => setDraft({ ...p })}
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              className="text-rose-600 cursor-pointer"
+              title="Delete profile"
+              onClick={async () => {
+                try {
+                  await invoke("ssh_remove_psmp_profile", { id: p.id });
+                  await onChange();
+                } catch (e) {
+                  setErr(String(e));
+                }
+              }}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
         </div>
       ))}
       {draft && (
@@ -415,9 +437,13 @@ function PsmpProfiles({
           <input className={INPUT} placeholder="Label" value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} />
           <input className={INPUT} placeholder="PSMP address" value={draft.psmpAddress} onChange={(e) => setDraft({ ...draft, psmpAddress: e.target.value })} />
           <input className={INPUT} placeholder="Vault user" value={draft.vaultUser} onChange={(e) => setDraft({ ...draft, vaultUser: e.target.value })} />
+          <div className="grid grid-cols-2 gap-2 col-span-2">
+            <input className={INPUT} placeholder="User delimiter (default @)" value={draft.userDelim} onChange={(e) => setDraft({ ...draft, userDelim: e.target.value })} />
+            <input className={INPUT} placeholder="Param delimiter (default #)" value={draft.paramDelim} onChange={(e) => setDraft({ ...draft, paramDelim: e.target.value })} />
+          </div>
           <div className="flex gap-2 justify-end col-span-2">
             <button type="button" className={BTN_GHOST} onClick={() => setDraft(null)}>Cancel</button>
-            <button type="button" className={BTN} onClick={save}>Add</button>
+            <button type="button" className={BTN} onClick={save}>{draft.id ? "Save changes" : "Add"}</button>
           </div>
         </div>
       )}
@@ -432,26 +458,34 @@ function CyberarkTab({
   cfg,
   creds,
   unlocked,
+  cyberAccounts,
+  setCyberAccounts,
   onChange,
   setErr,
 }: {
   cfg: SshConfig;
   creds: CredMeta[];
   unlocked: boolean;
+  cyberAccounts: CyberarkAccount[];
+  setCyberAccounts: (a: CyberarkAccount[]) => void;
   onChange: () => Promise<void>;
   setErr: (e: string | null) => void;
 }) {
   const [form, setForm] = useState<CyberarkConfig>(
-    cfg.cyberark ?? { baseUrl: "", authMethod: "Cyberark", tlsVerify: true, caCertPath: null, credentialSource: { kind: "prompt" } },
+    cfg.cyberark ?? { baseUrl: "", username: "", authMethod: "Cyberark", tlsVerify: true, caCertPath: null, credentialSource: { kind: "prompt" } },
   );
+  const [saved, setSaved] = useState(false);
   useEffect(() => {
     if (cfg.cyberark) setForm(cfg.cyberark);
   }, [cfg.cyberark]);
 
   const save = async () => {
     try {
+      setErr(null);
       await invoke("ssh_set_cyberark_config", { config: form });
       await onChange();
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
     } catch (e) {
       setErr(String(e));
     }
@@ -463,10 +497,16 @@ function CyberarkTab({
         <ShieldCheck className="h-4 w-4 text-emerald-500" />
         <span className="font-medium text-sm">CyberArk PAM connection</span>
       </div>
-      <label className="text-xs space-y-1 block">
-        <span className="text-neutral-500">PVWA API URL</span>
-        <input className={INPUT} placeholder="https://pvwa.corp" value={form.baseUrl} onChange={(e) => setForm({ ...form, baseUrl: e.target.value })} />
-      </label>
+      <div className="grid grid-cols-2 gap-2">
+        <label className="text-xs space-y-1">
+          <span className="text-neutral-500">PVWA API URL</span>
+          <input className={INPUT} placeholder="https://pvwa.corp" value={form.baseUrl} onChange={(e) => setForm({ ...form, baseUrl: e.target.value })} />
+        </label>
+        <label className="text-xs space-y-1">
+          <span className="text-neutral-500">Vault username</span>
+          <input className={INPUT} placeholder="vault-user" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
+        </label>
+      </div>
       <div className="grid grid-cols-2 gap-2">
         <label className="text-xs space-y-1">
           <span className="text-neutral-500">Auth method</span>
@@ -500,12 +540,145 @@ function CyberarkTab({
       </label>
       <div className="flex items-center justify-between pt-1">
         <span className="text-xs text-neutral-400">
-          Pick a stored credential to reuse it, or "Ask each time". Real connection test arrives in Faz 3.
+          Pick a stored credential to reuse it, or "Ask each time".
         </span>
-        <button type="button" className={BTN} onClick={save}>
-          Save settings
-        </button>
+        <div className="flex items-center gap-2">
+          {saved && (
+            <span className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+              <ShieldCheck className="h-3.5 w-3.5" /> Saved
+            </span>
+          )}
+          <button type="button" className={BTN} onClick={save}>
+            Save settings
+          </button>
+        </div>
       </div>
+
+      <CyberarkTester form={form} setErr={setErr} accounts={cyberAccounts} setAccounts={setCyberAccounts} />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CyberArk live test + account browser (Faz 3). Establishes a PVWA session
+// (token cached in Rust — never exposed to JS), then lists accounts so the
+// operator can assign them to servers. The master password is session-only.
+// ---------------------------------------------------------------------------
+type CyberarkAccount = { id: string; name: string; address: string; username: string; safe: string; platformId: string };
+
+function CyberarkTester({
+  form,
+  setErr,
+  accounts,
+  setAccounts,
+}: {
+  form: CyberarkConfig;
+  setErr: (e: string | null) => void;
+  accounts: CyberarkAccount[];
+  setAccounts: (a: CyberarkAccount[]) => void;
+}) {
+  const [master, setMaster] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const [loggedOn, setLoggedOn] = useState(false);
+  const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    void invoke<boolean>("cyberark_status").then(setLoggedOn).catch(() => {});
+  }, []);
+
+  const test = async () => {
+    if (!form.baseUrl.trim()) return setErr("Save a PVWA API URL first.");
+    if (!form.username.trim()) return setErr("Enter the vault username first.");
+    setBusy(true);
+    setStatus(null);
+    try {
+      const msg = await invoke<string>("cyberark_test_connection", { config: form, username: form.username, master });
+      setStatus(msg);
+      setMaster("");
+      setLoggedOn(true);
+    } catch (e) {
+      setStatus(null);
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const listAccounts = async () => {
+    setBusy(true);
+    try {
+      const a = await invoke<CyberarkAccount[]>("cyberark_list_accounts", { search: search || null });
+      setAccounts(a);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const logoff = async () => {
+    try {
+      await invoke("cyberark_logoff");
+      setLoggedOn(false);
+      setAccounts([]);
+      setStatus(null);
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+
+  return (
+    <div className="rounded border border-neutral-200 dark:border-[#3d3f44] p-3 space-y-2">
+      <div className="text-xs font-medium">Test connection & browse accounts</div>
+      <div className="flex gap-2">
+        <input
+          type="password"
+          className={INPUT}
+          placeholder="PVWA login password (session-only)"
+          value={master}
+          onChange={(e) => setMaster(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && test()}
+        />
+        <button type="button" className={BTN} disabled={busy} onClick={test}>
+          Test connection
+        </button>
+        {loggedOn && (
+          <button type="button" className={BTN_GHOST} onClick={logoff}>
+            Log off
+          </button>
+        )}
+      </div>
+      {status && (
+        <div className="text-xs text-emerald-600 dark:text-emerald-400">{status}</div>
+      )}
+
+      {loggedOn && (
+        <div className="space-y-2 pt-1">
+          <div className="flex gap-2">
+            <input className={INPUT} placeholder="Search accounts (name / address / user)" value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === "Enter" && listAccounts()} />
+            <button type="button" className={BTN_GHOST} disabled={busy} onClick={listAccounts}>
+              Search
+            </button>
+          </div>
+          {accounts.length > 0 && (
+            <div className="max-h-48 overflow-auto space-y-1">
+              {accounts.map((a) => (
+                <div key={a.id} className="text-xs font-mono text-neutral-600 dark:text-neutral-300 flex justify-between border-b border-neutral-100 dark:border-[#2f3136] py-0.5">
+                  <span className="truncate">{a.name || a.address} · {a.username}@{a.address}</span>
+                  <span className="text-neutral-400 shrink-0 ml-2">{a.safe}</span>
+                </div>
+              ))}
+              <p className="text-[11px] text-neutral-400 pt-1">
+                {accounts.length} account(s). Assign one to a server in the Servers tab (credential source → CyberArk).
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+      {!loggedOn && (
+        <p className="text-[11px] text-neutral-400">
+          Log on to fetch the account list, then set a server's credential source to a CyberArk account.
+        </p>
+      )}
     </div>
   );
 }

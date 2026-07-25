@@ -7,12 +7,13 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{mpsc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::State;
+use zeroize::Zeroizing;
 
 // Output is streamed to the frontend over the channel as two message shapes:
 //   - data: an `InvokeResponseBody::Raw` (bytes). Batches ≥1KB travel Tauri's
@@ -27,7 +28,10 @@ fn exit_event() -> InvokeResponseBody {
 }
 
 struct PtyHandle {
-    writer: Box<dyn Write + Send>,
+    // Shared with the reader thread so a password can be injected into the PTY
+    // (SSH auth) without the secret ever crossing into JS. `pty_write` locks it
+    // for user keystrokes; the injector locks it once for the password.
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
     master: Box<dyn MasterPty + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
 }
@@ -42,6 +46,16 @@ fn default_shell() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string())
 }
 
+/// True when the output tail ends in an interactive password/passcode prompt —
+/// the trigger for one-shot SSH password injection. Matched case-insensitively on
+/// the trailing text (trimmed) so `Password:`, `user@host's password:` and RADIUS
+/// `Passcode:` all fire, while incidental mentions mid-line (which have more text
+/// after them) do not.
+fn looks_like_password_prompt(tail: &str) -> bool {
+    let t = tail.trim_end().to_lowercase();
+    t.ends_with("password:") || t.ends_with("passcode:")
+}
+
 /// Spawn a login shell in a PTY. Returns the session id used by the other commands.
 #[tauri::command]
 pub fn pty_spawn(
@@ -51,6 +65,37 @@ pub fn pty_spawn(
     shell: Option<String>,
     cols: Option<u16>,
     rows: Option<u16>,
+) -> Result<String, String> {
+    let shell = shell.unwrap_or_else(default_shell);
+    // Login shell so the user's full PATH (incl. ~/.local/bin) is available — `claude`
+    // resolves inside the terminal. macOS GUI apps otherwise inherit a minimal PATH.
+    spawn_process(
+        &state,
+        on_event,
+        &shell,
+        &["-l".to_string()],
+        cwd.as_deref(),
+        cols,
+        rows,
+        None,
+    )
+}
+
+/// Spawn `program` with `args` in a PTY, streaming output to `on_event`. When
+/// `inject_secret` is Some, a reader-side watcher writes it into the PTY the first
+/// time a password/passcode prompt appears — used for SSH password auth so the
+/// secret is handled entirely in Rust and never reaches the JS/webview layer.
+/// Returns the session id used by `pty_write`/`pty_resize`/`pty_kill`.
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_process(
+    manager: &PtyManager,
+    on_event: Channel<InvokeResponseBody>,
+    program: &str,
+    args: &[String],
+    cwd: Option<&str>,
+    cols: Option<u16>,
+    rows: Option<u16>,
+    inject_secret: Option<Zeroizing<String>>,
 ) -> Result<String, String> {
     let pty_system = native_pty_system();
     let size = PtySize {
@@ -63,11 +108,10 @@ pub fn pty_spawn(
         .openpty(size)
         .map_err(|e| format!("openpty failed: {e}"))?;
 
-    let shell = shell.unwrap_or_else(default_shell);
-    let mut cmd = CommandBuilder::new(&shell);
-    // Login shell so the user's full PATH (incl. ~/.local/bin) is available — `claude`
-    // resolves inside the terminal. macOS GUI apps otherwise inherit a minimal PATH.
-    cmd.arg("-l");
+    let mut cmd = CommandBuilder::new(program);
+    for a in args {
+        cmd.arg(a);
+    }
     cmd.env("TERM", "xterm-256color");
     // The control plane may itself be launched from inside a Claude Code session
     // (notably during dev), which leaks CLAUDE* env vars. Those mark the new process
@@ -79,7 +123,7 @@ pub fn pty_spawn(
             cmd.env_remove(&k);
         }
     }
-    if let Some(dir) = cwd.as_deref().filter(|d| !d.is_empty()) {
+    if let Some(dir) = cwd.filter(|d| !d.is_empty()) {
         cmd.cwd(dir);
     }
 
@@ -94,12 +138,17 @@ pub fn pty_spawn(
         .master
         .try_clone_reader()
         .map_err(|e| format!("clone reader failed: {e}"))?;
-    let writer = pair
-        .master
-        .take_writer()
-        .map_err(|e| format!("take writer failed: {e}"))?;
+    let writer = Arc::new(Mutex::new(
+        pair.master
+            .take_writer()
+            .map_err(|e| format!("take writer failed: {e}"))?,
+    ));
 
-    let id = format!("pty-{}", state.counter.fetch_add(1, Ordering::Relaxed));
+    let id = format!("pty-{}", manager.counter.fetch_add(1, Ordering::Relaxed));
+
+    // Password injection: give the reader thread a writer handle + the secret. It
+    // fires exactly once, when the output tail looks like a password prompt.
+    let inject = inject_secret.map(|s| (Arc::clone(&writer), s));
 
     // Output is delivered in two stages to keep a high-output terminal (e.g. a
     // `claude` TUI redrawing, or a runaway `yes`) from (a) saturating the webview's
@@ -115,10 +164,28 @@ pub fn pty_spawn(
     let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(256); // ≤256×8KB ≈ 2MB buffered
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
+        let mut injected = false;
+        let mut tail = String::new();
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => {
+                    // Watch the output tail for a password prompt, then inject once.
+                    if let (false, Some((w, secret))) = (injected, inject.as_ref()) {
+                        tail.push_str(&String::from_utf8_lossy(&buf[..n]));
+                        if tail.len() > 512 {
+                            let cut = tail.len() - 512;
+                            tail.drain(..cut);
+                        }
+                        if looks_like_password_prompt(&tail) {
+                            if let Ok(mut wl) = w.lock() {
+                                let _ = wl.write_all(secret.as_bytes());
+                                let _ = wl.write_all(b"\n");
+                                let _ = wl.flush();
+                            }
+                            injected = true;
+                        }
+                    }
                     if tx.send(buf[..n].to_vec()).is_err() {
                         break;
                     }
@@ -163,7 +230,7 @@ pub fn pty_spawn(
         let _ = ch.send(exit_event());
     });
 
-    state.sessions.lock().unwrap().insert(
+    manager.sessions.lock().unwrap().insert(
         id.clone(),
         PtyHandle {
             writer,
@@ -177,14 +244,12 @@ pub fn pty_spawn(
 /// Write user input (keystrokes) to a PTY.
 #[tauri::command]
 pub fn pty_write(state: State<PtyManager>, id: String, data: String) -> Result<(), String> {
-    let mut sessions = state.sessions.lock().unwrap();
-    let h = sessions
-        .get_mut(&id)
-        .ok_or_else(|| format!("no pty {id}"))?;
-    h.writer
-        .write_all(data.as_bytes())
+    let sessions = state.sessions.lock().unwrap();
+    let h = sessions.get(&id).ok_or_else(|| format!("no pty {id}"))?;
+    let mut w = h.writer.lock().map_err(|_| "writer poisoned".to_string())?;
+    w.write_all(data.as_bytes())
         .map_err(|e| format!("write failed: {e}"))?;
-    h.writer.flush().map_err(|e| format!("flush failed: {e}"))
+    w.flush().map_err(|e| format!("flush failed: {e}"))
 }
 
 /// Resize a PTY when the xterm viewport changes.
@@ -453,6 +518,24 @@ mod tests {
         // A path with no preceding pid header must not panic or be attributed.
         assert!(super::parse_lsof_cwds("n/orphan/path\n").is_empty());
     }
+
+    // Password-injection trigger: real ssh prompt shapes fire; incidental
+    // mid-line mentions and empty tails do not.
+    #[test]
+    fn password_prompt_matches_ssh_prompts() {
+        assert!(super::looks_like_password_prompt(
+            "oracle@10.0.0.5's password: "
+        ));
+        assert!(super::looks_like_password_prompt("Password:"));
+        assert!(super::looks_like_password_prompt("\r\nPassword: "));
+        assert!(super::looks_like_password_prompt("Passcode: ")); // RADIUS
+                                                                  // Not a prompt: text continues after the word, or it's unrelated output.
+        assert!(!super::looks_like_password_prompt(
+            "Your password: was changed yesterday"
+        ));
+        assert!(!super::looks_like_password_prompt("Last login: today"));
+        assert!(!super::looks_like_password_prompt(""));
+    }
     use super::*;
 
     /// Proves the PTY layer works on this machine end to end (without the Tauri
@@ -496,6 +579,112 @@ mod tests {
         assert!(
             s.contains("apex-pty-ok"),
             "expected echo output, got: {s:?}"
+        );
+    }
+
+    /// END-TO-END password injection against a REAL sshd (Docker openssh-server on
+    /// 127.0.0.1:2222, user `testuser`, pw `Sup3rSecret!`). Proves the reader-side
+    /// injector answers ssh's password prompt so a remote command actually runs —
+    /// the core "CyberArk/stored password is selected but nothing logs in" fix.
+    ///
+    /// Ignored by default (needs the container). Run:
+    ///   docker run -d --name muya-ssh-test -e PASSWORD_ACCESS=true \
+    ///     -e USER_NAME=testuser -e USER_PASSWORD='Sup3rSecret!' -p 2222:2222 \
+    ///     lscr.io/linuxserver/openssh-server
+    ///   cargo test pty_injection_logs_into_real_sshd -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn pty_injection_logs_into_real_sshd() {
+        use std::sync::mpsc;
+        use std::time::{Duration, Instant};
+
+        let sys = native_pty_system();
+        let pair = sys
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .expect("openpty");
+        let mut cmd = CommandBuilder::new("ssh");
+        for a in [
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-o",
+            "ConnectTimeout=10",
+            "-p",
+            "2222",
+            "testuser@127.0.0.1",
+            "echo MUYA_INJECT_OK",
+        ] {
+            cmd.arg(a);
+        }
+        let mut reader = pair.master.try_clone_reader().expect("reader");
+        let writer = std::sync::Arc::new(std::sync::Mutex::new(
+            pair.master.take_writer().expect("writer"),
+        ));
+        let mut child = pair.slave.spawn_command(cmd).expect("spawn ssh");
+        drop(pair.slave);
+
+        // Same injection shape as spawn_process: match the prompt tail, inject once.
+        let (tx, rx) = mpsc::channel::<Vec<u8>>();
+        let w = std::sync::Arc::clone(&writer);
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            let mut injected = false;
+            let mut tail = String::new();
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if !injected {
+                            tail.push_str(&String::from_utf8_lossy(&buf[..n]));
+                            if tail.len() > 512 {
+                                let cut = tail.len() - 512;
+                                tail.drain(..cut);
+                            }
+                            if super::looks_like_password_prompt(&tail) {
+                                let mut wl = w.lock().unwrap();
+                                wl.write_all(b"Sup3rSecret!\n").unwrap();
+                                wl.flush().unwrap();
+                                injected = true;
+                            }
+                        }
+                        if tx.send(buf[..n].to_vec()).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        let mut out = String::new();
+        let deadline = Instant::now() + Duration::from_secs(25);
+        while Instant::now() < deadline {
+            match rx.recv_timeout(Duration::from_millis(500)) {
+                Ok(chunk) => {
+                    out.push_str(&String::from_utf8_lossy(&chunk));
+                    if out.contains("MUYA_INJECT_OK") {
+                        break;
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if out.contains("MUYA_INJECT_OK") {
+                        break;
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        let _ = child.kill();
+        println!("ssh session output:\n{out}");
+        assert!(
+            out.contains("MUYA_INJECT_OK"),
+            "injected password did not log in / run the remote command; got:\n{out}"
         );
     }
 
