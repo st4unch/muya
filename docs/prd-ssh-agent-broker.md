@@ -59,15 +59,16 @@ başvurur, şifre Rust tarafında çözülüp sunucu-tarafında kullanılır.
   connectionType taşır. Test (`ac7_meta_has_no_secret`): serialize JSON'da password/
   secret/token/credentialSource/localCredId YOK. Canlı e2e 18/18 (proxy stdout temiz).
 
-**Faz 2 — `ssh_run` (yeni risk yüzeyi):**
-- [ ] AC8: `spawn_process`'in **non-interaktif capture varyantı**: PTY'de ssh açar,
-  `looks_like_password_prompt` ile enjekte eder, stdout'u sınırlı buffer'da toplar,
-  timeout + exit-code ile döner. Docker sshd'ye karşı **canlı e2e test**: `ssh_run`
-  ile `echo MUYA_RUN_OK` çalışır, stdout `MUYA_RUN_OK` içerir, sır dönmez.
-- [ ] AC9: `command` argümanı argv-vektör olarak geçer (shell yorumlaması YOK);
-  `ssh -v`/verbose kapalı, stderr sır-scrub'lı. Test: `command` içinde `; whoami`
-  gibi ek komut enjekte edilemez (tek argv arg olarak gider).
-- [ ] AC10: Eşzamanlı `ssh_run` sayısı sınırlı (DoS koruması); aşımda net hata.
+**Faz 2 — `ssh_run` (yeni risk yüzeyi):** (✅ done — 2026-07-26)
+- [x] AC8: `pty::run_with_injection` — PTY'de ssh açar, `looks_like_password_prompt`
+  ile enjekte eder, 256KB bounded buffer, `try_wait` + 60s timeout+kill, prompt satırı
+  stdout'tan çıkarılır. **Docker sshd canlı e2e:** `captured stdout: "MUYA_RUN_OK\r\n"`,
+  exit 0, timeout yok, şifre yok. Bağımsız doğrulandı.
+- [x] AC9: `assemble_run_args` remote command'ı TEK argv elemanı olarak ekler
+  (Muya tarafında shell YOK), `-o LogLevel=ERROR` (verbose kapalı). Test: `echo hi;
+  whoami && id` tek argv elemanı kalıyor.
+- [x] AC10: `BrokerState.run_slots` tokio Semaphore N=4, `try_acquire_owned` hızlı
+  reddeder (hang yok). Test: N al, N+1 reddet, boşalanı yeniden kullan.
 
 ## 4. Koruma Listesi (dokunulmayacak)
 

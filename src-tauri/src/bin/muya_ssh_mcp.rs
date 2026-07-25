@@ -10,7 +10,8 @@
 //! terminal (the app injects the password Rust-side). If the app is not running,
 //! tool calls degrade gracefully with a JSON-RPC error "Muya app not running".
 //!
-//! Tools exposed (Faz 1): `ssh_list_servers`, `ssh_open`. `ssh_run` is Faz 2.
+//! Tools exposed: `ssh_list_servers`, `ssh_open` (Faz 1) and `ssh_run` (Faz 2 —
+//! one remote command, stdout captured, password injected app-side).
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
@@ -90,6 +91,19 @@ fn tools_list() -> Value {
                     "required": ["alias"],
                     "additionalProperties": false
                 }
+            },
+            {
+                "name": "ssh_run",
+                "description": "Run ONE command on the SSH server with the given alias (from ssh_list_servers) and return its stdout. Muya connects, injects the password server-side (never exposed to you), runs the single command remotely, and returns the captured output plus the exit code. The command is passed to the remote shell as a single string, so you may use pipes/redirection inside it. Fails if the alias is not agent-accessible, if the credential store is locked, or if the server uses a 'prompt' credential (no stored password to inject non-interactively) — in that case use a stored or CyberArk credential.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "alias": { "type": "string", "description": "Server alias from ssh_list_servers." },
+                        "command": { "type": "string", "description": "The command to run on the remote server, e.g. 'uname -a' or 'df -h | head'." }
+                    },
+                    "required": ["alias", "command"],
+                    "additionalProperties": false
+                }
             }
         ]
     })
@@ -138,6 +152,49 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                     resp.get("error")
                         .and_then(Value::as_str)
                         .unwrap_or("open failed")
+                        .to_string(),
+                ))
+            }
+        }
+        "ssh_run" => {
+            let alias = match args.get("alias").and_then(Value::as_str) {
+                Some(a) if !a.trim().is_empty() => a.to_string(),
+                _ => return Ok(tool_error("missing required argument 'alias'")),
+            };
+            let command = match args.get("command").and_then(Value::as_str) {
+                Some(c) if !c.trim().is_empty() => c.to_string(),
+                _ => return Ok(tool_error("missing required argument 'command'")),
+            };
+            let resp = app_call(&json!({ "op": "run", "alias": alias, "command": command }))
+                .map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                let stdout = resp.get("stdout").and_then(Value::as_str).unwrap_or("");
+                let timed_out = resp.get("timedOut").and_then(Value::as_bool) == Some(true);
+                let exit_note = match resp.get("exitCode").and_then(Value::as_i64) {
+                    Some(code) => format!("[exit code: {code}]"),
+                    None => "[exit code: unknown]".to_string(),
+                };
+                let mut text = stdout.to_string();
+                if !text.is_empty() && !text.ends_with('\n') {
+                    text.push('\n');
+                }
+                if timed_out {
+                    text.push_str("[command timed out and was terminated]\n");
+                }
+                text.push_str(&exit_note);
+                Ok(tool_ok(
+                    text,
+                    Some(json!({
+                        "stdout": stdout,
+                        "exitCode": resp.get("exitCode").cloned().unwrap_or(Value::Null),
+                        "timedOut": timed_out,
+                    })),
+                ))
+            } else {
+                Ok(tool_error(
+                    resp.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("run failed")
                         .to_string(),
                 ))
             }

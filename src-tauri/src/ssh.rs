@@ -430,6 +430,19 @@ pub async fn ssh_pty_connect(
     )
 }
 
+/// Build the base `ssh` invocation for a server, resolving its PSMP profile from
+/// the on-disk config. Public for the SSH Agent Broker's `ssh_run` (Faz 2), which
+/// appends the remote command as one more argv element. No secret is included;
+/// `needs_password_injection` tells the caller whether a password must be injected.
+pub(crate) fn connect_command_for(server: &Server) -> Result<ConnectCommand, String> {
+    let cfg = load()?;
+    let psmp = server
+        .psmp_profile_id
+        .as_ref()
+        .and_then(|pid| cfg.psmp_profiles.iter().find(|p| &p.id == pid));
+    build_connect_command(server, psmp)
+}
+
 #[tauri::command]
 pub fn ssh_build_connect_cmd(id: String) -> Result<ConnectCommand, String> {
     let cfg = load()?;

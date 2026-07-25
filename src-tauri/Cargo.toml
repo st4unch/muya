@@ -4,6 +4,10 @@ version = "0.2.5"
 description = "Muya — control plane for parallel Claude Code agents"
 authors = ["staunch"]
 edition = "2021"
+# Two [[bin]] targets exist (the app + the muya-ssh-mcp proxy), so `cargo run`
+# and `tauri dev` need to know which is the app. Without this they abort with
+# "could not determine which binary to run".
+default-run = "muya"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

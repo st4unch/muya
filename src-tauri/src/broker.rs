@@ -29,13 +29,15 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore};
+use zeroize::Zeroizing;
 
 use crate::ssh::Server;
 
@@ -43,15 +45,34 @@ use crate::ssh::Server;
 const MCP_ENTRY_NAME: &str = "muya-ssh";
 const MCP_BIN_NAME: &str = "muya-ssh-mcp";
 
+/// AC10 — cap on concurrent `ssh_run` commands. Over the cap the broker fails fast
+/// with a clear error instead of piling up PTYs / ssh processes (DoS protection).
+const MAX_CONCURRENT_RUNS: usize = 4;
+
+/// Wall-clock ceiling for a single `ssh_run` (connect + remote command). Past this
+/// the child is killed and `timedOut:true` is returned.
+const RUN_TIMEOUT: Duration = Duration::from_secs(60);
+
 // ---------------------------------------------------------------------------
 // Managed state
 // ---------------------------------------------------------------------------
 
-#[derive(Default)]
 pub struct BrokerState {
     /// Active listener + its path (if started). Held so a `disable` could drop it;
     /// today it starts once at launch and lives for the app's lifetime.
     pub listener: Mutex<Option<(Arc<UnixListener>, PathBuf)>>,
+    /// AC10 — permits for in-flight `ssh_run` commands. Acquired per run; over the
+    /// cap `try_acquire` fails fast so the broker never hangs under load.
+    pub run_slots: Arc<Semaphore>,
+}
+
+impl Default for BrokerState {
+    fn default() -> Self {
+        BrokerState {
+            listener: Mutex::new(None),
+            run_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_RUNS)),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -77,6 +98,9 @@ struct BrokerReq {
     op: String,
     #[serde(default)]
     alias: Option<String>,
+    /// The remote command for `run` (a SINGLE argv element passed to ssh; AC9).
+    #[serde(default)]
+    command: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -128,6 +152,24 @@ pub(crate) fn resolve_open<'a>(servers: &'a [Server], alias: &str) -> OpenResolu
     }
 }
 
+/// AC9 — assemble the final `ssh` argv for `run` from the base connect args (which
+/// END with the ssh destination) plus the remote `command`. The command is pushed
+/// as EXACTLY ONE argv element, so shell metacharacters in it (`;`, `&&`, `$()`)
+/// can never break our argv or spawn anything on the Muya side — ssh forwards the
+/// single element to the remote shell. Also forces `-o LogLevel=ERROR` (before the
+/// destination, where ssh requires options) so verbose diagnostics can't leak.
+pub(crate) fn assemble_run_args(
+    mut base: Vec<String>,
+    command: &str,
+) -> Result<Vec<String>, String> {
+    let dest = base.pop().ok_or("empty ssh args (no destination)")?;
+    base.push("-o".to_string());
+    base.push("LogLevel=ERROR".to_string());
+    base.push(dest);
+    base.push(command.to_string()); // the whole remote command, as ONE argv element
+    Ok(base)
+}
+
 // ---------------------------------------------------------------------------
 // Socket path + peer authentication
 // ---------------------------------------------------------------------------
@@ -174,7 +216,7 @@ fn err_resp(msg: impl Into<String>) -> String {
 }
 
 /// Handle one broker request line → one JSON response string (no trailing NL).
-fn handle_request(app: &AppHandle, line: &str) -> String {
+async fn handle_request(app: &AppHandle, line: &str) -> String {
     let req: BrokerReq = match serde_json::from_str(line) {
         Ok(r) => r,
         Err(e) => return err_resp(format!("bad request: {e}")),
@@ -225,7 +267,111 @@ fn handle_request(app: &AppHandle, line: &str) -> String {
                 }
             }
         }
+        "run" => handle_run(app, &servers, &req).await,
         other => err_resp(format!("unknown op '{other}'")),
+    }
+}
+
+/// AC8/AC9/AC10 — resolve an alias, gate it, resolve the secret in Rust, and run
+/// ONE remote command over ssh with the password injected server-side. Returns
+/// `{ok,stdout,exitCode,timedOut}` — never the secret.
+async fn handle_run(app: &AppHandle, servers: &[Server], req: &BrokerReq) -> String {
+    let alias = match req.alias.as_deref() {
+        Some(a) if !a.trim().is_empty() => a,
+        _ => return err_resp("`run` requires an `alias`"),
+    };
+    let command = match req.command.as_deref() {
+        Some(c) if !c.trim().is_empty() => c.to_string(),
+        _ => return err_resp("`run` requires a non-empty `command`"),
+    };
+
+    let server = match resolve_open(servers, alias) {
+        OpenResolution::NotFound => return err_resp(format!("no server matches alias '{alias}'")),
+        OpenResolution::NotAccessible => {
+            return err_resp(format!(
+                "server '{alias}' is not agent-accessible (enable 'Agent may use this server')"
+            ))
+        }
+        OpenResolution::Ok(s) => s,
+    };
+
+    // AC10 — bound concurrency: acquire a permit or fail fast (held for the run).
+    let broker: State<BrokerState> = app.state();
+    let _permit = match broker.run_slots.clone().try_acquire_owned() {
+        Ok(p) => p,
+        Err(_) => {
+            return err_resp(format!(
+            "too many concurrent ssh_run commands (limit {MAX_CONCURRENT_RUNS}); try again shortly"
+        ))
+        }
+    };
+
+    // Resolve the injectable secret entirely in Rust. `prompt` sources have no
+    // stored password to inject, so a non-interactive run cannot authenticate.
+    let secret: Option<Zeroizing<String>> = match server.credential_source.kind.as_str() {
+        "local" => {
+            let store: State<crate::credstore::CredStore> = app.state();
+            if !crate::credstore::is_unlocked(&store) {
+                return err_resp("password store is locked — unlock it in the Password Store tab");
+            }
+            let id = match server.credential_source.local_cred_id.as_deref() {
+                Some(id) => id,
+                None => {
+                    return err_resp("server uses the local store but no credential is selected")
+                }
+            };
+            match crate::credstore::secret_for(&store, id) {
+                Ok(s) => Some(s),
+                Err(e) => return err_resp(e),
+            }
+        }
+        "cyberark" => {
+            let acct = match server.credential_source.cyberark_account_id.as_deref() {
+                Some(a) => a,
+                None => return err_resp("server uses CyberArk but no account is selected"),
+            };
+            let cyber: State<crate::cyberark::CyberarkState> = app.state();
+            match crate::cyberark::fetch_password(&cyber, acct).await {
+                Ok(s) => Some(s),
+                Err(e) => return err_resp(e),
+            }
+        }
+        _ => {
+            return err_resp(
+                "ssh_run needs a stored or CyberArk credential; a 'prompt' server has no \
+                 password to inject non-interactively — switch it to a stored/CyberArk credential",
+            )
+        }
+    };
+
+    // Build the ssh argv (destination last), then append the remote command as ONE
+    // argv element (AC9). No shell on the Muya side.
+    let base = match crate::ssh::connect_command_for(server) {
+        Ok(c) => c,
+        Err(e) => return err_resp(e),
+    };
+    let program = base.program.clone();
+    let args = match assemble_run_args(base.args, &command) {
+        Ok(a) => a,
+        Err(e) => return err_resp(e),
+    };
+
+    // AC8 — run the blocking PTY capture off the async runtime.
+    let result = tokio::task::spawn_blocking(move || {
+        crate::pty::run_with_injection(&program, &args, secret, RUN_TIMEOUT)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(out)) => json!({
+            "ok": true,
+            "stdout": out.stdout,
+            "exitCode": out.exit_code,
+            "timedOut": out.timed_out,
+        })
+        .to_string(),
+        Ok(Err(e)) => err_resp(e),
+        Err(e) => err_resp(format!("run task failed: {e}")),
     }
 }
 
@@ -294,7 +440,7 @@ async fn serve_connection(stream: tokio::net::UnixStream, app: AppHandle) {
                 if line.trim().is_empty() {
                     continue;
                 }
-                let mut resp = handle_request(&app, &line);
+                let mut resp = handle_request(&app, &line).await;
                 resp.push('\n');
                 if write_half.write_all(resp.as_bytes()).await.is_err() {
                     break;
@@ -413,6 +559,63 @@ mod tests {
                 "broker metadata leaked `{banned}`: {json}"
             );
         }
+    }
+
+    // AC9 — the remote command is passed as EXACTLY ONE argv element, even when it
+    // contains shell metacharacters, and `-o LogLevel=ERROR` is forced before the
+    // destination. Nothing on the Muya side splits or interprets the command.
+    #[test]
+    fn ac9_remote_command_is_single_argv_element() {
+        // base ssh args as build_connect_command would produce: [-p, 2222, u@h]
+        let base = vec!["-p".into(), "2222".into(), "u@h".into()];
+        let args = assemble_run_args(base, "echo hi; whoami && id").unwrap();
+        // Destination stays put; options inserted before it; command is the LAST,
+        // single element carrying the entire remote command verbatim.
+        assert_eq!(
+            args,
+            vec![
+                "-p",
+                "2222",
+                "-o",
+                "LogLevel=ERROR",
+                "u@h",
+                "echo hi; whoami && id",
+            ]
+        );
+        // The metacharacters live in ONE element — never split into extra argv.
+        assert_eq!(args.last().unwrap(), "echo hi; whoami && id");
+        assert_eq!(args.iter().filter(|a| a.contains("whoami")).count(), 1);
+    }
+
+    // AC9 — an empty base (no destination) is a clear error, not a panic.
+    #[test]
+    fn assemble_run_args_rejects_empty_base() {
+        assert!(assemble_run_args(vec![], "echo hi").is_err());
+    }
+
+    // AC10 — the concurrency limiter admits exactly N and fails the (N+1)th fast.
+    #[test]
+    fn ac10_run_slots_cap_is_enforced() {
+        let sem = std::sync::Arc::new(Semaphore::new(MAX_CONCURRENT_RUNS));
+        let mut held = Vec::new();
+        for _ in 0..MAX_CONCURRENT_RUNS {
+            held.push(
+                sem.clone()
+                    .try_acquire_owned()
+                    .expect("permit within the cap must succeed"),
+            );
+        }
+        // One over the cap → immediate error, no blocking/hang.
+        assert!(
+            sem.clone().try_acquire_owned().is_err(),
+            "the (N+1)th ssh_run must be rejected"
+        );
+        // Releasing one permit frees a slot again.
+        held.pop();
+        assert!(
+            sem.clone().try_acquire_owned().is_ok(),
+            "a freed slot must be reusable"
+        );
     }
 
     // AC3 — a bound socket is 0600 and a same-process peer passes the uid check.

@@ -6,9 +6,9 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use tauri::ipc::{Channel, InvokeResponseBody};
@@ -239,6 +239,186 @@ pub fn spawn_process(
         },
     );
     Ok(id)
+}
+
+// ---------------------------------------------------------------------------
+// One-shot capture-with-injection (SSH Agent Broker, Faz 2 — AC8/AC9)
+// ---------------------------------------------------------------------------
+
+/// Captured result of a single non-interactive command run in a PTY. Carries NO
+/// secret: the injected password answers ssh's prompt *inside* the PTY and the
+/// prompt line is stripped from `stdout` before it is returned (AC9).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CommandOutput {
+    pub stdout: String,
+    pub exit_code: Option<i32>,
+    pub timed_out: bool,
+}
+
+/// Hard cap on captured output (AC8): stop appending past this so a runaway remote
+/// command can never grow memory without bound.
+const CAPTURE_CAP: usize = 256 * 1024;
+
+/// Remove the password-prompt line (and any trailing CR/LF/space) from captured
+/// output so the returned stdout starts at the remote command's own output. The
+/// prompt is always the FIRST `password:`/`passcode:` occurrence (it precedes any
+/// remote output), so matching the first hit is correct. The password itself is
+/// never echoed by ssh, so it never appears here — this only hides the prompt text.
+fn strip_injected_prompt(raw: &str) -> String {
+    let lower = raw.to_lowercase();
+    let mut best: Option<usize> = None;
+    for marker in ["password:", "passcode:"] {
+        if let Some(pos) = lower.find(marker) {
+            let end = pos + marker.len();
+            best = Some(best.map_or(end, |b| b.min(end)));
+        }
+    }
+    match best {
+        Some(end) => raw[end..].trim_start_matches([' ', '\r', '\n']).to_string(),
+        None => raw.to_string(),
+    }
+}
+
+/// Run `program args` in a real PTY, capturing output into a BOUNDED buffer while
+/// injecting `inject_secret` exactly once at the password prompt (AC8). ssh reads
+/// its password from a TTY, so a PTY — not `std::process::Command` — is required.
+///
+/// Blocking / synchronous: call from async code via `tokio::task::spawn_blocking`.
+/// Waits up to `timeout` for the child to exit, then kills it (`timed_out=true`).
+/// The secret is written only into the PTY and never appears in `stdout`.
+pub fn run_with_injection(
+    program: &str,
+    args: &[String],
+    inject_secret: Option<Zeroizing<String>>,
+    timeout: Duration,
+) -> Result<CommandOutput, String> {
+    let pty_system = native_pty_system();
+    let pair = pty_system
+        .openpty(PtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| format!("openpty failed: {e}"))?;
+
+    let mut cmd = CommandBuilder::new(program);
+    for a in args {
+        cmd.arg(a);
+    }
+    cmd.env("TERM", "xterm-256color");
+    // Same CLAUDE* strip as spawn_process — keep the child a clean top-level proc.
+    for (k, _) in std::env::vars() {
+        if k.starts_with("CLAUDE") || k == "AI_AGENT" {
+            cmd.env_remove(&k);
+        }
+    }
+
+    let mut child = pair
+        .slave
+        .spawn_command(cmd)
+        .map_err(|e| format!("spawn failed: {e}"))?;
+    drop(pair.slave); // so the master reader sees EOF when the child exits
+
+    let mut reader = pair
+        .master
+        .try_clone_reader()
+        .map_err(|e| format!("clone reader failed: {e}"))?;
+    let writer = Arc::new(Mutex::new(
+        pair.master
+            .take_writer()
+            .map_err(|e| format!("take writer failed: {e}"))?,
+    ));
+    // Hold the master open until after the reader thread joins so reads don't error.
+    let _master = pair.master;
+
+    let captured = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let injected_flag = Arc::new(AtomicBool::new(false));
+    let inject = inject_secret.map(|s| (Arc::clone(&writer), s));
+    let cap_for_thread = Arc::clone(&captured);
+    let injf = Arc::clone(&injected_flag);
+
+    let reader_handle = std::thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        let mut injected = false;
+        let mut tail = String::new();
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    // Watch the tail for a password prompt, then inject once.
+                    if let (false, Some((w, secret))) = (injected, inject.as_ref()) {
+                        tail.push_str(&String::from_utf8_lossy(&buf[..n]));
+                        if tail.len() > 512 {
+                            let cut = tail.len() - 512;
+                            tail.drain(..cut);
+                        }
+                        if looks_like_password_prompt(&tail) {
+                            if let Ok(mut wl) = w.lock() {
+                                let _ = wl.write_all(secret.as_bytes());
+                                let _ = wl.write_all(b"\n");
+                                let _ = wl.flush();
+                            }
+                            injected = true;
+                            injf.store(true, Ordering::Relaxed);
+                        }
+                    }
+                    // Bounded accumulation: stop appending once the cap is reached.
+                    if let Ok(mut c) = cap_for_thread.lock() {
+                        if c.len() < CAPTURE_CAP {
+                            let room = CAPTURE_CAP - c.len();
+                            let take = room.min(n);
+                            c.extend_from_slice(&buf[..take]);
+                        }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    // Wait for exit or timeout, polling so we can enforce the deadline + kill.
+    let deadline = Instant::now() + timeout;
+    let mut exit_code = None;
+    let mut timed_out = false;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                exit_code = Some(status.exit_code() as i32);
+                break;
+            }
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    timed_out = true;
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(_) => break,
+        }
+    }
+
+    // Child gone → reader hits EOF → thread returns. Join before reading buffer.
+    let _ = reader_handle.join();
+    drop(writer);
+    drop(_master);
+
+    let raw = captured
+        .lock()
+        .map(|c| String::from_utf8_lossy(&c).into_owned())
+        .unwrap_or_default();
+    let stdout = if injected_flag.load(Ordering::Relaxed) {
+        strip_injected_prompt(&raw)
+    } else {
+        raw
+    };
+    Ok(CommandOutput {
+        stdout,
+        exit_code,
+        timed_out,
+    })
 }
 
 /// Write user input (keystrokes) to a PTY.
@@ -686,6 +866,72 @@ mod tests {
             out.contains("MUYA_INJECT_OK"),
             "injected password did not log in / run the remote command; got:\n{out}"
         );
+    }
+
+    // AC9 — the injected password prompt is stripped from captured stdout, and a
+    // capture with no prompt is returned unchanged. The password never appears.
+    #[test]
+    fn strip_injected_prompt_removes_prompt_line() {
+        let raw = "\r\ntestuser@127.0.0.1's password: \r\nMUYA_RUN_OK\r\n";
+        let out = super::strip_injected_prompt(raw);
+        assert!(out.starts_with("MUYA_RUN_OK"), "got: {out:?}");
+        assert!(!out.to_lowercase().contains("password:"), "got: {out:?}");
+        // RADIUS passcode prompt shape.
+        assert!(super::strip_injected_prompt("Passcode: \r\nHELLO").starts_with("HELLO"));
+        // No prompt → unchanged.
+        assert_eq!(super::strip_injected_prompt("plain output"), "plain output");
+    }
+
+    /// END-TO-END (AC8): `run_with_injection` runs a single remote command over ssh
+    /// against the Docker sshd (127.0.0.1:2222, testuser / Sup3rSecret!), injecting
+    /// the password at the prompt and CAPTURING stdout. Proves the non-interactive
+    /// `ssh_run` path returns the remote output and never leaks the password.
+    ///
+    ///   docker start muya-ssh-test  # or `docker run` per the header above
+    ///   cargo test run_with_injection_live -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn run_with_injection_live() {
+        use zeroize::Zeroizing;
+        let args: Vec<String> = [
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-o",
+            "LogLevel=ERROR",
+            "-o",
+            "ConnectTimeout=10",
+            "-p",
+            "2222",
+            "testuser@127.0.0.1",
+            "echo MUYA_RUN_OK",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+        let out = super::run_with_injection(
+            "ssh",
+            &args,
+            Some(Zeroizing::new("Sup3rSecret!".to_string())),
+            Duration::from_secs(25),
+        )
+        .expect("run_with_injection");
+
+        println!("captured stdout: {:?}", out.stdout);
+        println!("exit_code={:?} timed_out={}", out.exit_code, out.timed_out);
+        assert!(
+            out.stdout.contains("MUYA_RUN_OK"),
+            "remote command output missing; got: {:?}",
+            out.stdout
+        );
+        assert!(
+            !out.stdout.contains("Sup3rSecret!"),
+            "SECRET LEAKED into captured stdout: {:?}",
+            out.stdout
+        );
+        assert!(!out.timed_out, "run should not have timed out");
     }
 
     /// Proves the CLAUDE* env strip works: a shell spawned with the strip sees an
