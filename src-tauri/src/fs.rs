@@ -993,27 +993,53 @@ pub fn install_skill(name: String, github_url: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Merge an MCP entry into ~/.claude/.mcp.json (user-scope, deduped by name).
+/// Merge an MCP entry into the user's Claude config (`~/.claude.json`, user scope,
+/// deduped by name). Claude Code reads user-scope MCP servers from `~/.claude.json`
+/// — NOT `~/.claude/.mcp.json`, which it ignores — so entries must land here to be
+/// visible to spawned `claude` sessions.
+///
+/// This file holds the user's ENTIRE Claude configuration (projects, auth, history),
+/// so the merge is deliberately conservative: an existing-but-unparseable file is a
+/// hard error (never overwrite it), every other key is preserved via a Value
+/// round-trip, and the write is atomic (temp + rename) so a crash can't truncate it.
 #[tauri::command(async)]
 pub fn install_mcp(name: String, command: String, args: Vec<String>) -> Result<(), String> {
+    let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
+    let cfg_path = Path::new(&home).join(".claude.json");
+    install_mcp_at(&cfg_path, name, command, args)
+}
+
+/// Path-injectable core of `install_mcp` so tests never touch the real
+/// `~/.claude.json`. Production always goes through `install_mcp` (default path).
+fn install_mcp_at(
+    cfg_path: &Path,
+    name: String,
+    command: String,
+    args: Vec<String>,
+) -> Result<(), String> {
     let name = crate::validate::valid_name(&name, "name")?;
     // command is executed by Claude Code later — require a non-empty, non-NUL value.
     let command = crate::validate::clean_arg(&command, "command", true)?;
-    let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
-    let mcp_path = Path::new(&home).join(".claude").join(".mcp.json");
 
-    let mut root: serde_json::Value = if mcp_path.exists() {
-        let content = std::fs::read_to_string(&mcp_path).map_err(|e| e.to_string())?;
-        serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({ "mcpServers": {} }))
+    let mut root: serde_json::Value = if cfg_path.exists() {
+        let content = std::fs::read_to_string(cfg_path).map_err(|e| e.to_string())?;
+        // Refuse to touch a config we can't parse — replacing it with a fresh object
+        // would destroy the user's projects/auth/history.
+        serde_json::from_str(&content)
+            .map_err(|e| format!("~/.claude.json is not valid JSON — refusing to modify it: {e}"))?
     } else {
-        serde_json::json!({ "mcpServers": {} })
+        serde_json::json!({})
     };
 
-    let servers = root
+    let obj = root
         .as_object_mut()
-        .and_then(|m| m.get_mut("mcpServers"))
-        .and_then(|v| v.as_object_mut())
-        .ok_or("malformed .mcp.json")?;
+        .ok_or("~/.claude.json is not a JSON object")?;
+    // Create mcpServers only if absent; never disturb the other top-level keys.
+    let servers = obj
+        .entry("mcpServers")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .ok_or("~/.claude.json 'mcpServers' is not an object")?;
 
     let args_json: Vec<serde_json::Value> = args.iter().map(|a| serde_json::json!(a)).collect();
     servers.insert(
@@ -1021,15 +1047,75 @@ pub fn install_mcp(name: String, command: String, args: Vec<String>) -> Result<(
         serde_json::json!({ "command": command, "args": args_json }),
     );
 
-    let out = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
-    std::fs::write(&mcp_path, out).map_err(|e| e.to_string())?;
-    Ok(())
+    let out = serde_json::to_vec_pretty(&root).map_err(|e| e.to_string())?;
+    // Atomic temp+rename (shared with credstore) — a mid-write crash can never leave
+    // the user's Claude config truncated.
+    crate::credstore::atomic_write(cfg_path, &out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::testutil::*;
+
+    // ----- install_mcp: merges into ~/.claude.json safely -----
+
+    #[test]
+    fn install_mcp_merges_and_preserves_other_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join(".claude.json");
+        // A realistic config: other top-level keys + an existing MCP server.
+        std::fs::write(
+            &cfg,
+            r#"{"numStartups":42,"mcpServers":{"blender":{"command":"uvx","args":["blender-mcp"]}}}"#,
+        )
+        .unwrap();
+
+        install_mcp_at(
+            &cfg,
+            "muya-ssh".into(),
+            "/path/to/muya-ssh-mcp".into(),
+            vec![],
+        )
+        .unwrap();
+
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&cfg).unwrap()).unwrap();
+        // Our entry landed…
+        assert_eq!(
+            v["mcpServers"]["muya-ssh"]["command"],
+            "/path/to/muya-ssh-mcp"
+        );
+        // …the pre-existing server is untouched…
+        assert_eq!(v["mcpServers"]["blender"]["command"], "uvx");
+        // …and unrelated top-level keys are preserved (not wiped).
+        assert_eq!(v["numStartups"], 42);
+    }
+
+    #[test]
+    fn install_mcp_creates_config_when_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join(".claude.json");
+        install_mcp_at(&cfg, "muya-ssh".into(), "/x/muya-ssh-mcp".into(), vec![]).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&cfg).unwrap()).unwrap();
+        assert_eq!(v["mcpServers"]["muya-ssh"]["command"], "/x/muya-ssh-mcp");
+    }
+
+    // The critical safety property: an existing but unparseable config is NEVER
+    // overwritten — refuse and leave the user's Claude config exactly as it was.
+    #[test]
+    fn install_mcp_refuses_to_clobber_unparseable_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join(".claude.json");
+        let junk = "{ this is not valid json ";
+        std::fs::write(&cfg, junk).unwrap();
+        let err = install_mcp_at(&cfg, "muya-ssh".into(), "/x/muya-ssh-mcp".into(), vec![])
+            .expect_err("must refuse an unparseable config");
+        assert!(err.contains("refusing to modify"), "unexpected: {err}");
+        // The original bytes survive untouched.
+        assert_eq!(std::fs::read_to_string(&cfg).unwrap(), junk);
+    }
 
     // ----- pure-function unit tests (no I/O) -----
 
