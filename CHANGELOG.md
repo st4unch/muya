@@ -6,6 +6,17 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-07-26
+
+### Fixed
+- **The muya-ssh MCP plugin now actually appears in Claude.** It was being registered
+  in a file Claude Code doesn't read (`~/.claude/.mcp.json`), so the tools never showed
+  up in `claude mcp list`. It's now written to the config Claude actually reads
+  (`~/.claude.json`), safely: your existing configuration is preserved, an unreadable
+  config is left untouched rather than overwritten, and the write is atomic. The same
+  fix applies to any MCP server installed from the Resources page. (Start a new
+  terminal session to pick up the newly-registered plugin.)
+
 ## [0.2.6] - 2026-07-26
 
 ### Added
