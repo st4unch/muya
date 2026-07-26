@@ -39,3 +39,6 @@ ApexMissionControl-*.zip
 
 # Local release scripts (build/sign/notarize/publish) — machine-local, not committed
 scripts/
+
+# Tauri externalBin staged sidecars (built by build-sign-notarize.sh)
+src-tauri/binaries/

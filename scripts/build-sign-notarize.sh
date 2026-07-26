@@ -55,6 +55,20 @@ PRODUCT="$(node -p "require('$ROOT/src-tauri/tauri.conf.json').productName")"
 ARCH="$(uname -m)"   # arm64 on Apple Silicon
 say "$PRODUCT v$VERSION ($ARCH) — local release build"
 
+# --- 0. stage the muya-ssh-mcp sidecar ----------------------------------------
+# The `muya-ssh` MCP proxy is a SECOND binary Claude Code spawns; it must ride
+# inside the .app so a shipped build's ~/.claude/.mcp.json path resolves (the app
+# registers `current_exe().parent()/muya-ssh-mcp`, and Tauri externalBin places
+# the sidecar exactly there — Contents/MacOS/ — and signs it in the bundle step).
+# Tauri expects the sidecar prebuilt at binaries/<name>-<target-triple>.
+TARGET_TRIPLE="$(rustc -Vv | sed -n 's/^host: //p')"
+say "Staging muya-ssh-mcp sidecar ($TARGET_TRIPLE)…"
+cargo build --release --bin muya-ssh-mcp --manifest-path "$ROOT/src-tauri/Cargo.toml"
+mkdir -p "$ROOT/src-tauri/binaries"
+cp "$ROOT/src-tauri/target/release/muya-ssh-mcp" \
+   "$ROOT/src-tauri/binaries/muya-ssh-mcp-$TARGET_TRIPLE"
+ok "sidecar staged: binaries/muya-ssh-mcp-$TARGET_TRIPLE"
+
 # --- 1. build (frontend + rust, auto-signed) ----------------------------------
 say "Building (npm run tauri build) — this is the slow part…"
 npm run tauri build
