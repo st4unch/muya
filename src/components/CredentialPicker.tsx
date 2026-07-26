@@ -8,7 +8,7 @@ import { Plus } from "lucide-react";
 // (credential id) — the secret is pulled by Rust at use time and never revealed
 // to the JS/webview layer.
 
-export type CredMeta = { id: string; label: string; username: string; secretKind: "password" | "key" | "token"; description?: string };
+export type CredMeta = { id: string; label: string; username: string; secretKind: "password" | "key" | "token" | "api_key"; description?: string };
 export type CyberarkAccountRef = { id: string; name: string; username: string; address: string };
 export type CredentialSource = {
   kind: "prompt" | "local" | "cyberark";

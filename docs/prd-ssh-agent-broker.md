@@ -97,8 +97,21 @@ başvurur, şifre Rust tarafında çözülüp sunucu-tarafında kullanılır.
 - [x] AC16: UI — Password Store'da credential ekle/düzenle'ye **description** alanı;
   `token` kind seçilebilir. tsc + vitest render testi.
 
-**Faz 3.2 (sonraya):** gerçek op tanımları (aws/git/gh), yazma-op'lar, `kubectl exec`,
-üretilen-sır-yakalama (D7). Bu run'da HARİÇ.
+**Faz 3.2a — `add_secret` (üretilen-sır yazma ucu) + API key tipi (operatör isteği 2026-07-26):** (✅ done — 2026-07-26)
+- [x] AC17: `add_secret(name, description, kind, value)` MCP tool + broker op —
+  store'a YENİ credential yazar. Kurallar (Rust-tarafı, fail-closed): (a) store
+  **açık değilse** hata ("store is locked"); (b) **create-only** — aynı `label`
+  varsa hata (mevcut sırrın üstüne yazılmaz — injected-agent koruması); (c) yanıt
+  yalnız `{name, kind}` döner, **value ASLA**. `kind ∈ password|key|token|api_key`.
+  Test: add → `list_secrets`'te görünür; aynı isim tekrar → hata; kilitli store →
+  hata; yanıt JSON'unda value/secret yok.
+- [x] AC18: credstore `secret_kind` doğrulaması `api_key`'i de kabul eder (mevcut
+  password|key|token'a ek). Eski config yüklenir. Test.
+- [x] AC19: UI — Password Store ekle/düzenle formunda **"API key"** seçeneği
+  (secretKind select'e). tsc + vitest render.
+
+**Faz 3.2b (sonraya):** gerçek op tanımları (aws/git/gh), yazma-op'lar, `kubectl exec`,
+overwrite/rotation yolu (operatör-onaylı), op-ekleme UI + isimle referans. Bu run'da HARİÇ.
 
 ## 4. Koruma Listesi (dokunulmayacak)
 

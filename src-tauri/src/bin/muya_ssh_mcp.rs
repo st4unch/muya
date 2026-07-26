@@ -111,6 +111,25 @@ fn tools_list() -> Value {
                 "inputSchema": { "type": "object", "additionalProperties": false }
             },
             {
+                "name": "add_secret",
+                "description": "Store a NEW secret (e.g. a token your workflow just generated) under a name for later use by run_operation. Fails if the name already exists or the credential store is locked. The value is write-only — it is never returned to you afterwards; you reference the secret only BY NAME. Pick a descriptive name and (optionally) a description so the operator can identify it.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string", "description": "Unique name for the secret (must not already exist)." },
+                        "value": { "type": "string", "description": "The secret value to store. Write-only — never returned." },
+                        "kind": {
+                            "type": "string",
+                            "enum": ["password", "key", "token", "api_key"],
+                            "description": "The kind of secret. Use 'api_key' for API keys/tokens; defaults to 'api_key' if omitted."
+                        },
+                        "description": { "type": "string", "description": "Optional operator-facing note describing the secret." }
+                    },
+                    "required": ["name", "value"],
+                    "additionalProperties": false
+                }
+            },
+            {
                 "name": "list_operations",
                 "description": "List the fixed operations the operator has defined that agents may run (name + description only). Each operation is a pinned program+subcommand (e.g. an aws/kubectl/git command) that uses a stored secret WITHOUT revealing it. Use the returned name with run_operation.",
                 "inputSchema": { "type": "object", "additionalProperties": false }
@@ -237,6 +256,54 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                     resp.get("error")
                         .and_then(Value::as_str)
                         .unwrap_or("list_secrets failed")
+                        .to_string(),
+                ))
+            }
+        }
+        "add_secret" => {
+            let secret_name = match args.get("name").and_then(Value::as_str) {
+                Some(n) if !n.trim().is_empty() => n.to_string(),
+                _ => return Ok(tool_error("missing required argument 'name'")),
+            };
+            let value = match args.get("value").and_then(Value::as_str) {
+                Some(v) if !v.is_empty() => v.to_string(),
+                _ => return Ok(tool_error("missing required argument 'value'")),
+            };
+            let kind = args
+                .get("kind")
+                .and_then(Value::as_str)
+                .filter(|k| !k.trim().is_empty())
+                .unwrap_or("api_key")
+                .to_string();
+            let description = args
+                .get("description")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let resp = app_call(&json!({
+                "op": "add_secret",
+                "name": secret_name,
+                "value": value,
+                "kind": kind,
+                "description": description,
+            }))
+            .map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                let secret = resp.get("secret").cloned().unwrap_or_else(|| json!({}));
+                let name = secret.get("name").and_then(Value::as_str).unwrap_or("");
+                let stored_kind = secret.get("kind").and_then(Value::as_str).unwrap_or("");
+                Ok(tool_ok(
+                    format!(
+                        "Stored secret '{name}' (kind: {stored_kind}). The value is write-only \
+                         and cannot be read back; reference it by name in run_operation."
+                    ),
+                    Some(json!({ "secret": secret })),
+                ))
+            } else {
+                Ok(tool_error(
+                    resp.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("add_secret failed")
                         .to_string(),
                 ))
             }

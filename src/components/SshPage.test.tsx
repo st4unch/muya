@@ -97,6 +97,29 @@ describe("SshPage — credential description + token kind (AC16)", () => {
   });
 });
 
+describe("SshPage — API key kind (AC19)", () => {
+  it("adds an api_key credential and shows the 'API key' label", async () => {
+    const user = userEvent.setup();
+    render(<SshPage />);
+
+    await user.click(screen.getByText("Password Store"));
+    await user.type(screen.getByPlaceholderText("Master password"), "hunter2");
+    await user.click(screen.getByText("Create"));
+    await screen.findByText(/Unlocked ·/);
+
+    await user.click(screen.getByText("Add credential"));
+    await user.type(screen.getByPlaceholderText("Label"), "openai");
+    await user.type(screen.getByPlaceholderText("Username"), "svc");
+    // The API key option exists in the secretKind select.
+    await user.selectOptions(screen.getByRole("combobox"), "api_key");
+    await user.type(screen.getByPlaceholderText(/API key value/), "sk-test-123");
+    await user.click(screen.getByText("Save"));
+
+    // The credential renders with the "API key" kind label.
+    expect(await screen.findByText(/svc · API key/)).toBeTruthy();
+  });
+});
+
 describe("SshPage — Password Store", () => {
   it("creates the store, locks it, rejects a wrong master, then unlocks", async () => {
     const user = userEvent.setup();

@@ -24,7 +24,7 @@ type Server = {
   lastConnectedAt?: string | null;
   tags: string[];
 };
-type Cred = { id: string; label: string; username: string; secretKind: "password" | "key" | "token"; secret: string; description?: string };
+type Cred = { id: string; label: string; username: string; secretKind: "password" | "key" | "token" | "api_key"; secret: string; description?: string };
 
 type State = {
   ssh: { version: number; servers: Server[]; psmpProfiles: any[]; cyberark: Json | null };

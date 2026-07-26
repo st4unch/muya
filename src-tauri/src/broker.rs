@@ -109,6 +109,16 @@ struct BrokerReq {
     /// before they reach the fixed program.
     #[serde(default)]
     args: Option<Vec<String>>,
+    /// AC17 `add_secret`: the new secret's name (== credential label), operator
+    /// note, kind, and value. `value` is write-only — never echoed back.
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    value: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -295,6 +305,35 @@ async fn handle_request(app: &AppHandle, line: &str) -> String {
                         .collect();
                     json!({"ok": true, "secrets": secrets}).to_string()
                 }
+                Err(e) => err_resp(e),
+            }
+        }
+        // AC17 — store a NEW secret the agent generated/received. CREATE-ONLY and
+        // unlock-gated in credstore::add_credential; the response carries only the
+        // name+kind, NEVER the value (which is never logged either).
+        "add_secret" => {
+            let name = match req.name.as_deref() {
+                Some(n) if !n.trim().is_empty() => n.to_string(),
+                _ => return err_resp("`add_secret` requires a non-empty `name`"),
+            };
+            let value = match req.value.as_deref() {
+                Some(v) if !v.is_empty() => v.to_string(),
+                _ => return err_resp("`add_secret` requires a non-empty `value`"),
+            };
+            let kind = req
+                .kind
+                .as_deref()
+                .filter(|k| !k.trim().is_empty())
+                .unwrap_or("api_key")
+                .to_string();
+            let description = req.description.clone().unwrap_or_default();
+            let store: State<crate::credstore::CredStore> = app.state();
+            match crate::credstore::add_credential(&store, name, description, kind, value) {
+                Ok(meta) => json!({
+                    "ok": true,
+                    "secret": { "name": meta.label, "kind": meta.secret_kind },
+                })
+                .to_string(),
                 Err(e) => err_resp(e),
             }
         }

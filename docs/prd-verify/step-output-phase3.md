@@ -68,3 +68,37 @@ an agent, confirm stdout returns and no secret leaks. Recommended before Faz 3.2
 - Added minimal `agent_ops_list` / `agent_ops_upsert` Tauri commands for a future
   ops-management UI. The broker reads the registry directly via `load_ops` (file-
   based); agents have NO path to upsert (it is a Tauri command, not a broker op).
+
+## Phase 3.2a — `add_secret` (AC17) + `api_key` kind (AC18/AC19)
+
+Spec date coded against: MCP `2025-06-18` (unchanged; `inputSchema` JSON Schema
+object, tool-result `isError` contract). Tool `add_secret` uses an `enum` on
+`kind` and `required: ["name","value"]`, `additionalProperties:false`.
+
+Deliverables:
+- AC18 — `credstore::valid_secret_kind` now accepts `password|key|token|api_key`;
+  upsert error message updated. Test `ac18_api_key_kind_is_valid` (accepts api_key,
+  no regression on old kinds, still rejects `apikey`/`shell`/``).
+- AC17 — new broker op `add_secret {name,description,kind,value}` in
+  `broker.rs::handle_request`, backed by `credstore::add_credential` (→ path-
+  injectable `add_credential_at`). CREATE-ONLY (label collision → error), unlock-
+  gated, empty-name/value + bad-kind rejected. Response is `{ok,secret:{name,kind}}`
+  — the value is NEVER returned, NEVER logged. Proxy tool `add_secret` added to
+  `muya_ssh_mcp.rs` tools/list + tools/call.
+- AC19 — Password Store add/edit `secretKind` select gains an "API key" option
+  (`api_key`); TS unions widened in SshPage.tsx / CredentialPicker.tsx /
+  mockBackend.ts; list row renders "API key". `CredMeta` derives `Debug`.
+
+Tests added: 5 Rust (`ac18_api_key_kind_is_valid`, `ac17_add_secret_creates_and_hides_value`,
+`ac17_add_secret_is_create_only`, `ac17_add_secret_requires_unlock`,
+`ac17_add_secret_validates_inputs`) + 1 vitest (AC19 API key render).
+
+Verification observed (Golden Rule §2):
+- `cargo test` → 173 passed (was 168), 0 failed.
+- `npx tsc --noEmit` → clean.
+- `npm test` → 87 passed (was 86).
+- `cargo build --bin muya-ssh-mcp` → ok.
+- Live proxy smoke (built binary): `tools/list` includes `add_secret`
+  (required `[name,value]`, kind enum `[password,key,token,api_key]`);
+  `tools/call add_secret` with no value → `isError:true` "missing required
+  argument 'value'"; with app down → JSON-RPC error -32000 "Muya app not running".

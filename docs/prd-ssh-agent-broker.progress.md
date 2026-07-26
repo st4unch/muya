@@ -53,10 +53,21 @@ started: 2026-07-26
   unit-test'li, arg-policy unit-test'li, wiring canlı-doğrulanmış ssh_open/ssh_run yolunu
   aynalıyor. In-app smoke Faz 3.2 öncesi önerilir.
 
+- **Faz 3.2a impl — DONE 2026-07-26 (mcp-developer opus):** `add_secret` MCP tool +
+  `api_key` kind. AC17-AC19 PASS, bağımsız doğrulandı: 173 rust test (+5), 87 vitest,
+  tsc temiz, **7 MCP tool** kayıtlı. `credstore::add_credential` — unlock-gated,
+  **create-only** (aynı label → hata; injected-agent overwrite koruması, kodu okudum),
+  CredMeta döner (value YOK), path-injectable (test gerçek store'u kirletmez). Broker
+  `add_secret` arm + proxy tool (kind enum). UI: "API key" seçeneği + TS union'lar
+  genişledi. Deviation: token label'ı "Token" olarak ayrıldı ki "API key" ayrı görünsün.
+
 ## Değişiklikler
 | Tarih | Dosya | Ne değişti | AC |
 |-------|-------|-----------|-----|
 | 2026-07-26 | docs/prd-ssh-agent-broker.md | Mini-PRD oluşturuldu (architect GO) | — |
+| 2026-07-26 | src-tauri/src/credstore.rs | add_credential (create-only, unlock-gated) + api_key kind | AC17-AC18 |
+| 2026-07-26 | src-tauri/src/{broker.rs,bin/muya_ssh_mcp.rs} | add_secret op + tool (7. tool) | AC17 |
+| 2026-07-26 | src/components/SshPage.tsx + CredentialPicker + mockBackend | API key kind | AC19 |
 | 2026-07-26 | src-tauri/src/agent_ops.rs (yeni) | op registry + fail-closed arg-policy + env inject + runner | AC13-AC15 |
 | 2026-07-26 | src-tauri/src/credstore.rs | description + token kind + list_meta | AC11-AC12 |
 | 2026-07-26 | src-tauri/src/{broker.rs,bin/muya_ssh_mcp.rs} | list_secrets/list_operations/run_operation | AC12,AC15 |

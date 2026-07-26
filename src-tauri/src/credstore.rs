@@ -62,7 +62,7 @@ pub struct Credential {
 }
 
 /// Non-secret projection returned to the UI — never carries `secret`.
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 pub struct CredMeta {
     pub id: String,
     pub label: String,
@@ -91,8 +91,10 @@ pub struct CredInput {
 
 /// The secret kinds the store accepts. `token` (AC11) covers API tokens/JSON
 /// credential blobs used by the agent-ops engine, alongside SSH passwords/keys.
+/// `api_key` (AC18) is a distinct label for API keys an agent stores via
+/// `add_secret`, so the operator can tell them apart in the UI/list.
 pub(crate) fn valid_secret_kind(kind: &str) -> bool {
-    matches!(kind, "password" | "key" | "token")
+    matches!(kind, "password" | "key" | "token" | "api_key")
 }
 
 /// The decrypted store contents.
@@ -506,6 +508,74 @@ pub(crate) fn list_meta(store: &CredStore) -> Result<Vec<CredMeta>, String> {
         .collect())
 }
 
+/// AC17 — CREATE-ONLY insert of a NEW secret from the SSH broker's `add_secret`
+/// op. Unlike `credstore_cred_upsert`, this NEVER updates an existing credential:
+/// if a credential with the same `label` already exists it errors, so an injected
+/// agent cannot silently overwrite a real operator secret. Gated on an unlocked
+/// store (locked → clear error). Returns the non-secret `CredMeta` — never the
+/// value. Persists the store to disk (AES-256-GCM sealed) before returning.
+pub(crate) fn add_credential(
+    store: &CredStore,
+    label: String,
+    description: String,
+    kind: String,
+    value: String,
+) -> Result<CredMeta, String> {
+    let path = default_store_path()?;
+    add_credential_at(store, &path, label, description, kind, value)
+}
+
+/// Path-injectable core of `add_credential` so tests can seal to a temp vault
+/// instead of clobbering the operator's real store. Do not call directly outside
+/// tests — production goes through `add_credential` (default path).
+fn add_credential_at(
+    store: &CredStore,
+    path: &Path,
+    label: String,
+    description: String,
+    kind: String,
+    value: String,
+) -> Result<CredMeta, String> {
+    if label.trim().is_empty() {
+        return Err("secret `name` is required".into());
+    }
+    if value.is_empty() {
+        return Err("secret `value` is required".into());
+    }
+    if !valid_secret_kind(&kind) {
+        return Err("kind must be 'password', 'key', 'token', or 'api_key'".into());
+    }
+    let mut guard = store.0.lock().map_err(|_| "state poisoned")?;
+    let u = guard
+        .as_mut()
+        .ok_or("password store is locked — unlock it in the Password Store tab")?;
+    // CREATE-ONLY: reject a name collision instead of overwriting (injected-agent
+    // protection). Match on `label`, which is the agent-facing secret name.
+    if u.data.credentials.iter().any(|c| c.label == label) {
+        return Err(format!("a secret named '{label}' already exists"));
+    }
+    let id = new_id();
+    let cred = Credential {
+        id,
+        label,
+        username: String::new(),
+        secret_kind: kind,
+        secret: value,
+        description,
+        key_passphrase: None,
+    };
+    let meta = CredMeta {
+        id: cred.id.clone(),
+        label: cred.label.clone(),
+        username: cred.username.clone(),
+        secret_kind: cred.secret_kind.clone(),
+        description: cred.description.clone(),
+    };
+    u.data.credentials.push(cred);
+    seal_to_path(path, &u.key, &u.kdf, &u.data)?;
+    Ok(meta)
+}
+
 #[tauri::command]
 pub fn credstore_cred_upsert(
     cred: CredInput,
@@ -515,7 +585,7 @@ pub fn credstore_cred_upsert(
     let mut guard = state.0.lock().map_err(|_| "state poisoned")?;
     let u = guard.as_mut().ok_or("store is locked")?;
     if !valid_secret_kind(&cred.secret_kind) {
-        return Err("secretKind must be 'password', 'key', or 'token'".into());
+        return Err("secretKind must be 'password', 'key', 'token', or 'api_key'".into());
     }
     let id = match cred.id.filter(|s| !s.is_empty()) {
         Some(existing) => {
@@ -734,6 +804,167 @@ mod tests {
         assert!(valid_secret_kind("key"));
         assert!(!valid_secret_kind("shell"));
         assert!(!valid_secret_kind(""));
+    }
+
+    // AC18 — `api_key` is accepted alongside the existing kinds; unknown still rejected.
+    #[test]
+    fn ac18_api_key_kind_is_valid() {
+        assert!(valid_secret_kind("api_key"));
+        // The pre-AC18 kinds still validate (no regression).
+        assert!(valid_secret_kind("token"));
+        assert!(valid_secret_kind("password"));
+        assert!(valid_secret_kind("key"));
+        // An unknown kind is still rejected.
+        assert!(!valid_secret_kind("apikey"));
+        assert!(!valid_secret_kind("shell"));
+        assert!(!valid_secret_kind(""));
+    }
+
+    // Build an unlocked in-memory store backed by a temp vault for add_secret tests.
+    fn unlocked_store(path: &Path) -> CredStore {
+        init_at(path, b"pw").unwrap();
+        let unlocked = unlock_at(path, b"pw").unwrap();
+        CredStore(Mutex::new(Some(unlocked)))
+    }
+
+    // AC17 — add_secret writes a NEW credential: it shows up in list_meta, and the
+    // returned meta (nor the store meta) never carries the secret value.
+    #[test]
+    fn ac17_add_secret_creates_and_hides_value() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("vault.enc");
+        let store = unlocked_store(&path);
+
+        let meta = add_credential_at(
+            &store,
+            &path,
+            "gh-token".into(),
+            "workflow token".into(),
+            "api_key".into(),
+            "ghp_SUPERSECRET".into(),
+        )
+        .unwrap();
+        assert_eq!(meta.label, "gh-token");
+        assert_eq!(meta.secret_kind, "api_key");
+
+        // Appears in the agent-facing metadata list.
+        let metas = list_meta(&store).unwrap();
+        assert!(metas.iter().any(|m| m.label == "gh-token"));
+
+        // Neither the returned meta nor list_meta leaks the value.
+        let meta_json = serde_json::to_string(&meta).unwrap();
+        let list_json = serde_json::to_string(&metas).unwrap();
+        for j in [&meta_json, &list_json] {
+            assert!(
+                !j.contains("ghp_SUPERSECRET"),
+                "add_secret leaked value: {j}"
+            );
+            assert!(
+                !j.contains("\"secret\""),
+                "add_secret leaked secret field: {j}"
+            );
+        }
+    }
+
+    // AC17 — CREATE-ONLY: a second add with the SAME name errors (no overwrite of a
+    // real operator secret by an injected agent).
+    #[test]
+    fn ac17_add_secret_is_create_only() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("vault.enc");
+        let store = unlocked_store(&path);
+
+        add_credential_at(
+            &store,
+            &path,
+            "dup".into(),
+            String::new(),
+            "token".into(),
+            "v1".into(),
+        )
+        .unwrap();
+        let err = add_credential_at(
+            &store,
+            &path,
+            "dup".into(),
+            String::new(),
+            "token".into(),
+            "v2-attacker".into(),
+        )
+        .unwrap_err();
+        assert!(err.contains("already exists"), "unexpected: {err}");
+
+        // The original value is untouched (create-only did NOT overwrite).
+        let guard = store.0.lock().unwrap();
+        let u = guard.as_ref().unwrap();
+        let cred = u
+            .data
+            .credentials
+            .iter()
+            .find(|c| c.label == "dup")
+            .unwrap();
+        assert_eq!(cred.secret, "v1");
+        assert_eq!(
+            u.data
+                .credentials
+                .iter()
+                .filter(|c| c.label == "dup")
+                .count(),
+            1
+        );
+    }
+
+    // AC17 — a LOCKED store rejects add_secret with a clear error, no write.
+    #[test]
+    fn ac17_add_secret_requires_unlock() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("vault.enc");
+        let store = CredStore(Mutex::new(None)); // locked
+        let err = add_credential_at(
+            &store,
+            &path,
+            "x".into(),
+            String::new(),
+            "token".into(),
+            "v".into(),
+        )
+        .unwrap_err();
+        assert!(err.contains("locked"), "unexpected: {err}");
+    }
+
+    // AC17 — empty name/value and an invalid kind are rejected up-front.
+    #[test]
+    fn ac17_add_secret_validates_inputs() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("vault.enc");
+        let store = unlocked_store(&path);
+        assert!(add_credential_at(
+            &store,
+            &path,
+            "  ".into(),
+            String::new(),
+            "token".into(),
+            "v".into()
+        )
+        .is_err());
+        assert!(add_credential_at(
+            &store,
+            &path,
+            "n".into(),
+            String::new(),
+            "token".into(),
+            String::new()
+        )
+        .is_err());
+        assert!(add_credential_at(
+            &store,
+            &path,
+            "n".into(),
+            String::new(),
+            "bogus".into(),
+            "v".into()
+        )
+        .is_err());
     }
 
     // AC12 — CredMeta (the projection returned to agents/UI) carries no secret.

@@ -73,7 +73,7 @@ type SshConfig = {
   psmpProfiles: PsmpProfile[];
   cyberark?: CyberarkConfig | null;
 };
-type SecretKind = "password" | "key" | "token";
+type SecretKind = "password" | "key" | "token" | "api_key";
 type CredMeta = { id: string; label: string; username: string; secretKind: SecretKind; description: string };
 type CredStoreStatus = { initialized: boolean; unlocked: boolean };
 
@@ -901,7 +901,7 @@ function StoreTab({
           <div className="text-sm">
             <span className="font-medium">{c.label}</span>{" "}
             <span className="text-xs text-neutral-500 font-mono">
-              {c.username} · {c.secretKind === "key" ? "SSH key" : c.secretKind === "token" ? "token" : "password"}
+              {c.username} · {c.secretKind === "key" ? "SSH key" : c.secretKind === "token" ? "token" : c.secretKind === "api_key" ? "API key" : "password"}
             </span>
             {c.description && <div className="text-xs text-neutral-400 mt-0.5">{c.description}</div>}
           </div>
@@ -940,12 +940,15 @@ function StoreTab({
             <select className={INPUT} value={draft.secretKind} onChange={(e) => setDraft({ ...draft, secretKind: e.target.value as SecretKind })}>
               <option value="password">Password</option>
               <option value="key">SSH private key</option>
-              <option value="token">Token / API key</option>
+              <option value="token">Token</option>
+              <option value="api_key">API key</option>
             </select>
             {draft.secretKind === "password" ? (
               <input type="password" className={INPUT} placeholder="Password" value={draft.secret} onChange={(e) => setDraft({ ...draft, secret: e.target.value })} />
             ) : draft.secretKind === "token" ? (
               <input type="password" className={INPUT} placeholder="Token / API key (or compact JSON)" value={draft.secret} onChange={(e) => setDraft({ ...draft, secret: e.target.value })} />
+            ) : draft.secretKind === "api_key" ? (
+              <input type="password" className={INPUT} placeholder="API key value" value={draft.secret} onChange={(e) => setDraft({ ...draft, secret: e.target.value })} />
             ) : (
               <textarea className={`${INPUT} col-span-2 font-mono h-24`} placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" value={draft.secret} onChange={(e) => setDraft({ ...draft, secret: e.target.value })} />
             )}
