@@ -6,6 +6,39 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-07-26
+
+### Added
+- **Muya can now lend secrets to Claude agents without ever revealing them.** A new
+  `muya-ssh` MCP plugin (registered automatically for agents running in Muya's
+  terminals) exposes tools so an agent can:
+  - **List and connect to SSH servers by alias** — Muya types the password for the
+    agent; it is never shown to the model. Opt in per server with the new
+    "Agent may use this server" toggle.
+  - **Run a command on a server** and get back its output, again without seeing the
+    password.
+  - **Use stored secrets to run operator-defined operations** (e.g. an `aws`/`git`
+    command): the secret is placed in the program's environment and only the output
+    comes back. Operations are defined by you in `~/.claude/muya-agent-ops.json`, and
+    a fail-closed argument policy blocks the escape hatches that would leak a secret.
+  - **Store a newly generated secret** by name for later reuse (write-only — it is
+    never read back).
+- **Password Store** now supports **API key** and **token** secret types and a
+  per-secret **description** (so an agent can pick the right one by name).
+- **Right-click a terminal** in the Sessions panel for **Duplicate** (re-opens it,
+  reconnecting SSH / re-resuming Claude) and **Reveal in Finder**.
+
+### Fixed
+- The app failed to launch in development after a second bundled binary was added;
+  the correct default binary is now declared.
+
+### Security
+- Every secret stays inside the app process: resolved in Rust, injected into the
+  SSH prompt or the child process's environment, and never sent to the agent, the
+  command line, logs, or disk in plaintext. Agent access additionally requires the
+  encrypted store to be unlocked by you, and the broker socket is owner-only
+  (rejects any other user).
+
 ## [0.2.5] - 2026-07-25
 
 ### Added
