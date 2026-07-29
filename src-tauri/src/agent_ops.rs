@@ -40,6 +40,10 @@ use serde::{Deserialize, Serialize};
 /// broker's 256 KiB PTY buffer. Prevents a runaway op from exhausting memory.
 const OUTPUT_CAP: usize = 256 * 1024;
 
+/// Max wall-clock for one operation before it is killed — so a hung fixed program
+/// can never wedge the calling agent forever (it gets a clear timeout error).
+const OP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Flags that can turn a "fixed program" into arbitrary code / exfiltration, no
 /// matter the program. Denied for EVERY op regardless of its allowlist.
 const HARD_DENIED_FLAGS: &[&str] = &[
@@ -356,9 +360,32 @@ pub(crate) fn execute_op(
     let out_handle = std::thread::spawn(move || read_capped(out_pipe));
     let err_handle = std::thread::spawn(move || read_capped(err_pipe));
 
-    let status = child
-        .wait()
-        .map_err(|e| format!("wait '{}': {e}", op.program))?;
+    // Bounded wait: a fixed program that hangs (waits on input we don't provide, a
+    // stalled network call, an interactive prompt) must NOT wedge the tool call
+    // forever — otherwise the agent that invoked it is stuck waiting for a result
+    // it never gets. Poll try_wait to a deadline, then kill. (ssh_run has the same
+    // guard; run_operation previously had none.)
+    let deadline = std::time::Instant::now() + OP_TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(s)) => break s,
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    // Kill closes the pipes → the drain threads return.
+                    let _ = out_handle.join();
+                    let _ = err_handle.join();
+                    return Err(format!(
+                        "operation timed out after {}s and was killed",
+                        OP_TIMEOUT.as_secs()
+                    ));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => return Err(format!("wait '{}': {e}", op.program)),
+        }
+    };
     let stdout = out_handle.join().map_err(|_| "stdout reader panicked")?;
     let stderr = err_handle.join().map_err(|_| "stderr reader panicked")?;
 
