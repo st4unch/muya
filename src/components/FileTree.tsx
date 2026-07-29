@@ -202,13 +202,32 @@ export default function FileTree({
   // flat file list for search
   const [allFiles, setAllFiles] = useState<Entry[]>([]);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const menuElRef = useRef<HTMLDivElement>(null);
 
-  // Close menu on outside click
+  // Close the context menu on an outside press. Two things make this robust and
+  // stop the "menu flickers / needs multiple clicks" behaviour:
+  //   1. Register on the NEXT tick (setTimeout 0) so the very right-click/mouseup
+  //      that OPENED the menu doesn't immediately close it.
+  //   2. Ignore presses that land inside the menu (ref contains check) — item
+  //      clicks handle themselves, so the menu never closes-then-reopens under the
+  //      cursor.
+  // Also listens on `mousedown` (fires before `click`), so a selection is never
+  // lost to a stale re-render.
   useEffect(() => {
     if (!menu) return;
-    const close = () => setMenu(null);
-    window.addEventListener("click", close);
-    return () => window.removeEventListener("click", close);
+    const onDown = (e: MouseEvent) => {
+      if (menuElRef.current?.contains(e.target as Node)) return;
+      setMenu(null);
+    };
+    const id = window.setTimeout(() => {
+      window.addEventListener("mousedown", onDown);
+      window.addEventListener("contextmenu", onDown);
+    }, 0);
+    return () => {
+      window.clearTimeout(id);
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("contextmenu", onDown);
+    };
   }, [menu]);
 
   // Focus search input when opened
@@ -435,8 +454,10 @@ export default function FileTree({
       {/* Context menu */}
       {menu && (
         <div
+          ref={menuElRef}
           style={{ position: "fixed", top: menu.y, left: menu.x, zIndex: 9999 }}
           className="min-w-[210px] bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded shadow-xl py-1 text-xs font-mono"
+          onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
         >
           {/* File-only */}
