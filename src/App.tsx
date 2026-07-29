@@ -5,6 +5,7 @@ import appIconUrl from "./assets/app-icon.png";
 import {
   Folder,
   FileCode,
+  FileText,
   Terminal,
   Layers,
   Sparkles,
@@ -56,6 +57,7 @@ import FileTree from "./components/FileTree";
 import SessionsPage from "./components/SessionsPage";
 import SessionsPanel from "./components/SessionsPanel";
 const FileEditor = lazy(() => import("./components/FileEditor"));
+const MarkdownView = lazy(() => import("./components/MarkdownView"));
 import SessionMonitor from "./components/SessionMonitor";
 import NewAgentModal, { type NewAgentSpec } from "./components/NewAgentModal";
 import QueuePage from "./components/QueuePage";
@@ -95,10 +97,10 @@ interface AgentSession {
 interface OpenTerminal {
   key: string; // unique tab id (session id, "resume:<id>", or "edit:<path>")
   name: string;
-  kind: "terminal" | "editor";
+  kind: "terminal" | "editor" | "mdview";
   cwd?: string;
   initialCommand?: string; // terminals: auto-run on spawn, e.g. `claude attach <id>`
-  filePath?: string; // editors: absolute file path
+  filePath?: string; // editors + mdview: absolute file path
   /** This tab runs a Claude session (vs a plain shell) — drives the icon + resume. */
   isClaude?: boolean;
   /** The Claude session THIS tab was running, captured live and persisted so a
@@ -356,6 +358,24 @@ export default function App() {
       kind: "editor",
       filePath,
     });
+  };
+
+  const isMarkdown = (p: string) => /\.mdx?$/i.test(p);
+
+  /** Default open (single-click / dispatch): markdown opens as a RENDERED read view;
+   *  everything else opens editable in Monaco. "Open in Muya" (right-click) always
+   *  routes to openEditor, so a .md can still be edited on demand. */
+  const openFile = (filePath: string) => {
+    if (isMarkdown(filePath)) {
+      openTerminal({
+        key: `mdview:${filePath}`,
+        name: filePath.split("/").pop() || filePath,
+        kind: "mdview",
+        filePath,
+      });
+    } else {
+      openEditor(filePath);
+    }
   };
 
   const [dirtyTabs, setDirtyTabs] = useState<Record<string, boolean>>({});
@@ -1598,8 +1618,14 @@ export const loginHandler = async (req, res) => {
               roots={trackedPaths}
               removableRoots={new Set(trackedPaths)}
               onOpenFile={(path) => {
-                // Every file — markdown included — opens EDITABLE in the centre
-                // editor. The old read-only markdown side panel is gone.
+                // Single-click: markdown opens as a RENDERED read view; other files
+                // open editable in Monaco. (openFile branches on the extension.)
+                openFile(path);
+                setView("control");
+              }}
+              onOpenFileEditable={(path) => {
+                // Right-click "Open in Muya" always opens editable in Monaco, even
+                // for markdown.
                 openEditor(path);
                 setView("control");
               }}
@@ -1704,12 +1730,12 @@ export const loginHandler = async (req, res) => {
                 <ChevronLeft className="h-3.5 w-3.5" />
               </button>
               <div ref={tabScrollRef} className="flex items-center space-x-0.5 h-full overflow-x-auto flex-1 min-w-0 scroll-smooth" style={{ scrollbarWidth: "none" }}>
-                {viewMode === "tabs" && openTerminals.filter(t => t.kind === "editor").length === 0 && (
+                {viewMode === "tabs" && openTerminals.filter(t => t.kind !== "terminal").length === 0 && (
                   <span className="px-2 text-[11px] font-mono text-neutral-400 dark:text-neutral-500 flex items-center gap-1.5">
                     <FileCode className="h-3.5 w-3.5" /> Open a file to add an editor tab
                   </span>
                 )}
-                {viewMode === "tabs" && openTerminals.filter(t => t.kind === "editor").map((tm) => {
+                {viewMode === "tabs" && openTerminals.filter(t => t.kind !== "terminal").map((tm) => {
                   const isActive = tm.key === activeTerminalKey;
                   const isDragging = tabDragFromRef.current === tm.key;
                   const isDragOver = tabDragOver === tm.key && tabDragFromRef.current !== tm.key;
@@ -1734,10 +1760,10 @@ export const loginHandler = async (req, res) => {
                           : "border-transparent text-neutral-500 dark:text-neutral-400 hover:text-neutral-800 dark:hover:text-neutral-200"
                       }`}
                     >
-                      {tm.kind === "editor" ? (
-                        <FileCode className="h-3.5 w-3.5 text-amber-500 dark:text-amber-400 shrink-0" />
+                      {tm.kind === "mdview" ? (
+                        <FileText className="h-3.5 w-3.5 text-indigo-500 dark:text-indigo-400 shrink-0" />
                       ) : (
-                        <Terminal className="h-3.5 w-3.5 text-indigo-500 dark:text-indigo-400 shrink-0" />
+                        <FileCode className="h-3.5 w-3.5 text-amber-500 dark:text-amber-400 shrink-0" />
                       )}
 
                       {renamingKey === tm.key ? (
@@ -1963,7 +1989,7 @@ export const loginHandler = async (req, res) => {
                     const gridCol = (gridIdx % 2) + 1;
                     const gridRow = Math.floor(gridIdx / 2) + 1;
 
-                    if (tm.kind === "editor") {
+                    if (tm.kind === "editor" || tm.kind === "mdview") {
                       return (
                         <div
                           key={tm.key}
@@ -1972,12 +1998,19 @@ export const loginHandler = async (req, res) => {
                             : { display: "none" }}
                           className="overflow-hidden bg-white dark:bg-[#25272b] rounded-lg border border-neutral-200 dark:border-neutral-700 shadow-inner"
                         >
-                          <Suspense fallback={<div className="flex-1 flex items-center justify-center text-xs text-neutral-400">Loading editor…</div>}>
-                            <FileEditor
-                              path={tm.filePath!}
-                              theme={effectiveTheme}
-                              onDirtyChange={(d) => setDirtyTabs(prev => ({ ...prev, [tm.key]: d }))}
-                            />
+                          <Suspense fallback={<div className="flex-1 flex items-center justify-center text-xs text-neutral-400">Loading…</div>}>
+                            {tm.kind === "mdview" ? (
+                              <MarkdownView
+                                filePath={tm.filePath!}
+                                onEdit={(p) => { closeTerminal(tm.key); openEditor(p); }}
+                              />
+                            ) : (
+                              <FileEditor
+                                path={tm.filePath!}
+                                theme={effectiveTheme}
+                                onDirtyChange={(d) => setDirtyTabs(prev => ({ ...prev, [tm.key]: d }))}
+                              />
+                            )}
                           </Suspense>
                         </div>
                       );

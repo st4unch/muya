@@ -6,23 +6,25 @@
 
 export interface TabLike {
   key: string;
-  kind: "terminal" | "editor";
+  kind: "terminal" | "editor" | "mdview";
 }
+
+// Terminals are one group; file tabs (editor + rendered markdown) are the other.
+// Closing a file must stay among files, never jump onto a terminal (L19).
+const isTerminal = (k: TabLike["kind"]) => k === "terminal";
 
 /** The key that should become active after `closedKey` is removed from `tabs`.
  *  Prefers the nearest same-kind tab (before, then after the closed position). */
 export function pickNextActiveKey(tabs: TabLike[], closedKey: string): string | null {
   const closedIdx = tabs.findIndex((t) => t.key === closedKey);
   if (closedIdx === -1) return tabs[tabs.length - 1]?.key ?? null;
-  const closedKind = tabs[closedIdx].kind;
+  const closedTerm = isTerminal(tabs[closedIdx].kind);
   const next = tabs.filter((t) => t.key !== closedKey);
   if (next.length === 0) return null;
 
-  const before = next
-    .slice(0, closedIdx)
-    .reverse()
-    .find((t) => t.kind === closedKind);
-  const after = next.slice(closedIdx).find((t) => t.kind === closedKind);
+  const sameGroup = (t: TabLike) => isTerminal(t.kind) === closedTerm;
+  const before = next.slice(0, closedIdx).reverse().find(sameGroup);
+  const after = next.slice(closedIdx).find(sameGroup);
   if (before) return before.key;
   if (after) return after.key;
   // No same-kind tab left — fall back to the tab now at the closed position.

@@ -5,6 +5,36 @@
    `.dark` class on <html> from the app theme, so every `dark:` utility responds. */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Rendered read-only markdown (MarkdownView.tsx). Scoped to .md-body so it never
+   leaks into the rest of the app. Theme-aware via the `.dark` variant. */
+.md-body { color: #27272a; font-size: 13px; line-height: 1.65; word-wrap: break-word; }
+.dark .md-body { color: #d4d4d8; }
+.md-body h1, .md-body h2, .md-body h3, .md-body h4 { font-weight: 700; line-height: 1.25; margin: 1.4em 0 0.6em; color: #18181b; }
+.dark .md-body h1, .dark .md-body h2, .dark .md-body h3, .dark .md-body h4 { color: #fafafa; }
+.md-body h1 { font-size: 1.7em; border-bottom: 1px solid #e4e4e7; padding-bottom: .3em; }
+.md-body h2 { font-size: 1.35em; border-bottom: 1px solid #e4e4e7; padding-bottom: .25em; }
+.dark .md-body h1, .dark .md-body h2 { border-color: #3f3f46; }
+.md-body h3 { font-size: 1.15em; } .md-body h4 { font-size: 1em; }
+.md-body p { margin: 0.7em 0; }
+.md-body a { color: #6366f1; text-decoration: underline; }
+.md-body ul, .md-body ol { margin: 0.6em 0; padding-left: 1.5em; }
+.md-body li { margin: 0.25em 0; }
+.md-body code { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.88em; background: #f4f4f5; padding: 0.12em 0.35em; border-radius: 4px; }
+.dark .md-body code { background: #27272a; }
+.md-body pre { background: #f4f4f5; padding: 0.9em 1em; border-radius: 8px; overflow-x: auto; margin: 0.8em 0; }
+.dark .md-body pre { background: #18181b; }
+.md-body pre code { background: none; padding: 0; font-size: 0.85em; }
+.md-body blockquote { border-left: 3px solid #a5b4fc; padding-left: 1em; margin: 0.8em 0; color: #52525b; }
+.dark .md-body blockquote { color: #a1a1aa; border-color: #4f46e5; }
+.md-body table { border-collapse: collapse; margin: 0.8em 0; display: block; overflow-x: auto; }
+.md-body th, .md-body td { border: 1px solid #e4e4e7; padding: 0.4em 0.7em; text-align: left; }
+.dark .md-body th, .dark .md-body td { border-color: #3f3f46; }
+.md-body th { background: #f4f4f5; font-weight: 600; }
+.dark .md-body th { background: #27272a; }
+.md-body hr { border: none; border-top: 1px solid #e4e4e7; margin: 1.2em 0; }
+.dark .md-body hr { border-color: #3f3f46; }
+.md-body img { max-width: 100%; }
+
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Space Grotesk", sans-serif;

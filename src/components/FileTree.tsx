@@ -170,6 +170,7 @@ export default function FileTree({
   roots,
   removableRoots,
   onOpenFile,
+  onOpenFileEditable,
   onRemoveRoot,
   onOpenTerminalHere,
   onOpenClaudeHere,
@@ -183,6 +184,8 @@ export default function FileTree({
   roots: string[];
   removableRoots?: Set<string>;
   onOpenFile?: (path: string) => void;
+  /** "Open in Muya" (right-click) — always opens editable Monaco, even for .md. */
+  onOpenFileEditable?: (path: string) => void;
   onRemoveRoot?: (path: string) => void;
   onOpenTerminalHere?: (cwd: string) => void;
   onOpenClaudeHere?: (cwd: string) => void;
@@ -465,7 +468,7 @@ export default function FileTree({
             <>
               {/* Opens EDITABLE in Muya's centre editor — every file type,
                   markdown included (there is no separate preview panel). */}
-              <MenuItem label="Open in Muya" onClick={() => { onOpenFile?.(menu.path); setMenu(null); }} />
+              <MenuItem label="Open in Muya" onClick={() => { (onOpenFileEditable ?? onOpenFile)?.(menu.path); setMenu(null); }} />
               <MenuItem label="Open in Terminal Here" onClick={() => {
                 const dir = menu.path.split("/").slice(0, -1).join("/");
                 onOpenTerminalHere?.(dir); setMenu(null);
