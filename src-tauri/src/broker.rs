@@ -383,12 +383,14 @@ async fn handle_run_operation(app: &AppHandle, req: &BrokerReq) -> String {
     // Resolve the secret entirely in Rust (only when the op declares one). The
     // store must be unlocked — a locked store yields a clear error, no secret.
     let secret: Option<Zeroizing<String>> = match op.secret_id.as_deref() {
-        Some(id) if !id.is_empty() => {
+        Some(reference) if !reference.is_empty() => {
             let store: State<crate::credstore::CredStore> = app.state();
             if !crate::credstore::is_unlocked(&store) {
                 return err_resp("password store is locked — unlock it in the Password Store tab");
             }
-            match crate::credstore::secret_for(&store, id) {
+            // Ops reference the secret by the NAME the operator gave it (label) or
+            // by id — not the internal hex id alone. secret_for_ref resolves either.
+            match crate::credstore::secret_for_ref(&store, reference) {
                 Ok(s) => Some(s),
                 Err(e) => return err_resp(e),
             }

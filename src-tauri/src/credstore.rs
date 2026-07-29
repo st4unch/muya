@@ -651,6 +651,29 @@ pub(crate) fn secret_for(store: &CredStore, id: &str) -> Result<Zeroizing<String
     Ok(Zeroizing::new(cred.secret.clone()))
 }
 
+/// Resolve a secret by human-facing REFERENCE — its NAME (label) or its id — for
+/// operator-authored agent operations (`muya-agent-ops.json`). Operators reference
+/// a secret by the name they gave it (e.g. `test-apikey-demo`), not the internal
+/// hex id, so match `label` first and fall back to `id`. Same unlock gate + no-leak
+/// contract as `secret_for`. (Fix: ops used `secret_for` (id-only) → a name ref
+/// always failed with "stored credential not found".)
+pub(crate) fn secret_for_ref(
+    store: &CredStore,
+    reference: &str,
+) -> Result<Zeroizing<String>, String> {
+    let guard = store.0.lock().map_err(|_| "state poisoned")?;
+    let u = guard
+        .as_ref()
+        .ok_or("password store is locked — unlock it in the Password Store tab")?;
+    let cred = u
+        .data
+        .credentials
+        .iter()
+        .find(|c| c.label == reference || c.id == reference)
+        .ok_or_else(|| format!("no stored secret named '{reference}' (check the name in muya-agent-ops.json matches a Password Store entry)"))?;
+    Ok(Zeroizing::new(cred.secret.clone()))
+}
+
 /// Cheap unlock probe for the SSH broker's `open` gate: true when the store is
 /// currently unlocked. Never touches secrets, so it is safe to call from the
 /// broker before deciding whether a `local`-sourced server can be opened.
@@ -825,6 +848,39 @@ mod tests {
         init_at(path, b"pw").unwrap();
         let unlocked = unlock_at(path, b"pw").unwrap();
         CredStore(Mutex::new(Some(unlocked)))
+    }
+
+    // Agent-ops secret reference resolves by NAME (label) — the operator's natural
+    // reference — and also by id, while an unknown name errors clearly. Regression
+    // for "stored credential not found" when an op referenced a secret by name.
+    #[test]
+    fn secret_for_ref_resolves_by_name_or_id() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("vault.enc");
+        let store = unlocked_store(&path);
+        let meta = add_credential_at(
+            &store,
+            &path,
+            "test-apikey-demo".into(),
+            "".into(),
+            "api_key".into(),
+            "SECRETVAL".into(),
+        )
+        .unwrap();
+
+        // By name (what the operator writes in muya-agent-ops.json)…
+        assert_eq!(
+            &*secret_for_ref(&store, "test-apikey-demo").unwrap(),
+            "SECRETVAL"
+        );
+        // …and by id (backward-compatible).
+        assert_eq!(&*secret_for_ref(&store, &meta.id).unwrap(), "SECRETVAL");
+        // An unknown reference errors with a helpful message, not a silent match.
+        let err = secret_for_ref(&store, "nope").unwrap_err();
+        assert!(
+            err.contains("no stored secret named 'nope'"),
+            "unexpected: {err}"
+        );
     }
 
     // AC17 — add_secret writes a NEW credential: it shows up in list_meta, and the
