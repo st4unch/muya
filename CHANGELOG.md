@@ -6,6 +6,30 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-07-29
+
+### Added
+- **Claude agents can now read and rotate stored secrets** (not just use them):
+  `get_secret` returns a secret's value when you need to place it into a system
+  you're configuring, and `update_secret` rotates an existing one — both only while
+  the Password Store is unlocked. Storing your systems' passwords here stays safer
+  than a plaintext file (encrypted at rest, human-unlock gated).
+- **Markdown files open as a clean rendered view on single-click** (nice for reading
+  docs); right-click **"Open in Muya"** (or the reader's **Edit** button) still opens
+  the editable editor. Rendered content is sanitized before display.
+
+### Fixed
+- **The muya-ssh MCP tools now resolve a secret by the name you gave it** (in
+  `muya-agent-ops.json`), not only its internal id — fixes "stored credential not
+  found" when an operation referenced a secret by name.
+- **CyberArk "Test connection" now actually sends a password** — it uses the typed
+  password or, if empty, the stored credential you selected (the login-credential
+  picker was previously ignored), and gives a clear error instead of CyberArk's
+  cryptic "Missing mandatory parameter [Password]".
+- **A hung agent operation can no longer freeze the Claude session that called it** —
+  `run_operation` now times out (60s) and reports it, instead of waiting forever.
+- **The file-tree right-click menu no longer flickers / needs several clicks.**
+
 ## [0.2.7] - 2026-07-26
 
 ### Fixed
