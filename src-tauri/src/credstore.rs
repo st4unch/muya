@@ -674,6 +674,53 @@ pub(crate) fn secret_for_ref(
     Ok(Zeroizing::new(cred.secret.clone()))
 }
 
+/// Update an EXISTING secret's value, matched by NAME (label) or id — the write
+/// side of the agent secret store (rotation). Update-only: a missing reference
+/// errors (use `add_credential` to create). Unlock-gated; reseals to disk under
+/// AES-256-GCM. Returns the non-secret `CredMeta` — never the value.
+pub(crate) fn update_credential(
+    store: &CredStore,
+    reference: &str,
+    value: String,
+) -> Result<CredMeta, String> {
+    let path = default_store_path()?;
+    update_credential_at(store, &path, reference, value)
+}
+
+/// Path-injectable core of `update_credential` so tests never touch the real store.
+fn update_credential_at(
+    store: &CredStore,
+    path: &Path,
+    reference: &str,
+    value: String,
+) -> Result<CredMeta, String> {
+    if value.is_empty() {
+        return Err("secret `value` is required".into());
+    }
+    let mut guard = store.0.lock().map_err(|_| "state poisoned")?;
+    let u = guard
+        .as_mut()
+        .ok_or("password store is locked — unlock it in the Password Store tab")?;
+    let cred = u
+        .data
+        .credentials
+        .iter_mut()
+        .find(|c| c.label == reference || c.id == reference)
+        .ok_or_else(|| {
+            format!("no stored secret named '{reference}' — use add_secret to create it first")
+        })?;
+    cred.secret = value;
+    let meta = CredMeta {
+        id: cred.id.clone(),
+        label: cred.label.clone(),
+        username: cred.username.clone(),
+        secret_kind: cred.secret_kind.clone(),
+        description: cred.description.clone(),
+    };
+    seal_to_path(path, &u.key, &u.kdf, &u.data)?;
+    Ok(meta)
+}
+
 /// Cheap unlock probe for the SSH broker's `open` gate: true when the store is
 /// currently unlocked. Never touches secrets, so it is safe to call from the
 /// broker before deciding whether a `local`-sourced server can be opened.
@@ -879,6 +926,36 @@ mod tests {
         let err = secret_for_ref(&store, "nope").unwrap_err();
         assert!(
             err.contains("no stored secret named 'nope'"),
+            "unexpected: {err}"
+        );
+    }
+
+    // update_credential rotates an EXISTING secret by name; a missing name errors
+    // (update-only), and the new value is persisted + readable via secret_for_ref.
+    #[test]
+    fn update_credential_rotates_existing_only() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("vault.enc");
+        let store = unlocked_store(&path);
+        add_credential_at(
+            &store,
+            &path,
+            "aws-key".into(),
+            "".into(),
+            "api_key".into(),
+            "OLD".into(),
+        )
+        .unwrap();
+
+        // Update by name → new value is stored and reads back.
+        let meta = update_credential_at(&store, &path, "aws-key", "NEW".into()).unwrap();
+        assert_eq!(meta.label, "aws-key");
+        assert_eq!(&*secret_for_ref(&store, "aws-key").unwrap(), "NEW");
+
+        // Update-only: a non-existent name errors, does not create.
+        let err = update_credential_at(&store, &path, "ghost", "X".into()).unwrap_err();
+        assert!(
+            err.contains("no stored secret named 'ghost'"),
             "unexpected: {err}"
         );
     }

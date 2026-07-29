@@ -130,6 +130,31 @@ fn tools_list() -> Value {
                 }
             },
             {
+                "name": "get_secret",
+                "description": "Read a stored secret's VALUE by name — use when you must place a stored password/API key into a system you are configuring (a config file, an env var you set, another service). Requires the operator to have unlocked the Password Store. Prefer run_operation when you only need to USE a secret (it never exposes the value); use get_secret only when you genuinely need the value itself.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string", "description": "The secret's name (from list_secrets)." }
+                    },
+                    "required": ["name"],
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "update_secret",
+                "description": "Replace an EXISTING secret's value by name (e.g. after rotating a credential or reconfiguring a system). Fails if the name does not exist (use add_secret to create) or the store is locked. The new value is write-only — never returned.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string", "description": "Name of the existing secret to update." },
+                        "value": { "type": "string", "description": "The new secret value. Write-only — never returned." }
+                    },
+                    "required": ["name", "value"],
+                    "additionalProperties": false
+                }
+            },
+            {
                 "name": "list_operations",
                 "description": "List the fixed operations the operator has defined that agents may run (name + description only). Each operation is a pinned program+subcommand (e.g. an aws/kubectl/git command) that uses a stored secret WITHOUT revealing it. Use the returned name with run_operation.",
                 "inputSchema": { "type": "object", "additionalProperties": false }
@@ -304,6 +329,53 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                     resp.get("error")
                         .and_then(Value::as_str)
                         .unwrap_or("add_secret failed")
+                        .to_string(),
+                ))
+            }
+        }
+        "get_secret" => {
+            let name = match args.get("name").and_then(Value::as_str) {
+                Some(n) if !n.trim().is_empty() => n.to_string(),
+                _ => return Ok(tool_error("missing required argument 'name'")),
+            };
+            let resp =
+                app_call(&json!({ "op": "get_secret", "name": name })).map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                let value = resp.get("value").and_then(Value::as_str).unwrap_or("");
+                // The value is returned to the agent by explicit operator design.
+                Ok(tool_ok(value.to_string(), Some(json!({ "value": value }))))
+            } else {
+                Ok(tool_error(
+                    resp.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("get_secret failed")
+                        .to_string(),
+                ))
+            }
+        }
+        "update_secret" => {
+            let name = match args.get("name").and_then(Value::as_str) {
+                Some(n) if !n.trim().is_empty() => n.to_string(),
+                _ => return Ok(tool_error("missing required argument 'name'")),
+            };
+            let value = match args.get("value").and_then(Value::as_str) {
+                Some(v) if !v.is_empty() => v.to_string(),
+                _ => return Ok(tool_error("missing required argument 'value'")),
+            };
+            let resp = app_call(&json!({ "op": "update_secret", "name": name, "value": value }))
+                .map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                let secret = resp.get("secret").cloned().unwrap_or_else(|| json!({}));
+                let n = secret.get("name").and_then(Value::as_str).unwrap_or("");
+                Ok(tool_ok(
+                    format!("Updated secret '{n}'. The new value is write-only and cannot be read back here."),
+                    Some(json!({ "secret": secret })),
+                ))
+            } else {
+                Ok(tool_error(
+                    resp.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("update_secret failed")
                         .to_string(),
                 ))
             }

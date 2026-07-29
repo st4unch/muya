@@ -337,6 +337,42 @@ async fn handle_request(app: &AppHandle, line: &str) -> String {
                 Err(e) => err_resp(e),
             }
         }
+        // Read a secret's VALUE back to the agent. This is the ONE deliberate
+        // exception to "never reveal a secret" — operator-approved so an agent can
+        // use a stored password to configure another system. Gated only on the
+        // human having unlocked the store (secret_for_ref enforces the lock).
+        "get_secret" => {
+            let name = match req.name.as_deref() {
+                Some(n) if !n.trim().is_empty() => n,
+                _ => return err_resp("`get_secret` requires a non-empty `name`"),
+            };
+            let store: State<crate::credstore::CredStore> = app.state();
+            match crate::credstore::secret_for_ref(&store, name) {
+                Ok(s) => json!({"ok": true, "value": s.as_str()}).to_string(),
+                Err(e) => err_resp(e),
+            }
+        }
+        // Update (rotate) an EXISTING secret's value. Update-only + unlock-gated in
+        // credstore; the response carries only name+kind, never the value.
+        "update_secret" => {
+            let name = match req.name.as_deref() {
+                Some(n) if !n.trim().is_empty() => n.to_string(),
+                _ => return err_resp("`update_secret` requires a non-empty `name`"),
+            };
+            let value = match req.value.as_deref() {
+                Some(v) if !v.is_empty() => v.to_string(),
+                _ => return err_resp("`update_secret` requires a non-empty `value`"),
+            };
+            let store: State<crate::credstore::CredStore> = app.state();
+            match crate::credstore::update_credential(&store, &name, value) {
+                Ok(meta) => json!({
+                    "ok": true,
+                    "secret": { "name": meta.label, "kind": meta.secret_kind },
+                })
+                .to_string(),
+                Err(e) => err_resp(e),
+            }
+        }
         "list_operations" => match crate::agent_ops::load_ops() {
             Ok(ops) => {
                 let metas = crate::agent_ops::op_metas(&ops);
