@@ -455,24 +455,51 @@ pub async fn fetch_password(
 // Tauri commands (thin wrappers; secrets never returned to JS)
 // ---------------------------------------------------------------------------
 
+/// Resolve the effective PVWA logon password: the operator's typed `master` if
+/// non-empty, else the stored credential the CyberArk form points at
+/// (`credential_source` kind = "local"). Errors clearly when neither is available
+/// — far better than CyberArk's cryptic "Missing mandatory parameter [Password]"
+/// (which is what an empty password produced). This also makes the CyberArk form's
+/// "Login credential" picker actually work (it was previously ignored).
+fn resolve_master(
+    config: &CyberarkConfig,
+    master: String,
+    cred: &crate::credstore::CredStore,
+) -> Result<Zeroizing<String>, String> {
+    if !master.is_empty() {
+        return Ok(Zeroizing::new(master));
+    }
+    let src = &config.credential_source;
+    if src.kind == "local" {
+        if let Some(reference) = src.local_cred_id.as_deref().filter(|s| !s.is_empty()) {
+            return crate::credstore::secret_for_ref(cred, reference);
+        }
+    }
+    Err("no PVWA password provided — type the login password in the test field, or select a stored credential as the CyberArk login credential".to_string())
+}
+
 #[tauri::command(async)]
 pub async fn cyberark_logon(
     state: State<'_, CyberarkState>,
+    cred: State<'_, crate::credstore::CredStore>,
     config: CyberarkConfig,
     username: String,
     master: String,
 ) -> Result<(), String> {
-    logon_with(state.inner(), &config, &username, Zeroizing::new(master)).await
+    let master = resolve_master(&config, master, &cred)?;
+    logon_with(state.inner(), &config, &username, master).await
 }
 
 #[tauri::command(async)]
 pub async fn cyberark_test_connection(
     state: State<'_, CyberarkState>,
+    cred: State<'_, crate::credstore::CredStore>,
     config: CyberarkConfig,
     username: String,
     master: String,
 ) -> Result<String, String> {
-    test_connection_with(state.inner(), &config, &username, Zeroizing::new(master)).await
+    let master = resolve_master(&config, master, &cred)?;
+    test_connection_with(state.inner(), &config, &username, master).await
 }
 
 #[tauri::command(async)]
