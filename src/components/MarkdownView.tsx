@@ -15,35 +15,52 @@ import { FileText, Pencil } from "lucide-react";
 export default function MarkdownView({
   filePath,
   onEdit,
+  active = true,
+  reloadTick = 0,
 }: {
   filePath: string;
   /** "Edit" button → open the same file in the Monaco editor (editable). */
   onEdit?: (path: string) => void;
+  /** Whether this tab is the visible one. Only the visible tab reloads on disk
+   *  changes — hidden tabs are never re-read in the background (they refresh when
+   *  you switch to them). */
+  active?: boolean;
+  /** Bumps on any watched-workspace change (App's fsTick). */
+  reloadTick?: number;
 }) {
   const [html, setHtml] = useState<string>("");
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<string>("");
 
+  // Load on open, and — ONLY while visible — reload when the workspace changes (an
+  // agent or an external editor wrote the file). The dep is `active ? reloadTick : 0`
+  // so a hidden tab never re-reads; becoming active flips the dep and catches it up.
+  // A short debounce coalesces the burst of events from a single save/agent write.
   useEffect(() => {
-    let active = true;
-    setStatus("loading");
-    invoke<string>("read_file", { path: filePath })
-      .then((raw) => {
-        if (!active) return;
-        // marked → raw HTML, then DOMPurify strips scripts/handlers/js: URLs.
-        const dirty = marked.parse(raw, { async: false }) as string;
-        setHtml(DOMPurify.sanitize(dirty));
-        setStatus("ready");
-      })
-      .catch((e) => {
-        if (!active) return;
-        setError(String(e));
-        setStatus("error");
-      });
-    return () => {
-      active = false;
+    let cancelled = false;
+    const load = () => {
+      invoke<string>("read_file", { path: filePath })
+        .then((raw) => {
+          if (cancelled) return;
+          // marked → raw HTML, then DOMPurify strips scripts/handlers/js: URLs.
+          const dirty = marked.parse(raw, { async: false }) as string;
+          setHtml(DOMPurify.sanitize(dirty));
+          setStatus("ready");
+        })
+        .catch((e) => {
+          if (cancelled) return;
+          setError(String(e));
+          setStatus("error");
+        });
     };
-  }, [filePath]);
+    if (html === "") setStatus("loading");
+    const t = setTimeout(load, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filePath, active ? reloadTick : 0]);
 
   const name = filePath.split("/").pop() ?? filePath;
 

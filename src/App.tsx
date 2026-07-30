@@ -2002,12 +2002,16 @@ export const loginHandler = async (req, res) => {
                             {tm.kind === "mdview" ? (
                               <MarkdownView
                                 filePath={tm.filePath!}
+                                active={isActiveTab}
+                                reloadTick={fsTick}
                                 onEdit={(p) => { closeTerminal(tm.key); openEditor(p); }}
                               />
                             ) : (
                               <FileEditor
                                 path={tm.filePath!}
                                 theme={effectiveTheme}
+                                active={isActiveTab}
+                                reloadTick={fsTick}
                                 onDirtyChange={(d) => setDirtyTabs(prev => ({ ...prev, [tm.key]: d }))}
                               />
                             )}

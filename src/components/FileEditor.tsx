@@ -29,16 +29,27 @@ export default function FileEditor({
   path,
   theme = "light",
   onDirtyChange,
+  active = true,
+  reloadTick = 0,
 }: {
   path: string;
   theme?: "dark" | "light";
   onDirtyChange?: (dirty: boolean) => void;
+  /** Visible tab? Only the visible editor reloads on disk changes. */
+  active?: boolean;
+  /** Bumps on any watched-workspace change (App's fsTick). */
+  reloadTick?: number;
 }) {
   const monacoTheme = theme === "dark" ? "vs-dark" : "light";
   const [value, setValue] = useState<string>("");
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<string>("");
   const [dirty, setDirty] = useState(false);
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+  // Set when the file changed on disk but the editor has UNSAVED edits — we don't
+  // clobber the user's work; a badge offers a manual reload instead.
+  const [diskChanged, setDiskChanged] = useState(false);
   const [saving, setSaving] = useState(false);
   const [mode, setMode] = useState<"edit" | "diff">("edit");
   const [head, setHead] = useState<string | null>(null);
@@ -63,26 +74,57 @@ export default function FileEditor({
     setMode("diff");
   };
 
+  // Load on open, and — ONLY while visible — reload when the file changes on disk
+  // (agent / external edit). A hidden tab never re-reads (dep collapses to 0);
+  // switching to it flips the dep and catches it up. If the editor has UNSAVED
+  // edits when the disk changes, we do NOT overwrite them — a badge offers reload.
+  const prevPathRef = useRef<string | null>(null);
   useEffect(() => {
-    let active = true;
-    setStatus("loading");
+    const pathChanged = prevPathRef.current !== path;
+    prevPathRef.current = path;
+    let cancelled = false;
+    const doLoad = () => {
+      if (pathChanged) setStatus("loading");
+      invoke<string>("read_file", { path })
+        .then((c) => {
+          if (cancelled) return;
+          setValue(c);
+          setDirty(false);
+          onDirtyChange?.(false);
+          setDiskChanged(false);
+          setStatus("ready");
+        })
+        .catch((e) => {
+          if (cancelled) return;
+          setError(String(e));
+          setStatus("error");
+        });
+    };
+    const t = setTimeout(() => {
+      if (cancelled) return;
+      // Disk changed for the SAME file while the user has unsaved edits → don't
+      // clobber; flag it. Otherwise (new file, or clean editor) reload.
+      if (!pathChanged && dirtyRef.current) setDiskChanged(true);
+      else doLoad();
+    }, pathChanged ? 0 : 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path, active ? reloadTick : 0]);
+
+  /** Manual reload from the "disk changed" badge — discards unsaved edits. */
+  const reloadFromDisk = () => {
     invoke<string>("read_file", { path })
       .then((c) => {
-        if (!active) return;
         setValue(c);
         setDirty(false);
         onDirtyChange?.(false);
-        setStatus("ready");
+        setDiskChanged(false);
       })
-      .catch((e) => {
-        if (!active) return;
-        setError(String(e));
-        setStatus("error");
-      });
-    return () => {
-      active = false;
-    };
-  }, [path]);
+      .catch((e) => setError(String(e)));
+  };
 
   const save = async () => {
     setSaving(true);
@@ -106,6 +148,16 @@ export default function FileEditor({
       <div className="px-3 py-1 border-b border-neutral-200 dark:border-[#3d3f44] bg-neutral-50 dark:bg-[#1e1f23] text-[10px] font-mono text-neutral-500 dark:text-neutral-400 shrink-0 flex items-center justify-between">
         <span className="truncate">{path}</span>
         <span className="flex items-center gap-2 shrink-0">
+          {diskChanged && (
+            <button
+              type="button"
+              onClick={reloadFromDisk}
+              title="This file changed on disk while you had unsaved edits. Reload discards your edits."
+              className="text-rose-600 dark:text-rose-400 hover:underline cursor-pointer"
+            >
+              ⟳ changed on disk — reload
+            </button>
+          )}
           {dirty && <span className="text-amber-600 dark:text-amber-400">● unsaved</span>}
           <button
             type="button"
