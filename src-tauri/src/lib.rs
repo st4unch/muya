@@ -29,6 +29,7 @@ mod bridge_remote;
 mod broker;
 mod credstore;
 mod cyberark;
+mod debuglog;
 mod fs;
 mod history;
 mod metrics;
@@ -98,10 +99,16 @@ pub fn run() {
                 .build(app)?;
             let check_update =
                 MenuItemBuilder::with_id("check_update", "Check for Updates...").build(app)?;
+            // Settings… (⌘, macOS convention) — opens the in-app Settings modal
+            // (debug logging toggle + log path). Emits "menu:settings".
+            let settings_item = MenuItemBuilder::with_id("settings", "Settings…")
+                .accelerator("CmdOrCtrl+,")
+                .build(app)?;
             let app_menu = SubmenuBuilder::new(app, "Muya")
                 .about(None)
                 .separator()
                 .item(&check_update)
+                .item(&settings_item)
                 .separator()
                 .services()
                 .separator()
@@ -129,6 +136,9 @@ pub fn run() {
                 .items(&[&app_menu, &file_menu, &edit_menu])
                 .build()?;
             app.set_menu(menu)?;
+            // Apply persisted debug-logging settings (~/.claude/muya-settings.json)
+            // so CyberArk/SSH step logs start flowing immediately if enabled.
+            debuglog::load_and_apply();
             // AC-1-7: Spawn vault MCP subprocess + warmup at startup.
             // warmup_vault runs asynchronously so it never blocks the setup hook.
             let vault_arc = app.state::<vault::VaultMcpManager>().0.clone();
@@ -178,6 +188,9 @@ pub fn run() {
             }
             "check_update" => {
                 let _ = app.emit("menu:check-update", ());
+            }
+            "settings" => {
+                let _ = app.emit("menu:settings", ());
             }
             "quit" => {
                 let now = SystemTime::now()
@@ -303,6 +316,8 @@ pub fn run() {
             cyberark::cyberark_status,
             agent_ops::agent_ops_list,
             agent_ops::agent_ops_upsert,
+            debuglog::debug_log_set,
+            debuglog::debug_log_get,
             frontend_log
         ])
         .build(tauri::generate_context!())

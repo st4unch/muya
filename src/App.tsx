@@ -65,6 +65,7 @@ import ResourcesPage from "./components/ResourcesPage";
 import SshPage from "./components/SshPage";
 import PrdBoard from "./components/PrdBoard";
 import ScheduledPromptModal, { type ScheduledPrompt } from "./components/ScheduledPromptModal";
+import SettingsModal from "./components/SettingsModal";
 import { buildAgentCommand } from "./lib/agent";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -829,6 +830,17 @@ export default function App() {
   // Scheduled prompts
   const [scheduledPrompts, setScheduledPrompts] = useState<ScheduledPrompt[]>([]);
   const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Native Muya > Settings… (⌘,): the backend menu emits "menu:settings".
+  // Opening the modal (a `fixed inset-0 z-50` + role="dialog" overlay) also lets
+  // the Terminal key-guard suppress PTY input while it is open. Subscribe once.
+  useEffect(() => {
+    const un = listen("menu:settings", () => setSettingsOpen(true));
+    return () => {
+      void un.then((f) => f());
+    };
+  }, []);
 
   // Always-fresh refs so the timer closure never goes stale.
   const scheduledPromptsRef = useRef(scheduledPrompts);
@@ -2438,6 +2450,8 @@ export const loginHandler = async (req, res) => {
         defaultWorkspace={selectedRoot}
         onLaunch={launchAgent}
       />
+
+      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
 
       <ScheduledPromptModal
         open={scheduleOpen}

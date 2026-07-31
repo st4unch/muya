@@ -397,6 +397,17 @@ pub async fn ssh_pty_connect(
         .as_ref()
         .and_then(|pid| cfg.psmp_profiles.iter().find(|p| &p.id == pid));
     let cmd = build_connect_command(&server, psmp)?;
+    // The built argv carries NO secret (PSMP injects the credential; direct
+    // password is injected into the PTY later) — safe to log verbatim.
+    crate::debuglog::log(&format!(
+        "ssh connect: server={} type={} program={} args={:?} cred_source={} injection_armed={}",
+        server.label,
+        server.connection_type,
+        cmd.program,
+        cmd.args,
+        server.credential_source.kind,
+        cmd.needs_password_injection
+    ));
 
     // Resolve the injectable secret (Rust-only). "prompt" injects nothing — the
     // user types the password in the terminal.
@@ -413,10 +424,19 @@ pub async fn ssh_pty_connect(
                 .cyberark_account_id
                 .as_deref()
                 .ok_or("credential source is 'CyberArk account' but no account is selected")?;
+            crate::debuglog::log(&format!(
+                "ssh connect: resolving CyberArk password for account={acct}"
+            ));
             Some(crate::cyberark::fetch_password(&cyber, acct).await?)
         }
         _ => None,
     };
+    // Metadata only — whether a secret was resolved, never the secret itself.
+    crate::debuglog::log(&format!(
+        "ssh connect: spawning PTY (program={}, secret_resolved={})",
+        cmd.program,
+        secret.is_some()
+    ));
 
     crate::pty::spawn_process(
         pty.inner(),

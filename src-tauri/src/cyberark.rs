@@ -189,24 +189,43 @@ async fn do_logon(
     let client = build_client(config.tls_verify, &config.ca_cert_path, timeout)?;
 
     let url = format!("{base}/PasswordVault/API/Auth/{method}/Logon");
+    crate::debuglog::log(&format!(
+        "cyberark do_logon: method={method} username={username} url={url} tls_verify={}",
+        config.tls_verify
+    ));
+    if method.eq_ignore_ascii_case("RADIUS") {
+        crate::debuglog::log(&format!(
+            "cyberark sending logon (method=RADIUS, waiting for push, timeout={}s)",
+            timeout.as_secs()
+        ));
+    } else {
+        crate::debuglog::log(&format!(
+            "cyberark sending logon (method={method}, timeout={}s)",
+            timeout.as_secs()
+        ));
+    }
     let body = serde_json::json!({
         "username": username,
         "password": master.as_str(),
         "concurrentSession": true,
     });
-    let resp = client
-        .post(&url)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("logon request failed: {e}"))?;
+    let resp = client.post(&url).json(&body).send().await.map_err(|e| {
+        crate::debuglog::log(&format!("cyberark logon request failed (transport): {e}"));
+        format!("logon request failed: {e}")
+    })?;
 
     let status = resp.status();
+    crate::debuglog::log(&format!(
+        "cyberark logon response: HTTP {} ({})",
+        status.as_u16(),
+        method
+    ));
     if status.is_success() {
         let text = resp
             .text()
             .await
             .map_err(|e| format!("read logon response: {e}"))?;
+        crate::debuglog::log("cyberark logon OK — token cached");
         return Ok(Session {
             token: parse_token_body(&text),
             base_url: base,
@@ -217,10 +236,16 @@ async fn do_logon(
 
     // v9 fallback — only when the v10 route is absent (old PVWA).
     if status.as_u16() == 404 {
+        crate::debuglog::log("cyberark logon 404 on v10 route — falling back to v9 .svc");
         return do_logon_v9(config, &base, username, master).await;
     }
 
     let text = resp.text().await.unwrap_or_default();
+    crate::debuglog::log(&format!(
+        "cyberark logon FAILED: HTTP {} body={}",
+        status.as_u16(),
+        snippet(&text)
+    ));
     Err(format!(
         "CyberArk logon failed (HTTP {}): {}",
         status.as_u16(),
@@ -240,6 +265,9 @@ async fn do_logon_v9(
     let url = format!(
         "{base}/PasswordVault/WebServices/auth/Cyberark/CyberArkAuthenticationService.svc/Logon"
     );
+    crate::debuglog::log(&format!(
+        "cyberark do_logon_v9: username={username} url={url}"
+    ));
     let body = serde_json::json!({ "username": username, "password": master.as_str() });
     let resp = client
         .post(&url)
@@ -248,8 +276,17 @@ async fn do_logon_v9(
         .await
         .map_err(|e| format!("v9 logon request failed: {e}"))?;
     let status = resp.status();
+    crate::debuglog::log(&format!(
+        "cyberark v9 logon response: HTTP {}",
+        status.as_u16()
+    ));
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
+        crate::debuglog::log(&format!(
+            "cyberark v9 logon FAILED: HTTP {} body={}",
+            status.as_u16(),
+            snippet(&text)
+        ));
         return Err(format!(
             "CyberArk v9 logon failed (HTTP {}): {}",
             status.as_u16(),
@@ -279,12 +316,17 @@ async fn do_logoff(
 ) -> Result<(), String> {
     let client = build_client(tls_verify, ca_cert_path, TIMEOUT_DEFAULT)?;
     let url = format!("{}/PasswordVault/API/Auth/Logoff", trim_base(base));
-    client
+    crate::debuglog::log(&format!("cyberark do_logoff: url={url}"));
+    let resp = client
         .post(&url)
         .header("Authorization", token)
         .send()
         .await
         .map_err(|e| format!("logoff request failed: {e}"))?;
+    crate::debuglog::log(&format!(
+        "cyberark logoff response: HTTP {}",
+        resp.status().as_u16()
+    ));
     Ok(())
 }
 
@@ -301,6 +343,7 @@ async fn do_list(
         trim_base(base),
         urlencode(search)
     );
+    crate::debuglog::log(&format!("cyberark do_list: search={:?} url={url}", search));
     let resp = client
         .get(&url)
         .header("Authorization", token)
@@ -308,8 +351,14 @@ async fn do_list(
         .await
         .map_err(|e| format!("list accounts request failed: {e}"))?;
     let status = resp.status();
+    crate::debuglog::log(&format!("cyberark list response: HTTP {}", status.as_u16()));
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
+        crate::debuglog::log(&format!(
+            "cyberark list FAILED: HTTP {} body={}",
+            status.as_u16(),
+            snippet(&text)
+        ));
         return Err(format!(
             "list accounts failed (HTTP {}): {}",
             status.as_u16(),
@@ -320,7 +369,13 @@ async fn do_list(
         .json()
         .await
         .map_err(|e| format!("parse accounts response: {e}"))?;
-    Ok(parsed.value.into_iter().map(AccountMeta::from).collect())
+    let accounts: Vec<AccountMeta> = parsed.value.into_iter().map(AccountMeta::from).collect();
+    crate::debuglog::log(&format!(
+        "cyberark list accounts (search={:?}) -> {} results",
+        search,
+        accounts.len()
+    ));
+    Ok(accounts)
 }
 
 async fn do_retrieve(
@@ -336,6 +391,9 @@ async fn do_retrieve(
         trim_base(base),
         account_id
     );
+    crate::debuglog::log(&format!(
+        "cyberark do_retrieve: account={account_id} url={url}"
+    ));
     let body = serde_json::json!({ "reason": REASON });
     let resp = client
         .post(&url)
@@ -345,8 +403,18 @@ async fn do_retrieve(
         .await
         .map_err(|e| format!("retrieve password request failed: {e}"))?;
     let status = resp.status();
+    // Status only — NEVER the retrieved password.
+    crate::debuglog::log(&format!(
+        "cyberark retrieve password for account {account_id} -> HTTP {}",
+        status.as_u16()
+    ));
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
+        crate::debuglog::log(&format!(
+            "cyberark retrieve FAILED: account {account_id} HTTP {} body={}",
+            status.as_u16(),
+            snippet(&text)
+        ));
         return Err(format!(
             "retrieve password failed (HTTP {}): {}",
             status.as_u16(),
@@ -399,20 +467,62 @@ async fn test_connection_with(
     master: Zeroizing<String>,
 ) -> Result<String, String> {
     let method = config.auth_method.trim().to_string();
+    crate::debuglog::log(&format!(
+        "cyberark test_connection: single logon (method={method}, no logoff/relogon)"
+    ));
+    // SINGLE logon. The old flow did logon → logoff → logon ("relogon") to prove
+    // the token was live, but for RADIUS 2FA the second logon triggers a SECOND
+    // push and 403s after the operator approved only the first push (bug fix
+    // 2026-07-31). Do ONE logon, cache it so the operator can browse accounts
+    // immediately, then verify the token with ONE lightweight authenticated GET.
     let session = do_logon(config, username, &master).await?;
+    // master drops here (Zeroizing) — used once, never cached.
     let base = session.base_url.clone();
-    // Best-effort logoff to prove the token is live, then re-cache so the user
-    // can immediately browse accounts without re-authenticating.
-    let _ = do_logoff(
-        &session.token,
-        &base,
-        session.tls_verify,
-        &session.ca_cert_path,
-    )
-    .await;
-    let relogon = do_logon(config, username, &master).await?;
-    *state.inner.lock().map_err(|_| "cyberark state poisoned")? = Some(relogon);
-    Ok(format!("OK — authenticated via {method} at {base}"))
+    let tls = session.tls_verify;
+    let ca = session.ca_cert_path.clone();
+    let token = session.token.clone();
+    *state.inner.lock().map_err(|_| "cyberark state poisoned")? = Some(session);
+
+    // Verify the cached token with a single GET (accounts, limit=1). This does NOT
+    // re-authenticate — it just confirms the token works and reports its status.
+    let verify_url = format!("{}/PasswordVault/API/Accounts?limit=1", trim_base(&base));
+    crate::debuglog::log(&format!(
+        "cyberark test_connection: verifying token via GET {verify_url}"
+    ));
+    let verify_status = match build_client(tls, &ca, TIMEOUT_DEFAULT) {
+        Ok(client) => match client
+            .get(&verify_url)
+            .header("Authorization", token.as_str())
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                let code = resp.status().as_u16();
+                crate::debuglog::log(&format!(
+                    "cyberark test_connection: token verify -> HTTP {code}"
+                ));
+                Some(code)
+            }
+            Err(e) => {
+                crate::debuglog::log(&format!(
+                    "cyberark test_connection: token verify request failed: {e}"
+                ));
+                None
+            }
+        },
+        Err(e) => {
+            crate::debuglog::log(&format!(
+                "cyberark test_connection: verify client build failed: {e}"
+            ));
+            None
+        }
+    };
+    match verify_status {
+        Some(code) => Ok(format!(
+            "OK — authenticated via {method} at {base} (token verified, HTTP {code})"
+        )),
+        None => Ok(format!("OK — authenticated via {method} at {base}")),
+    }
 }
 
 async fn list_with(
