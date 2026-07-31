@@ -6,6 +6,16 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-07-31
+
+### Added
+- **Open files refresh when they change on disk.** When an agent (or you, externally)
+  edits a file that's open in Muya, the view updates automatically — only the tab
+  you're looking at reloads (background tabs stay untouched and refresh when you
+  switch to them), so it stays light on CPU. If a file changes in the editor while
+  you have unsaved edits, your work is never overwritten — a "changed on disk —
+  reload" prompt lets you refresh on demand.
+
 ## [0.2.8] - 2026-07-29
 
 ### Added
