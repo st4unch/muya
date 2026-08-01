@@ -231,6 +231,11 @@ export default function FileEditor({
               readOnly: true,
               minimap: { enabled: false },
               automaticLayout: true,
+              unicodeHighlight: {
+                ambiguousCharacters: false,
+                invisibleCharacters: false,
+                nonBasicASCII: false,
+              },
             }}
           />
         ) : (
@@ -261,6 +266,13 @@ export default function FileEditor({
               automaticLayout: true,
               bracketPairColorization: { enabled: true },
               renderWhitespace: "selection",
+              // Turkish text (ı/ş/ğ/ç…) is legitimate content, not a homoglyph
+              // attack — don't flag it as "confusable with ASCII".
+              unicodeHighlight: {
+                ambiguousCharacters: false,
+                invisibleCharacters: false,
+                nonBasicASCII: false,
+              },
             }}
           />
         )}
