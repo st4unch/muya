@@ -46,6 +46,8 @@ type Server = {
   credentialSource: CredentialSource;
   /** Opt-in: may the muya-ssh MCP broker expose this server to Claude agents? */
   agentAccess?: boolean;
+  /** Provenance: was this server registered by a Claude agent via ssh_add_server? */
+  agentAdded?: boolean;
   /** Extra raw ssh CLI options, e.g. `-X -L 8080:localhost:80 -J jump@host`. */
   sshOptions?: string | null;
   lastConnectedAt?: string | null;
@@ -256,7 +258,17 @@ function ServersTab({
         {cfg.servers.map((s) => (
           <div key={s.id} className={`${CARD} flex items-center justify-between`}>
             <div className="min-w-0">
-              <div className="font-medium truncate">{s.label || `${s.username}@${s.host}`}</div>
+              <div className="font-medium truncate flex items-center gap-1.5">
+                <span className="truncate">{s.label || `${s.username}@${s.host}`}</span>
+                {s.agentAdded && (
+                  <span
+                    className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+                    title="Registered by a Claude agent via ssh_add_server — verify the host before attaching a credential."
+                  >
+                    agent-added
+                  </span>
+                )}
+              </div>
               <div className="text-xs text-neutral-500 font-mono truncate">
                 {s.username}@{s.host}:{s.port} · {s.connectionType === "psmp" ? "PSMP" : "direct"} ·{" "}
                 {s.credentialSource.kind}

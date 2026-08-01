@@ -46,6 +46,30 @@ describe("SshPage — Servers", () => {
   });
 });
 
+describe("SshPage — agent-added badge", () => {
+  it("shows an 'agent-added' badge for servers registered by an agent", async () => {
+    // Seed a server flagged agentAdded (as the broker's ssh_add_server would).
+    await mockInvoke("ssh_upsert_server", {
+      server: {
+        id: "",
+        label: "agent-box",
+        host: "10.0.0.9",
+        port: 22,
+        username: "deploy",
+        connectionType: "direct",
+        credentialSource: { kind: "prompt" },
+        agentAccess: true,
+        agentAdded: true,
+        tags: [],
+      },
+    });
+    render(<SshPage />);
+    // The badge renders next to the agent-added server.
+    expect(await screen.findByText("agent-added")).toBeTruthy();
+    expect(await screen.findByText(/deploy@10\.0\.0\.9:22/)).toBeTruthy();
+  });
+});
+
 describe("SshPage — credential reuse", () => {
   it("a stored credential can be picked in the CyberArk form", async () => {
     const user = userEvent.setup();

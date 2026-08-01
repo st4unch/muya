@@ -106,6 +106,22 @@ fn tools_list() -> Value {
                 }
             },
             {
+                "name": "ssh_add_server",
+                "description": "Register a NEW SSH server that you can then use with ssh_open / ssh_run. Provide host and login username (and optionally a label and port; port defaults to 22). Optionally attach a stored credential BY NAME (from list_secrets) so ssh_run can authenticate non-interactively — Muya resolves and injects that secret itself; you never see its value. Omit 'credential' for a server whose password is typed by the operator each time ('prompt'). You CANNOT set raw ssh options, a jump host, or a PSMP profile. The connection is always a direct ssh. Fails if a server for that host+username already exists (it will not overwrite an existing server), or if host/username contain spaces, control characters, or '@'.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "label": { "type": "string", "description": "Optional friendly name / alias for the server. Defaults to the server id if omitted." },
+                        "host": { "type": "string", "description": "Hostname or IP of the SSH server. No spaces, control characters, or '@'." },
+                        "username": { "type": "string", "description": "SSH login username. No spaces, control characters, or '@'." },
+                        "port": { "type": "integer", "description": "SSH port. Defaults to 22.", "minimum": 1, "maximum": 65535 },
+                        "credential": { "type": "string", "description": "Optional name of a stored secret (from list_secrets) to attach as this server's password. Muya injects it at connect time; you never see the value. Omit to have the operator type the password each time." }
+                    },
+                    "required": ["host", "username"],
+                    "additionalProperties": false
+                }
+            },
+            {
                 "name": "list_secrets",
                 "description": "List the names of stored secrets the operator has saved (name, description, kind). The secret VALUES are never returned — you reference a secret only BY NAME when running an operation. Use this to discover which credential to pick for a run_operation call.",
                 "inputSchema": { "type": "object", "additionalProperties": false }
@@ -266,6 +282,48 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                     resp.get("error")
                         .and_then(Value::as_str)
                         .unwrap_or("run failed")
+                        .to_string(),
+                ))
+            }
+        }
+        "ssh_add_server" => {
+            let host = match args.get("host").and_then(Value::as_str) {
+                Some(h) if !h.trim().is_empty() => h.to_string(),
+                _ => return Ok(tool_error("missing required argument 'host'")),
+            };
+            let username = match args.get("username").and_then(Value::as_str) {
+                Some(u) if !u.trim().is_empty() => u.to_string(),
+                _ => return Ok(tool_error("missing required argument 'username'")),
+            };
+            let mut call = json!({ "op": "add_server", "host": host, "username": username });
+            if let Some(label) = args.get("label").and_then(Value::as_str) {
+                if !label.trim().is_empty() {
+                    call["label"] = json!(label);
+                }
+            }
+            if let Some(port) = args.get("port").and_then(Value::as_u64) {
+                call["port"] = json!(port);
+            }
+            if let Some(cred) = args.get("credential").and_then(Value::as_str) {
+                if !cred.trim().is_empty() {
+                    call["credential"] = json!(cred);
+                }
+            }
+            let resp = app_call(&call).map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                let alias = resp.get("alias").and_then(Value::as_str).unwrap_or("");
+                Ok(tool_ok(
+                    format!(
+                        "Registered SSH server '{alias}'. Use it with ssh_open or ssh_run \
+                         by this alias."
+                    ),
+                    Some(json!({ "alias": alias })),
+                ))
+            } else {
+                Ok(tool_error(
+                    resp.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("add_server failed")
                         .to_string(),
                 ))
             }

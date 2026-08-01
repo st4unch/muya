@@ -62,6 +62,13 @@ pub struct Server {
     /// lacking `agentAccess` deserializes to `false` (serde `default`).
     #[serde(rename = "agentAccess", default)]
     pub agent_access: bool,
+    /// Provenance flag (default false): was this server created by a Claude agent
+    /// via the `muya-ssh` broker's `add_server` op (vs. configured by the human in
+    /// the UI)? Drives the "added by agent" badge so the operator scrutinizes an
+    /// agent-chosen host before typing/attaching a credential (confused-deputy
+    /// hardening, PRD D5). Old config JSON lacking `agentAdded` loads as `false`.
+    #[serde(rename = "agentAdded", default)]
+    pub agent_added: bool,
     /// Extra raw `ssh` CLI options inserted before the destination, e.g.
     /// `-X -L 8080:localhost:80 -J jump@host`. Split on whitespace (no shell).
     #[serde(
@@ -194,6 +201,18 @@ fn save(cfg: &SshConfig) -> Result<(), String> {
     save_to(&config_path()?, cfg)
 }
 
+/// Load the on-disk SSH config for the broker's `add_server` op (agentic SSH).
+/// Thin `pub(crate)` wrapper over the private `load()`.
+pub(crate) fn load_config() -> Result<SshConfig, String> {
+    load()
+}
+
+/// Persist the SSH config after an agent-side mutation (broker `add_server`).
+/// Thin `pub(crate)` wrapper over the private `save()` (atomic temp+rename).
+pub(crate) fn save_config(cfg: &SshConfig) -> Result<(), String> {
+    save(cfg)
+}
+
 // ---------------------------------------------------------------------------
 // Dedup + validation (pure, testable)
 // ---------------------------------------------------------------------------
@@ -277,6 +296,114 @@ fn upsert_server_in(cfg: &mut SshConfig, mut server: Server) -> Result<String, S
             Ok(id)
         }
     }
+}
+
+/// Reject values an agent could use to smuggle argv/`user@host` injection into the
+/// `ssh` invocation. A host/username must be a single, plain token: non-empty and
+/// free of whitespace, control chars, newlines, and `@` (which would let an agent
+/// rewrite the `user@host` destination — e.g. `host="h -oProxyCommand=..."` or
+/// `username="u@evil"`). This is load-bearing: everything downstream trusts these
+/// are inert tokens placed verbatim into the ssh destination.
+fn reject_injection(field: &str, value: &str) -> Result<(), String> {
+    if value.trim().is_empty() {
+        return Err(format!("{field} is required"));
+    }
+    if value.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(format!(
+            "{field} must not contain whitespace or control characters"
+        ));
+    }
+    if value.contains('@') {
+        return Err(format!("{field} must not contain '@'"));
+    }
+    Ok(())
+}
+
+/// Create a server ON BEHALF OF a Claude agent (broker `add_server` op). Structural
+/// guardrails (PRD `ssh-agent-add-server`, operator-overridden D1):
+///   * host + username are validated as inert tokens (`reject_injection`) — no
+///     whitespace/control/`@`, so an agent cannot inject ssh flags or rewrite the
+///     destination.
+///   * `connection_type` is FORCED `"direct"` — an agent can never select PSMP
+///     (that needs an operator-authored profile).
+///   * `ssh_options` is FORCED `None` — agents never get raw ssh flags
+///     (`-o ProxyCommand=` would be local RCE on the Muya host).
+///   * `agent_access = true` (the agent may use what it added) and
+///     `agent_added = true` (provenance → UI badge).
+///   * CREATE-ONLY via `upsert_server_in`: a collision with an existing server
+///     (especially a human-configured one) returns `Err` — an agent can NEVER
+///     overwrite an existing server.
+/// `credential_ref` (operator-approved): when `Some`, the server binds
+/// `credentialSource = {kind:"local", localCredId: <ref>}` where `<ref>` is a
+/// secret NAME (or id) resolved at connect time by `secret_for_ref`. When `None`
+/// the server is `{kind:"prompt"}` (the human types the password). The secret value
+/// is NEVER stored here — only the reference. Returns the alias (label, else id).
+pub(crate) fn agent_add_server_in(
+    cfg: &mut SshConfig,
+    label: &str,
+    host: &str,
+    username: &str,
+    port: Option<u16>,
+    credential_ref: Option<String>,
+) -> Result<String, String> {
+    reject_injection("host", host)?;
+    reject_injection("username", username)?;
+    let port = port.unwrap_or(DEFAULT_PORT);
+    if port == 0 {
+        return Err("port must be 1–65535".into());
+    }
+
+    let credential_source = match credential_ref.as_deref() {
+        Some(r) if !r.trim().is_empty() => CredentialSource {
+            kind: "local".into(),
+            local_cred_id: Some(r.to_string()),
+            cyberark_account_id: None,
+        },
+        _ => CredentialSource {
+            kind: "prompt".into(),
+            ..Default::default()
+        },
+    };
+
+    let server = Server {
+        id: String::new(),
+        label: label.trim().to_string(),
+        host: host.trim().to_string(),
+        port,
+        username: username.trim().to_string(),
+        connection_type: "direct".into(), // forced — agent cannot select PSMP
+        psmp_profile_id: None,
+        credential_source,
+        agent_access: true, // the agent may use what it added
+        ssh_options: None,  // forced — agents never get raw ssh flags (`-o ProxyCommand=`)
+        last_connected_at: None,
+        tags: vec![],
+        agent_added: true,
+    };
+
+    // CREATE-ONLY dedup: collision (esp. with a human server) → Err, no overwrite.
+    let id = upsert_server_in(cfg, server)?;
+    let alias = cfg
+        .servers
+        .iter()
+        .find(|s| s.id == id)
+        .map(|s| {
+            if s.label.trim().is_empty() {
+                s.id.clone()
+            } else {
+                s.label.clone()
+            }
+        })
+        .unwrap_or_else(|| id.clone());
+
+    let cred_desc = credential_ref
+        .as_deref()
+        .filter(|r| !r.trim().is_empty())
+        .unwrap_or("prompt");
+    crate::debuglog::log(&format!(
+        "agent added ssh server {alias} ({username}@{host}:{port}, credential={cred_desc})"
+    ));
+    Ok(alias)
 }
 
 // ---------------------------------------------------------------------------
@@ -413,10 +540,13 @@ pub async fn ssh_pty_connect(
     // user types the password in the terminal.
     let secret: Option<Zeroizing<String>> = match server.credential_source.kind.as_str() {
         "local" => {
-            let id = server.credential_source.local_cred_id.as_deref().ok_or(
+            // Resolve by REFERENCE (name OR id): the human UI picker stores an id,
+            // while an agent-added server stores the secret NAME. `secret_for_ref`
+            // matches either, so both paths work.
+            let reference = server.credential_source.local_cred_id.as_deref().ok_or(
                 "credential source is 'Local password store' but no credential is selected",
             )?;
-            Some(crate::credstore::secret_for(&cred, id)?)
+            Some(crate::credstore::secret_for_ref(&cred, reference)?)
         }
         "cyberark" => {
             let acct = server
@@ -581,6 +711,7 @@ mod tests {
             ssh_options: None,
             last_connected_at: None,
             tags: vec![],
+            agent_added: false,
         }
     }
 
@@ -775,5 +906,110 @@ mod tests {
         let mut s = srv("h", 22, "u");
         s.connection_type = "psmp".into();
         assert!(build_connect_command(&s, None).is_err());
+    }
+
+    // ---- agent_add_server_in (PRD ssh-agent-add-server) ------------------
+
+    // A plain agent-add (no credential) creates a direct, prompt server flagged
+    // agent_added + agent_access, with ssh_options forced None.
+    #[test]
+    fn agent_add_creates_prompt_direct_flagged() {
+        let mut cfg = SshConfig::default();
+        let alias =
+            agent_add_server_in(&mut cfg, "web1", "10.0.0.9", "deploy", None, None).unwrap();
+        assert_eq!(alias, "web1");
+        assert_eq!(cfg.servers.len(), 1);
+        let s = &cfg.servers[0];
+        assert!(s.agent_added);
+        assert!(s.agent_access);
+        assert_eq!(s.connection_type, "direct");
+        assert!(s.ssh_options.is_none());
+        assert_eq!(s.port, 22, "port defaults to 22");
+        assert_eq!(s.credential_source.kind, "prompt");
+        assert!(!s.id.is_empty());
+    }
+
+    // Passing a credential ref binds credentialSource kind="local" with the ref
+    // (a NAME) — resolved at connect time, NOT the secret value.
+    #[test]
+    fn agent_add_with_credential_ref_binds_local_by_name() {
+        let mut cfg = SshConfig::default();
+        agent_add_server_in(
+            &mut cfg,
+            "db",
+            "10.0.0.5",
+            "oracle",
+            Some(2222),
+            Some("prod-db-pass".into()),
+        )
+        .unwrap();
+        let s = &cfg.servers[0];
+        assert_eq!(s.port, 2222);
+        assert_eq!(s.credential_source.kind, "local");
+        assert_eq!(
+            s.credential_source.local_cred_id.as_deref(),
+            Some("prod-db-pass")
+        );
+        // The stored Server holds only the reference, never a secret value.
+        let json = serde_json::to_string(s).unwrap();
+        assert!(!json.contains("password") || json.contains("prod-db-pass"));
+        assert!(!json.to_lowercase().contains("secret"));
+    }
+
+    // Injection-shaped host or username is rejected (argv / user@host smuggling).
+    #[test]
+    fn agent_add_rejects_injection_in_host_or_user() {
+        let mut cfg = SshConfig::default();
+        // whitespace (would split into extra argv / flags)
+        assert!(agent_add_server_in(
+            &mut cfg,
+            "x",
+            "h -oProxyCommand=touch /tmp/x",
+            "u",
+            None,
+            None
+        )
+        .is_err());
+        // newline
+        assert!(agent_add_server_in(&mut cfg, "x", "h\nevil", "u", None, None).is_err());
+        // `@` rewrites the destination
+        assert!(agent_add_server_in(&mut cfg, "x", "host", "u@evil", None, None).is_err());
+        assert!(agent_add_server_in(&mut cfg, "x", "h@evil", "u", None, None).is_err());
+        // empty host / user
+        assert!(agent_add_server_in(&mut cfg, "x", "", "u", None, None).is_err());
+        assert!(agent_add_server_in(&mut cfg, "x", "h", "  ", None, None).is_err());
+        // nothing was persisted
+        assert_eq!(cfg.servers.len(), 0);
+    }
+
+    // CREATE-ONLY: an agent cannot overwrite an existing (esp. human) server.
+    #[test]
+    fn agent_add_is_create_only_no_overwrite() {
+        let mut cfg = SshConfig::default();
+        // A human-configured server on the same host/port/user.
+        upsert_server_in(&mut cfg, srv("10.0.0.5", 22, "oracle")).unwrap();
+        let human_id = cfg.servers[0].id.clone();
+        let dup = agent_add_server_in(&mut cfg, "evil", "10.0.0.5", "oracle", Some(22), None);
+        assert!(dup.is_err(), "agent must not overwrite an existing server");
+        assert_eq!(cfg.servers.len(), 1);
+        // The original human server is untouched (not flagged agent_added).
+        assert_eq!(cfg.servers[0].id, human_id);
+        assert!(!cfg.servers[0].agent_added);
+    }
+
+    // agentAdded serde: default false when absent, round-trips under camelCase.
+    #[test]
+    fn agent_added_serde_default_and_roundtrip() {
+        let legacy = r#"{
+            "id":"s1","label":"box","host":"h","port":22,"username":"u",
+            "connectionType":"direct","credentialSource":{"kind":"prompt"},"tags":[]
+        }"#;
+        let s: Server = serde_json::from_str(legacy).unwrap();
+        assert!(!s.agent_added, "missing agentAdded must default to false");
+
+        let mut cfg = SshConfig::default();
+        agent_add_server_in(&mut cfg, "a", "h", "u", None, None).unwrap();
+        let json = serde_json::to_string(&cfg.servers[0]).unwrap();
+        assert!(json.contains("\"agentAdded\":true"));
     }
 }

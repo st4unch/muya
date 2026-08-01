@@ -119,6 +119,18 @@ struct BrokerReq {
     kind: Option<String>,
     #[serde(default)]
     value: Option<String>,
+    /// `add_server` (agentic SSH): the new server's host, login username, optional
+    /// label + port, and an OPTIONAL credential NAME (from list_secrets) to bind.
+    #[serde(default)]
+    host: Option<String>,
+    #[serde(default)]
+    username: Option<String>,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
+    port: Option<u16>,
+    #[serde(default)]
+    credential: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -286,6 +298,41 @@ async fn handle_request(app: &AppHandle, line: &str) -> String {
             }
         }
         "run" => handle_run(app, &servers, &req).await,
+        // Agentic-SSH — register a NEW server the agent can then ssh_open/ssh_run
+        // (PRD ssh-agent-add-server). All guardrails live in `agent_add_server_in`:
+        // forced direct/no-ssh_options, host/user injection rejected, CREATE-ONLY
+        // (no overwrite), and — operator-approved — an OPTIONAL credential bound BY
+        // NAME (resolved+injected Rust-side at connect time; the value never crosses
+        // to the agent). No secret is serialized here.
+        "add_server" => {
+            let host = match req.host.as_deref() {
+                Some(h) if !h.trim().is_empty() => h,
+                _ => return err_resp("`add_server` requires a non-empty `host`"),
+            };
+            let username = match req.username.as_deref() {
+                Some(u) if !u.trim().is_empty() => u,
+                _ => return err_resp("`add_server` requires a non-empty `username`"),
+            };
+            let label = req.label.as_deref().unwrap_or("");
+            let credential = req
+                .credential
+                .as_deref()
+                .filter(|c| !c.trim().is_empty())
+                .map(|c| c.to_string());
+            let mut cfg = match crate::ssh::load_config() {
+                Ok(c) => c,
+                Err(e) => return err_resp(e),
+            };
+            match crate::ssh::agent_add_server_in(
+                &mut cfg, label, host, username, req.port, credential,
+            ) {
+                Ok(alias) => match crate::ssh::save_config(&cfg) {
+                    Ok(()) => json!({"ok": true, "alias": alias}).to_string(),
+                    Err(e) => err_resp(e),
+                },
+                Err(e) => err_resp(e),
+            }
+        }
         // Faz 3.1 — secret-operation broker (AC12/AC15). These do not touch SSH
         // servers; they surface stored-secret metadata + operator-defined ops.
         "list_secrets" => {
@@ -680,6 +727,7 @@ mod tests {
             ssh_options: None,
             last_connected_at: None,
             tags: vec![],
+            agent_added: false,
         }
     }
 
