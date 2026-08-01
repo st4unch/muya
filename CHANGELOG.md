@@ -6,6 +6,24 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.10] - 2026-08-01
+
+### Added
+- **Settings** in the Muya menu (⌘,): a **Debug logging** toggle + a log-file path.
+  When on, every CyberArk and SSH step (auth method, URL, HTTP status, RADIUS push
+  wait, account fetch, connect command) is written to the log — secret VALUES are
+  never logged. Use it to diagnose connection issues.
+- **Agents can register SSH servers** — a new `ssh_add_server` MCP tool completes the
+  agentic SSH loop: an agent adds a server (optionally attaching a stored credential
+  by name) and then uses `ssh_open` / `ssh_run` on it. Guardrails: the agent cannot
+  set raw ssh options or a jump host, host/username are validated, and it can never
+  overwrite a server you configured (agent-added servers are badged in the UI).
+
+### Fixed
+- **CyberArk RADIUS "Test connection" no longer 403s after you approve the push.**
+  The test previously logged on twice (which fired a second 2FA push that failed);
+  it now logs on once and verifies the token with a single read.
+
 ## [0.2.9] - 2026-07-31
 
 ### Added
