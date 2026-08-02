@@ -15,6 +15,7 @@ import {
   Download,
   ExternalLink,
   Star,
+  RefreshCw,
 } from "lucide-react";
 import CreateWithClaudeModal from "./CreateWithClaudeModal";
 
@@ -85,8 +86,11 @@ const rowInactive = "text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 
 
 export default function ResourcesPage({
   onOpenTerminal,
+  onRegisterRefresh,
 }: {
   onOpenTerminal: (spec: OpenTerminalSpec) => void;
+  /** Register this page's refresh fn with the App-level hourly coordinator. */
+  onRegisterRefresh?: (fn: () => Promise<void>) => void;
 }) {
   // ── Local resources ──────────────────────────────────────────────────────
   const [resources, setResources]     = useState<ClaudeResources | null>(null);
@@ -119,13 +123,28 @@ export default function ResourcesPage({
   // ── Search debounce ref ──────────────────────────────────────────────────
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── Load local resources once ────────────────────────────────────────────
-  useEffect(() => {
-    invoke<ClaudeResources>("list_claude_resources")
-      .then(setResources)
-      .catch((e) => setResError(String(e)))
-      .finally(() => setResLoading(false));
+  // ── Load / refresh local resources ─────────────────────────────────────────
+  const refresh = useCallback(async () => {
+    setResLoading(true);
+    setResError(null);
+    try {
+      setResources(await invoke<ClaudeResources>("list_claude_resources"));
+    } catch (e) {
+      setResError(String(e));
+    } finally {
+      setResLoading(false);
+    }
   }, []);
+
+  // Load once on mount (page is always mounted now, so this runs a single time).
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  // Expose refresh to the App-level hourly sequential coordinator.
+  useEffect(() => {
+    onRegisterRefresh?.(refresh);
+  }, [onRegisterRefresh, refresh]);
 
   // ── Fetch marketplace when tab or query changes ───────────────────────────
   const fetchMarket = useCallback(async (q: string) => {
@@ -273,7 +292,15 @@ export default function ResourcesPage({
               onChange={(e) => setQuery(e.target.value)}
             />
           </div>
-          <div className="ml-auto shrink-0">
+          <div className="ml-auto shrink-0 flex items-center gap-2">
+            <button
+              onClick={() => void refresh()}
+              disabled={resLoading}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700 text-neutral-600 dark:text-neutral-300 transition-colors cursor-pointer disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${resLoading ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
             <button
               onClick={() => setCreateOpen(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white transition-colors cursor-pointer"

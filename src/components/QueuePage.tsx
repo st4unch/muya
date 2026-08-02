@@ -58,13 +58,17 @@ export default function QueuePage({
   worktrees = [],
   refreshSignal,
   onWorktreeRemoved,
+  onRegisterRefresh,
   inspect,
   onClearInspect,
 }: {
   paths: string[];
   worktrees?: string[];
+  /** Kept for API symmetry; no longer drives auto-refetch (see below). */
   refreshSignal?: number;
   onWorktreeRemoved?: (path: string) => void;
+  /** Register this page's refresh fn with the App-level hourly coordinator. */
+  onRegisterRefresh?: (fn: () => Promise<void>) => void;
   /** A branch picked in the sidebar to inspect (commits / diff vs base). */
   inspect?: { repo: string; name: string } | null;
   onClearInspect?: () => void;
@@ -104,7 +108,9 @@ export default function QueuePage({
     return () => {
       active = false;
     };
-  }, [inspect, refreshSignal]);
+    // Load only when the user picks a branch to inspect (explicit action) —
+    // no longer re-fetches on every fsTick.
+  }, [inspect]);
 
   useEffect(() => {
     localStorage.setItem(QKEY, JSON.stringify(queue));
@@ -125,19 +131,15 @@ export default function QueuePage({
     }
   }, [paths]);
 
+  // Load once on mount (page is always mounted now, so this runs a single time).
   useEffect(() => {
     void refresh();
-    const t = setInterval(() => {
-      if (!document.hidden) void refresh();
-    }, 5000);
-    return () => clearInterval(t);
   }, [refresh]);
 
-  // Immediate refresh on a real filesystem change (notify watcher).
+  // Expose refresh to the App-level hourly sequential coordinator.
   useEffect(() => {
-    if (refreshSignal !== undefined) void refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshSignal]);
+    onRegisterRefresh?.(refresh);
+  }, [onRegisterRefresh, refresh]);
 
   // Trial-merge check for queued git projects.
   useEffect(() => {

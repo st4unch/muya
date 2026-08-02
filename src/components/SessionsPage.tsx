@@ -46,8 +46,11 @@ function statusColor(s: string) {
 /** Full session view: live sessions (claude agents --json --all) + transcript history. */
 export default function SessionsPage({
   onOpen,
+  onRegisterRefresh,
 }: {
   onOpen: (spec: OpenTerminalSpec) => void;
+  /** Register this page's refresh fn with the App-level hourly coordinator. */
+  onRegisterRefresh?: (fn: () => Promise<void>) => void;
 }) {
   const [live, setLive] = useState<AgentSession[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
@@ -89,13 +92,15 @@ export default function SessionsPage({
     }
   }, []);
 
+  // Load once on mount (page is always mounted now, so this runs a single time).
   useEffect(() => {
     void refresh();
-    const t = setInterval(() => {
-      if (!document.hidden) void refresh();
-    }, 5000);
-    return () => clearInterval(t);
   }, [refresh]);
+
+  // Expose refresh to the App-level hourly sequential coordinator.
+  useEffect(() => {
+    onRegisterRefresh?.(refresh);
+  }, [onRegisterRefresh, refresh]);
 
   const stop = async (s: AgentSession) => {
     try {

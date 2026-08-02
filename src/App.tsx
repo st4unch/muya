@@ -543,6 +543,28 @@ export default function App() {
     };
   }, []);
 
+  // ── Sequential 60-min auto-refresh coordinator ────────────────────────────
+  // The 4 secondary pages are always mounted (hidden off-view) so they load
+  // ONCE and no longer poll on short intervals. Instead each page registers its
+  // own refresh fn here, and a single hourly timer runs them ONE AT A TIME
+  // (awaited in order) so the backend is never hit by all four at once.
+  const pageRefreshers = useRef<Map<string, () => Promise<void>>>(new Map());
+  const registerSessionsRefresh = useCallback((fn: () => Promise<void>) => { pageRefreshers.current.set("sessions", fn); }, []);
+  const registerToolsRefresh    = useCallback((fn: () => Promise<void>) => { pageRefreshers.current.set("tools", fn); }, []);
+  const registerQueueRefresh    = useCallback((fn: () => Promise<void>) => { pageRefreshers.current.set("queue", fn); }, []);
+  const registerPrdRefresh      = useCallback((fn: () => Promise<void>) => { pageRefreshers.current.set("prd", fn); }, []);
+  useEffect(() => {
+    const ORDER = ["sessions", "tools", "queue", "prd"];
+    const t = setInterval(async () => {
+      for (const key of ORDER) {
+        const fn = pageRefreshers.current.get(key);
+        if (!fn) continue; // page not ready yet — skip
+        try { await fn(); } catch { /* keep going with the next page */ }
+      }
+    }, 60 * 60 * 1000); // 60 minutes
+    return () => clearInterval(t);
+  }, []);
+
 
   const killAgent = async (a: AgentSession) => {
     try {
@@ -1612,43 +1634,51 @@ export const loginHandler = async (req, res) => {
         </div>
       )}
 
-      {/* ================= MAIN AREA: Sessions page OR three-panel control plane ================= */}
-      {view === "sessions" && (
+      {/* ================= MAIN AREA: secondary pages (ALWAYS mounted, hidden off-view) =================
+          These 4 pages used to be conditionally rendered, so navigating away unmounted them and
+          navigating back remounted them → a fresh fetch on every click. They are now always mounted
+          and hidden (same pattern as SSH / Chat / Control below), so they load ONCE and refresh only
+          via their manual Refresh button or the hourly sequential coordinator above. */}
+      <div className={`flex-1 flex overflow-hidden ${view !== "sessions" ? "hidden" : ""}`}>
         <SessionsPage
+          onRegisterRefresh={registerSessionsRefresh}
           onOpen={(spec) => {
             if (spec.cwd) ensureWorktreeTracked(spec.cwd);
             openTerminal({ ...spec, kind: "terminal" });
             setView("control");
           }}
         />
-      )}
-      {view === "tools" && (
+      </div>
+      <div className={`flex-1 flex overflow-hidden ${view !== "tools" ? "hidden" : ""}`}>
         <ResourcesPage
+          onRegisterRefresh={registerToolsRefresh}
           onOpenTerminal={(spec) => {
             openTerminal({ ...spec, kind: "terminal" });
             setView("control");
           }}
         />
-      )}
-      {view === "queue" && (
+      </div>
+      <div className={`flex-1 flex overflow-hidden ${view !== "queue" ? "hidden" : ""}`}>
         <QueuePage
           paths={trackedPaths}
           worktrees={worktrees}
           refreshSignal={fsTick}
+          onRegisterRefresh={registerQueueRefresh}
           onWorktreeRemoved={(p) => setWorktrees((prev) => prev.filter((x) => x !== p))}
           inspect={branchInspect}
           onClearInspect={() => setBranchInspect(null)}
         />
-      )}
-      {view === "prd" && (
+      </div>
+      <div className={`flex-1 flex overflow-hidden ${view !== "prd" ? "hidden" : ""}`}>
         <PrdBoard
           workspaces={workspaces.filter((w) => w.startsWith("/"))}
+          onRegisterRefresh={registerPrdRefresh}
           onOpenFile={(path) => {
             openEditor(path);
             setView("control");
           }}
         />
-      )}
+      </div>
       {/* SSH config page — ALWAYS mounted, hidden when off-view, so an in-progress
           add/edit-server form (or CyberArk session) survives navigation to other
           tabs and back. Same always-mount pattern as the control plane below. */}

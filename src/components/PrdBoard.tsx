@@ -161,9 +161,12 @@ function projectOf(prdPath: string): string {
 export default function PrdBoard({
   workspaces,
   onOpenFile,
+  onRegisterRefresh,
 }: {
   workspaces: string[];
   onOpenFile: (path: string) => void;
+  /** Register this page's refresh fn with the App-level hourly coordinator. */
+  onRegisterRefresh?: (fn: () => Promise<void>) => void;
 }) {
   const [docs, setDocs] = useState<PrdDoc[]>([]);
   const [loading, setLoading] = useState(false);
@@ -185,6 +188,11 @@ export default function PrdBoard({
   useEffect(() => {
     if (workspaces.length > 0) void refresh();
   }, [workspaces, refresh]);
+
+  // Expose refresh to the App-level hourly sequential coordinator.
+  useEffect(() => {
+    onRegisterRefresh?.(refresh);
+  }, [onRegisterRefresh, refresh]);
 
   // Distinct projects present, for the project filter pills.
   const projects = [...new Set(docs.map((d) => projectOf(d.prdPath)))].sort();
