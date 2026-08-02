@@ -300,6 +300,7 @@ pub fn run() {
             credstore::credstore_export_master,
             credstore::credstore_import_key,
             credstore::credstore_export_cred,
+            credstore::credstore_reveal_cred,
             ssh::ssh_get_config,
             ssh::ssh_list_servers,
             ssh::ssh_upsert_server,

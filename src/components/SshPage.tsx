@@ -14,6 +14,8 @@ import {
   EyeOff,
   Download,
   Upload,
+  Copy,
+  Check,
 } from "lucide-react";
 
 import CredentialPicker from "./CredentialPicker";
@@ -726,8 +728,10 @@ function StoreTab({
   const [master, setMaster] = useState("");
   const [busy, setBusy] = useState(false);
   const [showMaster, setShowMaster] = useState(false);
-  const [draft, setDraft] = useState<{ label: string; username: string; secretKind: SecretKind; secret: string; description: string } | null>(null);
+  const [draft, setDraft] = useState<{ id?: string; label: string; username: string; secretKind: SecretKind; secret: string; description: string } | null>(null);
   const [importDraft, setImportDraft] = useState<{ label: string; username: string } | null>(null);
+  const [revealed, setRevealed] = useState<Record<string, string>>({});
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const doInit = async () => {
     if (master.length < 4) return setErr("master password must be at least 4 characters");
@@ -825,6 +829,41 @@ function StoreTab({
       setErr(String(e));
     }
   };
+  // Operator-only reveal (Tauri command, never an MCP path). Toggles inline view;
+  // fetches on demand so plaintext isn't preloaded for every row.
+  const toggleReveal = async (id: string) => {
+    if (id in revealed) {
+      setRevealed((r) => {
+        const { [id]: _drop, ...rest } = r;
+        return rest;
+      });
+      return;
+    }
+    try {
+      const value = await invoke<string>("credstore_reveal_cred", { id });
+      setRevealed((r) => ({ ...r, [id]: value }));
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+  const copyCred = async (id: string) => {
+    try {
+      const value = revealed[id] ?? (await invoke<string>("credstore_reveal_cred", { id }));
+      await navigator.clipboard.writeText(value);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId((c) => (c === id ? null : c)), 1500);
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+  const editCred = async (c: CredMeta) => {
+    try {
+      const secret = await invoke<string>("credstore_reveal_cred", { id: c.id });
+      setDraft({ id: c.id, label: c.label, username: c.username, secretKind: c.secretKind, secret, description: c.description ?? "" });
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
 
   if (!store.initialized) {
     return (
@@ -909,22 +948,38 @@ function StoreTab({
       </div>
 
       {creds.map((c) => (
-        <div key={c.id} className={`${CARD} flex justify-between items-center`}>
-          <div className="text-sm">
-            <span className="font-medium">{c.label}</span>{" "}
-            <span className="text-xs text-neutral-500 font-mono">
-              {c.username} · {c.secretKind === "key" ? "SSH key" : c.secretKind === "token" ? "token" : c.secretKind === "api_key" ? "API key" : "password"}
-            </span>
-            {c.description && <div className="text-xs text-neutral-400 mt-0.5">{c.description}</div>}
+        <div key={c.id} className={`${CARD} flex flex-col gap-2`}>
+          <div className="flex justify-between items-center">
+            <div className="text-sm">
+              <span className="font-medium">{c.label}</span>{" "}
+              <span className="text-xs text-neutral-500 font-mono">
+                {c.username} · {c.secretKind === "key" ? "SSH key" : c.secretKind === "token" ? "token" : c.secretKind === "api_key" ? "API key" : "password"}
+              </span>
+              {c.description && <div className="text-xs text-neutral-400 mt-0.5">{c.description}</div>}
+            </div>
+            <div className="flex gap-1 shrink-0">
+              <button type="button" className={BTN_GHOST} onClick={() => toggleReveal(c.id)} title={c.id in revealed ? "Hide value" : "View value"}>
+                {c.id in revealed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+              <button type="button" className={BTN_GHOST} onClick={() => copyCred(c.id)} title="Copy value">
+                {copiedId === c.id ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
+              </button>
+              <button type="button" className={BTN_GHOST} onClick={() => editCred(c)} title="Edit credential">
+                <Pencil className="h-4 w-4" />
+              </button>
+              <button type="button" className={BTN_GHOST} onClick={() => exportCred(c)} title={`Export ${c.secretKind}`}>
+                <Download className="h-4 w-4" />
+              </button>
+              <button type="button" className={`${BTN_GHOST} text-rose-600`} onClick={() => removeCred(c.id)}>
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </div>
           </div>
-          <div className="flex gap-1 shrink-0">
-            <button type="button" className={BTN_GHOST} onClick={() => exportCred(c)} title={`Export ${c.secretKind}`}>
-              <Download className="h-4 w-4" />
-            </button>
-            <button type="button" className={`${BTN_GHOST} text-rose-600`} onClick={() => removeCred(c.id)}>
-              <Trash2 className="h-4 w-4" />
-            </button>
-          </div>
+          {c.id in revealed && (
+            <pre className="text-xs font-mono bg-neutral-100 dark:bg-neutral-800 rounded p-2 whitespace-pre-wrap break-all select-text max-h-40 overflow-auto">
+              {revealed[c.id]}
+            </pre>
+          )}
         </div>
       ))}
 
@@ -946,6 +1001,7 @@ function StoreTab({
 
       {draft && (
         <div className={`${CARD} space-y-2`}>
+          <div className="font-medium text-sm">{draft.id ? "Edit credential" : "New credential"}</div>
           <div className="grid grid-cols-2 gap-2">
             <input className={INPUT} placeholder="Label" value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} />
             <input className={INPUT} placeholder="Username" value={draft.username} onChange={(e) => setDraft({ ...draft, username: e.target.value })} />

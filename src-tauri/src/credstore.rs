@@ -426,6 +426,33 @@ pub fn credstore_export_cred(
     atomic_write(Path::new(&dest), cred.secret.as_bytes())
 }
 
+/// Operator-only reveal of a stored credential's plaintext `secret` by id. Gated
+/// on an unlocked store (locked → clear error). This is exclusively for the
+/// desktop Password Store UI so the human can view/copy/edit their OWN secret —
+/// it is deliberately NOT wired into the MCP broker/proxy, so agents never gain a
+/// raw-reveal path here (they use the operator-opted-in `get_secret` separately).
+/// Never logged.
+#[tauri::command]
+pub fn credstore_reveal_cred(id: String, state: State<'_, CredStore>) -> Result<String, String> {
+    reveal_cred(&state, &id)
+}
+
+/// Pure core of `credstore_reveal_cred` so tests can exercise it against a temp
+/// vault. Returns the plaintext secret for `id`, or a clear error when the store
+/// is locked / the id is unknown.
+pub(crate) fn reveal_cred(store: &CredStore, id: &str) -> Result<String, String> {
+    let guard = store.0.lock().map_err(|_| "state poisoned")?;
+    let u = guard
+        .as_ref()
+        .ok_or("password store is locked — unlock it in the Password Store tab")?;
+    u.data
+        .credentials
+        .iter()
+        .find(|c| c.id == id)
+        .map(|c| c.secret.clone())
+        .ok_or_else(|| "credential not found".into())
+}
+
 /// Export the encrypted store to `dest` as a portable backup. The file is
 /// already AES-256-GCM sealed under the master-derived key, so the backup still
 /// requires the master password to open — no plaintext ever leaves the app (§9).
@@ -928,6 +955,38 @@ mod tests {
             err.contains("no stored secret named 'nope'"),
             "unexpected: {err}"
         );
+    }
+
+    // Operator reveal returns the plaintext by id on an unlocked store, errors
+    // clearly on an unknown id, and refuses when the store is locked. Guards the
+    // desktop view/copy/edit path without exposing a raw-reveal to agents.
+    #[test]
+    fn reveal_cred_unlocked_returns_value_locked_errors() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("vault.enc");
+        let store = unlocked_store(&path);
+        let meta = add_credential_at(
+            &store,
+            &path,
+            "reveal-demo".into(),
+            "".into(),
+            "password".into(),
+            "TOPSECRET".into(),
+        )
+        .unwrap();
+
+        // Unlocked → exact plaintext by id.
+        assert_eq!(reveal_cred(&store, &meta.id).unwrap(), "TOPSECRET");
+        // Unknown id → clear error, never a silent empty value.
+        assert!(reveal_cred(&store, "nope")
+            .unwrap_err()
+            .contains("credential not found"));
+
+        // A locked store refuses to reveal.
+        let locked = CredStore(Mutex::new(None));
+        assert!(reveal_cred(&locked, &meta.id)
+            .unwrap_err()
+            .contains("locked"));
     }
 
     // update_credential rotates an EXISTING secret by name; a missing name errors
