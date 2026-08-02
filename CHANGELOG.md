@@ -6,6 +6,23 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.11] - 2026-08-02
+
+### Added
+- **Password Store: view, copy, and edit a stored credential.** Each credential now
+  has an eye toggle to reveal its value inline, a copy button, and an edit button
+  that loads it back into the form to change the value or details. Revealing requires
+  the store to be unlocked and is a local UI action only — it is never exposed to
+  agents. (Agents already have the separate, opted-in `update_secret` MCP tool.)
+- **Green "DONE" pulse when a Claude session finishes a job.** Complementing the
+  orange "NEEDS YOU" blink (waiting for your input), a terminal's row now pulses green
+  when its Claude session finishes working, so you can tell at a glance which agents
+  are done. Opening the tab clears it; a pending decision (orange) takes priority.
+
+### Fixed
+- Turkish characters (ı/ş/ğ/ç…) are no longer flagged as "confusable with ASCII" in
+  the editor.
+
 ## [0.2.10] - 2026-08-01
 
 ### Added
