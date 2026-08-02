@@ -54,6 +54,7 @@ import {
 import BranchDAG from "./components/BranchDAG";
 import AgentTerminal from "./components/Terminal";
 import FileTree from "./components/FileTree";
+import ChatView from "./components/ChatView";
 import SessionsPage from "./components/SessionsPage";
 import SessionsPanel from "./components/SessionsPanel";
 const FileEditor = lazy(() => import("./components/FileEditor"));
@@ -402,7 +403,7 @@ export default function App() {
   };
 
   // Top-level view switch: the IDE control plane vs the full Sessions page.
-  const [view, setView] = useState<"control" | "sessions" | "queue" | "tools" | "prd" | "ssh">("control");
+  const [view, setView] = useState<"control" | "sessions" | "queue" | "tools" | "prd" | "ssh" | "chat">("control");
   // Action menu for a path clicked in a terminal's output.
   const [pathMenu, setPathMenu] = useState<{ resolved: string; kind: "file" | "dir"; x: number; y: number } | null>(null);
   // Right panel tab: branch matrix vs markdown viewer.
@@ -1512,6 +1513,17 @@ export const loginHandler = async (req, res) => {
           >
             SSH
           </button>
+          <button
+            type="button"
+            onClick={() => setView("chat")}
+            className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
+              view === "chat"
+                ? "bg-indigo-600 dark:bg-indigo-500 text-white font-bold border border-indigo-700 dark:border-indigo-400 shadow-sm"
+                : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
+            }`}
+          >
+            Chat
+          </button>
         </div>
 
         {/* System telemetry ticks right side */}
@@ -1642,6 +1654,11 @@ export const loginHandler = async (req, res) => {
           tabs and back. Same always-mount pattern as the control plane below. */}
       <div className={`flex-1 flex overflow-hidden ${view !== "ssh" ? "hidden" : ""}`}>
         <SshPage onConnect={openSshServer} />
+      </div>
+      {/* Claude-to-Claude chat bridge — ALWAYS mounted, hidden off-view, so an
+          active pairing / conversation survives navigation to other tabs. */}
+      <div className={`flex-1 flex overflow-hidden ${view !== "chat" ? "hidden" : ""}`}>
+        <ChatView />
       </div>
       {/* Control plane — ALWAYS mounted; hidden (not unmounted) on other views so the
           terminal PTYs and any running sessions survive page navigation. xterm guards
