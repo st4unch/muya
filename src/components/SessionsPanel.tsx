@@ -15,8 +15,10 @@ interface Props {
   terminalPtyIds: Record<string, string>;
   /** terminalKey → the shell's CURRENT working directory (polled). Falls back to the spawn cwd. */
   liveCwds?: Record<string, string>;
-  /** Tab keys whose Claude session is waiting for the operator's decision — these blink. */
+  /** Tab keys whose Claude session is waiting for the operator's decision — these blink orange. */
   waitingKeys?: Set<string>;
+  /** Tab keys whose Claude session just FINISHED a job (working → idle/stopped) — pulse green. */
+  doneKeys?: Set<string>;
   renamingKey: string | null;
   renameValue: string;
   setRenamingKey: (k: string | null) => void;
@@ -33,7 +35,7 @@ interface Props {
 }
 
 export default function SessionsPanel({
-  terminals, activeKey, terminalPtyIds, liveCwds, waitingKeys,
+  terminals, activeKey, terminalPtyIds, liveCwds, waitingKeys, doneKeys,
   renamingKey, renameValue, setRenamingKey, setRenameValue,
   onActivate, onClose, onReorder, onRename, onNewTerminal,
   onDuplicate, onRevealInFinder,
@@ -111,6 +113,8 @@ export default function SessionsPanel({
             const isDragOver = dragOver === t.key;
             const hasPty = Boolean(terminalPtyIds[t.key]);
             const needsDecision = Boolean(waitingKeys?.has(t.key));
+            // A finished job pulses green — but a pending decision (orange) wins.
+            const isDone = Boolean(doneKeys?.has(t.key)) && !needsDecision;
 
             return (
               <div
@@ -125,6 +129,8 @@ export default function SessionsPanel({
                 className={`group flex items-center gap-1 rounded border text-[10px] font-mono transition-colors ${
                   needsDecision
                     ? "session-needs-decision border-amber-400 dark:border-amber-500 bg-amber-50 dark:bg-amber-950/30"
+                    : isDone
+                    ? "border-emerald-400 dark:border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30"
                     : isDragOver
                     ? "border-indigo-400 bg-indigo-50 dark:bg-indigo-900/20"
                     : isActive
@@ -186,6 +192,10 @@ export default function SessionsPanel({
                     {needsDecision && renamingKey !== t.key ? (
                       <span className="ml-auto shrink-0 flex items-center gap-1 text-[8px] font-mono font-bold text-amber-600 dark:text-amber-400 animate-pulse" title="Waiting for your decision">
                         NEEDS YOU <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                      </span>
+                    ) : isDone && renamingKey !== t.key ? (
+                      <span className="ml-auto shrink-0 flex items-center gap-1 text-[8px] font-mono font-bold text-emerald-600 dark:text-emerald-400 animate-pulse" title="This session finished a job">
+                        DONE <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                       </span>
                     ) : hasPty && renamingKey !== t.key ? (
                       <span className="ml-auto shrink-0 w-1.5 h-1.5 rounded-full bg-emerald-400" title="PTY active" />

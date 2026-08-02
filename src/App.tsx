@@ -858,6 +858,12 @@ export default function App() {
   const sessionTickRef = useRef(0);
   // Tab keys whose Claude session is waiting-for-input (needs an operator decision).
   const [waitingKeys, setWaitingKeys] = useState<Set<string>>(new Set());
+  // Tab keys whose Claude session just STOPPED working (working → idle/stopped) —
+  // a job finished. These pulse GREEN (vs orange for "needs a decision") until the
+  // operator opens the tab. Detected by a status transition in the session poll.
+  const [doneKeys, setDoneKeys] = useState<Set<string>>(new Set());
+  // Previous polled session status per tab, to detect the working → done edge.
+  const prevSessionStatusRef = useRef<Record<string, string>>({});
   // Waiting tabs the operator has already opened this episode — acknowledged, so
   // they stop blinking even before the ~15s poll notices the answer. Cleared for a
   // tab once it leaves the waiting set, so the NEXT prompt blinks again.
@@ -876,6 +882,23 @@ export default function App() {
     () => deriveBlinkKeys(waitingKeys, activeTerminalKey, ackedWaiting),
     [waitingKeys, activeTerminalKey, ackedWaiting],
   );
+  // Opening a done (green) tab clears it — you've seen that the job finished.
+  useEffect(() => {
+    if (!activeTerminalKey) return;
+    setDoneKeys((prev) => {
+      if (!prev.has(activeTerminalKey)) return prev;
+      const next = new Set(prev);
+      next.delete(activeTerminalKey);
+      return next;
+    });
+  }, [activeTerminalKey]);
+  // The green set the panel shows never includes the active tab.
+  const doneBlinkKeys = useMemo(() => {
+    if (!activeTerminalKey || !doneKeys.has(activeTerminalKey)) return doneKeys;
+    const next = new Set(doneKeys);
+    next.delete(activeTerminalKey);
+    return next;
+  }, [doneKeys, activeTerminalKey]);
   useEffect(() => {
     let cancelled = false;
     const tick = async () => {
@@ -918,6 +941,26 @@ export default function App() {
           const same = prev.size === waiting.size && [...waiting].every((k) => prev.has(k));
           return same ? prev : waiting;
         });
+        // Green "job finished" edge: a tab that WAS "working" and is now "idle" or
+        // "stopped" just completed → mark it done (pulses green). Starting work
+        // again clears it. The active tab is never marked (you're watching it).
+        setDoneKeys((prev) => {
+          const next = new Set(prev);
+          for (const [key, ptyId] of entries) {
+            const cur = byPtySession[ptyId]?.status;
+            const was = prevSessionStatusRef.current[key];
+            if (cur === "working") next.delete(key);
+            else if ((cur === "idle" || cur === "stopped") && was === "working" && key !== activeKeyRef.current) {
+              next.add(key);
+            }
+          }
+          const same = prev.size === next.size && [...next].every((k) => prev.has(k));
+          return same ? prev : next;
+        });
+        for (const [key, ptyId] of entries) {
+          const cur = byPtySession[ptyId]?.status;
+          if (cur) prevSessionStatusRef.current[key] = cur;
+        }
         const sessionByKey: Record<string, { id: string; name: string; status: string }> = {};
         for (const [key, ptyId] of entries) {
           const info = byPtySession[ptyId];
@@ -2141,6 +2184,7 @@ export const loginHandler = async (req, res) => {
                     terminalPtyIds={terminalPtyIds}
                     liveCwds={liveCwds}
                     waitingKeys={blinkKeys}
+                    doneKeys={doneBlinkKeys}
                     renamingKey={renamingKey}
                     renameValue={renameValue}
                     setRenamingKey={setRenamingKey}
@@ -2201,6 +2245,7 @@ export const loginHandler = async (req, res) => {
               terminalPtyIds={terminalPtyIds}
                     liveCwds={liveCwds}
                     waitingKeys={blinkKeys}
+                    doneKeys={doneBlinkKeys}
               renamingKey={renamingKey}
               renameValue={renameValue}
               setRenamingKey={setRenamingKey}
