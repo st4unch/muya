@@ -586,20 +586,46 @@ async fn handle_run(app: &AppHandle, servers: &[Server], req: &BrokerReq) -> Str
         Err(e) => return err_resp(e),
     };
 
+    // AC2/AC3 — the challenge-gate and push-timeout hint are PSMP-only; direct SSH
+    // never sets `is_psmp`, so its behavior (incl. AC4's `passcode:` → inject) is
+    // byte-for-byte the pre-hardening path.
+    let is_psmp = server.connection_type == "psmp";
+
     // AC8 — run the blocking PTY capture off the async runtime.
     let result = tokio::task::spawn_blocking(move || {
-        crate::pty::run_with_injection(&program, &args, secret, RUN_TIMEOUT)
+        crate::pty::run_with_injection(&program, &args, secret, RUN_TIMEOUT, is_psmp)
     })
     .await;
 
     match result {
-        Ok(Ok(out)) => json!({
-            "ok": true,
-            "stdout": out.stdout,
-            "exitCode": out.exit_code,
-            "timedOut": out.timed_out,
-        })
-        .to_string(),
+        // AC2 — a 2FA/OTP/passcode challenge was seen: the secret was withheld,
+        // never written into the PTY. Report a fail-fast, actionable error instead
+        // of the usual ok:true shape so an agent doesn't mistake this for success.
+        Ok(Ok(out)) if out.challenge_detected => err_resp(
+            "PSMP requested a 2FA/interactive challenge (passcode/OTP/verification code) — \
+             non-interactive ssh_run does not support this; use ssh_open for an interactive \
+             session instead.",
+        ),
+        Ok(Ok(out)) => {
+            let mut resp = json!({
+                "ok": true,
+                "stdout": out.stdout,
+                "exitCode": out.exit_code,
+                "timedOut": out.timed_out,
+            });
+            // AC3 — timed out with NO prompt ever seen on a PSMP connection: most
+            // likely a RADIUS push notification waiting for out-of-band approval,
+            // which looks identical to a hung connection otherwise. Flag it so the
+            // agent doesn't retry the same non-interactive call.
+            if is_psmp && out.timed_out && !out.injected {
+                resp["message"] = json!(
+                    "Timed out with no password/2FA prompt seen — this may be a PSMP RADIUS \
+                     push notification awaiting out-of-band approval. Try ssh_open for an \
+                     interactive session instead of retrying ssh_run."
+                );
+            }
+            resp.to_string()
+        }
         Ok(Err(e)) => err_resp(e),
         Err(e) => err_resp(format!("run task failed: {e}")),
     }
