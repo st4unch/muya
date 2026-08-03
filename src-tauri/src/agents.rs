@@ -4,8 +4,10 @@
 //! active task/file) are left empty for now — they come from transcript parsing
 //! in a later phase.
 
+use std::collections::HashMap;
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -60,9 +62,18 @@ pub struct AgentSession {
     pub parent_id: Option<String>,
 }
 
-/// Resolve the `claude` binary: GUI apps on macOS inherit a minimal PATH, so a bare
-/// `claude` may not be found. Try PATH first, then common install locations.
-fn claude_bin() -> String {
+/// Resolve the `claude` binary once per process. The path never changes during a
+/// run, but `list_agent_sessions` is polled on a timer — without caching, every
+/// refresh spawned a throwaway `claude --version` (~38 ms + a full Node startup)
+/// just to re-confirm the same path. `OnceLock` collapses that to a single probe.
+fn claude_bin() -> &'static str {
+    static BIN: OnceLock<String> = OnceLock::new();
+    BIN.get_or_init(resolve_claude_bin).as_str()
+}
+
+/// GUI apps on macOS inherit a minimal PATH, so a bare `claude` may not be found.
+/// Try PATH first, then common install locations.
+fn resolve_claude_bin() -> String {
     if Command::new("claude").arg("--version").output().is_ok() {
         return "claude".to_string();
     }
@@ -81,7 +92,34 @@ fn claude_bin() -> String {
 }
 
 /// Best-effort current branch for a working directory; "—" if not a git repo.
+///
+/// Memoized by cwd with a short TTL: a single Sessions refresh maps many sessions,
+/// and parallel agents commonly share one repo — without the cache each of the N
+/// sessions spawned its own `git rev-parse` (~6 ms apiece) every refresh. The 15 s
+/// TTL keeps within-refresh calls (and rapid manual refreshes) on the cache while
+/// still reflecting a real branch switch on the next cycle.
 fn branch_for(cwd: &str) -> String {
+    static CACHE: OnceLock<Mutex<HashMap<String, (String, Instant)>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    const TTL: std::time::Duration = std::time::Duration::from_secs(15);
+
+    if let Ok(map) = cache.lock() {
+        if let Some((branch, at)) = map.get(cwd) {
+            if at.elapsed() < TTL {
+                return branch.clone();
+            }
+        }
+    }
+
+    let branch = resolve_branch(cwd);
+    if let Ok(mut map) = cache.lock() {
+        map.insert(cwd.to_string(), (branch.clone(), Instant::now()));
+    }
+    branch
+}
+
+/// Uncached `git rev-parse` for a working directory; "—" if not a git repo.
+fn resolve_branch(cwd: &str) -> String {
     Command::new("git")
         .args(["-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"])
         .output()
@@ -373,5 +411,42 @@ mod tests {
             }
             Err(e) => println!("list_agent_sessions errored (claude may be unavailable): {e}"),
         }
+    }
+
+    #[test]
+    fn claude_bin_is_resolved_once_and_stable() {
+        // Cached resolver must return the same path on every call (no re-probe).
+        let a = claude_bin();
+        let b = claude_bin();
+        assert_eq!(a, b, "claude_bin should be stable across calls");
+        assert!(
+            !a.is_empty(),
+            "claude_bin should resolve to a non-empty path"
+        );
+    }
+
+    #[test]
+    fn branch_for_is_memoized_within_ttl() {
+        // The repo root (src-tauri/..) is a git repo in this checkout.
+        let cwd = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
+
+        // Warm the cache, then confirm repeated lookups agree and the cached hit
+        // is far cheaper than the first git spawn (proves no re-spawn per call).
+        let first = branch_for(cwd);
+        let t = Instant::now();
+        let second = branch_for(cwd);
+        let cached_elapsed = t.elapsed();
+
+        assert_eq!(first, second, "cached branch must match the resolved one");
+        assert_eq!(
+            second,
+            resolve_branch(cwd),
+            "cache must return the same value the uncached path would"
+        );
+        // A real `git rev-parse` spawn is milliseconds; a HashMap hit is sub-100µs.
+        assert!(
+            cached_elapsed < std::time::Duration::from_millis(1),
+            "cached branch lookup should skip the git spawn (took {cached_elapsed:?})"
+        );
     }
 }
