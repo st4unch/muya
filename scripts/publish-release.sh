@@ -48,8 +48,18 @@ BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 
 [ -f "$ZIP" ] || die "dist zip missing: $ZIP — run scripts/build-sign-notarize.sh first"
 
-if git rev-parse "$TAG" >/dev/null 2>&1 || gh release view "$TAG" >/dev/null 2>&1; then
-  die "$TAG already exists (tag or release) — bump version in tauri.conf.json first"
+# Refuse to re-release a version that is ALREADY fully published (release exists
+# WITH assets). But allow finishing a PARTIAL publish — a release/tag left behind by
+# an interrupted upload — so a re-run can complete it idempotently (step 3 below
+# detects the existing release and re-uploads with --clobber).
+if gh release view "$TAG" >/dev/null 2>&1; then
+  EXISTING_ASSETS="$(gh release view "$TAG" --json assets --jq '.assets | length' 2>/dev/null || echo 0)"
+  if [ "${EXISTING_ASSETS:-0}" -gt 0 ]; then
+    die "$TAG already fully published ($EXISTING_ASSETS asset(s)) — bump version in tauri.conf.json first"
+  fi
+  ok "$TAG exists but has no assets — resuming a partial publish"
+elif git rev-parse "$TAG" >/dev/null 2>&1; then
+  die "tag $TAG exists without a release — resolve manually (git tag -d $TAG to redo)"
 fi
 # A release without a changelog entry gives the operator no way to see what
 # changed — refuse to publish one (operator standing rule).
@@ -160,13 +170,36 @@ awk -v ver="## [$VERSION]" '
   inside { print }
 ' "$CHANGELOG" > "$NOTES_FILE"
 [ -s "$NOTES_FILE" ] || die "could not extract CHANGELOG section for $VERSION"
-gh release create "$TAG" \
-  --target main \
-  --title "$TAG" \
-  --notes-file "$NOTES_FILE" \
-  "${ASSETS[@]}"
+
+# Create the release WITHOUT assets first, then upload assets separately. Uploading
+# 20+ MB inline with `gh release create` was flaky and repeatedly left the release
+# uncreated (the process stalled mid-upload with neither success nor error). A bare
+# `create` is instant and atomic; splitting off the upload makes each step retryable
+# and idempotent, so a re-run finishes a partial publish instead of dying.
+retry() { # retry <label> <cmd...>
+  local label="$1"; shift
+  local n=1
+  until "$@"; do
+    [ "$n" -ge 3 ] && return 1
+    say "$label failed (attempt $n/3) — retrying in 3s…"; sleep 3; n=$((n+1))
+  done
+}
+
+if gh release view "$TAG" >/dev/null 2>&1; then
+  ok "release $TAG already exists — will (re)upload assets (--clobber)"
+else
+  retry "gh release create" \
+    gh release create "$TAG" --target main --title "$TAG" --notes-file "$NOTES_FILE" \
+    || { rm -f "$NOTES_FILE"; die "gh release create failed after 3 attempts"; }
+  ok "release created (no assets yet)"
+fi
 rm -f "$NOTES_FILE"
-ok "release created"
+
+say "Uploading ${#ASSETS[@]} asset(s)…"
+# --clobber overwrites same-named assets, so re-running is safe and idempotent.
+retry "asset upload" gh release upload "$TAG" "${ASSETS[@]}" --clobber \
+  || die "asset upload failed after 3 attempts — re-run this script to finish (release exists, upload will resume)"
+ok "assets uploaded"
 
 # --- 4. verify ----------------------------------------------------------------
 say "Verifying…"
