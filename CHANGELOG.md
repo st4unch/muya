@@ -6,6 +6,14 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.13] - 2026-08-04
+
+### Fixed
+- **SSH: you can now open multiple terminals at once.** Clicking **Connect** always
+  opens a new, independent terminal — so you can run several sessions to the *same*
+  host side by side, and to different hosts at the same time. Previously a second
+  Connect to a host replaced the first tab instead of adding one.
+
 ## [0.2.12] - 2026-08-03
 
 ### Added
