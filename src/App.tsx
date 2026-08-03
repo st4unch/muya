@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
 import { nextAcked, deriveBlinkKeys } from "./lib/blink";
-import { pickNextActiveKey } from "./lib/tabs";
+import { pickNextActiveKey, newSshTabKey, addSshSession } from "./lib/tabs";
 import appIconUrl from "./assets/app-icon.png";
 import {
   Folder,
@@ -802,11 +802,13 @@ export default function App() {
   // remounts a live PTY that actually re-runs ssh). Shared by the SSH page's
   // Connect button and the muya-ssh MCP broker's `ssh-broker-open` event.
   const openSshServer = useCallback((serverId: string, label: string) => {
-    const key = `ssh:${serverId}:${Date.now()}`;
-    setOpenTerminals((prev) => [
-      ...prev.filter((t) => t.key !== `ssh:${serverId}` && !t.key.startsWith(`ssh:${serverId}:`)),
-      { key, name: label, kind: "terminal", sshServerId: serverId },
-    ]);
+    // Each Connect opens a NEW, independent terminal — supporting multiple parallel
+    // sessions to the same host (and to different hosts). addSshSession never filters
+    // the server's existing tabs (L28); the key is unique per click.
+    const key = newSshTabKey(serverId);
+    setOpenTerminals((prev) =>
+      addSshSession(prev, { key, name: label, kind: "terminal", sshServerId: serverId }),
+    );
     setActiveTerminalKey(key);
     setView("control");
   }, []);
