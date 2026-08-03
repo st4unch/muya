@@ -6,6 +6,25 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.12] - 2026-08-03
+
+### Added
+- **Claude-to-Claude chat is back in the UI.** The bridge that lets two Claude agents
+  talk to each other over a paired connection is re-wired into the Chat view, so you
+  can open it, pair with a peer, and exchange messages again.
+
+### Changed
+- **Sessions / Kanban / Resources / Queue no longer refresh on every click.** Each page
+  now loads once when first opened, has a manual refresh, and auto-refreshes at most
+  once an hour — and never all at the same time (one finishes before the next starts).
+  This cuts constant background CPU use, especially the Sessions poll, without you
+  losing freshness.
+
+### Performance
+- **Faster Sessions refresh.** The list no longer re-probes for the `claude` binary on
+  every refresh and no longer runs a separate git lookup for each session in the same
+  folder, trimming the per-refresh cost. The displayed data is unchanged.
+
 ## [0.2.11] - 2026-08-02
 
 ### Added
