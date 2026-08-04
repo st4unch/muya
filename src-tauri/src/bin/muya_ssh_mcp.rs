@@ -122,6 +122,31 @@ fn tools_list() -> Value {
                 }
             },
             {
+                "name": "ssh_scp",
+                "description": "Copy a file to/from the SSH server with the given alias (from ssh_list_servers), including servers behind a CyberArk PSMP proxy. Muya resolves and injects the credential server-side (never exposed to you) and assembles all ssh/scp options itself. SECURITY: localPath is confined to Muya's configured workspace roots (the folders open in the app) — any path outside them (e.g. ~/.ssh/id_rsa, /etc/passwd, a '..' escape, or a symlink pointing outside) is refused before scp ever runs, and nothing is read/written on your local disk in that case. extraArgs accepts ONLY scp flags -r/-p/-C/-l (never a path) — -o/-F/-i/-S/-P are always rejected, Muya sets those itself. direction is required and explicit ('upload' or 'download') — it is never inferred. Same PSMP 2FA/OTP limitation as ssh_run: a challenge prompt is refused (use ssh_open instead) rather than guessed.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "alias": { "type": "string", "description": "Server alias from ssh_list_servers." },
+                        "direction": {
+                            "type": "string",
+                            "enum": ["upload", "download"],
+                            "description": "Transfer direction. 'upload' copies localPath -> remotePath; 'download' copies remotePath -> localPath. Always explicit, never inferred."
+                        },
+                        "localPath": { "type": "string", "description": "Absolute local path. Must resolve inside one of Muya's configured workspace roots; anything outside is refused before any transfer or filesystem access." },
+                        "remotePath": { "type": "string", "description": "Absolute or relative path on the remote server." },
+                        "recursive": { "type": "boolean", "default": false, "description": "Copy a directory recursively (adds scp -r)." },
+                        "extraArgs": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Optional extra scp FLAGS only (no paths): -r, -p, -C, -l[<limit>]. -o/-F/-i/-S/-P are always rejected."
+                        }
+                    },
+                    "required": ["alias", "direction", "localPath", "remotePath"],
+                    "additionalProperties": false
+                }
+            },
+            {
                 "name": "list_secrets",
                 "description": "List the names of stored secrets the operator has saved (name, description, kind). The secret VALUES are never returned — you reference a secret only BY NAME when running an operation. Use this to discover which credential to pick for a run_operation call.",
                 "inputSchema": { "type": "object", "additionalProperties": false }
@@ -282,6 +307,98 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                     resp.get("error")
                         .and_then(Value::as_str)
                         .unwrap_or("run failed")
+                        .to_string(),
+                ))
+            }
+        }
+        "ssh_scp" => {
+            let alias = match args.get("alias").and_then(Value::as_str) {
+                Some(a) if !a.trim().is_empty() => a.to_string(),
+                _ => return Ok(tool_error("missing required argument 'alias'")),
+            };
+            let direction = match args.get("direction").and_then(Value::as_str) {
+                Some(d) if d == "upload" || d == "download" => d.to_string(),
+                Some(other) => {
+                    return Ok(tool_error(format!(
+                        "'direction' must be 'upload' or 'download', got '{other}'"
+                    )))
+                }
+                None => return Ok(tool_error("missing required argument 'direction'")),
+            };
+            let local_path = match args.get("localPath").and_then(Value::as_str) {
+                Some(p) if !p.trim().is_empty() => p.to_string(),
+                _ => return Ok(tool_error("missing required argument 'localPath'")),
+            };
+            let remote_path = match args.get("remotePath").and_then(Value::as_str) {
+                Some(p) if !p.trim().is_empty() => p.to_string(),
+                _ => return Ok(tool_error("missing required argument 'remotePath'")),
+            };
+            let recursive = args
+                .get("recursive")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let extra_args: Vec<String> = match args.get("extraArgs") {
+                None | Some(Value::Null) => vec![],
+                Some(Value::Array(items)) => {
+                    let mut out = Vec::with_capacity(items.len());
+                    for it in items {
+                        match it.as_str() {
+                            Some(s) => out.push(s.to_string()),
+                            None => {
+                                return Ok(tool_error("'extraArgs' must be an array of strings"))
+                            }
+                        }
+                    }
+                    out
+                }
+                Some(_) => return Ok(tool_error("'extraArgs' must be an array of strings")),
+            };
+            let resp = app_call(&json!({
+                "op": "scp",
+                "alias": alias,
+                "direction": direction,
+                "localPath": local_path,
+                "remotePath": remote_path,
+                "recursive": recursive,
+                "extraArgs": extra_args,
+            }))
+            .map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                let resolved_local = resp
+                    .get("localPath")
+                    .and_then(Value::as_str)
+                    .unwrap_or(&local_path);
+                let timed_out = resp.get("timedOut").and_then(Value::as_bool) == Some(true);
+                let exit_note = match resp.get("exitCode").and_then(Value::as_i64) {
+                    Some(code) => format!("[exit code: {code}]"),
+                    None => "[exit code: unknown]".to_string(),
+                };
+                let mut text = format!(
+                    "{direction} '{resolved_local}' <-> '{remote_path}' on '{alias}' complete.\n"
+                );
+                if timed_out {
+                    text.push_str("[transfer timed out and was terminated]\n");
+                }
+                if let Some(msg) = resp.get("message").and_then(Value::as_str) {
+                    text.push_str(msg);
+                    text.push('\n');
+                }
+                text.push_str(&exit_note);
+                Ok(tool_ok(
+                    text,
+                    Some(json!({
+                        "direction": direction,
+                        "localPath": resolved_local,
+                        "remotePath": remote_path,
+                        "exitCode": resp.get("exitCode").cloned().unwrap_or(Value::Null),
+                        "timedOut": timed_out,
+                    })),
+                ))
+            } else {
+                Ok(tool_error(
+                    resp.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("scp failed")
                         .to_string(),
                 ))
             }
