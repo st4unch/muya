@@ -6,6 +6,21 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.14] - 2026-08-04
+
+### Changed
+- **Agents can run commands through CyberArk PSM for SSH (PSMP) more safely.** When an
+  agent uses `ssh_run` on a PSMP-fronted server and PSMP asks for a 2FA/OTP/passcode
+  (RADIUS) code, Muya no longer submits the stored password into that prompt — it stops
+  and tells the agent to use the interactive `ssh_open` instead. This prevents wasted
+  logins and possible account lockouts. A PSMP connection that just times out with no
+  prompt now returns a clearer "this may be a RADIUS push — use ssh_open" hint. Ordinary
+  (non-PSMP) SSH command runs are unchanged.
+
+### Note
+- The PSMP command-run path is verified by unit tests; end-to-end confirmation against a
+  live PSMP server is still pending an operator test.
+
 ## [0.2.13] - 2026-08-04
 
 ### Fixed
