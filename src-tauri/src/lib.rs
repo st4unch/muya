@@ -32,6 +32,7 @@ mod cyberark;
 mod debuglog;
 mod fs;
 mod history;
+mod local_guard;
 mod metrics;
 mod pm;
 mod pty;
@@ -41,6 +42,7 @@ mod testutil;
 mod validate;
 mod vault;
 mod watcher;
+mod workspace_roots;
 
 /// Frontend errors (window.onerror / unhandledrejection) are forwarded here so
 /// they land in the same persistent log file as the Rust logs.
@@ -317,6 +319,7 @@ pub fn run() {
             cyberark::cyberark_status,
             agent_ops::agent_ops_list,
             agent_ops::agent_ops_upsert,
+            workspace_roots::set_workspace_roots,
             debuglog::debug_log_set,
             debuglog::debug_log_get,
             frontend_log

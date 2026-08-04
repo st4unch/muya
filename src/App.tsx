@@ -621,6 +621,10 @@ export default function App() {
   // Watch tracked projects in real time (notify); refresh views on change.
   useEffect(() => {
     void invoke("start_watching", { paths: trackedPaths }).catch(() => {});
+    // Mirror the same tracked paths to the Rust side as the `ssh_scp` MCP tool's
+    // local-filesystem guardrail (PRD ssh-scp, AC3): agents may only read/write
+    // localPath inside one of these roots. No secret involved — plain folder paths.
+    void invoke("set_workspace_roots", { roots: trackedPaths }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaces, worktrees]);
 
