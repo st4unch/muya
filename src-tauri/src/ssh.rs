@@ -100,6 +100,18 @@ pub struct PsmpProfile {
     pub user_delim: String,
     #[serde(rename = "paramDelim", default = "hash_delim")]
     pub param_delim: String,
+    /// PRD `ssh-scp` — extra `-o KEY=VAL …` tokens (operator-authored, whitespace
+    /// split, no shell) that `ssh_scp` appends for this profile's PSMP servers.
+    /// The AGENT can never pass `-o` itself (hard-denied by `enforce_scp_arg_policy`);
+    /// this is the ONLY way scp gets PSMP-required `-o` options, and only the
+    /// operator can set it (UI form / config file). Absent in old config JSON ⇒
+    /// `None` (serde `default`) — back-compat, no scpOptions applied.
+    #[serde(
+        rename = "scpOptions",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub scp_options: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -593,6 +605,133 @@ pub(crate) fn connect_command_for(server: &Server) -> Result<ConnectCommand, Str
     build_connect_command(server, psmp)
 }
 
+// ---------------------------------------------------------------------------
+// SCP command building (PRD `ssh-scp`) — reuses the same server/PSMP config as
+// `build_connect_command`, but never lets the agent supply `-o`/port-in-dest:
+// Muya alone assembles the destination string and any `-o` options.
+// ---------------------------------------------------------------------------
+
+/// Explicit transfer direction — NEVER inferred from argument order/shape (a
+/// mistaken inference could turn a download into an upload of the wrong file, or
+/// vice versa). The broker parses the agent's `direction` string into this enum
+/// before any path is touched.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ScpDirection {
+    Upload,
+    Download,
+}
+
+/// The `scp` invocation to run. Like `ConnectCommand`, NEVER carries a secret —
+/// the credential (when needed) is injected into the PTY by `run_with_injection`,
+/// exactly as `ssh_run` does.
+pub(crate) struct ScpCommand {
+    pub program: String,
+    pub args: Vec<String>,
+    pub needs_password_injection: bool,
+}
+
+/// Build the `scp` argv for one transfer (PURE, testable). `extra_args` MUST
+/// already be policed by the caller (`enforce_scp_arg_policy` in `broker.rs`) —
+/// this function does not re-validate flags, only assembles the command.
+/// `local_path` MUST already be guardrail-checked (`local_guard::resolve_local_scp_path`)
+/// — this function trusts it verbatim.
+///
+/// PSMP destination (verified against `docs.cyberark.com`, PRD AC5): SCP has no
+/// `#`-delimited "extra params" syntax the way an interactive `ssh` PSMP session
+/// does (`#` is not a valid SCP host-spec separator), so the destination is ONLY
+/// `vaultUser@targetUser@targetAddress@psmpAddress` — a single `@`-delimited
+/// chain — and a non-default port is passed via `-P`, never embedded in the dest.
+pub(crate) fn build_scp_command(
+    server: &Server,
+    psmp: Option<&PsmpProfile>,
+    direction: ScpDirection,
+    local_path: &str,
+    remote_path: &str,
+    recursive: bool,
+    extra_args: &[String],
+) -> Result<ScpCommand, String> {
+    let mut args: Vec<String> = Vec::new();
+    // Muya-owned diagnostics option — mirrors `assemble_run_args`'s forced
+    // `-o LogLevel=ERROR` so verbose ssh/scp chatter can't leak into captured
+    // output. Always first, before anything agent- or profile-supplied.
+    args.push("-o".to_string());
+    args.push("LogLevel=ERROR".to_string());
+
+    let dest_spec = if server.connection_type == "psmp" {
+        let p = psmp.ok_or("PSMP server has no profile")?;
+        if server.port != DEFAULT_PORT {
+            args.push("-P".to_string());
+            args.push(server.port.to_string());
+        }
+        // Operator-authored `-o KEY=VAL …` for this PSMP profile ONLY — the agent
+        // never supplies `-o` (hard-denied in enforce_scp_arg_policy).
+        if let Some(opts) = p.scp_options.as_deref() {
+            for tok in opts.split_whitespace() {
+                args.push(tok.to_string());
+            }
+        }
+        format!(
+            "{vu}@{tu}@{ta}@{px}",
+            vu = p.vault_user,
+            tu = server.username,
+            ta = server.host,
+            px = p.psmp_address
+        )
+    } else {
+        if server.port != DEFAULT_PORT {
+            args.push("-P".to_string());
+            args.push(server.port.to_string());
+        }
+        format!("{}@{}", server.username, server.host)
+    };
+
+    if recursive {
+        args.push("-r".to_string());
+    }
+    // Agent-supplied flags — ALREADY policed by `enforce_scp_arg_policy` before
+    // this function is called (fail-closed: `-o/-F/-i/-S/-P` never reach here).
+    args.extend(extra_args.iter().cloned());
+
+    let (src, dst) = match direction {
+        ScpDirection::Upload => (local_path.to_string(), format!("{dest_spec}:{remote_path}")),
+        ScpDirection::Download => (format!("{dest_spec}:{remote_path}"), local_path.to_string()),
+    };
+    args.push(src);
+    args.push(dst);
+
+    Ok(ScpCommand {
+        program: "scp".into(),
+        args,
+        needs_password_injection: needs_injection(server),
+    })
+}
+
+/// Resolve `server`'s PSMP profile from on-disk config (if any) and build the
+/// `scp` argv. Public for the SSH Agent Broker's `ssh_scp` (`broker.rs::handle_scp`).
+pub(crate) fn scp_command_for(
+    server: &Server,
+    direction: ScpDirection,
+    local_path: &str,
+    remote_path: &str,
+    recursive: bool,
+    extra_args: &[String],
+) -> Result<ScpCommand, String> {
+    let cfg = load()?;
+    let psmp = server
+        .psmp_profile_id
+        .as_ref()
+        .and_then(|pid| cfg.psmp_profiles.iter().find(|p| &p.id == pid));
+    build_scp_command(
+        server,
+        psmp,
+        direction,
+        local_path,
+        remote_path,
+        recursive,
+        extra_args,
+    )
+}
+
 #[tauri::command]
 pub fn ssh_build_connect_cmd(id: String) -> Result<ConnectCommand, String> {
     let cfg = load()?;
@@ -828,6 +967,7 @@ mod tests {
             vault_user: "ferhat".into(),
             user_delim: "@".into(),
             param_delim: "#".into(),
+            scp_options: None,
         }
     }
 
@@ -1011,5 +1151,287 @@ mod tests {
         agent_add_server_in(&mut cfg, "a", "h", "u", None, None).unwrap();
         let json = serde_json::to_string(&cfg.servers[0]).unwrap();
         assert!(json.contains("\"agentAdded\":true"));
+    }
+
+    // ---- build_scp_command (PRD ssh-scp) ----------------------------------
+
+    // AC5 — PSMP scp destination is `vaultUser@targetUser@targetAddress@psmpAddress`
+    // (ONLY `@`, never the ssh dest's `#paramDelim` port trick), plus the profile's
+    // `scpOptions` `-o`s. Pure builder — no live PSMP needed.
+    #[test]
+    fn ac5_psmp_scp_dest_uses_only_at_delim_plus_scp_options() {
+        let mut s = srv("10.0.0.5", 22, "oracle");
+        s.connection_type = "psmp".into();
+        s.psmp_profile_id = Some("p1".into());
+        let mut profile = psmp();
+        profile.scp_options = Some("-o ProxyCommand=none -o ServerAliveInterval=30".into());
+        let cmd = build_scp_command(
+            &s,
+            Some(&profile),
+            ScpDirection::Upload,
+            "/local/file.txt",
+            "/remote/file.txt",
+            false,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(cmd.program, "scp");
+        // Muya's -o LogLevel=ERROR, then the profile's scpOptions tokens, then src/dst.
+        assert_eq!(
+            cmd.args,
+            vec![
+                "-o",
+                "LogLevel=ERROR",
+                "-o",
+                "ProxyCommand=none",
+                "-o",
+                "ServerAliveInterval=30",
+                "/local/file.txt",
+                "ferhat@oracle@10.0.0.5@bastion.corp:/remote/file.txt",
+            ]
+        );
+        // Never a `#` delimiter (illegal as an SCP host-spec separator).
+        assert!(!cmd.args.iter().any(|a| a.contains('#')));
+    }
+
+    // AC5 — a non-default PSMP target port goes via `-P`, NEVER embedded in the
+    // destination string (SCP has no `#port` syntax the way interactive ssh does).
+    #[test]
+    fn ac5_psmp_scp_non_standard_port_uses_dash_p_not_dest_embed() {
+        let mut s = srv("10.0.0.5", 2222, "oracle");
+        s.connection_type = "psmp".into();
+        s.psmp_profile_id = Some("p1".into());
+        let cmd = build_scp_command(
+            &s,
+            Some(&psmp()),
+            ScpDirection::Download,
+            "/local/out.txt",
+            "/remote/in.txt",
+            false,
+            &[],
+        )
+        .unwrap();
+        assert!(cmd.args.contains(&"-P".to_string()));
+        assert!(cmd.args.contains(&"2222".to_string()));
+        // Download: dest_spec:remotePath is the SRC (second-to-last is dest here:
+        // src then dst — download puts the remote spec first).
+        let dest = cmd
+            .args
+            .iter()
+            .find(|a| a.contains("bastion.corp"))
+            .unwrap();
+        assert_eq!(dest, "ferhat@oracle@10.0.0.5@bastion.corp:/remote/in.txt");
+        assert!(!dest.contains('#'), "no #port embed: {dest}");
+    }
+
+    // Direct (non-PSMP) upload/download dest shapes.
+    #[test]
+    fn direct_scp_upload_and_download_dest_shapes() {
+        let s = srv("h", 22, "u");
+        let up = build_scp_command(
+            &s,
+            None,
+            ScpDirection::Upload,
+            "/local/a.txt",
+            "/remote/a.txt",
+            false,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            up.args,
+            vec!["-o", "LogLevel=ERROR", "/local/a.txt", "u@h:/remote/a.txt"]
+        );
+        let down = build_scp_command(
+            &s,
+            None,
+            ScpDirection::Download,
+            "/local/b.txt",
+            "/remote/b.txt",
+            false,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            down.args,
+            vec!["-o", "LogLevel=ERROR", "u@h:/remote/b.txt", "/local/b.txt"]
+        );
+    }
+
+    // `recursive:true` inserts `-r` before src/dst; policed extraArgs (already
+    // validated upstream) are appended after it.
+    #[test]
+    fn recursive_and_extra_args_ordering() {
+        let s = srv("h", 22, "u");
+        let cmd = build_scp_command(
+            &s,
+            None,
+            ScpDirection::Upload,
+            "/local/dir",
+            "/remote/dir",
+            true,
+            &["-p".to_string(), "-C".to_string()],
+        )
+        .unwrap();
+        assert_eq!(
+            cmd.args,
+            vec![
+                "-o",
+                "LogLevel=ERROR",
+                "-r",
+                "-p",
+                "-C",
+                "/local/dir",
+                "u@h:/remote/dir",
+            ]
+        );
+    }
+
+    // A PSMP server with no resolved profile is a clear error, not a broken string.
+    #[test]
+    fn scp_psmp_without_profile_errors() {
+        let mut s = srv("h", 22, "u");
+        s.connection_type = "psmp".into();
+        assert!(build_scp_command(&s, None, ScpDirection::Upload, "/l", "/r", false, &[]).is_err());
+    }
+
+    // `scpOptions` absent in old config JSON deserializes to `None` (back-compat).
+    #[test]
+    fn psmp_profile_scp_options_defaults_none() {
+        let legacy = r#"{
+            "id":"p1","label":"bastion","psmpAddress":"bastion.corp","vaultUser":"ferhat"
+        }"#;
+        let p: PsmpProfile = serde_json::from_str(legacy).unwrap();
+        assert!(p.scp_options.is_none());
+        // And round-trips when set.
+        let mut p2 = p.clone();
+        p2.scp_options = Some("-o Foo=Bar".into());
+        let json = serde_json::to_string(&p2).unwrap();
+        assert!(json.contains("\"scpOptions\":\"-o Foo=Bar\""));
+    }
+
+    /// AC1/AC2 — END-TO-END: `build_scp_command` + `pty::run_with_injection` against
+    /// a REAL sshd (same Docker container the pre-existing `ssh_run` live tests use:
+    /// `lscr.io/linuxserver/openssh-server`, 127.0.0.1:2222, testuser/Sup3rSecret!).
+    /// Proves the actual mechanism `ssh_scp` will run in production: (1) upload
+    /// writes the real file remotely, independently re-verified via a plain `ssh cat`
+    /// (not just scp's own exit code), and (2) download reads a real remote file back
+    /// to a local path with matching content. The injected password never appears in
+    /// any captured output. `-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null`
+    /// are TEST-ONLY additions (this throwaway container has no stable host key) —
+    /// `build_scp_command` itself never sets those (production keeps host-key
+    /// checking on); see `ac5_*`/`direct_scp_*` unit tests for the exact argv it emits.
+    ///
+    /// Ignored by default (needs the container). Run:
+    ///   docker start muya-ssh-test  # or `docker run` per pty.rs's test header
+    ///   cargo test scp_upload_download_live -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn scp_upload_download_live() {
+        use zeroize::Zeroizing;
+
+        let dir = tempfile::tempdir().unwrap();
+        let upload_src = dir.path().join("upload_src.txt");
+        std::fs::write(&upload_src, b"MUYA_SCP_UPLOAD_OK\n").unwrap();
+        let download_dst = dir.path().join("download_dst.txt");
+        let remote_name = "muya_scp_live_test.txt";
+        let pw = || Some(Zeroizing::new("Sup3rSecret!".to_string()));
+        let test_only_opts = |mut args: Vec<String>| -> Vec<String> {
+            let mut prefixed = vec![
+                "-o".to_string(),
+                "StrictHostKeyChecking=no".to_string(),
+                "-o".to_string(),
+                "UserKnownHostsFile=/dev/null".to_string(),
+            ];
+            prefixed.append(&mut args);
+            prefixed
+        };
+
+        let server = srv("127.0.0.1", 2222, "testuser");
+
+        // (1) Upload local -> remote (relative remote path = the login's home dir).
+        let up = build_scp_command(
+            &server,
+            None,
+            ScpDirection::Upload,
+            &upload_src.to_string_lossy(),
+            remote_name,
+            false,
+            &[],
+        )
+        .unwrap();
+        let up_out = crate::pty::run_with_injection(
+            &up.program,
+            &test_only_opts(up.args),
+            pw(),
+            std::time::Duration::from_secs(25),
+            false,
+        )
+        .expect("upload run_with_injection");
+        assert!(!up_out.timed_out, "upload timed out: {:?}", up_out.stdout);
+        assert!(
+            !up_out.stdout.contains("Sup3rSecret!"),
+            "SECRET LEAKED in upload output: {:?}",
+            up_out.stdout
+        );
+
+        // Independent re-verification: `ssh cat` the file remotely (not just trusting
+        // scp's own exit code) — proves the upload actually landed with the right
+        // content, not merely that scp returned 0.
+        let cat_args: Vec<String> = test_only_opts(vec![
+            "-p".to_string(),
+            "2222".to_string(),
+            "testuser@127.0.0.1".to_string(),
+            format!("cat {remote_name}"),
+        ]);
+        let cat_out = crate::pty::run_with_injection(
+            "ssh",
+            &cat_args,
+            pw(),
+            std::time::Duration::from_secs(25),
+            false,
+        )
+        .expect("cat run_with_injection");
+        assert!(
+            cat_out.stdout.contains("MUYA_SCP_UPLOAD_OK"),
+            "uploaded file content mismatch, remote cat returned: {:?}",
+            cat_out.stdout
+        );
+        assert!(!cat_out.stdout.contains("Sup3rSecret!"));
+
+        // (2) Download remote -> local: read the SAME remote file back to a fresh
+        // local path, confirm the bytes match what was uploaded.
+        let down = build_scp_command(
+            &server,
+            None,
+            ScpDirection::Download,
+            &download_dst.to_string_lossy(),
+            remote_name,
+            false,
+            &[],
+        )
+        .unwrap();
+        let down_out = crate::pty::run_with_injection(
+            &down.program,
+            &test_only_opts(down.args),
+            pw(),
+            std::time::Duration::from_secs(25),
+            false,
+        )
+        .expect("download run_with_injection");
+        assert!(
+            !down_out.timed_out,
+            "download timed out: {:?}",
+            down_out.stdout
+        );
+        assert!(!down_out.stdout.contains("Sup3rSecret!"));
+        let downloaded = std::fs::read_to_string(&download_dst)
+            .expect("downloaded file must exist locally after scp download");
+        assert_eq!(
+            downloaded, "MUYA_SCP_UPLOAD_OK\n",
+            "downloaded content mismatch: {downloaded:?}"
+        );
+
+        println!("scp_upload_download_live: upload + independent remote cat + download all PASS");
     }
 }
