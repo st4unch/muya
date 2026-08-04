@@ -147,7 +147,12 @@ fi
 
 # --- 3. create release with notarized asset -----------------------------------
 say "Creating GitHub release $TAG..."
-DMG="$(ls "$ROOT"/src-tauri/target/release/bundle/dmg/*.dmg 2>/dev/null | head -1)"
+# `ls *.dmg` exits non-zero when no DMG was built (the normal case — we ship .app +
+# zip, not DMG). Under `set -euo pipefail` that non-zero propagates through the pipe
+# and ABORTS the whole script right here, after "Creating GitHub release…" printed —
+# which is exactly why every release's `gh release create` step silently died and had
+# to be finished by hand. `|| true` swallows the empty-glob failure.
+DMG="$(ls "$ROOT"/src-tauri/target/release/bundle/dmg/*.dmg 2>/dev/null | head -1 || true)"
 ASSETS=("$ZIP")
 # The .app.tar.gz is what the auto-updater downloads (latest.json points at it);
 # the .zip stays for manual download.
