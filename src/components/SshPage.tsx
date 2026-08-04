@@ -63,6 +63,10 @@ type PsmpProfile = {
   vaultUser: string;
   userDelim: string;
   paramDelim: string;
+  // ssh_scp (PRD ssh-scp, AC5): extra `-o KEY=VAL …` tokens this PSMP profile's
+  // scp transfers need. The agent can never set `-o` itself — this is the ONLY
+  // way scp gets PSMP-required `-o` options, operator-authored only.
+  scpOptions?: string;
 };
 type CyberarkConfig = {
   baseUrl: string;
@@ -410,7 +414,7 @@ function PsmpProfiles({
   setErr: (e: string | null) => void;
 }) {
   const [draft, setDraft] = useState<PsmpProfile | null>(null);
-  const blank = (): PsmpProfile => ({ id: "", label: "", psmpAddress: "", vaultUser: "", userDelim: "@", paramDelim: "#" });
+  const blank = (): PsmpProfile => ({ id: "", label: "", psmpAddress: "", vaultUser: "", userDelim: "@", paramDelim: "#", scpOptions: "" });
   const save = async () => {
     if (!draft) return;
     try {
@@ -470,6 +474,12 @@ function PsmpProfiles({
             <input className={INPUT} placeholder="User delimiter (default @)" value={draft.userDelim} onChange={(e) => setDraft({ ...draft, userDelim: e.target.value })} />
             <input className={INPUT} placeholder="Param delimiter (default #)" value={draft.paramDelim} onChange={(e) => setDraft({ ...draft, paramDelim: e.target.value })} />
           </div>
+          <input
+            className={`${INPUT} col-span-2`}
+            placeholder='ssh_scp -o options for this profile (e.g. "-o ProxyCommand=... -o ServerAliveInterval=30")'
+            value={draft.scpOptions ?? ""}
+            onChange={(e) => setDraft({ ...draft, scpOptions: e.target.value })}
+          />
           <div className="flex gap-2 justify-end col-span-2">
             <button type="button" className={BTN_GHOST} onClick={() => setDraft(null)}>Cancel</button>
             <button type="button" className={BTN} onClick={save}>{draft.id ? "Save changes" : "Add"}</button>
