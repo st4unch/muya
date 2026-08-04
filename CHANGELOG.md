@@ -6,6 +6,21 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.15] - 2026-08-04
+
+### Fixed
+- **File tree and file opening are fast again.** Listing a folder or opening a file
+  could take ~10 seconds: background polls (git status, and the Claude-session probes)
+  were spawning subprocesses that tied up the shared worker pool, so the quick file
+  reads had to wait their turn. Those polls now run off that pool and refresh less
+  aggressively — listings and file opens are near-instant again.
+
+### Changed
+- **Password Store unlock shows an "Unlocking…" state.** The unlock runs a deliberately
+  heavy key-derivation (Argon2id) that can take a second or two; the button now shows a
+  spinner + "Unlocking…" and a short "deriving the key…" note so it's clearly working,
+  not stuck. Security is unchanged — only the wait is now visible.
+
 ## [0.2.14] - 2026-08-04
 
 ### Changed
