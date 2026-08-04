@@ -407,6 +407,16 @@ export default function App() {
 
   // Top-level view switch: the IDE control plane vs the full Sessions page.
   const [view, setView] = useState<"control" | "sessions" | "queue" | "tools" | "prd" | "ssh" | "chat">("control");
+  // Mount-on-first-visit + keep-alive (L32): a panel is rendered only once its view
+  // has been visited, then stays mounted (hidden) so its state survives navigation.
+  // "control" is mounted from the start (the terminals must live immediately); the
+  // heavy secondary panels (Sessions/Queue/Resources/PRD/SSH/Chat) defer their mount
+  // + data-fetch off startup so they don't all contend for the single JS thread and
+  // slow terminal open / SSH connect / chat load.
+  const [mountedViews, setMountedViews] = useState<Set<string>>(() => new Set(["control"]));
+  useEffect(() => {
+    setMountedViews((prev) => (prev.has(view) ? prev : new Set(prev).add(view)));
+  }, [view]);
   // Action menu for a path clicked in a terminal's output.
   const [pathMenu, setPathMenu] = useState<{ resolved: string; kind: "file" | "dir"; x: number; y: number } | null>(null);
   // Right panel tab: branch matrix vs markdown viewer.
@@ -1645,55 +1655,64 @@ export const loginHandler = async (req, res) => {
           and hidden (same pattern as SSH / Chat / Control below), so they load ONCE and refresh only
           via their manual Refresh button or the hourly sequential coordinator above. */}
       <div className={`flex-1 flex overflow-hidden ${view !== "sessions" ? "hidden" : ""}`}>
-        <SessionsPage
-          onRegisterRefresh={registerSessionsRefresh}
-          onOpen={(spec) => {
-            if (spec.cwd) ensureWorktreeTracked(spec.cwd);
-            openTerminal({ ...spec, kind: "terminal" });
-            setView("control");
-          }}
-        />
+        {mountedViews.has("sessions") && (
+          <SessionsPage
+            onRegisterRefresh={registerSessionsRefresh}
+            onOpen={(spec) => {
+              if (spec.cwd) ensureWorktreeTracked(spec.cwd);
+              openTerminal({ ...spec, kind: "terminal" });
+              setView("control");
+            }}
+          />
+        )}
       </div>
       <div className={`flex-1 flex overflow-hidden ${view !== "tools" ? "hidden" : ""}`}>
-        <ResourcesPage
-          onRegisterRefresh={registerToolsRefresh}
-          onOpenTerminal={(spec) => {
-            openTerminal({ ...spec, kind: "terminal" });
-            setView("control");
-          }}
-        />
+        {mountedViews.has("tools") && (
+          <ResourcesPage
+            onRegisterRefresh={registerToolsRefresh}
+            onOpenTerminal={(spec) => {
+              openTerminal({ ...spec, kind: "terminal" });
+              setView("control");
+            }}
+          />
+        )}
       </div>
       <div className={`flex-1 flex overflow-hidden ${view !== "queue" ? "hidden" : ""}`}>
-        <QueuePage
-          paths={trackedPaths}
-          worktrees={worktrees}
-          refreshSignal={fsTick}
-          onRegisterRefresh={registerQueueRefresh}
-          onWorktreeRemoved={(p) => setWorktrees((prev) => prev.filter((x) => x !== p))}
-          inspect={branchInspect}
-          onClearInspect={() => setBranchInspect(null)}
-        />
+        {mountedViews.has("queue") && (
+          <QueuePage
+            paths={trackedPaths}
+            worktrees={worktrees}
+            refreshSignal={fsTick}
+            onRegisterRefresh={registerQueueRefresh}
+            onWorktreeRemoved={(p) => setWorktrees((prev) => prev.filter((x) => x !== p))}
+            inspect={branchInspect}
+            onClearInspect={() => setBranchInspect(null)}
+          />
+        )}
       </div>
       <div className={`flex-1 flex overflow-hidden ${view !== "prd" ? "hidden" : ""}`}>
-        <PrdBoard
-          workspaces={workspaces.filter((w) => w.startsWith("/"))}
-          onRegisterRefresh={registerPrdRefresh}
-          onOpenFile={(path) => {
-            openEditor(path);
-            setView("control");
-          }}
-        />
+        {mountedViews.has("prd") && (
+          <PrdBoard
+            workspaces={workspaces.filter((w) => w.startsWith("/"))}
+            onRegisterRefresh={registerPrdRefresh}
+            onOpenFile={(path) => {
+              openEditor(path);
+              setView("control");
+            }}
+          />
+        )}
       </div>
-      {/* SSH config page — ALWAYS mounted, hidden when off-view, so an in-progress
-          add/edit-server form (or CyberArk session) survives navigation to other
-          tabs and back. Same always-mount pattern as the control plane below. */}
+      {/* SSH config page — mounted on first visit, then kept alive (hidden off-view)
+          so an in-progress add/edit-server form (or CyberArk session) survives
+          navigation. Deferred off startup so its load doesn't contend (L32). */}
       <div className={`flex-1 flex overflow-hidden ${view !== "ssh" ? "hidden" : ""}`}>
-        <SshPage onConnect={openSshServer} />
+        {mountedViews.has("ssh") && <SshPage onConnect={openSshServer} />}
       </div>
-      {/* Claude-to-Claude chat bridge — ALWAYS mounted, hidden off-view, so an
-          active pairing / conversation survives navigation to other tabs. */}
+      {/* Claude-to-Claude chat bridge — mounted on first visit, then kept alive so an
+          active pairing / conversation survives navigation. Its bridge data-fetches
+          (peers/inbound/local_ip) no longer run at app startup (L32). */}
       <div className={`flex-1 flex overflow-hidden ${view !== "chat" ? "hidden" : ""}`}>
-        <ChatView />
+        {mountedViews.has("chat") && <ChatView />}
       </div>
       {/* Control plane — ALWAYS mounted; hidden (not unmounted) on other views so the
           terminal PTYs and any running sessions survive page navigation. xterm guards
