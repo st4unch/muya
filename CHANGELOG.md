@@ -6,6 +6,18 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.16] - 2026-08-04
+
+### Fixed
+- **Opening a terminal, connecting SSH, and the chat view are responsive again.** A
+  previous change mounted every side panel (Sessions, Resources, Queue, PRD, SSH, Chat)
+  at startup, so they all fetched at once and competed for the UI thread — slowing
+  terminal open / SSH connect and making the chat load late. Panels now load the first
+  time you open them and stay put afterward, so startup is light again.
+- **Session tabs keep their own name.** Tabs no longer get relabeled with Claude's
+  auto-generated "<project>-N" session name (which looked like just the project name);
+  a tab keeps the name it was opened with.
+
 ## [0.2.15] - 2026-08-04
 
 ### Fixed
