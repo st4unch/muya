@@ -1,6 +1,28 @@
 # mcp-developer memory — claude-control-plane
 
-## Current state (2026-08-01)
+## Current state (2026-08-04)
+
+**`ssh_scp` MCP TOOL — P1 DONE (PRD ssh-scp, AC1-AC7 code+live-verified; AC8 real-PSMP + full-app-chain need operator)**
+- New agent-facing file-transfer tool: `ssh_scp(alias,direction,localPath,remotePath,recursive?,extraArgs?)`. Same barrier as `ssh_run` (secret resolved in Rust, `run_with_injection(...,is_psmp)` PTY inject, PSMP 2FA-gate reused unchanged) PLUS two NEW guardrails (first tool touching the LOCAL fs):
+  - **AC3 (CRITICAL) — local-path guardrail**: `local_guard::resolve_local_scp_path` canonicalizes `localPath`, requires it be a child of a configured **workspace root** (operator chose workspace roots over a dedicated sandbox). Canonicalize catches `..`-escapes AND symlink-escapes in one pass. Runs BEFORE scp is invoked.
+  - **AC4 — extraArgs policy**: `broker::enforce_scp_arg_policy` — `-o/-F/-i/-S/-P` hard-denied, `-r/-p/-C/-l[N]` allowed, unknown flags AND bare positionals rejected (paths ONLY via typed `localPath`/`remotePath`, never smuggled through `extraArgs`).
+  - **AC5 — PSMP scp dest**: `ssh::build_scp_command`/`scp_command_for` — dest is ONLY `vaultUser@targetUser@targetAddress@psmpAddress` (`@`-only; `#` is NOT a valid SCP delimiter), non-default port via `-P` (never dest-embedded). New `PsmpProfile.scp_options: Option<String>` — the ONLY way scp gets PSMP-required `-o`'s (operator-authored only, agent can never pass `-o`).
+- **GROUNDING GOTCHA (will bite again):** "workspace roots" had NO Rust-side/on-disk source before this — lived only in frontend `localStorage`. Added minimal bridge `workspace_roots.rs` (`~/.claude/muya-workspace-roots.json`, `atomic_write`) + `set_workspace_roots` Tauri command wired into App.tsx's existing tracked-paths effect. If a future PRD says "read X from Muya config" — VERIFY it actually exists server-side before assuming; it may only be a frontend `localStorage` convention.
+- **Live-verified myself (Golden Rule §3, had docker access):** `ssh::tests::scp_upload_download_live` (`--ignored`) — real upload + independent `ssh cat` + download against the existing `muya-ssh-test` Docker sshd container (127.0.0.1:2222), PASS. This bypasses `broker.rs::handle_scp`'s Tauri State (can't headless-test that) — full chain (real MCP call → app → broker) still needs operator + running Muya.app.
+- Tests: 216 backend (+~25 vs 191 baseline: ssh.rs, local_guard.rs NEW, workspace_roots.rs NEW, broker.rs), 7 ignored (+1 new live test). tsc clean. vitest 91/92 (1 PRE-EXISTING unrelated fail: `ScheduledPromptModal` — verified via git status untouched + reproduces isolated, not caused by this task).
+- Step output: `docs/prd-verify/step-output-P1.md` § "Retry 0 — PRD ssh-scp" (shares the generic `step-output-P1.md` filename with the unrelated `ssh-run-psmp-hardening` PRD's own Retry 0 — append-only, don't confuse the two sections).
+
+## Prior state (2026-08-04)
+
+**`ssh_run` PSMP 2FA/OTP HARDENING — P1 DONE (PRD ssh-run-psmp-hardening, AC2/AC4/AC5 code-verified; AC1/AC6 need operator+real PSMP)**
+- `pty::run_with_injection` gained `is_psmp: bool` + a PSMP-only challenge classifier `looks_like_challenge_prompt` (tail: `passcode:`/`verification code:`/`one-time`/`otp:`), checked BEFORE the password check ONLY when `is_psmp`. Match → secret withheld, child killed immediately (not waiting `timeout`). `CommandOutput{stdout,exit_code,timed_out,+challenge_detected,+injected}`.
+- `broker.rs::handle_run`: `is_psmp = server.connection_type=="psmp"`. `challenge_detected` → `err_resp(...)` pointing at ssh_open (AC2). PSMP timeout with no prompt seen (`timed_out && !injected`) → additive `"message"` hint on the normal `ok:true` response (AC3, likely RADIUS push). Direct-SSH responses byte-for-byte unchanged.
+- `bin/muya_ssh_mcp.rs` `ssh_run` description documents the PSMP+2FA limit (AC5).
+- Tests: 191 backend (+3 vs 188 pre-task: `challenge_prompt_matches_2fa_shapes`, `ac2_psmp_challenge_prompt_withholds_injection`, `ac4_direct_still_injects_on_passcode_prompt` — all use a local `sh`-based PTY harness, NO Docker/PSMP needed). `cargo check --bin muya` / `--bin muya-ssh-mcp` clean.
+- **GAP (operator-required):** AC1 (real-PSMP plain-password live run) and AC6 (full live e2e vs real PSMP or a layered-prompt harness) NOT run — no real PSMP access this session. The local `sh` harness proves withhold/kill + no-regression mechanics but not real PSMP's actual layered prompt sequence/RADIUS timing.
+- Step output: `docs/prd-verify/step-output-P1.md`. PRD: `docs/prd-ssh-run-psmp-hardening.md`.
+
+## Prior state (2026-08-01)
 
 **AGENTIC SSH — `ssh_add_server` DONE (PRD ssh-agent-add-server)**
 - Agents REGISTER an SSH server, then `ssh_open`/`ssh_run` it. `Server.agent_added: bool` (`agentAdded` serde default false). Core `ssh::agent_add_server_in(cfg,label,host,username,port,credential_ref)`: forces `direct` + `ssh_options=None`, `agent_access=true`+`agent_added=true`, CREATE-ONLY (`upsert_server_in` collision ⇒ Err — no overwrite of human servers), audit line. `reject_injection` rejects empty/whitespace/control/`@` in host+user (argv + user@host injection — load-bearing).
@@ -65,66 +87,12 @@
 - 4 new real-socket tests (real `TcpListener`+`TlsAcceptor`/`TlsConnector`, two Ed25519 identities pinning each other): round-trip proving broker gets sender's verified SPKI, unpinned-peer fail-closed, direct verifier reject/accept, real-socket SPKI-mismatch (stale-registry/MITM sim) rejected at handshake both sides. 102/102 backend, 55/55 frontend, tsc clean.
 - Step output: `docs/prd-verify/step-output-faz-2-remote-mtls.md` § Data-channel wiring.
 
-## Prior state (2026-07-15)
+## Older history (claude-remote-bridge Faz 1-3, 2026-07-15) — condensed
 
-**Faz 3 TASK EXECUTION — DONE** (branch: dev)
-
-- `bridge_exec.rs` (new): sandboxed exec (TempDir cwd + deny-list env strip), bounded streaming channel (256), capability scope gate, auto-run three-path, memory-only audit log, fan-out independence, AC-3-7 shell two-factor override. 5 Tauri commands.
-- `lib.rs`: mod bridge_exec, .manage(ExecState::default()), 5 new commands.
-- `Cargo.toml`: tempfile moved to [dependencies] (runtime use for TempDir sandbox).
-- 96/96 tests pass (32 new Faz 3 + 64 Faz 1+2 retained); 4 ignored (machine-specific).
-
-**Faz 2 REMOTE mTLS + SPAKE2 PAIRING — DONE** (commit: be5d985)
-
-- `bridge_remote.rs`: BridgeIdentity, PinnedSpkiVerifier (fail-closed), AnyCertVerifier (pairing-only), SPAKE2, PeerRegistry, PIN lifecycle, SAS derivation. 7 Tauri commands.
-
-**Faz 1 LOCAL MVP — DONE**
-
-- `bridge.rs`: UDS accept loop, length-prefixed framing, broker queue, approval gate. 4 Tauri commands.
-
-## Key decisions / gotchas
-
-### Faz 3 gotchas (HIGH PRIORITY)
-- **Argv MUST be JSON array** — `extract_argv` rejects string cmd (prevents shell interpolation). No `bash -c "$payload"` ever.
-- **env deny-list + HOME override:** `build_sandbox_env` starts EMPTY, copies SAFE_ENV_KEYS only, overrides HOME → TempDir path. Debug assertion checks no blocked pattern leaked.
-- **Mutex per-line, NOT per-task:** stdout + stderr accumulators each lock briefly per line. Holding across `.await` deadlocks the other task.
-- **AC-3-7 two-factor shell override:** shell auto-run requires `auto_run_capabilities.contains("shell")` AND `shell_auto_run_override == true`. Both must be explicitly set. API rejects adding "shell" without the flag.
-- **`gate_and_execute` reads `req.approval`** — the InboundRequest field set by `bridge_approve()`. Not a separate staged lookup.
-- **`tempfile` in `[dependencies]`** (runtime, not dev-only) — TempDir used in `execute_sandboxed_shell_task`.
-- **Fan-out raw pointer pattern** — same `*const T as usize` pattern as Faz 2 pairing watcher. Safe: ExecState is 'static Tauri-managed.
-
-### Faz 2 gotchas (still relevant)
-- CPace → SPAKE2 (ADR R7). SPAKE2 identity order: `start_b(pw, id_a, id_b)` same as `start_a`. SecretKey.expose() for raw bytes. base64 padding = 255 (not 0). PAKE state non-Clone/non-Send — create fresh per connection. `client_auth_mandatory() = true`. SAS: canonical sorted SPKIs. AnyCertVerifier pairing-only.
-
-### Faz 1 gotchas
-- `BridgeState.staged` is `Arc<Mutex<HashMap>>`. Max frame 16 MiB, checked BEFORE alloc.
-
-## Architecture (versioned one-way doors)
-- PAKE wire version: v1 | Registry schema: v1 | Envelope: v1 (ADR D6) | SAS: canonical sorted SPKIs
-
-## Files
-- `src-tauri/src/bridge.rs` — local UDS (Faz 1); `required_approval` now `pub(crate)`
-- `src-tauri/src/bridge_remote.rs` — remote mTLS + pairing (Faz 2) + data channel wiring; ~2540 lines
-- `src-tauri/src/bridge_exec.rs` — task exec engine (Faz 3); ~900 lines
-- `src-tauri/src/lib.rs` — all registered
-- `src-tauri/Cargo.toml` — rcgen, spake2-conflux, sha2, hkdf, rand, tempfile
-- `src/components/ChatView.tsx` — routes send() to bridge_remote_send/bridge_send by peer kind
-
-## Known gap (not yet wired)
-
-`bridge_remote_listen` (the remote TCP+TLS listener start/stop) is registered as a
-Tauri command but **the frontend never calls it** — grepped, zero call sites in `src/`.
-`ChatView.tsx`'s "Accept connections" toggle only calls `bridge_local_listen` +
-`bridge_pair_invite`. So today a peer can be PAIRED (SPKI pinned) but the remote
-data listener that would let `bridge_remote_send` actually land anywhere is never
-started via UI. Out of scope for the data-channel wiring task (explicitly scoped to
-send()-routing only) — flag for whoever builds the remote-listener toggle UI.
-
-## Next phase
-
-**Faz 4 (optional):** OS-level sandbox (macOS `sandbox-exec` / Linux seccomp-BPF). Frontend bridge UI for approve/audit (events already emitted: `bridge://task-chunk`, `bridge://task-end`, `bridge://task-rejected`). Also: frontend toggle to start `bridge_remote_listen` (see gap above).
-
-## ADR refs
-- ADR 0002: `docs/adr/claude-remote-bridge-architecture.md`
-- Step output Faz 3: `docs/prd-verify/step-output-faz-3-task-handoff.md`
-- Step output Faz 2 (with Retry 1): `docs/prd-verify/step-output-faz-2-remote-mtls.md`
+Local UDS bridge (`bridge.rs`) + remote mTLS/SPAKE2 pairing (`bridge_remote.rs`,
+~2540 lines) + sandboxed task exec (`bridge_exec.rs`, ~900 lines, TempDir cwd +
+env deny-list, JSON-array-only argv, AC-3-7 shell two-factor override). PAKE wire
+v1 / Registry schema v1 / Envelope v1 (ADR D6). **Known gap, still true unless
+someone wired it since:** `bridge_remote_listen` has NO frontend call site — a
+peer can be paired but the remote data listener is never started via UI.
+Full gotchas/decisions: journal.md 2026-07-15 entries. ADR: `docs/adr/claude-remote-bridge-architecture.md`.
