@@ -470,10 +470,16 @@ pub fn remove_worktree(worktree: String) -> Result<String, String> {
 /// `git status --porcelain` for a workspace root. Returns `(relative_path, status_char)` pairs
 /// where status_char is "M" (modified), "A" (added/staged), or "?" (untracked).
 #[tauri::command(async)]
-pub fn git_status(root: String) -> Result<Vec<(String, String)>, String> {
-    let output = Command::new("git")
+pub async fn git_status(root: String) -> Result<Vec<(String, String)>, String> {
+    // async subprocess (tokio::process) so a slow `git status` on a large root does
+    // NOT block a tokio worker thread. The sync std::process variant occupied a
+    // worker for the whole subprocess; with the 5s poll across N roots that starved
+    // the shared pool and made unrelated fast commands (list_dir/read_file) queue
+    // for ~10s (L31). tokio::process yields the worker while git runs.
+    let output = tokio::process::Command::new("git")
         .args(["-C", &root, "status", "--porcelain"])
         .output()
+        .await
         .map_err(|e| format!("git not found: {e}"))?;
     if !output.status.success() {
         // Not a git repo or other error — return empty list silently.

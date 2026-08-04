@@ -648,11 +648,11 @@ pub struct TabSession {
 /// whichever session's process descends from a tab's shell belongs to that tab.
 /// The frontend persists the result so the tab can `--resume` exactly it later.
 #[tauri::command(async)]
-pub fn pty_session_ids(
-    state: State<PtyManager>,
+pub async fn pty_session_ids(
+    state: State<'_, PtyManager>,
     ids: Vec<String>,
 ) -> Result<HashMap<String, TabSession>, String> {
-    // shell pid → tab id
+    // Read the (in-memory) shell pid → tab id map under the lock first…
     let roots: HashMap<u32, String> = {
         let sessions = state.sessions.lock().unwrap();
         ids.iter()
@@ -667,7 +667,18 @@ pub fn pty_session_ids(
     if roots.is_empty() {
         return Ok(HashMap::new());
     }
+    // …then offload the two subprocesses (`ps` + `claude agents --json`) to the
+    // blocking pool. This command is polled every few seconds; running its
+    // subprocesses on a tokio WORKER thread starved the pool shared with fs
+    // commands and stalled file listing for ~10s (L31).
+    tokio::task::spawn_blocking(move || pty_session_ids_blocking(roots))
+        .await
+        .map_err(|e| format!("session-ids task join failed: {e}"))?
+}
 
+fn pty_session_ids_blocking(
+    roots: HashMap<u32, String>,
+) -> Result<HashMap<String, TabSession>, String> {
     let ps = std::process::Command::new("/bin/ps")
         .args(["-Ao", "pid=,ppid="])
         .output()
@@ -675,7 +686,7 @@ pub fn pty_session_ids(
     let ppid = parse_ppid_map(&String::from_utf8_lossy(&ps.stdout));
 
     // Live Claude sessions carry the session id we want to resume later.
-    let agents = crate::agents::list_agent_sessions(Some(true)).unwrap_or_default();
+    let agents = crate::agents::list_agent_sessions_sync(Some(true)).unwrap_or_default();
 
     let mut out = HashMap::new();
     for a in agents {

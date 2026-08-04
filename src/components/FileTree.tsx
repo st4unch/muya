@@ -252,7 +252,13 @@ export default function FileTree({
 
   useEffect(() => {
     void refreshGitStatus();
-    const t = setInterval(() => void refreshGitStatus(), 5000);
+    // Poll git status infrequently and skip when the window is hidden: each call
+    // shells `git status` per root, which on large repos can take seconds and (until
+    // git_status went async) starved the shared worker pool, stalling file listing
+    // for ~10s (L31). 30s is plenty for a status-dot refresh.
+    const t = setInterval(() => {
+      if (!document.hidden) void refreshGitStatus();
+    }, 30000);
     return () => clearInterval(t);
   }, [refreshGitStatus]);
 

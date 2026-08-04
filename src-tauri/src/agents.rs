@@ -235,7 +235,19 @@ fn disambiguate_names(sessions: &mut [AgentSession]) {
 /// Tauri command: live Claude Code sessions from `claude agents --json`.
 /// `--all` includes completed sessions too.
 #[tauri::command(async)]
-pub fn list_agent_sessions(include_all: Option<bool>) -> Result<Vec<AgentSession>, String> {
+pub async fn list_agent_sessions(include_all: Option<bool>) -> Result<Vec<AgentSession>, String> {
+    // `claude agents --json` is a Node subprocess (~hundreds of ms) plus per-session
+    // git lookups. Run it on the blocking pool so it never occupies a tokio WORKER
+    // thread — polled every few seconds, a worker-bound subprocess starved the shared
+    // pool and stalled fast fs commands (list_dir/read_file) for ~10s (L31).
+    tokio::task::spawn_blocking(move || list_agent_sessions_sync(include_all))
+        .await
+        .map_err(|e| format!("agents task join failed: {e}"))?
+}
+
+pub(crate) fn list_agent_sessions_sync(
+    include_all: Option<bool>,
+) -> Result<Vec<AgentSession>, String> {
     let mut cmd = Command::new(claude_bin());
     cmd.args(["agents", "--json"]);
     if include_all.unwrap_or(false) {
@@ -394,7 +406,7 @@ mod tests {
     #[test]
     #[ignore = "machine-specific: needs live claude CLI"]
     fn live_sessions_smoke() {
-        match list_agent_sessions(Some(false)) {
+        match list_agent_sessions_sync(Some(false)) {
             Ok(sessions) => {
                 println!("mapped {} session(s):", sessions.len());
                 for s in &sessions {

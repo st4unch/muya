@@ -262,7 +262,10 @@ export default function App() {
         .catch((e) => console.warn("[apex] list_agent_sessions failed:", e));
     };
     load();
-    const t = setInterval(load, 3000);
+    // 8s (was 3s): `list_agent_sessions` spawns a `claude` subprocess each call; 3s
+    // was needless churn. The subprocess now also runs on the blocking pool so it
+    // never starves the tokio worker pool that fs commands share (L31).
+    const t = setInterval(load, 8000);
     return () => {
       active = false;
       clearInterval(t);
