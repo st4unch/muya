@@ -16,6 +16,7 @@ import {
   Upload,
   Copy,
   Check,
+  Loader2,
 } from "lucide-react";
 
 import CredentialPicker from "./CredentialPicker";
@@ -877,14 +878,15 @@ function StoreTab({
           stores it, so you can also export an encrypted backup once unlocked.
         </p>
         <div className="relative">
-          <input type={showMaster ? "text" : "password"} className={INPUT} placeholder="Master password" value={master} onChange={(e) => setMaster(e.target.value)} />
+          <input type={showMaster ? "text" : "password"} className={INPUT} placeholder="Master password" value={master} disabled={busy} onChange={(e) => setMaster(e.target.value)} />
           <button type="button" className="absolute right-2 top-1.5 text-neutral-400 hover:text-neutral-600 cursor-pointer" onClick={() => setShowMaster(!showMaster)} title={showMaster ? "Hide" : "Show"}>
             {showMaster ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </button>
         </div>
+        {busy && <p className="text-xs text-neutral-500">Deriving the key (Argon2id) — this can take a second or two.</p>}
         <div className="flex gap-2">
           <button type="button" className={BTN} disabled={busy} onClick={doInit}>
-            Create
+            {busy ? <><Loader2 className="h-4 w-4 inline -mt-0.5 mr-1 animate-spin" /> Creating…</> : "Create"}
           </button>
           <button type="button" className={BTN_GHOST} onClick={exportMaster}>
             <Download className="h-4 w-4 inline -mt-0.5 mr-1" /> Export master password
@@ -910,17 +912,26 @@ function StoreTab({
             className={INPUT}
             placeholder="Master password"
             value={master}
+            disabled={busy}
             onChange={(e) => setMaster(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && doUnlock()}
+            onKeyDown={(e) => e.key === "Enter" && !busy && doUnlock()}
           />
           <button type="button" className="absolute right-2 top-1.5 text-neutral-400 hover:text-neutral-600 cursor-pointer" onClick={() => setShowMaster(!showMaster)} title={showMaster ? "Hide" : "Show"}>
             {showMaster ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </button>
         </div>
         <button type="button" className={BTN} disabled={busy} onClick={doUnlock}>
-          <Unlock className="h-4 w-4 inline -mt-0.5 mr-1" /> Unlock
+          {busy ? (
+            <><Loader2 className="h-4 w-4 inline -mt-0.5 mr-1 animate-spin" /> Unlocking…</>
+          ) : (
+            <><Unlock className="h-4 w-4 inline -mt-0.5 mr-1" /> Unlock</>
+          )}
         </button>
-        <p className="text-xs text-neutral-400">Touch ID auto-unlock arrives with Faz 1 (Keychain).</p>
+        {busy ? (
+          <p className="text-xs text-neutral-500">Deriving the key (Argon2id) — this can take a second or two, hang tight.</p>
+        ) : (
+          <p className="text-xs text-neutral-400">Touch ID auto-unlock arrives with Faz 1 (Keychain).</p>
+        )}
       </div>
     );
   }
