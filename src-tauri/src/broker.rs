@@ -131,6 +131,20 @@ struct BrokerReq {
     port: Option<u16>,
     #[serde(default)]
     credential: Option<String>,
+    /// `scp` (PRD `ssh-scp`): explicit transfer direction — "upload" | "download".
+    /// NEVER inferred from argument shape/order.
+    #[serde(default)]
+    direction: Option<String>,
+    #[serde(rename = "localPath", default)]
+    local_path: Option<String>,
+    #[serde(rename = "remotePath", default)]
+    remote_path: Option<String>,
+    #[serde(default)]
+    recursive: Option<bool>,
+    /// Agent-supplied extra scp flags, policed by `enforce_scp_arg_policy` before
+    /// they ever reach `ssh::build_scp_command`.
+    #[serde(rename = "extraArgs", default)]
+    extra_args: Option<Vec<String>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -198,6 +212,65 @@ pub(crate) fn assemble_run_args(
     base.push(dest);
     base.push(command.to_string()); // the whole remote command, as ONE argv element
     Ok(base)
+}
+
+/// AC4 — fail-closed scp `extraArgs` policy (PRD `ssh-scp`). Mirrors the shape of
+/// `agent_ops::enforce_arg_policy`: an unknown/unlisted flag is REJECTED, not
+/// merely the explicitly-denied ones — "if in doubt, reject". Every value here
+/// MUST be a flag; `ssh_scp`'s typed `localPath`/`remotePath` fields are the ONLY
+/// way to supply paths, so a bare (non-flag) `extraArgs` token can never be an
+/// attempt to smuggle in an extra positional path/host-spec.
+///
+/// Denied (hard, argv-injection/RCE risk regardless of allow-list):
+///   * `-o` — arbitrary ssh/scp option (`ProxyCommand=` = local RCE)
+///   * `-F` — an attacker-controlled ssh_config file
+///   * `-i` — an attacker-chosen identity/key file
+///   * `-S` — an attacker-chosen ssh program (arbitrary executable)
+///   * `-P` — port is Muya-owned (derived from the server config), never agent-set
+/// Allowed: `-r` `-p` `-C` `-l` (recursion/preserve-times/compression/bandwidth-limit;
+/// `-l` may carry its numeric limit attached, e.g. `-l800`, or as a bare flag).
+pub(crate) fn enforce_scp_arg_policy(args: &[String]) -> Result<Vec<String>, String> {
+    const HARD_DENIED: &[&str] = &["-o", "-F", "-i", "-S", "-P"];
+    const ALLOWED: &[&str] = &["-r", "-p", "-C", "-l"];
+
+    let mut out = Vec::with_capacity(args.len());
+    for arg in args {
+        if arg.contains('\0') {
+            return Err("extraArgs argument contains a NUL byte".to_string());
+        }
+        let stripped = match arg.strip_prefix('-') {
+            Some(s) => s,
+            None => {
+                return Err(format!(
+                    "extraArgs entry '{arg}' is not a flag — ssh_scp only accepts scp \
+                     FLAGS here; use the localPath/remotePath fields for paths"
+                ))
+            }
+        };
+        if stripped.is_empty() || stripped == "-" {
+            return Err(format!("bare '{arg}' is not an allowed extraArgs entry"));
+        }
+        if HARD_DENIED.contains(&arg.as_str()) {
+            return Err(format!(
+                "flag '{arg}' is denied for ssh_scp (argument-injection / RCE risk) — Muya \
+                 sets ssh/scp options itself"
+            ));
+        }
+        // `-l` may carry an attached numeric value (`-l800`); everything else must
+        // match an allowed flag exactly.
+        let is_allowed = ALLOWED.contains(&arg.as_str())
+            || (arg.starts_with("-l")
+                && arg[2..].chars().all(|c| c.is_ascii_digit())
+                && arg.len() > 2);
+        if !is_allowed {
+            return Err(format!(
+                "flag '{arg}' is not on ssh_scp's allow-list (unknown flags are rejected); \
+                 allowed: -r -p -C -l"
+            ));
+        }
+        out.push(arg.clone());
+    }
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -298,6 +371,7 @@ async fn handle_request(app: &AppHandle, line: &str) -> String {
             }
         }
         "run" => handle_run(app, &servers, &req).await,
+        "scp" => handle_scp(app, &servers, &req).await,
         // Agentic-SSH — register a NEW server the agent can then ssh_open/ssh_run
         // (PRD ssh-agent-add-server). All guardrails live in `agent_add_server_in`:
         // forced direct/no-ssh_options, host/user injection rejected, CREATE-ONLY
@@ -538,41 +612,11 @@ async fn handle_run(app: &AppHandle, servers: &[Server], req: &BrokerReq) -> Str
 
     // Resolve the injectable secret entirely in Rust. `prompt` sources have no
     // stored password to inject, so a non-interactive run cannot authenticate.
-    let secret: Option<Zeroizing<String>> = match server.credential_source.kind.as_str() {
-        "local" => {
-            let store: State<crate::credstore::CredStore> = app.state();
-            if !crate::credstore::is_unlocked(&store) {
-                return err_resp("password store is locked — unlock it in the Password Store tab");
-            }
-            let id = match server.credential_source.local_cred_id.as_deref() {
-                Some(id) => id,
-                None => {
-                    return err_resp("server uses the local store but no credential is selected")
-                }
-            };
-            match crate::credstore::secret_for(&store, id) {
-                Ok(s) => Some(s),
-                Err(e) => return err_resp(e),
-            }
-        }
-        "cyberark" => {
-            let acct = match server.credential_source.cyberark_account_id.as_deref() {
-                Some(a) => a,
-                None => return err_resp("server uses CyberArk but no account is selected"),
-            };
-            let cyber: State<crate::cyberark::CyberarkState> = app.state();
-            match crate::cyberark::fetch_password(&cyber, acct).await {
-                Ok(s) => Some(s),
-                Err(e) => return err_resp(e),
-            }
-        }
-        _ => {
-            return err_resp(
-                "ssh_run needs a stored or CyberArk credential; a 'prompt' server has no \
-                 password to inject non-interactively — switch it to a stored/CyberArk credential",
-            )
-        }
-    };
+    let secret: Option<Zeroizing<String>> =
+        match resolve_injectable_secret(app, server, "ssh_run").await {
+            Ok(s) => s,
+            Err(e) => return err_resp(e),
+        };
 
     // Build the ssh argv (destination last), then append the remote command as ONE
     // argv element (AC9). No shell on the Muya side.
@@ -628,6 +672,197 @@ async fn handle_run(app: &AppHandle, servers: &[Server], req: &BrokerReq) -> Str
         }
         Ok(Err(e)) => err_resp(e),
         Err(e) => err_resp(format!("run task failed: {e}")),
+    }
+}
+
+/// Shared secret resolution for both `ssh_run` and `ssh_scp` — identical gating
+/// (store-unlock, local vs cyberark, `prompt` has nothing to inject) so the two
+/// tools present the exact same auth behavior. `tool_name` only flavors the
+/// "needs a stored/CyberArk credential" error message.
+async fn resolve_injectable_secret(
+    app: &AppHandle,
+    server: &Server,
+    tool_name: &str,
+) -> Result<Option<Zeroizing<String>>, String> {
+    match server.credential_source.kind.as_str() {
+        "local" => {
+            let store: State<crate::credstore::CredStore> = app.state();
+            if !crate::credstore::is_unlocked(&store) {
+                return Err(
+                    "password store is locked — unlock it in the Password Store tab".into(),
+                );
+            }
+            let id = server
+                .credential_source
+                .local_cred_id
+                .as_deref()
+                .ok_or("server uses the local store but no credential is selected")?;
+            crate::credstore::secret_for(&store, id).map(Some)
+        }
+        "cyberark" => {
+            let acct = server
+                .credential_source
+                .cyberark_account_id
+                .as_deref()
+                .ok_or("server uses CyberArk but no account is selected")?;
+            let cyber: State<crate::cyberark::CyberarkState> = app.state();
+            crate::cyberark::fetch_password(&cyber, acct)
+                .await
+                .map(Some)
+        }
+        _ => Err(format!(
+            "{tool_name} needs a stored or CyberArk credential; a 'prompt' server has no \
+             password to inject non-interactively — switch it to a stored/CyberArk credential"
+        )),
+    }
+}
+
+/// AC1/AC2/AC3/AC4/AC5/AC6/AC7 — resolve an alias, gate it, guardrail-check the
+/// LOCAL path against the operator's configured workspace roots, police the
+/// agent's `extraArgs`, resolve the secret in Rust, build the scp argv (Muya owns
+/// all `-o`/port/PSMP-dest assembly), and run it through the SAME PTY-injection +
+/// 2FA-challenge-gate path as `ssh_run`. Returns `{ok,direction,localPath,
+/// remotePath,exitCode,timedOut}` — never the secret, never a filesystem write/read
+/// outside the resolved local path.
+async fn handle_scp(app: &AppHandle, servers: &[Server], req: &BrokerReq) -> String {
+    let alias = match req.alias.as_deref() {
+        Some(a) if !a.trim().is_empty() => a,
+        _ => return err_resp("`scp` requires an `alias`"),
+    };
+    // AC — explicit enum, never inferred from arg shape/order.
+    let direction = match req.direction.as_deref() {
+        Some("upload") => crate::ssh::ScpDirection::Upload,
+        Some("download") => crate::ssh::ScpDirection::Download,
+        Some(other) => {
+            return err_resp(format!(
+                "`direction` must be 'upload' or 'download', got '{other}'"
+            ))
+        }
+        None => return err_resp("`scp` requires a `direction` ('upload' or 'download')"),
+    };
+    let local_path_raw = match req.local_path.as_deref() {
+        Some(p) if !p.trim().is_empty() => p,
+        _ => return err_resp("`scp` requires a non-empty `localPath`"),
+    };
+    let remote_path = match req.remote_path.as_deref() {
+        Some(p) if !p.trim().is_empty() => p.to_string(),
+        _ => return err_resp("`scp` requires a non-empty `remotePath`"),
+    };
+    let recursive = req.recursive.unwrap_or(false);
+    let extra_args_raw = req.extra_args.clone().unwrap_or_default();
+
+    let server = match resolve_open(servers, alias) {
+        OpenResolution::NotFound => return err_resp(format!("no server matches alias '{alias}'")),
+        OpenResolution::NotAccessible => {
+            return err_resp(format!(
+                "server '{alias}' is not agent-accessible (enable 'Agent may use this server')"
+            ))
+        }
+        OpenResolution::Ok(s) => s,
+    };
+
+    // AC3 (CRITICAL — before anything else touches the filesystem or runs scp):
+    // localPath must canonicalize to a child of a configured workspace root.
+    let for_download = direction == crate::ssh::ScpDirection::Download;
+    let roots = match crate::workspace_roots::load_workspace_roots() {
+        Ok(r) => r,
+        Err(e) => return err_resp(e),
+    };
+    let resolved_local =
+        match crate::local_guard::resolve_local_scp_path(local_path_raw, &roots, for_download) {
+            Ok(p) => p,
+            Err(e) => return err_resp(e),
+        };
+    let resolved_local_str = resolved_local.to_string_lossy().into_owned();
+
+    // AC4 — fail-closed extraArgs policy, before the args ever reach the builder.
+    let extra_args = match enforce_scp_arg_policy(&extra_args_raw) {
+        Ok(a) => a,
+        Err(e) => return err_resp(e),
+    };
+
+    // AC10 reuse — same concurrency cap/pool as ssh_run.
+    let broker: State<BrokerState> = app.state();
+    let _permit = match broker.run_slots.clone().try_acquire_owned() {
+        Ok(p) => p,
+        Err(_) => {
+            return err_resp(format!(
+                "too many concurrent ssh_run/ssh_scp commands (limit {MAX_CONCURRENT_RUNS}); \
+                 try again shortly"
+            ))
+        }
+    };
+
+    let secret: Option<Zeroizing<String>> =
+        match resolve_injectable_secret(app, server, "ssh_scp").await {
+            Ok(s) => s,
+            Err(e) => return err_resp(e),
+        };
+
+    // AC5 — Muya assembles the scp argv (PSMP dest, -o's, -P) entirely server-side;
+    // extraArgs were already policed above.
+    let cmd = match crate::ssh::scp_command_for(
+        server,
+        direction,
+        &resolved_local_str,
+        &remote_path,
+        recursive,
+        &extra_args,
+    ) {
+        Ok(c) => c,
+        Err(e) => return err_resp(e),
+    };
+    let program = cmd.program.clone();
+    let args = cmd.args.clone();
+    // Audit trail parity with ssh_pty_connect's connect log — no secret, just
+    // metadata (whether a credential will be injected, never the value).
+    crate::debuglog::log(&format!(
+        "ssh_scp: alias={alias} type={} program={program} injection_armed={}",
+        server.connection_type, cmd.needs_password_injection
+    ));
+
+    // AC6 — same PSMP 2FA/OTP challenge gate as ssh_run (is_psmp reuse).
+    let is_psmp = server.connection_type == "psmp";
+
+    let direction_str = match direction {
+        crate::ssh::ScpDirection::Upload => "upload",
+        crate::ssh::ScpDirection::Download => "download",
+    };
+
+    // AC7/AC8 — same bounded PTY capture + timeout as ssh_run; the secret is only
+    // ever written into the PTY, never into argv/stdout/logs.
+    let result = tokio::task::spawn_blocking(move || {
+        crate::pty::run_with_injection(&program, &args, secret, RUN_TIMEOUT, is_psmp)
+    })
+    .await;
+
+    match result {
+        // AC6 — a 2FA/OTP/passcode challenge was seen: withheld, never injected.
+        Ok(Ok(out)) if out.challenge_detected => err_resp(
+            "PSMP requested a 2FA/interactive challenge (passcode/OTP/verification code) — \
+             non-interactive ssh_scp does not support this; use ssh_open for an interactive \
+             session instead.",
+        ),
+        Ok(Ok(out)) => {
+            let mut resp = json!({
+                "ok": true,
+                "direction": direction_str,
+                "localPath": resolved_local_str,
+                "remotePath": remote_path,
+                "exitCode": out.exit_code,
+                "timedOut": out.timed_out,
+            });
+            if is_psmp && out.timed_out && !out.injected {
+                resp["message"] = json!(
+                    "Timed out with no password/2FA prompt seen — this may be a PSMP RADIUS \
+                     push notification awaiting out-of-band approval. Try ssh_open for an \
+                     interactive session instead of retrying ssh_scp."
+                );
+            }
+            resp.to_string()
+        }
+        Ok(Err(e)) => err_resp(e),
+        Err(e) => err_resp(format!("scp task failed: {e}")),
     }
 }
 
@@ -906,5 +1141,58 @@ mod tests {
             Some(unsafe { libc::getuid() }),
             "same-process peer uid must equal our uid"
         );
+    }
+
+    // ---- enforce_scp_arg_policy (PRD ssh-scp, AC4) ------------------------
+
+    fn a(xs: &[&str]) -> Vec<String> {
+        xs.iter().map(|s| s.to_string()).collect()
+    }
+
+    // Allowed scp flags pass through unchanged.
+    #[test]
+    fn ac4_allowed_scp_flags_pass() {
+        let out = enforce_scp_arg_policy(&a(&["-r", "-p", "-C"])).unwrap();
+        assert_eq!(out, a(&["-r", "-p", "-C"]));
+        // `-l` bare and with an attached numeric limit both pass.
+        assert!(enforce_scp_arg_policy(&a(&["-l"])).is_ok());
+        assert!(enforce_scp_arg_policy(&a(&["-l800"])).is_ok());
+    }
+
+    // Hard-denied flags (argv-injection/RCE surface) are rejected even alone.
+    #[test]
+    fn ac4_denied_scp_flags_rejected() {
+        for flag in ["-o", "-F", "-i", "-S", "-P"] {
+            assert!(
+                enforce_scp_arg_policy(&a(&[flag])).is_err(),
+                "{flag} must be rejected"
+            );
+        }
+        // A denied flag with an attached/following value is still rejected at the
+        // flag itself (fail fast, no partial trust of the value).
+        assert!(enforce_scp_arg_policy(&a(&["-o", "ProxyCommand=touch /tmp/x"])).is_err());
+        assert!(enforce_scp_arg_policy(&a(&["-i", "/etc/passwd"])).is_err());
+    }
+
+    // An unknown flag (not on the small allow-list) is rejected — fail-closed.
+    #[test]
+    fn ac4_unknown_flag_rejected() {
+        assert!(enforce_scp_arg_policy(&a(&["-v"])).is_err());
+        assert!(enforce_scp_arg_policy(&a(&["--recursive"])).is_err());
+    }
+
+    // A bare (non-flag) token is rejected — extraArgs is FLAGS ONLY; paths must go
+    // through the typed localPath/remotePath fields, never smuggled in here.
+    #[test]
+    fn ac4_bare_positional_rejected() {
+        assert!(enforce_scp_arg_policy(&a(&["/etc/passwd"])).is_err());
+        assert!(enforce_scp_arg_policy(&a(&["evil@host:/path"])).is_err());
+    }
+
+    // NUL bytes and bare dashes are rejected.
+    #[test]
+    fn ac4_nul_and_bare_dash_rejected() {
+        assert!(enforce_scp_arg_policy(&["a\0b".to_string()]).is_err());
+        assert!(enforce_scp_arg_policy(&a(&["-"])).is_err());
     }
 }
