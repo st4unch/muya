@@ -1015,7 +1015,12 @@ export default function App() {
             if (!polled.has(t.key)) return t;
             const info = sessionByKey[t.key];
             const running = Boolean(info);
-            const name = running && info!.name && !t.userRenamed ? info!.name : t.name;
+            // A tab keeps its OWN name (the one it was given at open — session name,
+            // SSH label, etc.). The poll no longer overwrites it with Claude's
+            // auto-generated "<project>-N" session name, which read as "just the
+            // project name" (operator choice). isClaude/sessionId still update so the
+            // icon and --resume keep working.
+            const name = t.name;
             const sessionId = running ? info!.id : t.sessionId;
             if (t.isClaude === running && t.name === name && t.sessionId === sessionId) return t;
             changed = true;
