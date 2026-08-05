@@ -1121,12 +1121,16 @@ export default function App() {
       }
     };
     load();
-    const t = setInterval(load, 5000);
+    // 20s (was 5s) and NO `fsTick` dep: `git branch` per repo is a subprocess, and
+    // having fsTick in the deps re-fired this whole burst on EVERY file change —
+    // during active editing that was a git-subprocess storm (~20% CPU + stutter,
+    // seen in a live sample). The interval is enough to keep branch data fresh. (L31)
+    const t = setInterval(load, 20000);
     return () => {
       active = false;
       clearInterval(t);
     };
-  }, [repoList.join(","), fsTick]);
+  }, [repoList.join(",")]);
 
   // branchList for the currently viewed repo (backwards compat with BranchDAG + cards).
   const branchList = branchMap[branchRepo] ?? [];
@@ -1149,10 +1153,13 @@ export default function App() {
         .catch(() => {});
     };
     load();
-    const t = setInterval(load, 5000);
+    // 20s (was 5s) and NO `fsTick` dep: pm_collisions runs `git` per worktree
+    // (pm::status_for → pm::git in the sample = the top CPU cost). fsTick in the deps
+    // re-fired it on every file change → subprocess storm while editing. (L31)
+    const t = setInterval(load, 20000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaces, worktrees, fsTick]);
+  }, [workspaces, worktrees]);
 
   // Refresh once when the window becomes visible again (polls were paused while hidden).
   useEffect(() => {

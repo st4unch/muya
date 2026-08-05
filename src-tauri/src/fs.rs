@@ -215,7 +215,15 @@ fn track_to_status(track: &str) -> &'static str {
 /// List local branches of a repo for the topology view. Returns empty if not a git
 /// repo (UI just shows nothing rather than erroring).
 #[tauri::command(async)]
-pub fn list_branches(repo: String) -> Result<Vec<GitBranchState>, String> {
+pub async fn list_branches(repo: String) -> Result<Vec<GitBranchState>, String> {
+    // `git for-each-ref` subprocess — run on the blocking pool so this (polled)
+    // command never occupies a tokio worker thread (L31).
+    tokio::task::spawn_blocking(move || list_branches_sync(repo))
+        .await
+        .map_err(|e| format!("list_branches join: {e}"))?
+}
+
+fn list_branches_sync(repo: String) -> Result<Vec<GitBranchState>, String> {
     let fmt = "%(refname:short)\x1f%(upstream:track)\x1f%(authorname)\x1f%(subject)";
     let out = Command::new("git")
         .args(["-C", &repo, "for-each-ref", "--format", fmt, "refs/heads/"])
@@ -1167,7 +1175,7 @@ mod tests {
         commit_file(&r.path, "b.txt", "b", "b1");
         run_git(&r.path, &["switch", "main"]);
 
-        let bs = list_branches(r.path.clone()).unwrap();
+        let bs = list_branches_sync(r.path.clone()).unwrap();
         let by = |n: &str| bs.iter().find(|b| b.name == n).unwrap();
         assert_eq!(bs.len(), 3);
         assert_eq!(by("feature/a").kind, "WIP");

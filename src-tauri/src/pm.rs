@@ -131,7 +131,16 @@ fn status_for(path: &str) -> ProjectStatus {
 
 /// Live status for the given project/worktree paths (non-git paths reported as such).
 #[tauri::command(async)]
-pub fn pm_status(paths: Vec<String>) -> Vec<ProjectStatus> {
+pub async fn pm_status(paths: Vec<String>) -> Vec<ProjectStatus> {
+    // status_for() shells out to `git` per path — run on the blocking pool so this
+    // (polled) command never occupies a tokio worker thread (L31; live sample showed
+    // pm::status_for/pm::git dominating CPU on tokio-rt-workers).
+    tokio::task::spawn_blocking(move || pm_status_sync(&paths))
+        .await
+        .unwrap_or_default()
+}
+
+pub(crate) fn pm_status_sync(paths: &[String]) -> Vec<ProjectStatus> {
     paths.iter().map(|p| status_for(p)).collect()
 }
 
@@ -230,7 +239,7 @@ pub struct Collision {
     pub worktrees: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CollisionReport {
     pub collisions: Vec<Collision>,
@@ -242,7 +251,15 @@ pub struct CollisionReport {
 /// (uncommitted) in two or more worktrees of the same repo. Compares working-tree
 /// changes via `git status --porcelain`.
 #[tauri::command(async)]
-pub fn pm_collisions(paths: Vec<String>) -> CollisionReport {
+pub async fn pm_collisions(paths: Vec<String>) -> CollisionReport {
+    // Runs `git status`/`rev-parse` per worktree — offload to the blocking pool so this
+    // polled command doesn't occupy a tokio worker thread (L31).
+    tokio::task::spawn_blocking(move || pm_collisions_sync(paths))
+        .await
+        .unwrap_or_default()
+}
+
+fn pm_collisions_sync(paths: Vec<String>) -> CollisionReport {
     use std::collections::HashMap;
     // repo common-dir -> (repo-relative file -> worktree names that changed it)
     let mut map: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
@@ -326,7 +343,7 @@ mod tests {
         run_git(&r.path, &["switch", "-c", "feature/x"]);
         commit_file(&r.path, "x.txt", "x", "x1"); // 1 ahead of main
         put_file(&r.path, "x.txt", "dirty"); // uncommitted change
-        let s = &pm_status(vec![r.path.clone()])[0];
+        let s = &pm_status_sync(&vec![r.path.clone()])[0];
         assert!(s.is_git);
         assert_eq!(s.branch, "feature/x");
         assert_eq!(s.base, "main");
@@ -339,7 +356,7 @@ mod tests {
     #[test]
     fn pm_status_non_git() {
         let dir = tempfile::tempdir().unwrap();
-        let s = &pm_status(vec![dir.path().to_string_lossy().into()])[0];
+        let s = &pm_status_sync(&vec![dir.path().to_string_lossy().into()])[0];
         assert!(!s.is_git);
     }
 
@@ -375,7 +392,7 @@ mod tests {
         // one real edit in the single worktree
         put_file(&r.path, "app.txt", "changed\n");
 
-        let report = pm_collisions(vec![r.path.clone(), format!("{}/sub", r.path)]);
+        let report = pm_collisions_sync(vec![r.path.clone(), format!("{}/sub", r.path)]);
         assert!(
             report.collisions.is_empty(),
             "same worktree added twice must not collide with itself: {:?}",
@@ -393,14 +410,14 @@ mod tests {
         // both edit the SAME repo-relative file → collision
         put_file(&wt1, "app.txt", "from a\n");
         put_file(&wt2, "app.txt", "from b\n");
-        let report = pm_collisions(vec![wt1.clone(), wt2.clone()]);
+        let report = pm_collisions_sync(vec![wt1.clone(), wt2.clone()]);
         assert_eq!(report.collisions.len(), 1, "{:?}", report.collisions);
         assert_eq!(report.collisions[0].file, "app.txt");
         assert_eq!(report.collisions[0].worktrees.len(), 2);
 
         // editing DIFFERENT files → no collision
         put_file(&wt1, "only-a.txt", "x");
-        let report2 = pm_collisions(vec![wt1.clone(), wt2.clone()]);
+        let report2 = pm_collisions_sync(vec![wt1.clone(), wt2.clone()]);
         // app.txt still collides, only-a.txt does not
         assert!(report2.collisions.iter().all(|c| c.file == "app.txt"));
     }
@@ -412,7 +429,7 @@ mod tests {
         if !Path::new(repo).exists() {
             return;
         }
-        let s = &pm_status(vec![repo.to_string()])[0];
+        let s = &pm_status_sync(&vec![repo.to_string()])[0];
         assert!(s.is_git);
     }
 }
