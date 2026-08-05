@@ -6,6 +6,20 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.19] - 2026-08-05
+
+### Changed
+- **SSH password handling is now deterministic (fixes PSMP `ssh_scp` + flaky `ssh_run`).**
+  Muya used to type the password into the terminal when it spotted a "password:" prompt —
+  a timing race that made `ssh_scp` fail against CyberArk PSMP (hang/timeout or "Permission
+  denied") and made `ssh_run` fail intermittently (~1 in 3). Muya now hands the password to
+  ssh/scp through OpenSSH's own askpass channel, so there's no prompt-timing guesswork — it
+  either has the password ready or it doesn't. A PSMP 2FA/OTP challenge is still refused
+  (the password is never sent to a one-time-code field). The password is streamed over a
+  private in-memory pipe — never written to disk, never in the process's arguments,
+  environment, or logs. (End-to-end confirmation against a live PSMP is still pending an
+  operator re-test; verified 15/15 deterministic against a test SSH server.)
+
 ## [0.2.18] - 2026-08-05
 
 ### Fixed
