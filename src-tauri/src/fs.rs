@@ -1429,6 +1429,23 @@ pub fn scan_prd_docs(dirs: Vec<String>) -> Vec<PrdDoc> {
             });
         }
     }
+    // Dedup by slug: with multiple roots scanned (a repo + its worktrees share
+    // committed docs), the SAME PRD can appear more than once. Keep the richest copy
+    // — one WITH a progress file, else the most-advanced (more done phases).
+    let mut by_slug: std::collections::HashMap<String, PrdDoc> = std::collections::HashMap::new();
+    for doc in results {
+        let replace = match by_slug.get(&doc.slug) {
+            None => true,
+            Some(cur) => {
+                (doc.progress_path.is_some() && cur.progress_path.is_none())
+                    || doc.done_phases > cur.done_phases
+            }
+        };
+        if replace {
+            by_slug.insert(doc.slug.clone(), doc);
+        }
+    }
+    let mut results: Vec<PrdDoc> = by_slug.into_values().collect();
     results.sort_by(|a, b| a.name.cmp(&b.name));
     results
 }

@@ -1709,7 +1709,15 @@ export const loginHandler = async (req, res) => {
       <div className={`flex-1 flex overflow-hidden ${view !== "prd" ? "hidden" : ""}`}>
         {mountedViews.has("prd") && (
           <PrdBoard
-            workspaces={workspaces.filter((w) => w.startsWith("/"))}
+            // Scan every known project root, not just user-added `workspaces`: agents
+            // run in git WORKTREES and drop their PRDs in the worktree's docs/, so a
+            // PRD created by an agent was invisible in the Kanban unless that worktree
+            // happened to be a workspace. Union in worktrees + live agent cwds.
+            workspaces={[...new Set([
+              ...workspaces,
+              ...worktrees,
+              ...agents.map((a) => a.worktree).filter(Boolean),
+            ])].filter((w) => w.startsWith("/")).sort()}
             onRegisterRefresh={registerPrdRefresh}
             onOpenFile={(path) => {
               openEditor(path);
