@@ -6,6 +6,17 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.18] - 2026-08-05
+
+### Fixed
+- **`ssh_scp` now authenticates against CyberArk PSMP.** File transfers to a PSMP-fronted
+  server were failing with "Permission denied (publickey,keyboard-interactive)" (exit 255):
+  scp tried public-key auth first and the PSMP proxy closed the connection before the
+  "Vault Password:" prompt appeared, so Muya never got to inject the password. scp now
+  disables public-key auth whenever Muya will inject a stored/CyberArk credential (matching
+  what `ssh_run` already did), so it reaches the password prompt. (End-to-end confirmation
+  against a live PSMP is pending an operator re-test.)
+
 ## [0.2.17] - 2026-08-05
 
 ### Added

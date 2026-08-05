@@ -1,6 +1,6 @@
 [package]
 name = "muya"
-version = "0.2.17"
+version = "0.2.18"
 description = "Muya — control plane for parallel Claude Code agents"
 authors = ["staunch"]
 edition = "2021"
