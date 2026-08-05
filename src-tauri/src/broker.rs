@@ -637,7 +637,7 @@ async fn handle_run(app: &AppHandle, servers: &[Server], req: &BrokerReq) -> Str
 
     // AC8 — run the blocking PTY capture off the async runtime.
     let result = tokio::task::spawn_blocking(move || {
-        crate::pty::run_with_injection(&program, &args, secret, RUN_TIMEOUT, is_psmp)
+        crate::askpass::run_with_askpass(&program, &args, secret, RUN_TIMEOUT, is_psmp)
     })
     .await;
 
@@ -832,7 +832,7 @@ async fn handle_scp(app: &AppHandle, servers: &[Server], req: &BrokerReq) -> Str
     // AC7/AC8 — same bounded PTY capture + timeout as ssh_run; the secret is only
     // ever written into the PTY, never into argv/stdout/logs.
     let result = tokio::task::spawn_blocking(move || {
-        crate::pty::run_with_injection(&program, &args, secret, RUN_TIMEOUT, is_psmp)
+        crate::askpass::run_with_askpass(&program, &args, secret, RUN_TIMEOUT, is_psmp)
     })
     .await;
 

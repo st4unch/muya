@@ -23,6 +23,7 @@ fn get_startup_files() -> Vec<String> {
 
 mod agent_ops;
 mod agents;
+mod askpass;
 mod bridge;
 mod bridge_exec;
 mod bridge_remote;
