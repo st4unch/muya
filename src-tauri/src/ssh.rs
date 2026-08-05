@@ -657,6 +657,18 @@ pub(crate) fn build_scp_command(
     args.push("-o".to_string());
     args.push("LogLevel=ERROR".to_string());
 
+    // When Muya injects a stored/CyberArk password, force password auth by disabling
+    // pubkey. Otherwise scp tries publickey FIRST and, against a PSMP proxy that
+    // offers (publickey, keyboard-interactive), the connection is closed with
+    // "Permission denied (publickey,keyboard-interactive)" / exit 255 BEFORE the
+    // "Vault Password:" prompt ever appears for PTY injection. ssh_run works because
+    // the operator put this in the server's ssh_options; the scp builder never
+    // inherited it (operator-diagnosed against a real PSMP, 2026-08-05). (L33)
+    if needs_injection(server) {
+        args.push("-o".to_string());
+        args.push("PubkeyAuthentication=no".to_string());
+    }
+
     let dest_spec = if server.connection_type == "psmp" {
         let p = psmp.ok_or("PSMP server has no profile")?;
         if server.port != DEFAULT_PORT {
@@ -1255,6 +1267,55 @@ mod tests {
         assert_eq!(
             down.args,
             vec!["-o", "LogLevel=ERROR", "u@h:/remote/b.txt", "/local/b.txt"]
+        );
+    }
+
+    // L33 regression: when Muya will inject a password, scp must disable pubkey so it
+    // reaches the (keyboard-interactive) password prompt instead of failing pubkey
+    // first — the real-PSMP bug the operator diagnosed on 2026-08-05. A "prompt"
+    // server (no injection) must NOT get the option.
+    #[test]
+    fn scp_forces_no_pubkey_only_when_injecting() {
+        let mut inject = srv("h", 22, "u");
+        inject.credential_source = CredentialSource {
+            kind: "local".into(),
+            local_cred_id: Some("cred-1".into()),
+            ..Default::default()
+        };
+        let cmd = build_scp_command(
+            &inject,
+            None,
+            ScpDirection::Upload,
+            "/l/a",
+            "/r/a",
+            false,
+            &[],
+        )
+        .unwrap();
+        assert!(
+            cmd.args
+                .windows(2)
+                .any(|w| w == ["-o", "PubkeyAuthentication=no"]),
+            "injecting scp must disable pubkey; got {:?}",
+            cmd.args
+        );
+
+        // A "prompt" server (default srv) injects nothing → no PubkeyAuthentication=no.
+        let prompt = srv("h", 22, "u");
+        let cmd2 = build_scp_command(
+            &prompt,
+            None,
+            ScpDirection::Upload,
+            "/l/a",
+            "/r/a",
+            false,
+            &[],
+        )
+        .unwrap();
+        assert!(
+            !cmd2.args.iter().any(|a| a == "PubkeyAuthentication=no"),
+            "prompt scp must not force pubkey-off; got {:?}",
+            cmd2.args
         );
     }
 
