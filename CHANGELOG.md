@@ -6,6 +6,20 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.20] - 2026-08-06
+
+### Fixed
+- **CPU spikes / stutter while editing are gone.** Two background checks (branch list
+  and cross-worktree collisions) were re-running their `git` subprocesses on every file
+  change and every 5 seconds — a subprocess storm that pushed CPU to ~20% and made the
+  UI stutter during active work. They now refresh at most every 20s (not on every file
+  change) and run off the shared worker pool, so file edits stay smooth.
+- **The Kanban shows PRDs created by agents.** Agents run in git worktrees and drop
+  their PRDs there, but the board only scanned your manually-added workspace folders —
+  so an agent-created PRD was invisible. The board now scans every known project root
+  (workspaces + worktrees + live agent working dirs) and de-duplicates, so every PRD
+  shows up once.
+
 ## [0.2.19] - 2026-08-05
 
 ### Changed
