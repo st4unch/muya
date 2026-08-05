@@ -6,6 +6,21 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.17] - 2026-08-05
+
+### Added
+- **Agents can transfer files over SCP (`ssh_scp`).** A Claude agent can now upload or
+  download a file to/from any SSH server you've allowed it to use (including PSMP), by
+  server alias — Muya injects the credential, the agent never sees it. Guardrails: the
+  local file path is confined to your **workspace folders** (the agent can't read
+  `~/.ssh` or write outside a workspace), the agent can't pass risky scp flags (`-o`,
+  `-i`, …), and a PSMP 2FA/OTP challenge is refused rather than guessed. PSMP profiles
+  gain an optional **SCP options** field for any `-o` your environment requires.
+
+### Note
+- Verified end-to-end against a live SSH server (upload + download); confirmation against
+  a real CyberArk PSMP transfer is still pending an operator test.
+
 ## [0.2.16] - 2026-08-04
 
 ### Fixed
