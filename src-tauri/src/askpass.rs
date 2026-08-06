@@ -149,7 +149,9 @@ pub fn run_with_askpass(
         // No controlling TTY: askpass is used precisely so no PTY/prompt is needed.
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+        // Capture stderr so a failed ssh/scp surfaces its REAL error (auth/PSMP DLP/
+        // protocol message) instead of a bare exit code. Never holds the password.
+        .stderr(Stdio::piped());
     if let Some(ap) = &ap {
         cmd.env("SSH_ASKPASS", &ap.script)
             .env("SSH_ASKPASS_REQUIRE", "force")
@@ -201,6 +203,28 @@ pub fn run_with_askpass(
         })
     });
 
+    // Same bounded drain for stderr (the real error on a failed transfer).
+    let captured_err = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let err_handle = child.stderr.take().map(|mut err| {
+        let cap = Arc::clone(&captured_err);
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 8192];
+            loop {
+                match err.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        if let Ok(mut c) = cap.lock() {
+                            if c.len() < CAPTURE_CAP {
+                                let room = CAPTURE_CAP - c.len();
+                                c.extend_from_slice(&buf[..room.min(n)]);
+                            }
+                        }
+                    }
+                }
+            }
+        })
+    });
+
     let deadline = Instant::now() + timeout;
     let mut exit_code = None;
     let mut timed_out = false;
@@ -238,10 +262,17 @@ pub fn run_with_askpass(
     if let Some(h) = reader_handle {
         let _ = h.join();
     }
+    if let Some(h) = err_handle {
+        let _ = h.join();
+    }
 
     let challenge_detected = ap.as_ref().map(|a| a.challenge.exists()).unwrap_or(false);
     let injected = ap.as_ref().map(|a| a.called.exists()).unwrap_or(false) && !challenge_detected;
     let stdout = captured
+        .lock()
+        .map(|c| String::from_utf8_lossy(&c).into_owned())
+        .unwrap_or_default();
+    let stderr = captured_err
         .lock()
         .map(|c| String::from_utf8_lossy(&c).into_owned())
         .unwrap_or_default();
@@ -253,6 +284,7 @@ pub fn run_with_askpass(
         timed_out,
         challenge_detected,
         injected,
+        stderr,
     })
 }
 

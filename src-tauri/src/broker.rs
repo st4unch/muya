@@ -654,6 +654,7 @@ async fn handle_run(app: &AppHandle, servers: &[Server], req: &BrokerReq) -> Str
             let mut resp = json!({
                 "ok": true,
                 "stdout": out.stdout,
+                "stderr": out.stderr,
                 "exitCode": out.exit_code,
                 "timedOut": out.timed_out,
             });
@@ -849,6 +850,7 @@ async fn handle_scp(app: &AppHandle, servers: &[Server], req: &BrokerReq) -> Str
                 "direction": direction_str,
                 "localPath": resolved_local_str,
                 "remotePath": remote_path,
+                "stderr": out.stderr,
                 "exitCode": out.exit_code,
                 "timedOut": out.timed_out,
             });

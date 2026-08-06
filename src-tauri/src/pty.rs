@@ -276,6 +276,12 @@ pub struct CommandOutput {
     /// vice versa) — callers use this to tell "no prompt ever appeared" (AC3,
     /// possible RADIUS push with no local prompt) from "we injected normally".
     pub injected: bool,
+    /// Captured stderr (askpass path only; empty for the PTY path, which merges the
+    /// streams). Surfaced so a failed ssh/scp shows its REAL error (e.g. a CyberArk
+    /// PSMP DLP "download not permitted" message) instead of a bare exit code. Never
+    /// contains the password — ssh/scp never echo it (askpass keeps it off the tty).
+    #[serde(default)]
+    pub stderr: String,
 }
 
 /// Hard cap on captured output (AC8): stop appending past this so a runaway remote
@@ -472,6 +478,7 @@ pub fn run_with_injection(
         timed_out,
         challenge_detected,
         injected,
+        stderr: String::new(), // PTY merges stderr into stdout; kept for API parity.
     })
 }
 
