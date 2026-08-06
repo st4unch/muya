@@ -671,6 +671,13 @@ pub(crate) fn build_scp_command(
 
     let dest_spec = if server.connection_type == "psmp" {
         let p = psmp.ok_or("PSMP server has no profile")?;
+        // Force the LEGACY scp protocol through PSMP. OpenSSH 9.0+ made scp use the
+        // SFTP subsystem by default; CyberArk PSMP proxies the legacy scp/exec channel
+        // (the same one ssh_run uses — which is why ssh_run works) but not the SFTP
+        // subsystem, so a default scp fails through PSMP (exit 255 / SFTP-negotiation
+        // timeout / exit 1). `-O` restores the exec-based protocol PSMP understands.
+        // Operator-diagnosed against a real PSMP (k3s_master), 2026-08-06. (L35)
+        args.push("-O".to_string());
         if server.port != DEFAULT_PORT {
             args.push("-P".to_string());
             args.push(server.port.to_string());
@@ -1170,6 +1177,38 @@ mod tests {
     // AC5 — PSMP scp destination is `vaultUser@targetUser@targetAddress@psmpAddress`
     // (ONLY `@`, never the ssh dest's `#paramDelim` port trick), plus the profile's
     // `scpOptions` `-o`s. Pure builder — no live PSMP needed.
+    // L35: PSMP scp must force the legacy protocol (-O); a direct scp must not (its
+    // SFTP-based transfer works against a normal sshd and is what the Docker e2e uses).
+    #[test]
+    fn scp_forces_legacy_protocol_for_psmp_only() {
+        let mut p = srv("h", 22, "u");
+        p.connection_type = "psmp".into();
+        let cmd = build_scp_command(
+            &p,
+            Some(&psmp()),
+            ScpDirection::Upload,
+            "/l",
+            "/r",
+            false,
+            &[],
+        )
+        .unwrap();
+        assert!(
+            cmd.args.iter().any(|a| a == "-O"),
+            "psmp scp needs -O: {:?}",
+            cmd.args
+        );
+
+        let d = srv("h", 22, "u"); // direct
+        let cmd2 =
+            build_scp_command(&d, None, ScpDirection::Upload, "/l", "/r", false, &[]).unwrap();
+        assert!(
+            !cmd2.args.iter().any(|a| a == "-O"),
+            "direct scp must not force -O: {:?}",
+            cmd2.args
+        );
+    }
+
     #[test]
     fn ac5_psmp_scp_dest_uses_only_at_delim_plus_scp_options() {
         let mut s = srv("10.0.0.5", 22, "oracle");
@@ -1188,12 +1227,14 @@ mod tests {
         )
         .unwrap();
         assert_eq!(cmd.program, "scp");
-        // Muya's -o LogLevel=ERROR, then the profile's scpOptions tokens, then src/dst.
+        // Muya's -o LogLevel=ERROR, then -O (legacy scp protocol for PSMP, L35), then
+        // the profile's scpOptions tokens, then src/dst.
         assert_eq!(
             cmd.args,
             vec![
                 "-o",
                 "LogLevel=ERROR",
+                "-O",
                 "-o",
                 "ProxyCommand=none",
                 "-o",
