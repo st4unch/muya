@@ -6,6 +6,15 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.22] - 2026-08-06
+
+### Added
+- **`ssh_run` / `ssh_scp` now return `stderr`.** They used to return only an exit code,
+  so a failed transfer was undiagnosable. The real error message is now included — so a
+  server-side block (e.g. a CyberArk PSMP policy that permits uploads but blocks
+  downloads) can be told apart from a genuine transfer error. (The `-O` legacy-protocol
+  fix in 0.2.21 made PSMP *uploads* work; a still-failing download now shows why.)
+
 ## [0.2.21] - 2026-08-06
 
 ### Fixed
