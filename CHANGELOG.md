@@ -6,6 +6,17 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.21] - 2026-08-06
+
+### Fixed
+- **`ssh_scp` through CyberArk PSMP forces the legacy transfer protocol.** File
+  transfers to a PSMP-fronted server failed (exit 255 / timeout / exit 1) while
+  `ssh_run` worked. The cause was the transfer protocol, not auth: modern OpenSSH's
+  `scp` uses the SFTP subsystem by default, which CyberArk PSMP doesn't proxy (it
+  proxies the classic scp channel — the same one `ssh_run` uses). Muya now runs `scp`
+  with the original protocol (`-O`) for PSMP servers. Direct (non-PSMP) transfers are
+  unchanged. (End-to-end confirmation against a live PSMP is pending an operator re-test.)
+
 ## [0.2.20] - 2026-08-06
 
 ### Fixed
