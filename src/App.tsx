@@ -1019,12 +1019,19 @@ export default function App() {
             if (!polled.has(t.key)) return t;
             const info = sessionByKey[t.key];
             const running = Boolean(info);
-            // A tab keeps its OWN name (the one it was given at open — session name,
-            // SSH label, etc.). The poll no longer overwrites it with Claude's
-            // auto-generated "<project>-N" session name, which read as "just the
-            // project name" (operator choice). isClaude/sessionId still update so the
-            // icon and --resume keep working.
-            const name = t.name;
+            // Adopt Claude's session name so a name you give a session shows up LIVE
+            // (no manual refresh). BUT keep the tab's OWN name when (a) you renamed it
+            // in Muya (userRenamed) or (b) Claude's name is just the auto-generated
+            // "<folder>-N" (which reads as the project name — the tab's original name
+            // is nicer). This fixes the earlier over-correction that never adopted any
+            // name, so a real rename only appeared after a Sessions refresh.
+            const folder = (t.cwd ?? "").replace(/\/+$/, "").split("/").pop() ?? "";
+            const looksAutoName =
+              !!info?.name &&
+              folder !== "" &&
+              new RegExp(`^${folder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-\\d+$`).test(info!.name);
+            const name =
+              running && info!.name && !t.userRenamed && !looksAutoName ? info!.name : t.name;
             const sessionId = running ? info!.id : t.sessionId;
             if (t.isClaude === running && t.name === name && t.sessionId === sessionId) return t;
             changed = true;
