@@ -281,6 +281,7 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                 .map_err(|e| (-32000, e))?;
             if resp.get("ok").and_then(Value::as_bool) == Some(true) {
                 let stdout = resp.get("stdout").and_then(Value::as_str).unwrap_or("");
+                let stderr = resp.get("stderr").and_then(Value::as_str).unwrap_or("");
                 let timed_out = resp.get("timedOut").and_then(Value::as_bool) == Some(true);
                 let exit_note = match resp.get("exitCode").and_then(Value::as_i64) {
                     Some(code) => format!("[exit code: {code}]"),
@@ -293,11 +294,15 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                 if timed_out {
                     text.push_str("[command timed out and was terminated]\n");
                 }
+                if !stderr.trim().is_empty() {
+                    text.push_str(&format!("[stderr]\n{}\n", stderr.trim_end()));
+                }
                 text.push_str(&exit_note);
                 Ok(tool_ok(
                     text,
                     Some(json!({
                         "stdout": stdout,
+                        "stderr": stderr,
                         "exitCode": resp.get("exitCode").cloned().unwrap_or(Value::Null),
                         "timedOut": timed_out,
                     })),
@@ -368,6 +373,7 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                     .get("localPath")
                     .and_then(Value::as_str)
                     .unwrap_or(&local_path);
+                let stderr = resp.get("stderr").and_then(Value::as_str).unwrap_or("");
                 let timed_out = resp.get("timedOut").and_then(Value::as_bool) == Some(true);
                 let exit_note = match resp.get("exitCode").and_then(Value::as_i64) {
                     Some(code) => format!("[exit code: {code}]"),
@@ -383,6 +389,9 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                     text.push_str(msg);
                     text.push('\n');
                 }
+                if !stderr.trim().is_empty() {
+                    text.push_str(&format!("[stderr]\n{}\n", stderr.trim_end()));
+                }
                 text.push_str(&exit_note);
                 Ok(tool_ok(
                     text,
@@ -390,6 +399,7 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                         "direction": direction,
                         "localPath": resolved_local,
                         "remotePath": remote_path,
+                        "stderr": stderr,
                         "exitCode": resp.get("exitCode").cloned().unwrap_or(Value::Null),
                         "timedOut": timed_out,
                     })),
