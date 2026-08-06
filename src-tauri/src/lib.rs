@@ -37,6 +37,7 @@ mod local_guard;
 mod metrics;
 mod pm;
 mod pty;
+mod sessions;
 mod ssh;
 #[cfg(test)]
 mod testutil;
@@ -271,6 +272,8 @@ pub fn run() {
             vault::vault_set_path,
             vault::vault_restart,
             fs::scan_prd_docs,
+            sessions::search_session_contents,
+            sessions::export_session_markdown,
             bridge::bridge_local_listen,
             bridge::bridge_poll_inbound,
             bridge::bridge_send,

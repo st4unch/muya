@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { relTime, shortCwd } from "../lib/format";
-import { RefreshCw, Play, Plug, FolderGit2, Clock, Square, Search, X, MessageSquare, User, Bot, Copy, Check } from "lucide-react";
+import { RefreshCw, Play, Plug, FolderGit2, Clock, Square, Search, X, MessageSquare, User, Bot, Copy, Check, Download } from "lucide-react";
 
 interface AgentSession {
   id: string;
@@ -56,6 +56,9 @@ export default function SessionsPage({
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
+  // sessionId -> snippet, for sessions whose TRANSCRIPT CONTENT matches `query`
+  // (searched in the backend; see the debounced effect below).
+  const [contentMatches, setContentMatches] = useState<Map<string, string>>(new Map());
   // Resume id just copied — shows a transient "copied" confirmation.
   const [copiedId, setCopiedId] = useState<string | null>(null);
   // Transcript drawer: which past session's conversation is open.
@@ -102,6 +105,46 @@ export default function SessionsPage({
     onRegisterRefresh?.(refresh);
   }, [onRegisterRefresh, refresh]);
 
+  // Content search: debounced grep of the visible sessions' transcripts, so a word
+  // from the CONVERSATION (not just the name/path) surfaces the session. Backend runs
+  // it off the worker pool; ≥2 chars only.
+  useEffect(() => {
+    const q2 = query.trim();
+    if (q2.length < 2) { setContentMatches(new Map()); return; }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      const sessions = [
+        ...live.map((s) => ({ id: s.id, cwd: s.worktree })),
+        ...history.map((h) => ({ id: h.sessionId, cwd: h.cwd })),
+      ].filter((s) => s.id && s.cwd);
+      try {
+        const matches = await invoke<{ sessionId: string; snippet: string }[]>(
+          "search_session_contents",
+          { query: q2, sessions },
+        );
+        if (!cancelled) setContentMatches(new Map(matches.map((m) => [m.sessionId, m.snippet])));
+      } catch (e) {
+        if (!cancelled) console.warn("[apex] content search failed:", e);
+      }
+    }, 300);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [query, live, history]);
+
+  // Export one session's conversation to a Markdown file the operator picks.
+  const exportMarkdown = useCallback(async (id: string, cwd: string, label: string) => {
+    try {
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const dest = (await save({
+        title: "Export conversation as Markdown",
+        defaultPath: `${(label || id.slice(0, 8)).replace(/[^\w.-]+/g, "-")}.md`,
+      })) as string | null;
+      if (!dest) return;
+      await invoke("export_session_markdown", { sessionId: id, cwd, dest });
+    } catch (e) {
+      console.warn("[apex] export markdown failed:", e);
+    }
+  }, []);
+
   const stop = async (s: AgentSession) => {
     try {
       await invoke("stop_agent", { id: s.attachId ?? s.id });
@@ -119,7 +162,8 @@ export default function SessionsPage({
         s.name.toLowerCase().includes(q) ||
         s.worktree.toLowerCase().includes(q) ||
         s.branch.toLowerCase().includes(q) ||
-        s.status.toLowerCase().includes(q)
+        s.status.toLowerCase().includes(q) ||
+        contentMatches.has(s.id) // matched inside the conversation
       )
     : live;
   const filteredHistory = q
@@ -127,7 +171,8 @@ export default function SessionsPage({
         const name = h.cwd.split("/").filter(Boolean).pop() ?? "";
         return name.toLowerCase().includes(q) ||
           h.cwd.toLowerCase().includes(q) ||
-          h.sessionId.toLowerCase().includes(q);
+          h.sessionId.toLowerCase().includes(q) ||
+          contentMatches.has(h.sessionId);
       })
     : history;
 
@@ -151,7 +196,7 @@ export default function SessionsPage({
         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-neutral-400 dark:text-neutral-500 pointer-events-none" />
         <input
           type="text"
-          placeholder="Search by name, path, branch, session ID…"
+          placeholder="Search name, path, branch, ID — and inside the conversation…"
           value={query}
           onChange={e => setQuery(e.target.value)}
           className="w-full pl-8 pr-8 py-1.5 text-[11px] font-mono rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#25272b] text-neutral-800 dark:text-neutral-200 placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none focus:border-indigo-400 dark:focus:border-indigo-600"
@@ -216,8 +261,25 @@ export default function SessionsPage({
                     <Clock className="h-3 w-3" /> {s.duration}
                   </span>
                 </div>
+                {contentMatches.get(s.id) && (
+                  <div
+                    className="mt-1 text-[10px] font-mono text-indigo-600 dark:text-indigo-400 truncate max-w-[440px]"
+                    title={contentMatches.get(s.id)}
+                  >
+                    <Search className="h-3 w-3 inline -mt-0.5 mr-1" />
+                    {contentMatches.get(s.id)}
+                  </div>
+                )}
               </div>
               <div className="shrink-0 flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => void exportMarkdown(s.id, s.worktree, s.name)}
+                  className="flex items-center gap-1 text-[11px] font-mono px-2 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#25272b] hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-400 cursor-pointer transition-colors"
+                  title="Export conversation as Markdown"
+                >
+                  <Download className="h-3 w-3" /> .md
+                </button>
                 <button
                   type="button"
                   onClick={() =>
@@ -303,8 +365,25 @@ export default function SessionsPage({
                         : <><Copy className="h-3 w-3" /> <span className="select-all">{h.sessionId}</span></>}
                     </button>
                   </div>
+                  {contentMatches.get(h.sessionId) && (
+                    <div
+                      className="mt-1 text-[10px] font-mono text-indigo-600 dark:text-indigo-400 truncate max-w-[440px]"
+                      title={contentMatches.get(h.sessionId)}
+                    >
+                      <Search className="h-3 w-3 inline -mt-0.5 mr-1" />
+                      {contentMatches.get(h.sessionId)}
+                    </div>
+                  )}
                 </div>
                 <div className="shrink-0 flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => void exportMarkdown(h.sessionId, h.cwd, name)}
+                    className="flex items-center gap-1 text-[11px] font-mono px-2 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#25272b] text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer transition-colors"
+                    title="Export conversation as Markdown"
+                  >
+                    <Download className="h-3 w-3" /> .md
+                  </button>
                   <button
                     type="button"
                     onClick={() => void openTranscript(h)}
