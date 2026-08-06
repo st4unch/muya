@@ -6,6 +6,15 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.23] - 2026-08-06
+
+### Fixed
+- **`ssh_run` / `ssh_scp` actually return `stderr` now.** 0.2.22 added stderr to the
+  backend, but the MCP layer that hands the result to the agent was rebuilding the
+  response with a fixed set of fields and silently dropping stderr — so it never
+  reached the caller. Both the structured result and the readable text now include it,
+  so a failed transfer finally shows its real error.
+
 ## [0.2.22] - 2026-08-06
 
 ### Added
