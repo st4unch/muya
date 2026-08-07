@@ -1,7 +1,8 @@
 ---
-status: active
+status: done
 prd: docs/prd-file-open-ux.md
 started: 2026-08-07
+completed: 2026-08-07
 ---
 
 ## Faz Çıktıları
