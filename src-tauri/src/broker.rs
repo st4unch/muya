@@ -42,7 +42,10 @@ use zeroize::Zeroizing;
 use crate::ssh::Server;
 
 /// Name of the MCP entry written to `~/.claude/.mcp.json` and of the proxy binary.
-const MCP_ENTRY_NAME: &str = "muya-ssh";
+const MCP_ENTRY_NAME: &str = "muya-mcp";
+/// Prior name of this MCP server; removed from `~/.claude.json` on register so the
+/// rename doesn't leave a stale duplicate pointing at the same binary.
+const MCP_LEGACY_ENTRY_NAME: &str = "muya-ssh";
 const MCP_BIN_NAME: &str = "muya-ssh-mcp";
 
 /// AC10 — cap on concurrent `ssh_run` commands. Over the cap the broker fails fast
@@ -957,10 +960,12 @@ pub(crate) fn mcp_binary_path() -> Result<String, String> {
     Ok(dir.join(MCP_BIN_NAME).to_string_lossy().into_owned())
 }
 
-/// Register (or refresh) the `muya-ssh` stdio entry in `~/.claude/.mcp.json`.
+/// Register (or refresh) the `muya-mcp` stdio entry in `~/.claude.json`.
 /// Idempotent — `install_mcp` merges by key, so running twice never duplicates.
+/// Also drops the legacy `muya-ssh` entry so the rename doesn't leave a stale twin.
 pub(crate) fn register_mcp() -> Result<(), String> {
     let command = mcp_binary_path()?;
+    let _ = crate::fs::remove_mcp(MCP_LEGACY_ENTRY_NAME.to_string());
     crate::fs::install_mcp(MCP_ENTRY_NAME.to_string(), command, vec![])
 }
 

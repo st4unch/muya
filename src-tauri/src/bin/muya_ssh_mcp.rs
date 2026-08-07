@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use serde_json::{json, Value};
 
 const PROTOCOL_VERSION: &str = "2025-06-18";
-const SERVER_NAME: &str = "muya-ssh";
+const SERVER_NAME: &str = "muya-mcp";
 const SERVER_VERSION: &str = "0.1.0";
 
 fn app_socket_path() -> PathBuf {

@@ -80,6 +80,25 @@ pub fn create_file(path: String) -> Result<(), String> {
     std::fs::write(p, "").map_err(|e| format!("create failed: {e}"))
 }
 
+/// Classify a dropped path so the frontend can route it: a directory becomes a
+/// workspace root, a file opens in the editor. Returns "dir", "file", or "missing".
+#[tauri::command(async)]
+pub fn path_kind(path: String) -> String {
+    match std::fs::metadata(Path::new(&path)) {
+        Ok(m) if m.is_dir() => "dir".into(),
+        Ok(_) => "file".into(),
+        Err(_) => "missing".into(),
+    }
+}
+
+/// Create a new directory (File tree > New Folder). Idempotent: an existing dir is
+/// left untouched. Parent dirs are created as needed.
+#[tauri::command(async)]
+pub fn create_dir(path: String) -> Result<(), String> {
+    let path = crate::validate::valid_mutable_path(&path)?;
+    std::fs::create_dir_all(Path::new(&path)).map_err(|e| format!("mkdir failed: {e}"))
+}
+
 /// Read a file's committed (HEAD) version for diffing against the working tree.
 /// Returns the HEAD content, or an empty string if the file is untracked/new (so the
 /// diff shows it as fully added). Errors only if the path isn't inside a git repo.
@@ -1023,6 +1042,33 @@ pub fn install_mcp(name: String, command: String, args: Vec<String>) -> Result<(
     install_mcp_at(&cfg_path, name, command, args)
 }
 
+/// Remove an MCP server entry by name from `~/.claude.json` (no-op if absent). Used to
+/// migrate a renamed server (drop the stale key) without disturbing any other config.
+pub fn remove_mcp(name: String) -> Result<(), String> {
+    let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
+    let cfg_path = Path::new(&home).join(".claude.json");
+    remove_mcp_at(&cfg_path, &name)
+}
+
+fn remove_mcp_at(cfg_path: &Path, name: &str) -> Result<(), String> {
+    if !cfg_path.exists() {
+        return Ok(());
+    }
+    let content = std::fs::read_to_string(cfg_path).map_err(|e| e.to_string())?;
+    let mut root: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("~/.claude.json is not valid JSON — refusing to modify it: {e}"))?;
+    let removed = root
+        .get_mut("mcpServers")
+        .and_then(|s| s.as_object_mut())
+        .map(|servers| servers.remove(name).is_some())
+        .unwrap_or(false);
+    if !removed {
+        return Ok(()); // nothing to do — never rewrite the file needlessly
+    }
+    let out = serde_json::to_vec_pretty(&root).map_err(|e| e.to_string())?;
+    crate::credstore::atomic_write(cfg_path, &out)
+}
+
 /// Path-injectable core of `install_mcp` so tests never touch the real
 /// `~/.claude.json`. Production always goes through `install_mcp` (default path).
 fn install_mcp_at(
@@ -1129,6 +1175,43 @@ mod tests {
         assert!(err.contains("refusing to modify"), "unexpected: {err}");
         // The original bytes survive untouched.
         assert_eq!(std::fs::read_to_string(&cfg).unwrap(), junk);
+    }
+
+    // ----- remove_mcp: migration drops the stale key, preserves everything else -----
+
+    #[test]
+    fn remove_mcp_drops_target_and_preserves_rest() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join(".claude.json");
+        std::fs::write(
+            &cfg,
+            r#"{"numStartups":7,"mcpServers":{"muya-ssh":{"command":"/x/muya-ssh-mcp","args":[]},"blender":{"command":"uvx","args":["blender-mcp"]}}}"#,
+        )
+        .unwrap();
+        remove_mcp_at(&cfg, "muya-ssh").unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&cfg).unwrap()).unwrap();
+        assert!(
+            v["mcpServers"].get("muya-ssh").is_none(),
+            "stale key removed"
+        );
+        assert_eq!(v["mcpServers"]["blender"]["command"], "uvx");
+        assert_eq!(v["numStartups"], 7);
+    }
+
+    #[test]
+    fn remove_mcp_noop_when_absent_or_no_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join(".claude.json");
+        // No file at all → Ok, nothing created.
+        remove_mcp_at(&cfg, "muya-ssh").unwrap();
+        assert!(!cfg.exists());
+        // File without the key → untouched.
+        std::fs::write(&cfg, r#"{"mcpServers":{"blender":{"command":"uvx"}}}"#).unwrap();
+        remove_mcp_at(&cfg, "muya-ssh").unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&cfg).unwrap()).unwrap();
+        assert_eq!(v["mcpServers"]["blender"]["command"], "uvx");
     }
 
     // ----- pure-function unit tests (no I/O) -----

@@ -236,6 +236,8 @@ pub fn run() {
             fs::read_file,
             fs::write_file,
             fs::create_file,
+            fs::create_dir,
+            fs::path_kind,
             fs::read_head_file,
             fs::create_worktree,
             fs::remove_worktree,

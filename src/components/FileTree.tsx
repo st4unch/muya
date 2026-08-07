@@ -24,6 +24,8 @@ interface CtxMenu {
   isRoot: boolean;
   rootPath: string;
   confirmDelete?: boolean;
+  /** When set, the menu shows an inline name input to create a file/folder. */
+  creating?: "file" | "folder";
 }
 
 type GitStatusMap = Map<string, string>;
@@ -202,6 +204,12 @@ export default function FileTree({
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
+  const [createName, setCreateName] = useState("");
+  // Bumped locally to force an immediate tree reload after a create/rename/delete,
+  // rather than waiting for the fs-watcher's debounced `fs-changed` (L38).
+  const [localRefresh, setLocalRefresh] = useState(0);
+  const treeRefresh = (refreshSignal ?? 0) + localRefresh;
+  const createInputRef = useRef<HTMLInputElement>(null);
   // flat file list for search
   const [allFiles, setAllFiles] = useState<Entry[]>([]);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -237,6 +245,11 @@ export default function FileTree({
   useEffect(() => {
     if (searchOpen) requestAnimationFrame(() => searchInputRef.current?.focus());
   }, [searchOpen]);
+
+  // Focus the New File/Folder name input the moment the menu switches into create mode.
+  useEffect(() => {
+    if (menu?.creating) requestAnimationFrame(() => createInputRef.current?.focus());
+  }, [menu?.creating]);
 
   // Poll git status for all roots
   const refreshGitStatus = useCallback(async () => {
@@ -283,7 +296,7 @@ export default function FileTree({
 
   useEffect(() => {
     if (searchOpen) void buildFileList();
-  }, [searchOpen, buildFileList, refreshSignal]);
+  }, [searchOpen, buildFileList, treeRefresh]);
 
   const handleContextMenu = (e: React.MouseEvent, entry: Entry, root: string) => {
     e.preventDefault();
@@ -303,14 +316,39 @@ export default function FileTree({
     if (!newName || newName === oldPath.split("/").pop()) return;
     try {
       await invoke("rename_entry", { oldPath, newName });
+      setLocalRefresh((n) => n + 1);
     } catch (e) { console.warn("rename failed:", e); }
   };
 
   const deleteEntry = async (path: string) => {
     try {
       await invoke("delete_entry", { path });
+      setLocalRefresh((n) => n + 1);
     } catch (e) { console.warn("delete failed:", e); }
     setMenu(null);
+  };
+
+  /** Directory the new file/folder lands in: the entry itself if a folder, else its parent. */
+  const createParentDir = (m: CtxMenu) =>
+    m.isDir ? m.path : m.path.split("/").slice(0, -1).join("/");
+
+  const commitCreate = async () => {
+    if (!menu?.creating) return;
+    const name = createName.trim();
+    const kind = menu.creating;
+    setMenu(null);
+    setCreateName("");
+    if (!name || name.includes("/")) return;
+    const full = `${createParentDir(menu)}/${name}`;
+    try {
+      if (kind === "folder") {
+        await invoke("create_dir", { path: full });
+      } else {
+        await invoke("create_file", { path: full });
+        (onOpenFileEditable ?? onOpenFile)?.(full);
+      }
+      setLocalRefresh((n) => n + 1);
+    } catch (e) { console.warn(`create ${kind} failed:`, e); }
   };
 
   const requestDelete = (path: string) => {
@@ -448,7 +486,7 @@ export default function FileTree({
                   depth={0}
                   root={r}
                   onOpenFile={onOpenFile}
-                  refreshSignal={refreshSignal}
+                  refreshSignal={treeRefresh}
                   onContextMenu={handleContextMenu}
                   gitStatus={gitStatus}
                   renamingPath={renamingPath}
@@ -469,8 +507,38 @@ export default function FileTree({
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
         >
+          {/* Inline New File / New Folder name input */}
+          {menu.creating && (
+            <div className="px-3 py-2">
+              <p className="text-[10px] text-neutral-500 dark:text-neutral-400 mb-1.5">
+                New {menu.creating} in <span className="font-bold">{createParentDir(menu).split("/").pop()}</span>
+              </p>
+              <input
+                ref={createInputRef}
+                value={createName}
+                onChange={(e) => setCreateName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") { e.preventDefault(); void commitCreate(); }
+                  else if (e.key === "Escape") { e.preventDefault(); setMenu(null); setCreateName(""); }
+                }}
+                placeholder={menu.creating === "folder" ? "folder-name" : "file-name.ext"}
+                className="w-full text-[11px] font-mono px-2 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-800 dark:text-neutral-200 outline-none focus:ring-1 focus:ring-indigo-400"
+              />
+              <div className="flex gap-1.5 mt-1.5">
+                <button type="button" onClick={() => void commitCreate()}
+                  className="flex-1 text-[11px] px-2 py-1 rounded bg-indigo-600 text-white hover:bg-indigo-700 cursor-pointer font-bold">
+                  Create
+                </button>
+                <button type="button" onClick={() => { setMenu(null); setCreateName(""); }}
+                  className="flex-1 text-[11px] px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-600 cursor-pointer">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* File-only */}
-          {!menu.isDir && (
+          {!menu.creating && !menu.isDir && (
             <>
               {/* Opens EDITABLE in Muya's centre editor — every file type,
                   markdown included (there is no separate preview panel). */}
@@ -483,6 +551,9 @@ export default function FileTree({
                 const dir = menu.path.split("/").slice(0, -1).join("/");
                 onOpenClaudeHere?.(dir); setMenu(null);
               }} />
+              <Sep />
+              <MenuItem label="New File" onClick={() => setMenu((m) => m ? { ...m, creating: "file" } : m)} />
+              <MenuItem label="New Folder" onClick={() => setMenu((m) => m ? { ...m, creating: "folder" } : m)} />
               <Sep />
               <MenuItem label="Add as @ Reference" onClick={() => {
                 void navigator.clipboard.writeText(`@${menu.path}`);
@@ -520,8 +591,11 @@ export default function FileTree({
           )}
 
           {/* Folder (non-root) */}
-          {menu.isDir && !menu.isRoot && (
+          {!menu.creating && menu.isDir && !menu.isRoot && (
             <>
+              <MenuItem label="New File" onClick={() => setMenu((m) => m ? { ...m, creating: "file" } : m)} />
+              <MenuItem label="New Folder" onClick={() => setMenu((m) => m ? { ...m, creating: "folder" } : m)} />
+              <Sep />
               <MenuItem label="Open in Terminal Here" onClick={() => { onOpenTerminalHere?.(menu.path); setMenu(null); }} />
               <MenuItem label="Open Claude Here" onClick={() => { onOpenClaudeHere?.(menu.path); setMenu(null); }} />
               <Sep />
@@ -550,8 +624,11 @@ export default function FileTree({
           )}
 
           {/* Root */}
-          {menu.isRoot && (
+          {!menu.creating && menu.isRoot && (
             <>
+              <MenuItem label="New File" onClick={() => setMenu((m) => m ? { ...m, creating: "file" } : m)} />
+              <MenuItem label="New Folder" onClick={() => setMenu((m) => m ? { ...m, creating: "folder" } : m)} />
+              <Sep />
               <MenuItem label="Open in Terminal Here" onClick={() => { onOpenTerminalHere?.(menu.path); setMenu(null); }} />
               <MenuItem label="Open Claude Here" onClick={() => { onOpenClaudeHere?.(menu.path); setMenu(null); }} />
               <MenuItem label="Reveal in Finder" onClick={() => { void invoke("reveal_in_finder", { path: menu.path }); setMenu(null); }} />

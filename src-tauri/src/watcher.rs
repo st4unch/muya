@@ -3,13 +3,21 @@
 //! file tree immediately instead of waiting for the next poll.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use tauri::{AppHandle, Emitter, State};
 
-pub struct WatchState(pub Mutex<Option<RecommendedWatcher>>);
+/// Holds the live watcher plus a stop flag for its trailing-edge flusher thread so
+/// a restart (roots changed) tears the old thread down instead of leaking it.
+pub struct WatchHandle {
+    _watcher: RecommendedWatcher,
+    stop: Arc<AtomicBool>,
+}
+
+pub struct WatchState(pub Mutex<Option<WatchHandle>>);
 
 impl Default for WatchState {
     fn default() -> Self {
@@ -31,22 +39,39 @@ pub fn start_watching(
     state: State<WatchState>,
     paths: Vec<String>,
 ) -> Result<(), String> {
-    let last = Arc::new(Mutex::new(Instant::now() - Duration::from_secs(1)));
+    // Stop the previous generation's flusher thread before swapping in a new watcher.
+    if let Some(prev) = state.0.lock().unwrap().take() {
+        prev.stop.store(true, Ordering::Relaxed);
+    }
+
+    // Shared between the notify callback and the flusher thread: `pending` marks an
+    // unseen change, `last_emit` gates the leading edge.
+    let pending = Arc::new(AtomicBool::new(false));
+    let last_emit = Arc::new(Mutex::new(Instant::now() - Duration::from_secs(2)));
+    let debounce = Duration::from_millis(1500);
+
+    let cb_pending = pending.clone();
+    let cb_last = last_emit.clone();
+    let cb_app = app.clone();
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
         let Ok(ev) = res else { return };
         if noisy(&ev) {
             return;
         }
-        // Debounce: at most one event every 1.5s. The frontend reacts to `fs-changed`
-        // by re-running git-backed polls (branch topology, collisions) across every
-        // tracked worktree, so a tight debounce would spawn a git storm while agents
-        // edit files. 1.5s keeps the UI responsive without freezing the machine.
-        let mut l = last.lock().unwrap();
-        if l.elapsed() < Duration::from_millis(1500) {
-            return;
+        // Leading edge: emit at once if it's been quiet, so a lone change refreshes the
+        // UI instantly. Otherwise mark `pending` and let the flusher deliver the
+        // TRAILING edge — a leading-only debounce silently drops any change that lands
+        // within the window of a prior one (agent edit + external add), which left the
+        // file tree stale (L38).
+        let mut l = cb_last.lock().unwrap();
+        if l.elapsed() >= debounce {
+            *l = Instant::now();
+            drop(l);
+            cb_pending.store(false, Ordering::Relaxed);
+            let _ = cb_app.emit("fs-changed", ());
+        } else {
+            cb_pending.store(true, Ordering::Relaxed);
         }
-        *l = Instant::now();
-        let _ = app.emit("fs-changed", ());
     })
     .map_err(|e| e.to_string())?;
 
@@ -56,6 +81,31 @@ pub fn start_watching(
             let _ = watcher.watch(path, RecursiveMode::Recursive);
         }
     }
-    *state.0.lock().unwrap() = Some(watcher);
+
+    // Trailing-edge flusher: once the burst settles (no change for `debounce`), emit the
+    // coalesced `fs-changed` so the last change is never lost. Tied to `stop` so a
+    // restart ends it.
+    let stop = Arc::new(AtomicBool::new(false));
+    let flush_stop = stop.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_millis(400));
+        if flush_stop.load(Ordering::Relaxed) {
+            break;
+        }
+        if pending.load(Ordering::Relaxed) {
+            let mut l = last_emit.lock().unwrap();
+            if l.elapsed() >= debounce {
+                *l = Instant::now();
+                drop(l);
+                pending.store(false, Ordering::Relaxed);
+                let _ = app.emit("fs-changed", ());
+            }
+        }
+    });
+
+    *state.0.lock().unwrap() = Some(WatchHandle {
+        _watcher: watcher,
+        stop,
+    });
     Ok(())
 }

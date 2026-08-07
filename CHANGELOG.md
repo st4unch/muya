@@ -6,7 +6,18 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.2.24] - 2026-08-06
+## [0.2.25] - 2026-08-07
+
+### Added
+- **Drag files into Muya to open them.** Drop a file onto the window and it opens in the editor; drop a folder and it's added as a workspace. A "Drop to open" hint appears while you drag.
+- **New File / New Folder from the tree.** Right-click any folder (or file) in the left sidebar to create a file or folder right there — it opens immediately.
+- **More file types open in Muya.** Finder's "Open With → Muya" and the editor now cover `.pem`, `.key`, `.crt`, `.cer`, `.conf`, `.cfg`, `.ini`, `.properties`, `.sql`, `.lock`, `Dockerfile`, and `.gitignore`.
+
+### Changed
+- **The SSH MCP is now named `muya-mcp`** (was `muya-ssh`); the old entry is removed automatically on launch. Your saved servers and secrets are untouched. Agents should reconnect to pick up the new name.
+
+### Fixed
+- **The file tree now refreshes when files change outside Muya.** Adding a file to a folder from Finder (or another app) while Muya was busy could leave the tree stale; it now always catches up.
 
 ### Added
 - **Search inside your conversations, and export them.** The Sessions search now also

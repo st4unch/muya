@@ -384,7 +384,7 @@ function ServersTab({
                 onChange={(e) => setDraft({ ...draft, agentAccess: e.target.checked })}
               />
               <span className="text-neutral-500">
-                Agent may use this server (exposes it by alias to Claude via the muya-ssh MCP; the password is never shared)
+                Agent may use this server (exposes it by alias to Claude via the muya-mcp MCP; the password is never shared)
               </span>
             </label>
           </div>

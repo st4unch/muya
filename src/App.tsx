@@ -72,6 +72,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openDialog, save as saveDialog, confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -815,6 +816,38 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // OS drag-and-drop INTO the window: a dropped file opens in the editor, a dropped
+  // folder is added as a workspace root. Tauri v2 captures the OS drop (dragDropEnabled
+  // defaults true) and fires onDragDropEvent — the webview never sees an HTML5 drop, so
+  // this listener is the only path. `dropActive` drives a full-window drop hint.
+  const [dropActive, setDropActive] = useState(false);
+  useEffect(() => {
+    const webview = getCurrentWebview();
+    const un = webview.onDragDropEvent(async (event) => {
+      const p = event.payload;
+      if (p.type === "enter" || p.type === "over") { setDropActive(true); return; }
+      if (p.type === "leave") { setDropActive(false); return; }
+      if (p.type === "drop") {
+        setDropActive(false);
+        let openedAny = false;
+        for (const path of p.paths) {
+          try {
+            const kind = await invoke<string>("path_kind", { path });
+            if (kind === "dir") {
+              setWorkspaces((prev) => (prev.includes(path) ? prev : [...prev, path]));
+            } else if (kind === "file") {
+              openFile(path);
+              openedAny = true;
+            }
+          } catch { /* ignore unreadable drops */ }
+        }
+        if (openedAny) setView("control");
+      }
+    });
+    return () => { void un.then((f) => f()); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Open an SSH server in a fresh terminal tab (fresh key per attempt so React
   // remounts a live PTY that actually re-runs ssh). Shared by the SSH page's
   // Connect button and the muya-ssh MCP broker's `ssh-broker-open` event.
@@ -1485,7 +1518,16 @@ export const loginHandler = async (req, res) => {
 
   return (
     <div id="vs-ctrl-plane" className="min-h-screen bg-neutral-50 dark:bg-[#25272b] text-neutral-800 dark:text-neutral-200 flex flex-col font-sans select-none overflow-hidden h-screen text-xs">
-      
+
+      {/* OS drag-drop hint: shown while a file/folder is dragged over the window. */}
+      {dropActive && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-indigo-500/10 backdrop-blur-[1px] pointer-events-none">
+          <div className="px-6 py-4 rounded-xl border-2 border-dashed border-indigo-400 dark:border-indigo-300 bg-white/90 dark:bg-neutral-900/90 text-indigo-700 dark:text-indigo-300 font-mono text-sm shadow-xl">
+            Drop to open — file → editor · folder → workspace
+          </div>
+        </div>
+      )}
+
       {/* ================= TOP CUSTOM VS CODE STATUS BRANDING BAR ================= */}
       <header className="h-10 border-b border-neutral-200 dark:border-[#3d3f44] bg-white dark:bg-[#1e1f23] px-3 flex items-center justify-between shrink-0 select-none shadow-sm">
         <div className="flex items-center space-x-3">
