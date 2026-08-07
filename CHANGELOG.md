@@ -6,6 +6,20 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.24] - 2026-08-06
+
+### Added
+- **Search inside your conversations, and export them.** The Sessions search now also
+  looks INSIDE each session's transcript — type a word from the conversation (not just
+  the name or path) and the matching sessions surface with a snippet of the match. And
+  every session (live or past) has an **Export .md** button that saves the whole
+  conversation as a readable Markdown file.
+
+### Fixed
+- **A name you give a session shows up right away.** After you name/rename a session it
+  now appears in the Sessions list live, instead of only after a manual refresh. Claude's
+  auto-generated "<project>-N" placeholder still doesn't override a nicer name.
+
 ## [0.2.23] - 2026-08-06
 
 ### Fixed
