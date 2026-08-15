@@ -6,6 +6,11 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.31] - 2026-08-07
+
+### Added
+- **Persistent agent SSH sessions — one login for many commands (`ssh_session_*`).** An agent can open ONE session to a PSMP server (paying the OTP/push just once), run many commands inside it, and close it — with shell state (cd, env, sudo) preserved between commands. This is the real fix for "PSMP asks for OTP on every command": since PSMP won't let one connection be reused across separate calls, the agent now keeps a single session open and runs everything in it. New tools: `ssh_session_open`, `ssh_session_exec`, `ssh_session_close`.
+
 ## [0.2.30] - 2026-08-07
 
 ### Added

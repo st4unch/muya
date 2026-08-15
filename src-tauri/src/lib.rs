@@ -29,6 +29,7 @@ fn ssh_release_session(session_id: String) {
 }
 
 mod agent_ops;
+mod agent_ssh;
 mod agents;
 mod askpass;
 mod bridge;
@@ -237,6 +238,7 @@ pub fn run() {
         .manage(bridge_remote::RemoteBridgeState::default())
         .manage(bridge_exec::ExecState::default())
         .manage(broker::BrokerState::default())
+        .manage(agent_ssh::AgentSshStore::default())
         .manage(credstore::CredStore::default())
         .manage(cyberark::CyberarkState::default())
         .invoke_handler(tauri::generate_handler![

@@ -125,6 +125,44 @@ fn tools_list() -> Value {
                 }
             },
             {
+                "name": "ssh_session_open",
+                "description": "Open a PERSISTENT session on a server and get a `sessionId`. This is the way to run many commands against a CyberArk PSMP server while paying the login/OTP/push only ONCE: PSMP binds one audited session to one connection, so instead of a fresh connection (and fresh OTP) per command, you keep one session open and run commands inside it with ssh_session_exec — and shell state (cd, env vars, sudo) is preserved between them. Muya injects the password itself (never exposed to you); a one-time push/OTP is approved by the human at open. Close it with ssh_session_close when finished. (For a single quick command, plain ssh_run is fine; for a batch with no state, ssh_run `commands: []`. Use a session when you need MANY commands and/or preserved state on a PSMP server.)",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "alias": { "type": "string", "description": "Server alias from ssh_list_servers." }
+                    },
+                    "required": ["alias"],
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "ssh_session_exec",
+                "description": "Run ONE command inside a session opened with ssh_session_open, and get its stdout + exit code back. State from earlier commands in the same session persists (e.g. `cd /opt` then `ls` lists /opt). Returns when the command finishes; on a timeout it sends Ctrl-C and the session stays open for the next command. stdout and stderr are combined (it's an interactive shell).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "sessionId": { "type": "string", "description": "Session id from ssh_session_open." },
+                        "command": { "type": "string", "description": "A single command line to run in the session (pipes/redirection allowed)." },
+                        "timeoutSecs": { "type": "integer", "description": "Optional per-command timeout in seconds (default 120).", "minimum": 1 }
+                    },
+                    "required": ["sessionId", "command"],
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "ssh_session_close",
+                "description": "Close a persistent session opened with ssh_session_open (ends the ssh process). Always close a session when you're done with it.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "sessionId": { "type": "string", "description": "Session id from ssh_session_open." }
+                    },
+                    "required": ["sessionId"],
+                    "additionalProperties": false
+                }
+            },
+            {
                 "name": "ssh_run",
                 "description": "THIS is how you (the agent) execute a command on a remote server and get the result back — your primary tool for remote command execution (no human needed). Runs ONE command on the SSH server with the given alias (from ssh_list_servers) and returns its stdout. Muya connects, injects the password server-side (never exposed to you), runs the single command remotely, and returns the captured stdout plus the exit code (and `stderr` — the real error message on a non-zero exit). The command is passed to the remote shell as a single string, so you may use pipes/redirection inside it. To run SEVERAL commands, pass `commands: [..]` instead of `command` — they run over ONE connection and you get a per-command result with its own exit code (far faster than many ssh_run calls, and the recommended batch path for PSMP servers). Fails if the alias is not agent-accessible, if the credential store is locked, or if the server uses a 'prompt' credential (no stored password to inject non-interactively) — in that case use a stored or CyberArk credential. LIMITATION — PSMP + 2FA: for servers behind a CyberArk PSMP proxy, ssh_run only supports a plain password prompt. If PSMP shows a 2FA/OTP/passcode/RADIUS challenge, ssh_run refuses to guess (it will NOT type the stored password into a 2FA field) and returns an error telling you to use ssh_open instead, which lets a human complete the interactive challenge. A timeout with no prompt at all on a PSMP server likely means a RADIUS push notification is awaiting out-of-band approval — again, use ssh_open.",
                 "inputSchema": {
@@ -344,6 +382,94 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                     resp.get("error")
                         .and_then(Value::as_str)
                         .unwrap_or("send failed")
+                        .to_string(),
+                ))
+            }
+        }
+        "ssh_session_open" => {
+            let alias = match args.get("alias").and_then(Value::as_str) {
+                Some(a) if !a.trim().is_empty() => a.to_string(),
+                _ => return Ok(tool_error("missing required argument 'alias'")),
+            };
+            let resp = app_call(&json!({ "op": "session_open", "alias": alias }))
+                .map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                let sid = resp
+                    .get("sessionId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                Ok(tool_ok(
+                    format!(
+                        "Opened a persistent session on '{alias}'. sessionId={sid} — run commands \
+                         in it with ssh_session_exec(sessionId, command); state (cd/env/sudo) is \
+                         kept between them. Close it with ssh_session_close when done."
+                    ),
+                    Some(json!({ "sessionId": sid })),
+                ))
+            } else {
+                Ok(tool_error(
+                    resp.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("session open failed")
+                        .to_string(),
+                ))
+            }
+        }
+        "ssh_session_exec" => {
+            let session_id = match args.get("sessionId").and_then(Value::as_str) {
+                Some(s) if !s.trim().is_empty() => s.to_string(),
+                _ => return Ok(tool_error("missing required argument 'sessionId'")),
+            };
+            let command = match args.get("command").and_then(Value::as_str) {
+                Some(c) if !c.trim().is_empty() => c.to_string(),
+                _ => return Ok(tool_error("missing required argument 'command'")),
+            };
+            let mut call =
+                json!({ "op": "session_exec", "sessionId": session_id, "command": command });
+            if let Some(t) = args.get("timeoutSecs").and_then(Value::as_u64) {
+                call["timeoutSecs"] = json!(t);
+            }
+            let resp = app_call(&call).map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                let stdout = resp.get("stdout").and_then(Value::as_str).unwrap_or("");
+                let timed_out = resp.get("timedOut").and_then(Value::as_bool) == Some(true);
+                let ec = resp.get("exitCode").and_then(Value::as_i64).unwrap_or(-1);
+                let mut text = stdout.to_string();
+                if !text.is_empty() && !text.ends_with('\n') {
+                    text.push('\n');
+                }
+                if timed_out {
+                    text.push_str("[command timed out — sent Ctrl-C; the session is still open]\n");
+                }
+                text.push_str(&format!("[exit code: {ec}]"));
+                Ok(tool_ok(
+                    text,
+                    Some(json!({ "stdout": stdout, "exitCode": ec, "timedOut": timed_out })),
+                ))
+            } else {
+                Ok(tool_error(
+                    resp.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("session exec failed")
+                        .to_string(),
+                ))
+            }
+        }
+        "ssh_session_close" => {
+            let session_id = match args.get("sessionId").and_then(Value::as_str) {
+                Some(s) if !s.trim().is_empty() => s.to_string(),
+                _ => return Ok(tool_error("missing required argument 'sessionId'")),
+            };
+            let resp = app_call(&json!({ "op": "session_close", "sessionId": session_id }))
+                .map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                Ok(tool_ok(format!("Closed session {session_id}."), None))
+            } else {
+                Ok(tool_error(
+                    resp.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("session close failed")
                         .to_string(),
                 ))
             }

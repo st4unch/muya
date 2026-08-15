@@ -51,7 +51,7 @@ fn default_shell() -> String {
 /// the trailing text (trimmed) so `Password:`, `user@host's password:` and RADIUS
 /// `Passcode:` all fire, while incidental mentions mid-line (which have more text
 /// after them) do not.
-fn looks_like_password_prompt(tail: &str) -> bool {
+pub(crate) fn looks_like_password_prompt(tail: &str) -> bool {
     let t = tail.trim_end().to_lowercase();
     t.ends_with("password:") || t.ends_with("passcode:")
 }
@@ -63,7 +63,7 @@ fn looks_like_password_prompt(tail: &str) -> bool {
 /// for PSMP connections, and checked BEFORE `looks_like_password_prompt` in the
 /// injector — direct-SSH connections never consult this function, so the existing
 /// `passcode:` → inject behavior there (AC4 regression guard) is untouched.
-fn looks_like_challenge_prompt(tail: &str) -> bool {
+pub(crate) fn looks_like_challenge_prompt(tail: &str) -> bool {
     let t = tail.trim_end().to_lowercase();
     t.ends_with("passcode:")
         || t.ends_with("verification code:")

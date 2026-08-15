@@ -184,6 +184,9 @@ struct BrokerReq {
     session_id: Option<String>,
     #[serde(default)]
     text: Option<String>,
+    /// `session_exec` (PRD `ssh-session`): optional per-command timeout in seconds.
+    #[serde(rename = "timeoutSecs", default)]
+    timeout_secs: Option<u64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -426,6 +429,9 @@ async fn handle_request(app: &AppHandle, line: &str) -> String {
         "run" => handle_run(app, &servers, &req).await,
         "scp" => handle_scp(app, &servers, &req).await,
         "send" => handle_send(app, &req),
+        "session_open" => handle_session_open(app, &servers, &req).await,
+        "session_exec" => handle_session_exec(app, &req).await,
+        "session_close" => handle_session_close(app, &req).await,
         // Agentic-SSH — register a NEW server the agent can then ssh_open/ssh_run
         // (PRD ssh-agent-add-server). All guardrails live in `agent_add_server_in`:
         // forced direct/no-ssh_options, host/user injection rejected, CREATE-ONLY
@@ -749,6 +755,95 @@ fn stderr_tail(stderr: &str) -> String {
         flat
     } else {
         flat.chars().skip(n - 200).collect()
+    }
+}
+
+/// `ssh_session_open` (PRD `ssh-session`, Faz 2): open a persistent, headless SSH session
+/// (one PSMP connection = one OTP) the agent can then run many commands in. The password
+/// is injected into the PTY Rust-side, never returned. Returns a `sessionId`.
+async fn handle_session_open(app: &AppHandle, servers: &[Server], req: &BrokerReq) -> String {
+    let alias = match req.alias.as_deref() {
+        Some(a) if !a.trim().is_empty() => a,
+        _ => return err_resp("`session_open` requires an `alias`"),
+    };
+    let server = match resolve_open(servers, alias) {
+        OpenResolution::NotFound => return err_resp(format!("no server matches alias '{alias}'")),
+        OpenResolution::NotAccessible => {
+            return err_resp(format!(
+                "server '{alias}' is not agent-accessible (enable 'Agent may use this server')"
+            ))
+        }
+        OpenResolution::Ok(s) => s,
+    };
+    let secret = match resolve_injectable_secret(app, server, "ssh_session_open").await {
+        Ok(s) => s,
+        Err(e) => return err_resp(e),
+    };
+    let base = match crate::ssh::connect_command_for(server) {
+        Ok(c) => c,
+        Err(e) => return err_resp(e),
+    };
+    let program = base.program.clone();
+    let args = base.args.clone();
+    let is_psmp = server.connection_type == "psmp";
+    let store = app
+        .state::<crate::agent_ssh::AgentSshStore>()
+        .inner()
+        .clone();
+    let result = tokio::task::spawn_blocking(move || {
+        crate::agent_ssh::open(&store, &program, &args, secret, is_psmp)
+    })
+    .await;
+    match result {
+        Ok(Ok(session_id)) => json!({ "ok": true, "sessionId": session_id }).to_string(),
+        Ok(Err(e)) => err_resp(e),
+        Err(e) => err_resp(format!("session open task failed: {e}")),
+    }
+}
+
+/// `ssh_session_exec`: run one command inside an open session and return its output +
+/// exit code. Shell state (cd/env/sudo) is preserved between calls.
+async fn handle_session_exec(app: &AppHandle, req: &BrokerReq) -> String {
+    let session_id = match req.session_id.as_deref() {
+        Some(s) if !s.trim().is_empty() => s.to_string(),
+        _ => return err_resp("`session_exec` requires a `sessionId` (from ssh_session_open)"),
+    };
+    let command = match req.command.as_deref() {
+        Some(c) if !c.trim().is_empty() => c.to_string(),
+        _ => return err_resp("`session_exec` requires a non-empty `command`"),
+    };
+    let timeout = req.timeout_secs.map(std::time::Duration::from_secs);
+    let store = app
+        .state::<crate::agent_ssh::AgentSshStore>()
+        .inner()
+        .clone();
+    let result = tokio::task::spawn_blocking(move || {
+        crate::agent_ssh::exec(&store, &session_id, &command, timeout)
+    })
+    .await;
+    match result {
+        Ok(Ok(out)) => json!({
+            "ok": true,
+            "stdout": out.stdout,
+            "exitCode": out.exit_code,
+            "timedOut": out.timed_out,
+        })
+        .to_string(),
+        Ok(Err(e)) => err_resp(e),
+        Err(e) => err_resp(format!("session exec task failed: {e}")),
+    }
+}
+
+/// `ssh_session_close`: end a persistent session (kills the ssh process).
+async fn handle_session_close(app: &AppHandle, req: &BrokerReq) -> String {
+    let session_id = match req.session_id.as_deref() {
+        Some(s) if !s.trim().is_empty() => s,
+        _ => return err_resp("`session_close` requires a `sessionId`"),
+    };
+    let store = app.state::<crate::agent_ssh::AgentSshStore>();
+    match crate::agent_ssh::close(store.inner(), session_id) {
+        Ok(()) => json!({ "ok": true }).to_string(),
+        Err(e) => err_resp(e),
     }
 }
 
