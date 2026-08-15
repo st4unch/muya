@@ -164,6 +164,18 @@ fn scan_roots_for_vaults(roots: Vec<String>) -> Vec<String> {
             if !p.is_dir() {
                 continue;
             }
+            // Never descend into TCC-protected home subfolders while auto-scanning: even
+            // stat'ing into ~/Library (Containers/App Support/CloudStorage — "other apps'
+            // data"), ~/Pictures/~/Music/~/Movies (Photos/Music), or hidden dirs fires the
+            // macOS privacy prompt repeatedly. A vault in one of these is selected
+            // explicitly, never auto-scanned. L43.
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with('.')
+                || matches!(name.as_ref(), "Library" | "Pictures" | "Music" | "Movies")
+            {
+                continue;
+            }
             if is_obsidian_vault(&p) {
                 let mtime = p
                     .metadata()

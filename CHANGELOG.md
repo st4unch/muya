@@ -6,7 +6,10 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.2.31] - 2026-08-07
+## [0.2.32] - 2026-08-07
+
+### Fixed
+- **Really stops the repeated "access data from other apps" prompt.** The Obsidian-vault auto-scan still walked into `~/Library` (and `~/Pictures`/`~/Music`/`~/Movies`) two levels deep looking for vaults, and just reaching into `~/Library/Containers` etc. re-fires that macOS privacy prompt. Auto-detection now skips those protected home folders entirely (a vault there is selected explicitly). The 0.2.29 fix only covered the cloud folders; this covers the local ones.
 
 ### Added
 - **Persistent agent SSH sessions — one login for many commands (`ssh_session_*`).** An agent can open ONE session to a PSMP server (paying the OTP/push just once), run many commands inside it, and close it — with shell state (cd, env, sudo) preserved between commands. This is the real fix for "PSMP asks for OTP on every command": since PSMP won't let one connection be reused across separate calls, the agent now keeps a single session open and runs everything in it. New tools: `ssh_session_open`, `ssh_session_exec`, `ssh_session_close`.
