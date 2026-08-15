@@ -6,7 +6,16 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.2.25] - 2026-08-07
+## [0.2.26] - 2026-08-07
+
+### Fixed
+- **Searching inside conversations now actually works.** The Sessions search reads the exact transcript path each row already knows (instead of re-deriving it, which missed some projects) and no longer skips large sessions — long marathon transcripts (40 MB+) are streamed and searched instead of being silently dropped by a size cap.
+
+### Added
+- **Active sessions show a "working" pulse.** A running Claude session's tab icon pulses while it's actually working and goes still the moment it's idle or waiting — so you can tell at a glance who's busy without it animating constantly.
+
+### Changed
+- **Clearer `ssh_run` vs `ssh_open` for agents.** `ssh_run` is now described as the agent's primary way to run a remote command and get output back; `ssh_open` is explicitly for handing an interactive terminal to a human (e.g. a 2FA/PSMP login).
 
 ### Added
 - **Drag files into Muya to open them.** Drop a file onto the window and it opens in the editor; drop a folder and it's added as a workspace. A "Drop to open" hint appears while you drag.

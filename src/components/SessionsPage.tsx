@@ -114,9 +114,12 @@ export default function SessionsPage({
     let cancelled = false;
     const t = setTimeout(async () => {
       const sessions = [
-        ...live.map((s) => ({ id: s.id, cwd: s.worktree })),
-        ...history.map((h) => ({ id: h.sessionId, cwd: h.cwd })),
-      ].filter((s) => s.id && s.cwd);
+        // Live sessions only know their cwd → backend derives the transcript path.
+        ...live.map((s) => ({ id: s.id, cwd: s.worktree, path: undefined as string | undefined })),
+        // History rows carry the EXACT transcript path — pass it so the backend never
+        // has to re-derive (which misses for dotted/odd project dirs).
+        ...history.map((h) => ({ id: h.sessionId, cwd: h.cwd, path: h.path })),
+      ].filter((s) => s.id && (s.cwd || s.path));
       try {
         const matches = await invoke<{ sessionId: string; snippet: string }[]>(
           "search_session_contents",

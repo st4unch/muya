@@ -8,22 +8,30 @@
 //! conversation to a Markdown file the operator picks. Both run on the blocking pool
 //! (L31) so their file work never occupies a tokio worker thread.
 
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// Skip transcripts bigger than this when searching (keeps a keystroke cheap); export
-/// has no cap since it's a one-off explicit action.
-const SEARCH_FILE_CAP: u64 = 25 * 1024 * 1024;
+/// Skip transcripts bigger than this when searching. Long marathon sessions routinely
+/// pass 40 MB, and the whole point of content search is to find them — so the cap is
+/// generous and we stream line-by-line (never load the whole file) to keep it cheap.
+const SEARCH_FILE_CAP: u64 = 512 * 1024 * 1024;
 /// Stop after this many matching sessions (search is for narrowing, not exhaustive).
 const MAX_MATCHES: usize = 200;
 const SNIPPET_RADIUS: usize = 60;
 
 /// A session to look at: its id + the cwd it ran in (both from `AgentSession`).
+/// `path` is the exact transcript path when the caller already knows it (history
+/// rows do) — always preferred over re-deriving from `cwd`, because Claude Code's
+/// project-dir encoding is not a simple `/`→`-` for every path (dots, etc.), so
+/// derivation silently misses. Live sessions omit `path` and fall back to derivation.
 #[derive(Debug, Deserialize)]
 pub struct SessionRef {
     pub id: String,
     pub cwd: String,
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -119,21 +127,28 @@ fn make_snippet(text: &str, needle_lower: &str) -> Option<String> {
     Some(s)
 }
 
-fn search_one(cwd: &str, id: &str, needle_lower: &str) -> Option<SessionMatch> {
-    let path = transcript_path(cwd, id)?;
-    let meta = std::fs::metadata(&path).ok()?;
+fn search_one(path: &Path, id: &str, needle_lower: &str) -> Option<SessionMatch> {
+    let meta = std::fs::metadata(path).ok()?;
     if meta.len() > SEARCH_FILE_CAP {
         return None;
     }
-    let raw = std::fs::read_to_string(&path).ok()?;
-    // Fast reject: if the query isn't anywhere in the file, skip the per-line parse.
-    if !raw.to_lowercase().contains(needle_lower) {
-        return None;
-    }
+    // Stream line-by-line so a 40 MB+ transcript never lands in memory whole. Each JSONL
+    // line is one message; we only parse lines whose raw bytes already contain the needle
+    // (cheap reject per line, replacing the old whole-file read_to_string).
+    let file = std::fs::File::open(path).ok()?;
+    let reader = std::io::BufReader::new(file);
     let mut count = 0u32;
     let mut snippet: Option<String> = None;
-    for line in raw.lines() {
-        let v: serde_json::Value = match serde_json::from_str(line) {
+    for line in reader.lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => break, // non-UTF-8 / read error — stop scanning this file
+        };
+        // Per-line fast reject on the raw JSON bytes before the (costlier) parse.
+        if !line.to_lowercase().contains(needle_lower) {
+            continue;
+        }
+        let v: serde_json::Value = match serde_json::from_str(&line) {
             Ok(v) => v,
             Err(_) => continue,
         };
@@ -159,6 +174,19 @@ fn search_one(cwd: &str, id: &str, needle_lower: &str) -> Option<SessionMatch> {
     })
 }
 
+/// Resolve a session's transcript path: the caller-supplied exact `path` if it exists,
+/// otherwise derive `~/.claude/projects/<cwd '/'→'-'>/<id>.jsonl` from the cwd.
+fn resolve_transcript(s: &SessionRef) -> Option<PathBuf> {
+    if let Some(p) = &s.path {
+        let pb = PathBuf::from(p);
+        if pb.is_file() {
+            return Some(pb);
+        }
+    }
+    let derived = transcript_path(&s.cwd, &s.id)?;
+    derived.is_file().then_some(derived)
+}
+
 /// Grep the given sessions' transcripts for `query`; returns the ones whose
 /// CONVERSATION TEXT contains it, with a snippet. Blocking-pool'd (L31).
 #[tauri::command(async)]
@@ -173,7 +201,10 @@ pub async fn search_session_contents(
     tokio::task::spawn_blocking(move || {
         let mut out = Vec::new();
         for s in &sessions {
-            if let Some(m) = search_one(&s.cwd, &s.id, &q) {
+            let Some(path) = resolve_transcript(s) else {
+                continue;
+            };
+            if let Some(m) = search_one(&path, &s.id, &q) {
                 out.push(m);
                 if out.len() >= MAX_MATCHES {
                     break;
@@ -300,6 +331,52 @@ mod tests {
         // <2 chars → no work.
         let out = tokio_test_block(search_session_contents("a".into(), vec![])).unwrap();
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn search_one_matches_content_via_explicit_path_and_streams() {
+        // Real transcript on disk; matched by the CONVERSATION text, not JSON structure.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s1.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                r#"{"type":"user","message":{"role":"user","content":"please deploy the widget"}}"#, "\n",
+                r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"deploy done"}]}}"#, "\n",
+                r#"{"type":"custom-title","title":"unrelated"}"#, "\n",
+            ),
+        )
+        .unwrap();
+        let m = search_one(&path, "s1", "deploy").expect("content match");
+        assert_eq!(m.session_id, "s1");
+        assert_eq!(m.match_count, 2); // "deploy" appears in two message turns
+        assert!(m.snippet.to_lowercase().contains("deploy"));
+    }
+
+    #[test]
+    fn search_one_rejects_when_needle_only_in_json_keys() {
+        // "content"/"role" are JSON keys, never conversation text → no match.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s2.jsonl");
+        std::fs::write(
+            &path,
+            "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"hello there\"}}\n",
+        )
+        .unwrap();
+        assert!(search_one(&path, "s2", "role").is_none());
+    }
+
+    #[test]
+    fn resolve_transcript_prefers_explicit_path_over_derivation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("real.jsonl");
+        std::fs::write(&path, "{}\n").unwrap();
+        let s = SessionRef {
+            id: "x".into(),
+            cwd: "/nonexistent/derives/nowhere".into(),
+            path: Some(path.to_string_lossy().into_owned()),
+        };
+        assert_eq!(resolve_transcript(&s).unwrap(), path);
     }
 
     // tiny blocking helper so the async command can be unit-tested without a full runtime.

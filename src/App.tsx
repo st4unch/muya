@@ -937,6 +937,10 @@ export default function App() {
   // a job finished. These pulse GREEN (vs orange for "needs a decision") until the
   // operator opens the tab. Detected by a status transition in the session poll.
   const [doneKeys, setDoneKeys] = useState<Set<string>>(new Set());
+  // Tab keys whose Claude session is ACTIVELY working right now — their tab icon
+  // pulses so "this agent is running" reads at a glance. Cleared the moment it goes
+  // idle/waiting, so the animation isn't constant (only while actually working).
+  const [workingKeys, setWorkingKeys] = useState<Set<string>>(new Set());
   // Previous polled session status per tab, to detect the working → done edge.
   const prevSessionStatusRef = useRef<Record<string, string>>({});
   // Waiting tabs the operator has already opened this episode — acknowledged, so
@@ -1009,12 +1013,19 @@ export default function App() {
         // Tabs whose Claude session is paused waiting for the operator — the
         // TERMINALS panel blinks these so a decision isn't missed.
         const waiting = new Set<string>();
+        const working = new Set<string>();
         for (const [key, ptyId] of entries) {
-          if (byPtySession[ptyId]?.status === "waiting-for-input") waiting.add(key);
+          const st = byPtySession[ptyId]?.status;
+          if (st === "waiting-for-input") waiting.add(key);
+          else if (st === "working") working.add(key);
         }
         setWaitingKeys((prev) => {
           const same = prev.size === waiting.size && [...waiting].every((k) => prev.has(k));
           return same ? prev : waiting;
+        });
+        setWorkingKeys((prev) => {
+          const same = prev.size === working.size && [...working].every((k) => prev.has(k));
+          return same ? prev : working;
         });
         // Green "job finished" edge: a tab that WAS "working" and is now "idle" or
         // "stopped" just completed → mark it done (pulses green). Starting work
@@ -2329,6 +2340,7 @@ export const loginHandler = async (req, res) => {
                     liveCwds={liveCwds}
                     waitingKeys={blinkKeys}
                     doneKeys={doneBlinkKeys}
+                    workingKeys={workingKeys}
                     renamingKey={renamingKey}
                     renameValue={renameValue}
                     setRenamingKey={setRenamingKey}
@@ -2390,6 +2402,7 @@ export const loginHandler = async (req, res) => {
                     liveCwds={liveCwds}
                     waitingKeys={blinkKeys}
                     doneKeys={doneBlinkKeys}
+                    workingKeys={workingKeys}
               renamingKey={renamingKey}
               renameValue={renameValue}
               setRenamingKey={setRenamingKey}

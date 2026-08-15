@@ -19,6 +19,8 @@ interface Props {
   waitingKeys?: Set<string>;
   /** Tab keys whose Claude session just FINISHED a job (working → idle/stopped) — pulse green. */
   doneKeys?: Set<string>;
+  /** Tab keys whose Claude session is ACTIVELY working — the row icon pulses while it runs. */
+  workingKeys?: Set<string>;
   renamingKey: string | null;
   renameValue: string;
   setRenamingKey: (k: string | null) => void;
@@ -35,7 +37,7 @@ interface Props {
 }
 
 export default function SessionsPanel({
-  terminals, activeKey, terminalPtyIds, liveCwds, waitingKeys, doneKeys,
+  terminals, activeKey, terminalPtyIds, liveCwds, waitingKeys, doneKeys, workingKeys,
   renamingKey, renameValue, setRenamingKey, setRenameValue,
   onActivate, onClose, onReorder, onRename, onNewTerminal,
   onDuplicate, onRevealInFinder,
@@ -113,6 +115,7 @@ export default function SessionsPanel({
             const isDragOver = dragOver === t.key;
             const hasPty = Boolean(terminalPtyIds[t.key]);
             const needsDecision = Boolean(waitingKeys?.has(t.key));
+            const isWorking = Boolean(workingKeys?.has(t.key));
             // A finished job pulses green — but a pending decision (orange) wins.
             const isDone = Boolean(doneKeys?.has(t.key)) && !needsDecision;
 
@@ -157,13 +160,13 @@ export default function SessionsPanel({
                         terminal glyph — so the two are told apart at a glance. */}
                     {t.isClaude ? (
                       <Sparkles
-                        className={`h-3 w-3 shrink-0 ${isActive ? "text-amber-500" : "text-amber-500/80 dark:text-amber-400/80"}`}
-                        aria-label="Claude session"
+                        className={`h-3 w-3 shrink-0 ${isWorking ? "animate-pulse text-amber-500" : isActive ? "text-amber-500" : "text-amber-500/80 dark:text-amber-400/80"}`}
+                        aria-label={isWorking ? "Claude session (working)" : "Claude session"}
                       />
                     ) : (
                       <Terminal
-                        className={`h-3 w-3 shrink-0 ${isActive ? "text-indigo-500" : "text-indigo-400 dark:text-indigo-500"}`}
-                        aria-label="Terminal"
+                        className={`h-3 w-3 shrink-0 ${isWorking ? "animate-pulse text-indigo-500" : isActive ? "text-indigo-500" : "text-indigo-400 dark:text-indigo-500"}`}
+                        aria-label={isWorking ? "Terminal (working)" : "Terminal"}
                       />
                     )}
 
