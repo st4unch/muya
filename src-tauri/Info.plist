@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Merged into the generated bundle Info.plist by the Tauri macOS bundler.
+  These NS*FolderUsageDescription keys are what let macOS store a PERMANENT TCC
+  grant for a non-sandboxed app: without them, access to Desktop/Documents/Downloads
+  can be treated as transient and re-prompt every time the file tree reads there.
+  With them, the user is asked ONCE per folder and the choice sticks.
+-->
+<plist version="1.0">
+<dict>
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>Muya reads and opens files from your Desktop when you browse or drop them into a workspace.</string>
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>Muya reads and opens files from your Documents when you browse or drop them into a workspace.</string>
+    <key>NSDownloadsFolderUsageDescription</key>
+    <string>Muya reads and opens files from your Downloads when you browse or drop them into a workspace.</string>
+    <key>NSRemovableVolumesUsageDescription</key>
+    <string>Muya reads and opens files from removable volumes when a workspace lives on one.</string>
+    <key>NSNetworkVolumesUsageDescription</key>
+    <string>Muya reads and opens files from network volumes when a workspace lives on one.</string>
+</dict>
+</plist>

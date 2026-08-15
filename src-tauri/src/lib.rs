@@ -21,6 +21,13 @@ fn get_startup_files() -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Called by the frontend when an SSH terminal tab closes, so the broker stops
+/// accepting `ssh_send` to that (now dead) session id.
+#[tauri::command]
+fn ssh_release_session(session_id: String) {
+    crate::broker::release_ssh_session(&session_id);
+}
+
 mod agent_ops;
 mod agents;
 mod askpass;
@@ -268,6 +275,7 @@ pub fn run() {
             fs::rename_entry,
             fs::delete_entry,
             get_startup_files,
+            ssh_release_session,
             vault::vault_search,
             vault::vault_get_status,
             vault::vault_detect_candidates,

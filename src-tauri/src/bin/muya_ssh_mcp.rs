@@ -13,6 +13,7 @@
 //! Tools exposed: `ssh_list_servers`, `ssh_open` (Faz 1) and `ssh_run` (Faz 2 —
 //! one remote command, stdout captured, password injected app-side).
 
+use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
@@ -72,6 +73,24 @@ fn tool_ok(text: String, structured: Option<Value>) -> Value {
     v
 }
 
+/// Turn a plan title into a filename-safe slug: alphanumerics kept (Unicode letters
+/// too, so Turkish titles survive), everything else collapses to single dashes, and
+/// leading/trailing dashes are trimmed. Empty result → caller rejects.
+fn slugify(title: &str) -> String {
+    let mut out = String::new();
+    let mut prev_dash = false;
+    for c in title.chars() {
+        if c.is_alphanumeric() {
+            out.extend(c.to_lowercase());
+            prev_dash = false;
+        } else if !prev_dash && !out.is_empty() {
+            out.push('-');
+            prev_dash = true;
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
 fn tools_list() -> Value {
     json!({
         "tools": [
@@ -82,13 +101,26 @@ fn tools_list() -> Value {
             },
             {
                 "name": "ssh_open",
-                "description": "Open a live, INTERACTIVE SSH terminal TAB in Muya's window (a human watches/uses it). You do NOT receive the command output — this is for handing a session to a person, e.g. an interactive login, a 2FA/OTP/RADIUS challenge PSMP requires, or a task that needs a human at the keyboard. To run a command and get its output back yourself, use ssh_run instead. Muya resolves and injects the password itself; the password is never exposed to you. Fails if the alias is not agent-accessible or the credential store is locked.",
+                "description": "Open a live, INTERACTIVE SSH terminal TAB in Muya's window (a human watches it) and return a `sessionId`. You do NOT receive the command output on-screen — this is for interactive work: an interactive login, a 2FA/OTP/RADIUS challenge PSMP requires, or a multi-step/TUI flow. Keep the returned `sessionId` and use ssh_send(sessionId, text) to type into that same terminal afterwards. To run a single command and get its stdout back to you, use ssh_run instead. Muya resolves and injects the password itself; the password is never exposed to you. Fails if the alias is not agent-accessible or the credential store is locked.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "alias": { "type": "string", "description": "Server alias from ssh_list_servers." }
                     },
                     "required": ["alias"],
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "ssh_send",
+                "description": "Type text into a terminal you previously opened with ssh_open (Playwright-style). Pass the `sessionId` that ssh_open returned and the literal `text` to send — include a trailing newline (\\n) to actually run a command. Use this for interactive follow-ups ssh_run can't do: answering a prompt, driving a TUI/REPL, a sudo password the human just cleared, or a multi-step flow. Fire-and-forget: the output appears in the human's terminal, NOT back to you — if you need the output, use ssh_run instead. You may only write to a session YOU opened, and only while its tab is still open; a closed or unknown sessionId is refused. The text is delivered as keystrokes and is never logged.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "sessionId": { "type": "string", "description": "The session id returned by ssh_open for the terminal to type into." },
+                        "text": { "type": "string", "description": "Literal text to type. Add a trailing '\\n' to submit a command line." }
+                    },
+                    "required": ["sessionId", "text"],
                     "additionalProperties": false
                 }
             },
@@ -102,6 +134,20 @@ fn tools_list() -> Value {
                         "command": { "type": "string", "description": "The command to run on the remote server, e.g. 'uname -a' or 'df -h | head'." }
                     },
                     "required": ["alias", "command"],
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "track_plan",
+                "description": "Publish a PRD or plan onto Muya's Kanban board so the human can watch its status. Writes docs/prd-<slug>.md (+ a progress file carrying the status) inside YOUR CURRENT PROJECT directory — the same folder you're working in — and Muya's Kanban picks it up automatically. Use it when you create or finish a plan/PRD and want it visible: call once with status 'active' when you start, and again (same title) with status 'done' when finished. `title` becomes the card name; `status` is one of active|draft|blocked|done (defaults to active); optional `body` is the Markdown plan contents. Re-calling with the same title updates that card.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "title": { "type": "string", "description": "Human-readable plan/PRD title. Becomes the Kanban card name and the doc's slug." },
+                        "status": { "type": "string", "enum": ["active", "draft", "blocked", "done"], "description": "Board column. Defaults to 'active'." },
+                        "body": { "type": "string", "description": "Optional Markdown body of the plan/PRD (phases, acceptance criteria, notes)." }
+                    },
+                    "required": ["title"],
                     "additionalProperties": false
                 }
             },
@@ -255,9 +301,17 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
             let resp =
                 app_call(&json!({ "op": "open", "alias": alias })).map_err(|e| (-32000, e))?;
             if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                let session_id = resp
+                    .get("sessionId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
                 Ok(tool_ok(
-                    format!("Opening '{alias}' in a new Muya terminal."),
-                    None,
+                    format!(
+                        "Opening '{alias}' in a new Muya terminal. sessionId={session_id} — pass \
+                         this to ssh_send to type into that terminal."
+                    ),
+                    Some(json!({ "sessionId": session_id })),
                 ))
             } else {
                 Ok(tool_error(
@@ -267,6 +321,83 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                         .to_string(),
                 ))
             }
+        }
+        "ssh_send" => {
+            let session_id = match args.get("sessionId").and_then(Value::as_str) {
+                Some(s) if !s.trim().is_empty() => s.to_string(),
+                _ => return Ok(tool_error("missing required argument 'sessionId'")),
+            };
+            let text = match args.get("text").and_then(Value::as_str) {
+                Some(t) => t.to_string(),
+                _ => return Ok(tool_error("missing required argument 'text'")),
+            };
+            let resp = app_call(&json!({ "op": "send", "sessionId": session_id, "text": text }))
+                .map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                Ok(tool_ok(
+                    format!("Sent {} bytes to session {session_id}.", text.len()),
+                    None,
+                ))
+            } else {
+                Ok(tool_error(
+                    resp.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("send failed")
+                        .to_string(),
+                ))
+            }
+        }
+        "track_plan" => {
+            let title = match args.get("title").and_then(Value::as_str) {
+                Some(t) if !t.trim().is_empty() => t.trim().to_string(),
+                _ => return Ok(tool_error("missing required argument 'title'")),
+            };
+            let status = {
+                let s = args
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("active")
+                    .trim();
+                if s.is_empty() { "active" } else { s }.to_string()
+            };
+            let body = args
+                .get("body")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let slug = slugify(&title);
+            if slug.is_empty() {
+                return Ok(tool_error(
+                    "title has no usable characters to form a filename",
+                ));
+            }
+            // Write into the CURRENT project's docs/ — the folder Claude Code spawned
+            // this MCP server in, i.e. the agent's own project/worktree. Muya's Kanban
+            // scans that dir, so the card appears with no extra wiring.
+            let cwd = std::env::current_dir()
+                .map_err(|e| (-32000i64, format!("cannot resolve current dir: {e}")))?;
+            let docs = cwd.join("docs");
+            if let Err(e) = fs::create_dir_all(&docs) {
+                return Ok(tool_error(format!("cannot create docs/: {e}")));
+            }
+            let prd_path = docs.join(format!("prd-{slug}.md"));
+            let progress_path = docs.join(format!("prd-{slug}.progress.md"));
+            let prd_md = format!("# {title}\n\n{body}\n");
+            let progress_md =
+                format!("---\nstatus: {status}\nprd: docs/prd-{slug}.md\n---\n\n## Progress\n");
+            if let Err(e) = fs::write(&prd_path, prd_md) {
+                return Ok(tool_error(format!("failed to write PRD: {e}")));
+            }
+            if let Err(e) = fs::write(&progress_path, progress_md) {
+                return Ok(tool_error(format!("failed to write progress: {e}")));
+            }
+            Ok(tool_ok(
+                format!(
+                    "Tracked '{title}' ({status}) on the Kanban → {}",
+                    prd_path.display()
+                ),
+                Some(json!({ "prdPath": prd_path.to_string_lossy(), "status": status })),
+            ))
         }
         "ssh_run" => {
             let alias = match args.get("alias").and_then(Value::as_str) {
@@ -721,5 +852,19 @@ fn write_line<W: Write>(out: &mut W, value: &Value) {
         s.push('\n');
         let _ = out.write_all(s.as_bytes());
         let _ = out.flush();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::slugify;
+
+    #[test]
+    fn slugify_makes_filename_safe_slugs() {
+        assert_eq!(slugify("Vault RAG Pipeline"), "vault-rag-pipeline");
+        assert_eq!(slugify("  spaced  out  "), "spaced-out");
+        assert_eq!(slugify("weird!!!chars@@@here"), "weird-chars-here");
+        assert_eq!(slugify("--leading-trailing--"), "leading-trailing");
+        assert_eq!(slugify("!!!"), ""); // no usable chars → caller rejects
     }
 }

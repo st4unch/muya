@@ -396,6 +396,9 @@ export default function App() {
       );
       if (!ok) return;
     }
+    // If this was an agent-opened ssh_open session, tell the broker it's gone so a
+    // later ssh_send to this id is refused (not written to a recycled/dead PTY).
+    if (key.startsWith("ssh:")) void invoke("ssh_release_session", { sessionId: key }).catch(() => {});
     setOpenTerminals((prev) => {
       // Focus a neighbouring tab of the SAME kind — closing a file must not jump
       // focus onto a terminal (where the next ⌘W would kill a Claude session). L19.
@@ -851,11 +854,12 @@ export default function App() {
   // Open an SSH server in a fresh terminal tab (fresh key per attempt so React
   // remounts a live PTY that actually re-runs ssh). Shared by the SSH page's
   // Connect button and the muya-ssh MCP broker's `ssh-broker-open` event.
-  const openSshServer = useCallback((serverId: string, label: string) => {
+  const openSshServer = useCallback((serverId: string, label: string, explicitKey?: string) => {
     // Each Connect opens a NEW, independent terminal — supporting multiple parallel
     // sessions to the same host (and to different hosts). addSshSession never filters
-    // the server's existing tabs (L28); the key is unique per click.
-    const key = newSshTabKey(serverId);
+    // the server's existing tabs (L28); the key is unique per click. Broker-initiated
+    // opens (ssh_open) pass their own session id as the key so ssh_send can target it.
+    const key = explicitKey ?? newSshTabKey(serverId);
     setOpenTerminals((prev) =>
       addSshSession(prev, { key, name: label, kind: "terminal", sshServerId: serverId }),
     );
@@ -863,15 +867,28 @@ export default function App() {
     setView("control");
   }, []);
 
-  // muya-ssh MCP → app: agent asked to open a server by alias. Rust validated
+  // muya-mcp → app: agent asked to open a server by alias. Rust validated
   // opt-in + store-unlock and resolved the id; the password stays Rust-side.
+  // The broker's `sessionId` becomes the tab key so a later ssh_send reaches this PTY.
   useEffect(() => {
-    const un = listen<{ serverId: string; label?: string }>("ssh-broker-open", (e) => {
-      const { serverId, label } = e.payload;
-      openSshServer(serverId, label || serverId);
+    const un = listen<{ serverId: string; label?: string; sessionId?: string }>("ssh-broker-open", (e) => {
+      const { serverId, label, sessionId } = e.payload;
+      openSshServer(serverId, label || serverId, sessionId);
     });
     return () => { void un.then((f) => f()); };
   }, [openSshServer]);
+
+  // muya-mcp → app: agent typed into an ssh_open terminal it owns (ssh_send). The
+  // broker already checked the session id is one the agent opened; we just write the
+  // text to that tab's PTY (as if the user typed it). Unknown/closed key → ignored.
+  useEffect(() => {
+    const un = listen<{ sessionId: string; text: string }>("ssh-broker-send", (e) => {
+      const { sessionId, text } = e.payload;
+      const ptyId = terminalPtyIdsRef.current[sessionId];
+      if (ptyId) void invoke("pty_write", { id: ptyId, data: text }).catch(() => {});
+    });
+    return () => { void un.then((f) => f()); };
+  }, []);
 
   useEffect(() => {
     localStorage.setItem("apex.worktrees", JSON.stringify(worktrees));

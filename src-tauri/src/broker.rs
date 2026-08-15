@@ -24,11 +24,12 @@
 //!   Request : {"op":"list_servers"} | {"op":"open","alias":"<label|id>"}
 //!   Response: {"ok":true,"servers":[..]} | {"ok":true} | {"ok":false,"error":".."}
 
+use std::collections::HashSet;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex as StdMutex};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -47,6 +48,31 @@ const MCP_ENTRY_NAME: &str = "muya-mcp";
 /// rename doesn't leave a stale duplicate pointing at the same binary.
 const MCP_LEGACY_ENTRY_NAME: &str = "muya-ssh";
 const MCP_BIN_NAME: &str = "muya-ssh-mcp";
+
+/// Session ids the agent has opened via `ssh_open` and may write to with `ssh_send`.
+/// An id is added when the open is signalled and removed when the tab closes, so a
+/// stale id (closed tab) can never be written to. Kept process-wide (not per-request)
+/// because opens and sends are separate MCP calls.
+static SSH_SESSIONS: LazyLock<StdMutex<HashSet<String>>> =
+    LazyLock::new(|| StdMutex::new(HashSet::new()));
+
+fn register_ssh_session(id: &str) {
+    if let Ok(mut set) = SSH_SESSIONS.lock() {
+        set.insert(id.to_string());
+    }
+}
+
+fn ssh_session_is_open(id: &str) -> bool {
+    SSH_SESSIONS.lock().map(|s| s.contains(id)).unwrap_or(false)
+}
+
+/// Drop a session id once its terminal tab closes (called from the app via the
+/// `ssh_release_session` command). Idempotent.
+pub fn release_ssh_session(id: &str) {
+    if let Ok(mut set) = SSH_SESSIONS.lock() {
+        set.remove(id);
+    }
+}
 
 /// AC10 — cap on concurrent `ssh_run` commands. Over the cap the broker fails fast
 /// with a clear error instead of piling up PTYs / ssh processes (DoS protection).
@@ -148,6 +174,12 @@ struct BrokerReq {
     /// they ever reach `ssh::build_scp_command`.
     #[serde(rename = "extraArgs", default)]
     extra_args: Option<Vec<String>>,
+    /// `send` (PRD `ssh-send`): the ssh_open session id to write to, and the literal
+    /// text to type into that terminal's PTY (include a trailing "\n" to run it).
+    #[serde(rename = "sessionId", default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    text: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -362,19 +394,34 @@ async fn handle_request(app: &AppHandle, line: &str) -> String {
                             );
                         }
                     }
+                    // A stable session id the agent keeps and later targets with
+                    // ssh_send. The app uses this verbatim as the terminal tab key, so
+                    // the id maps 1:1 to that tab's PTY. Nonce = monotonic-ish nanos.
+                    let nonce = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_nanos())
+                        .unwrap_or(0);
+                    let session_id = format!("ssh:{}:{}", server.id, nonce);
+                    register_ssh_session(&session_id);
                     // Trigger the existing inject-capable open path in the UI. The
                     // secret is resolved + injected entirely in the app process by
                     // ssh_pty_connect; nothing secret is returned here.
-                    let payload = json!({ "serverId": server.id, "label": alias_of(server) });
+                    let payload = json!({
+                        "serverId": server.id,
+                        "label": alias_of(server),
+                        "sessionId": session_id,
+                    });
                     if let Err(e) = app.emit("ssh-broker-open", payload) {
+                        release_ssh_session(&session_id);
                         return err_resp(format!("failed to signal open: {e}"));
                     }
-                    json!({"ok": true}).to_string()
+                    json!({"ok": true, "sessionId": session_id}).to_string()
                 }
             }
         }
         "run" => handle_run(app, &servers, &req).await,
         "scp" => handle_scp(app, &servers, &req).await,
+        "send" => handle_send(app, &req),
         // Agentic-SSH — register a NEW server the agent can then ssh_open/ssh_run
         // (PRD ssh-agent-add-server). All guardrails live in `agent_add_server_in`:
         // forced direct/no-ssh_options, host/user injection rejected, CREATE-ONLY
@@ -582,6 +629,35 @@ async fn handle_run_operation(app: &AppHandle, req: &BrokerReq) -> String {
 /// AC8/AC9/AC10 — resolve an alias, gate it, resolve the secret in Rust, and run
 /// ONE remote command over ssh with the password injected server-side. Returns
 /// `{ok,stdout,exitCode,timedOut}` — never the secret.
+/// `ssh_send` (PRD `ssh-send`): type `text` into the PTY of a terminal the agent
+/// opened with ssh_open. Only ids currently in `SSH_SESSIONS` (opened, tab still open)
+/// are writable — a closed or foreign id is refused. Fire-and-forget: the human sees
+/// the result on screen; nothing but ok/err comes back to the agent. The text content
+/// is NEVER logged (only the id + byte length).
+fn handle_send(app: &AppHandle, req: &BrokerReq) -> String {
+    let session_id = match req.session_id.as_deref() {
+        Some(s) if !s.trim().is_empty() => s.trim(),
+        _ => return err_resp("`send` requires a `sessionId` (returned by ssh_open)"),
+    };
+    let text = match req.text.as_deref() {
+        Some(t) => t,
+        None => return err_resp("`send` requires `text`"),
+    };
+    if !ssh_session_is_open(session_id) {
+        return err_resp(format!(
+            "unknown or closed session '{session_id}' — you may only write to a session \
+             you opened with ssh_open, while its terminal tab is still open"
+        ));
+    }
+    // Audit trail — id + byte length ONLY; the keystroke content is never logged.
+    log::info!("ssh_send → session {session_id} ({} bytes)", text.len());
+    let payload = json!({ "sessionId": session_id, "text": text });
+    if let Err(e) = app.emit("ssh-broker-send", payload) {
+        return err_resp(format!("failed to deliver keystrokes: {e}"));
+    }
+    json!({"ok": true}).to_string()
+}
+
 async fn handle_run(app: &AppHandle, servers: &[Server], req: &BrokerReq) -> String {
     let alias = match req.alias.as_deref() {
         Some(a) if !a.trim().is_empty() => a,
@@ -997,6 +1073,21 @@ mod tests {
             tags: vec![],
             agent_added: false,
         }
+    }
+
+    // ssh_send gate: a session is writable only after ssh_open registers it, and not
+    // after it's released (tab closed).
+    #[test]
+    fn ssh_session_registration_gates_send() {
+        let id = "ssh:test-server:12345";
+        assert!(!ssh_session_is_open(id), "unknown id must not be writable");
+        register_ssh_session(id);
+        assert!(ssh_session_is_open(id), "registered id is writable");
+        release_ssh_session(id);
+        assert!(
+            !ssh_session_is_open(id),
+            "released id is no longer writable"
+        );
     }
 
     // AC4 — only opted-in servers are visible; two servers, one opt-in → 1.
