@@ -117,6 +117,14 @@ fn is_obsidian_vault(dir: &Path) -> bool {
 
 /// Scan common vault parent locations for `.obsidian` folders, depth-limited.
 /// Returns absolute paths, most-recently-modified first.
+///
+/// IMPORTANT — no TCC-protected cloud dirs here. `~/Library/CloudStorage`
+/// (OneDrive/Drive/Dropbox) and `~/Library/Mobile Documents` (iCloud) are gated by
+/// macOS's "wants to access data from other apps" prompt (Sequoia+). Auto-detection
+/// runs on every `vault_get_status` when no vault is configured, so reading them here
+/// made that prompt fire again and again. A vault living in iCloud/CloudStorage is
+/// still usable — set it explicitly via `OBSIDIAN_VAULT_PATH` or the vault config
+/// panel (an explicit action, so the one-time prompt then is expected).
 fn detect_vaults() -> Vec<String> {
     let home = match std::env::var("HOME") {
         Ok(h) => h,
@@ -125,8 +133,6 @@ fn detect_vaults() -> Vec<String> {
     let roots = vec![
         format!("{home}/Documents"),
         format!("{home}/Obsidian"),
-        format!("{home}/Library/Mobile Documents/iCloud~md~obsidian/Documents"),
-        format!("{home}/Library/CloudStorage"),
         home.clone(),
     ];
     scan_roots_for_vaults(roots)

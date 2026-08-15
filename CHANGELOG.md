@@ -8,6 +8,9 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.2.29] - 2026-08-07
 
+### Fixed
+- **Stops the repeated "Muya wants to access data from other apps" prompt.** Obsidian-vault auto-detection was scanning `~/Library/CloudStorage` (OneDrive/Drive/Dropbox) and iCloud on every vault status check, and macOS gates those with that prompt — so it kept reappearing. Auto-detection now stays out of those cloud locations; a vault that lives there can still be selected explicitly (vault config panel or `OBSIDIAN_VAULT_PATH`).
+
 ### Changed
 - **SSH connection-reuse diagnostics.** Connection reuse (0.2.28) stays on for PSMP servers, and Muya now logs the reuse state around every `ssh_run` — whether a shared master already existed, the exit code, timing, and whether a failure matches the PSMP "invalid session state" signature. This is to pinpoint exactly when/why a reused PSMP connection goes stale so it can be solved properly (look for `[ssh-cm]` lines in the log).
 
