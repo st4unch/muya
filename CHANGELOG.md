@@ -6,6 +6,11 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.29] - 2026-08-07
+
+### Fixed
+- **SSH connection reuse no longer breaks CyberArk PSMP sessions.** Connection multiplexing (added in 0.2.28) is now limited to direct SSH servers. Through a PSMP proxy it worked at first but then failed with "Invalid session state / Shared connection closed" once PSMP timed out its audited session while the local reuse socket lingered — so PSMP servers now go back to a fresh, reliable connection per command. Direct servers keep the reuse speed-up.
+
 ## [0.2.28] - 2026-08-07
 
 ### Added
