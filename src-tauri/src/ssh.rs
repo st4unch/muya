@@ -523,12 +523,13 @@ fn build_connect_command(
             px = p.psmp_address,
             ud = ud
         );
-        // NB: NO ControlMaster for PSMP. CyberArk PSMP invalidates its audited session
-        // on its own timeout while the local ControlPath socket lingers, so a reused
-        // connection later fails with "Invalid session state / Shared connection closed"
-        // (operator-observed on k3s_w2, 2026-08-07 — worked at first, then broke). PSMP
-        // servers therefore keep the reliable fresh-connection-per-command behaviour. L41.
+        // PSMP keeps ControlMaster too (under diagnosis): it works at first, then a
+        // reused connection can fail with "Invalid session state / Shared connection
+        // closed" once PSMP times out its audited session while the local socket lingers
+        // (operator-observed k3s_w2, 2026-08-07). We are instrumenting rather than
+        // disabling — see the debug logging in broker::handle_run. L41/L42.
         let mut args = extra_ssh_opts(server);
+        args.extend(control_master_opts(&control_master_dir()));
         args.push(dest);
         return Ok(ConnectCommand {
             program: "ssh".into(),
@@ -536,7 +537,7 @@ fn build_connect_command(
             needs_password_injection: needs_injection(server),
         });
     }
-    // direct — connection reuse is safe here (no PSMP session-state constraint)
+    // direct
     let mut args = Vec::new();
     if server.port != DEFAULT_PORT {
         args.push("-p".to_string());
@@ -932,8 +933,9 @@ mod tests {
     }
 
     #[test]
-    fn connect_reuse_on_direct_only_never_psmp() {
-        // Direct servers get connection reuse (safe)…
+    fn connect_command_enables_control_master_reuse() {
+        // Both direct and PSMP connects carry the reuse options, before the destination.
+        // (PSMP reuse is under LIVE diagnosis via broker::handle_run logging, not disabled.)
         let direct = build_connect_command(&srv("h", 22, "u"), None).unwrap();
         assert!(direct.args.iter().any(|a| a == "ControlMaster=auto"));
         assert!(direct
@@ -941,17 +943,11 @@ mod tests {
             .iter()
             .any(|a| a.starts_with("ControlPath=") && a.ends_with("/%C")));
         assert_eq!(direct.args.last().unwrap(), "u@h"); // destination stays last
-                                                        // …but PSMP must NOT (its audited session goes invalid → stale-master failures). L41.
         let mut s = srv("10.0.0.5", 22, "oracle");
         s.connection_type = "psmp".into();
         s.psmp_profile_id = Some("p1".into());
         let psmp_cmd = build_connect_command(&s, Some(&psmp())).unwrap();
-        assert!(
-            !psmp_cmd.args.iter().any(|a| a == "ControlMaster=auto"),
-            "PSMP must not get ControlMaster: {:?}",
-            psmp_cmd.args
-        );
-        assert!(!psmp_cmd.args.iter().any(|a| a.starts_with("ControlPath=")));
+        assert!(psmp_cmd.args.iter().any(|a| a == "ControlMaster=auto"));
         assert_eq!(
             psmp_cmd.args.last().unwrap(),
             "ferhat@oracle@10.0.0.5@bastion.corp"

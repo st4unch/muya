@@ -8,8 +8,8 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.2.29] - 2026-08-07
 
-### Fixed
-- **SSH connection reuse no longer breaks CyberArk PSMP sessions.** Connection multiplexing (added in 0.2.28) is now limited to direct SSH servers. Through a PSMP proxy it worked at first but then failed with "Invalid session state / Shared connection closed" once PSMP timed out its audited session while the local reuse socket lingered — so PSMP servers now go back to a fresh, reliable connection per command. Direct servers keep the reuse speed-up.
+### Changed
+- **SSH connection-reuse diagnostics.** Connection reuse (0.2.28) stays on for PSMP servers, and Muya now logs the reuse state around every `ssh_run` — whether a shared master already existed, the exit code, timing, and whether a failure matches the PSMP "invalid session state" signature. This is to pinpoint exactly when/why a reused PSMP connection goes stale so it can be solved properly (look for `[ssh-cm]` lines in the log).
 
 ## [0.2.28] - 2026-08-07
 

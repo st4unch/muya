@@ -658,6 +658,54 @@ fn handle_send(app: &AppHandle, req: &BrokerReq) -> String {
     json!({"ok": true}).to_string()
 }
 
+/// Query the LOCAL ControlMaster socket for a connection (`ssh -O check`). Never touches
+/// the remote host or PSMP — it only asks the local ssh whether a master socket is live.
+/// Returns a short state for the reuse diagnostics log.
+fn master_state(connect_args: &[String]) -> String {
+    let out = std::process::Command::new("ssh")
+        .arg("-O")
+        .arg("check")
+        .args(connect_args)
+        .output();
+    match out {
+        Ok(o) => {
+            let s = String::from_utf8_lossy(&o.stderr);
+            if s.contains("Master running") {
+                "alive".to_string()
+            } else if s.contains("No such file")
+                || s.contains("no match")
+                || s.contains("not found")
+                || s.contains("Control socket connect")
+            {
+                "absent".to_string()
+            } else {
+                format!("other({})", s.trim().replace('\n', " "))
+            }
+        }
+        Err(e) => format!("check-err({e})"),
+    }
+}
+
+/// True if stderr carries the PSMP stale-master / multiplexing-rejection signature.
+fn is_stale_master(stderr: &str) -> bool {
+    stderr.contains("Invalid session state")
+        || stderr.contains("Failed to receive an allowed pid")
+        || stderr.contains("Failed to receive a return code")
+        || stderr.contains("PSM SSH Proxy exception")
+        || stderr.contains("Shared connection to")
+}
+
+/// Last ~200 chars of stderr on one line, for a compact diagnostic log entry.
+fn stderr_tail(stderr: &str) -> String {
+    let flat = stderr.trim().replace('\n', " ");
+    let n = flat.chars().count();
+    if n <= 200 {
+        flat
+    } else {
+        flat.chars().skip(n - 200).collect()
+    }
+}
+
 async fn handle_run(app: &AppHandle, servers: &[Server], req: &BrokerReq) -> String {
     let alias = match req.alias.as_deref() {
         Some(a) if !a.trim().is_empty() => a,
@@ -704,6 +752,9 @@ async fn handle_run(app: &AppHandle, servers: &[Server], req: &BrokerReq) -> Str
         Err(e) => return err_resp(e),
     };
     let program = base.program.clone();
+    // Keep the base connect args (options + dest, no remote command) so we can query the
+    // ControlMaster socket state with `ssh -O check` for the reuse diagnostics below.
+    let connect_args = base.args.clone();
     let args = match assemble_run_args(base.args, &command) {
         Ok(a) => a,
         Err(e) => return err_resp(e),
@@ -714,11 +765,34 @@ async fn handle_run(app: &AppHandle, servers: &[Server], req: &BrokerReq) -> Str
     // byte-for-byte the pre-hardening path.
     let is_psmp = server.connection_type == "psmp";
 
+    // ControlMaster reuse diagnostics (L41/L42): log whether a master already exists
+    // BEFORE this command, so a shared PSMP log shows the "created → reused → reused →
+    // stale-fail" progression. `ssh -O check` is a LOCAL socket query — it never talks
+    // to the remote/PSMP.
+    log::info!(
+        "[ssh-cm] run server={} host={} psmp={} master_before={}",
+        server.id,
+        server.host,
+        is_psmp,
+        master_state(&connect_args)
+    );
+
     // AC8 — run the blocking PTY capture off the async runtime.
+    let started = std::time::Instant::now();
     let result = tokio::task::spawn_blocking(move || {
         crate::askpass::run_with_askpass(&program, &args, secret, RUN_TIMEOUT, is_psmp)
     })
     .await;
+    let dur_ms = started.elapsed().as_millis();
+    match &result {
+        Ok(Ok(out)) => log::info!(
+            "[ssh-cm] done server={} exit={:?} dur={}ms timedOut={} injected={} stale={} master_after={} stderr_tail={:?}",
+            server.id, out.exit_code, dur_ms, out.timed_out, out.injected,
+            is_stale_master(&out.stderr), master_state(&connect_args), stderr_tail(&out.stderr)
+        ),
+        Ok(Err(e)) => log::info!("[ssh-cm] run-err server={} dur={}ms err={}", server.id, dur_ms, e),
+        Err(e) => log::info!("[ssh-cm] join-err server={} err={}", server.id, e),
+    }
 
     match result {
         // AC2 — a 2FA/OTP/passcode challenge was seen: the secret was withheld,
@@ -1073,6 +1147,26 @@ mod tests {
             tags: vec![],
             agent_added: false,
         }
+    }
+
+    #[test]
+    fn stale_master_signature_matches_psmp_errors() {
+        assert!(is_stale_master(
+            "PSM SSH Proxy exception occurred. 479E ... Invalid session state. (Codes: -1, -3)"
+        ));
+        assert!(is_stale_master(
+            "Failed to receive an allowed pid message. Error code [2]."
+        ));
+        assert!(is_stale_master("Shared connection to 10.185.30.67 closed."));
+        assert!(!is_stale_master("bash: command not found"));
+        assert!(!is_stale_master(""));
+    }
+
+    #[test]
+    fn stderr_tail_flattens_and_caps() {
+        assert_eq!(stderr_tail("  a\nb  "), "a b");
+        let long: String = "x".repeat(300);
+        assert_eq!(stderr_tail(&long).chars().count(), 200);
     }
 
     // ssh_send gate: a session is writable only after ssh_open registers it, and not

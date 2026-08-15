@@ -9,7 +9,8 @@ completed: 2026-08-07
 **P1 (2026-08-07) — opus impl:** AC1/AC3/AC4/AC5/AC6 kod+unit. `ssh.rs`: `control_master_opts(cm_dir)` (saf) + `control_master_dir()` + `ensure_control_master_dir()` (0700); `build_connect_command` her iki dalına (direct + PSMP) dest'ten önce eklendi → ssh_run + interaktif ssh_open reuse eder. `lib.rs`: broker start'ta dizin oluşturma. Testler: control_master_opts_shape + connect_command_enables_control_master_reuse + 4 mevcut connect testi `without_cm` ile güncellendi. cargo 235 / tsc / npm 92 yeşil. Process-riski elendi: askpass yalnız timeout'ta child.kill() (grup değil) → ControlPersist master (detached) hayatta kalır.
 
 **AC2 (scp) ERTELENDİ:** çalışan scp/PSMP `-O` yolunu riske atmamak için connect-reuse PSMP'de doğrulanana kadar scp'ye eklenmedi.
-**AC7 SONUÇ (2026-08-07, operatör canlı test):** PSMP'de İLK ssh_run'lar geçti, sonra "Invalid session state / Failed to receive allowed pid / Shared connection closed" → bayat-master (PSMP oturumu timeout, yerel soket kaldı). **v0.2.29: ControlMaster direct-only'e gate'lendi** (PSMP dalından çıkarıldı, her komut taze). Direct sunucular reuse'u korur. Ders L41.
+**AC7 (2026-08-07, operatör canlı test):** PSMP'de İLK ssh_run'lar geçti, sonra "Invalid session state / Failed to receive allowed pid / Shared connection closed" → bayat-master (PSMP oturumu timeout, yerel soket kaldı).
+**Karar (operatör düzeltmesi, L42):** kapatma/gate DEĞİL — PSMP reuse TUTULDU, kök neden **enstrümante** edildi. **v0.2.29: `broker::handle_run`'a `[ssh-cm]` debug log** (master_before/after via `ssh -O check` yerel, exit, süre, stale-imza tespiti). Operatör gerçek PSMP'de log toplayıp paylaşacak → kanıtla çözülecek. Ders L41 (bayat-master) + L42 (danışmadan kapatma).
 
 ## Değişiklikler
 | Tarih | Dosya | Ne değişti | AC |
