@@ -769,13 +769,16 @@ async fn handle_run(app: &AppHandle, servers: &[Server], req: &BrokerReq) -> Str
     // BEFORE this command, so a shared PSMP log shows the "created → reused → reused →
     // stale-fail" progression. `ssh -O check` is a LOCAL socket query — it never talks
     // to the remote/PSMP.
-    log::info!(
+    // Use the SAME debug logger as the `ssh connect:` / `ssh_scp:` audit lines
+    // (~/.claude/muya-debug.log, gated by the Settings debug toggle) so all SSH
+    // diagnostics land in one file the operator is already watching.
+    crate::debuglog::log(&format!(
         "[ssh-cm] run server={} host={} psmp={} master_before={}",
         server.id,
         server.host,
         is_psmp,
         master_state(&connect_args)
-    );
+    ));
 
     // AC8 — run the blocking PTY capture off the async runtime.
     let started = std::time::Instant::now();
@@ -785,13 +788,13 @@ async fn handle_run(app: &AppHandle, servers: &[Server], req: &BrokerReq) -> Str
     .await;
     let dur_ms = started.elapsed().as_millis();
     match &result {
-        Ok(Ok(out)) => log::info!(
+        Ok(Ok(out)) => crate::debuglog::log(&format!(
             "[ssh-cm] done server={} exit={:?} dur={}ms timedOut={} injected={} stale={} master_after={} stderr_tail={:?}",
             server.id, out.exit_code, dur_ms, out.timed_out, out.injected,
             is_stale_master(&out.stderr), master_state(&connect_args), stderr_tail(&out.stderr)
-        ),
-        Ok(Err(e)) => log::info!("[ssh-cm] run-err server={} dur={}ms err={}", server.id, dur_ms, e),
-        Err(e) => log::info!("[ssh-cm] join-err server={} err={}", server.id, e),
+        )),
+        Ok(Err(e)) => crate::debuglog::log(&format!("[ssh-cm] run-err server={} dur={}ms err={}", server.id, dur_ms, e)),
+        Err(e) => crate::debuglog::log(&format!("[ssh-cm] join-err server={} err={}", server.id, e)),
     }
 
     match result {

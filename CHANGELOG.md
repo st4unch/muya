@@ -6,6 +6,11 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.30] - 2026-08-07
+
+### Fixed
+- **SSH reuse diagnostics now land in the debug log you actually watch.** The `[ssh-cm]` lines were going to the app system log; they now write to the same `~/.claude/muya-debug.log` as the `ssh connect:` / `ssh_scp:` audit lines (Settings → debug logging). No behavior change — just the right file.
+
 ## [0.2.29] - 2026-08-07
 
 ### Fixed
