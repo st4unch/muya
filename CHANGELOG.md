@@ -8,7 +8,11 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.2.30] - 2026-08-07
 
+### Added
+- **Run many SSH commands in one call (`commands: []`).** `ssh_run` now accepts a list of commands that run over ONE connection, returning a separate result (with its own exit code) for each. This is the fast, reliable way to run a batch against PSMP servers — far fewer connections, no multiplexing.
+
 ### Fixed
+- **PSMP no longer breaks after the first command.** Connection reuse (ControlMaster) is now off for PSMP servers, which proved to reject reused connections ("Invalid session state") and — worse — left a live master that locked the alias until it was killed by hand. PSMP now uses a fresh, reliable connection per command; direct SSH servers keep reuse. Stale reuse sockets are also swept on launch.
 - **SSH reuse diagnostics now land in the debug log you actually watch.** The `[ssh-cm]` lines were going to the app system log; they now write to the same `~/.claude/muya-debug.log` as the `ssh connect:` / `ssh_scp:` audit lines (Settings → debug logging). No behavior change — just the right file.
 
 ## [0.2.29] - 2026-08-07

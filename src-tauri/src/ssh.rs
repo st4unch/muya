@@ -469,6 +469,30 @@ pub(crate) fn ensure_control_master_dir() {
     }
 }
 
+/// Close and remove every ControlMaster socket in `~/.claude/muya-cm/`. Run at startup
+/// (and app exit): ControlPersist does NOT reap PSMP masters (they aren't idle), so a
+/// dead-for-reuse master from a previous run would otherwise linger for its whole life
+/// and lock that alias (operator saw a 43-min one). For each socket we ask its master to
+/// exit (`ssh -O exit`), then unlink whatever remains. Best-effort — never fails startup.
+pub(crate) fn sweep_control_master_sockets() {
+    let dir = control_master_dir();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let p = path.to_string_lossy().into_owned();
+        // Ask the master (if alive) to exit cleanly; the host arg is nominal when
+        // ControlPath points straight at the socket. Then unlink whatever remains.
+        let _ = std::process::Command::new("ssh")
+            .args(["-O", "exit", "-o"])
+            .arg(format!("ControlPath={p}"))
+            .arg("muya-cm-sweep")
+            .output();
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
 /// The three `-o` options that turn on connection reuse. Pure — the socket dir is
 /// passed in so the builder stays testable. `ControlMaster=auto` makes the first
 /// connection the master and later ones reuse it; `ControlPersist=10m` keeps the
@@ -481,6 +505,21 @@ fn control_master_opts(cm_dir: &str) -> Vec<String> {
         format!("ControlPath={cm_dir}/%C"),
         "-o".to_string(),
         "ControlPersist=10m".to_string(),
+    ]
+}
+
+/// Explicitly DISABLE connection reuse. Used for PSMP: multiplexing is proven to fail
+/// there (PSMP binds one audited session to one connection — a reused channel skips its
+/// "allowed pid" handshake → "Invalid session state"; worse, the master stays alive so
+/// ControlPersist never reaps it and the broken socket locks the alias). `ControlMaster=no`
+/// alone is NOT enough — ssh would still USE an existing socket — so `ControlPath=none`
+/// too, forcing a fresh connection every time (operator-proven, 2026-08-15). L41.
+fn control_master_disabled_opts() -> Vec<String> {
+    vec![
+        "-o".to_string(),
+        "ControlMaster=no".to_string(),
+        "-o".to_string(),
+        "ControlPath=none".to_string(),
     ]
 }
 
@@ -523,13 +562,11 @@ fn build_connect_command(
             px = p.psmp_address,
             ud = ud
         );
-        // PSMP keeps ControlMaster too (under diagnosis): it works at first, then a
-        // reused connection can fail with "Invalid session state / Shared connection
-        // closed" once PSMP times out its audited session while the local socket lingers
-        // (operator-observed k3s_w2, 2026-08-07). We are instrumenting rather than
-        // disabling — see the debug logging in broker::handle_run. L41/L42.
+        // PSMP: reuse is DISABLED (proven to fail — see control_master_disabled_opts).
+        // Each PSMP command gets a fresh connection; efficiency comes from batching many
+        // commands into one connection (ssh_run `commands: []`), not multiplexing. L41.
         let mut args = extra_ssh_opts(server);
-        args.extend(control_master_opts(&control_master_dir()));
+        args.extend(control_master_disabled_opts());
         args.push(dest);
         return Ok(ConnectCommand {
             program: "ssh".into(),
@@ -904,7 +941,7 @@ mod tests {
         while i < args.len() {
             if args[i] == "-o"
                 && i + 1 < args.len()
-                && (args[i + 1] == "ControlMaster=auto"
+                && (args[i + 1].starts_with("ControlMaster=")
                     || args[i + 1].starts_with("ControlPath=")
                     || args[i + 1].starts_with("ControlPersist="))
             {
@@ -933,9 +970,8 @@ mod tests {
     }
 
     #[test]
-    fn connect_command_enables_control_master_reuse() {
-        // Both direct and PSMP connects carry the reuse options, before the destination.
-        // (PSMP reuse is under LIVE diagnosis via broker::handle_run logging, not disabled.)
+    fn direct_reuses_connection_psmp_does_not() {
+        // Direct: connection reuse ON (multiplexing works, master idle-reaps).
         let direct = build_connect_command(&srv("h", 22, "u"), None).unwrap();
         assert!(direct.args.iter().any(|a| a == "ControlMaster=auto"));
         assert!(direct
@@ -943,11 +979,15 @@ mod tests {
             .iter()
             .any(|a| a.starts_with("ControlPath=") && a.ends_with("/%C")));
         assert_eq!(direct.args.last().unwrap(), "u@h"); // destination stays last
+                                                        // PSMP: reuse explicitly OFF — ControlMaster=no AND ControlPath=none (proven to
+                                                        // fail + lock the alias otherwise, L41).
         let mut s = srv("10.0.0.5", 22, "oracle");
         s.connection_type = "psmp".into();
         s.psmp_profile_id = Some("p1".into());
         let psmp_cmd = build_connect_command(&s, Some(&psmp())).unwrap();
-        assert!(psmp_cmd.args.iter().any(|a| a == "ControlMaster=auto"));
+        assert!(psmp_cmd.args.iter().any(|a| a == "ControlMaster=no"));
+        assert!(psmp_cmd.args.iter().any(|a| a == "ControlPath=none"));
+        assert!(!psmp_cmd.args.iter().any(|a| a == "ControlMaster=auto"));
         assert_eq!(
             psmp_cmd.args.last().unwrap(),
             "ferhat@oracle@10.0.0.5@bastion.corp"

@@ -189,6 +189,9 @@ pub fn run() {
                 // ControlMaster socket dir (0700) — ssh reuses one connection per host
                 // via ControlPath in here, so it must exist before any ssh_run.
                 crate::ssh::ensure_control_master_dir();
+                // Sweep stale masters from a previous run: ControlPersist doesn't reap
+                // PSMP masters (not idle), so a dead-for-reuse socket would lock the alias.
+                crate::ssh::sweep_control_master_sockets();
             }
 
             Ok(())

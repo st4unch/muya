@@ -126,14 +126,15 @@ fn tools_list() -> Value {
             },
             {
                 "name": "ssh_run",
-                "description": "THIS is how you (the agent) execute a command on a remote server and get the result back — your primary tool for remote command execution (no human needed). Runs ONE command on the SSH server with the given alias (from ssh_list_servers) and returns its stdout. Muya connects, injects the password server-side (never exposed to you), runs the single command remotely, and returns the captured stdout plus the exit code (and `stderr` — the real error message on a non-zero exit). The command is passed to the remote shell as a single string, so you may use pipes/redirection inside it. Fails if the alias is not agent-accessible, if the credential store is locked, or if the server uses a 'prompt' credential (no stored password to inject non-interactively) — in that case use a stored or CyberArk credential. LIMITATION — PSMP + 2FA: for servers behind a CyberArk PSMP proxy, ssh_run only supports a plain password prompt. If PSMP shows a 2FA/OTP/passcode/RADIUS challenge, ssh_run refuses to guess (it will NOT type the stored password into a 2FA field) and returns an error telling you to use ssh_open instead, which lets a human complete the interactive challenge. A timeout with no prompt at all on a PSMP server likely means a RADIUS push notification is awaiting out-of-band approval — again, use ssh_open.",
+                "description": "THIS is how you (the agent) execute a command on a remote server and get the result back — your primary tool for remote command execution (no human needed). Runs ONE command on the SSH server with the given alias (from ssh_list_servers) and returns its stdout. Muya connects, injects the password server-side (never exposed to you), runs the single command remotely, and returns the captured stdout plus the exit code (and `stderr` — the real error message on a non-zero exit). The command is passed to the remote shell as a single string, so you may use pipes/redirection inside it. To run SEVERAL commands, pass `commands: [..]` instead of `command` — they run over ONE connection and you get a per-command result with its own exit code (far faster than many ssh_run calls, and the recommended batch path for PSMP servers). Fails if the alias is not agent-accessible, if the credential store is locked, or if the server uses a 'prompt' credential (no stored password to inject non-interactively) — in that case use a stored or CyberArk credential. LIMITATION — PSMP + 2FA: for servers behind a CyberArk PSMP proxy, ssh_run only supports a plain password prompt. If PSMP shows a 2FA/OTP/passcode/RADIUS challenge, ssh_run refuses to guess (it will NOT type the stored password into a 2FA field) and returns an error telling you to use ssh_open instead, which lets a human complete the interactive challenge. A timeout with no prompt at all on a PSMP server likely means a RADIUS push notification is awaiting out-of-band approval — again, use ssh_open.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "alias": { "type": "string", "description": "Server alias from ssh_list_servers." },
-                        "command": { "type": "string", "description": "The command to run on the remote server, e.g. 'uname -a' or 'df -h | head'." }
+                        "command": { "type": "string", "description": "A single command to run, e.g. 'uname -a' or 'df -h | head'. Use this OR 'commands'." },
+                        "commands": { "type": "array", "items": { "type": "string" }, "description": "Several commands to run over ONE connection (much faster than many ssh_run calls, and the recommended way to run a batch against PSMP servers). Each is run in order and you get back a per-command result with its own exit code. State does NOT carry between them (each is a fresh shell line); if you need cd/env to persist, chain within a single command string using '&&' or ';'." }
                     },
-                    "required": ["alias", "command"],
+                    "required": ["alias"],
                     "additionalProperties": false
                 }
             },
@@ -404,16 +405,70 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                 Some(a) if !a.trim().is_empty() => a.to_string(),
                 _ => return Ok(tool_error("missing required argument 'alias'")),
             };
-            let command = match args.get("command").and_then(Value::as_str) {
-                Some(c) if !c.trim().is_empty() => c.to_string(),
-                _ => return Ok(tool_error("missing required argument 'command'")),
-            };
-            let resp = app_call(&json!({ "op": "run", "alias": alias, "command": command }))
-                .map_err(|e| (-32000, e))?;
+            let command = args
+                .get("command")
+                .and_then(Value::as_str)
+                .map(|s| s.to_string());
+            let commands: Option<Vec<String>> =
+                args.get("commands").and_then(Value::as_array).map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                });
+            let has_command = command
+                .as_deref()
+                .map(|c| !c.trim().is_empty())
+                .unwrap_or(false);
+            let has_commands = commands.as_ref().map(|c| !c.is_empty()).unwrap_or(false);
+            if !has_command && !has_commands {
+                return Ok(tool_error(
+                    "provide 'command' (a string) or 'commands' (a non-empty array)",
+                ));
+            }
+            let mut call = json!({ "op": "run", "alias": alias });
+            if has_command {
+                call["command"] = json!(command);
+            }
+            if has_commands {
+                call["commands"] = json!(commands);
+            }
+            let resp = app_call(&call).map_err(|e| (-32000, e))?;
             if resp.get("ok").and_then(Value::as_bool) == Some(true) {
-                let stdout = resp.get("stdout").and_then(Value::as_str).unwrap_or("");
                 let stderr = resp.get("stderr").and_then(Value::as_str).unwrap_or("");
                 let timed_out = resp.get("timedOut").and_then(Value::as_bool) == Some(true);
+                // Batch: one result per command, each with its own exit code, from ONE
+                // connection. Render a labelled block per command + forward the array.
+                if let Some(results) = resp.get("results").and_then(Value::as_array) {
+                    let mut text = String::new();
+                    for r in results {
+                        let cmd = r.get("command").and_then(Value::as_str).unwrap_or("");
+                        let out = r.get("stdout").and_then(Value::as_str).unwrap_or("");
+                        let ec = r.get("exitCode").and_then(Value::as_i64).unwrap_or(-1);
+                        text.push_str(&format!("$ {cmd}\n{out}"));
+                        if !out.ends_with('\n') {
+                            text.push('\n');
+                        }
+                        text.push_str(&format!("[exit code: {ec}]\n\n"));
+                    }
+                    if timed_out {
+                        text.push_str("[the batch timed out and was terminated]\n");
+                    }
+                    if !stderr.trim().is_empty() {
+                        text.push_str(&format!(
+                            "[stderr — combined for the batch]\n{}\n",
+                            stderr.trim_end()
+                        ));
+                    }
+                    return Ok(tool_ok(
+                        text,
+                        Some(json!({
+                            "results": results,
+                            "stderr": stderr,
+                            "timedOut": timed_out,
+                        })),
+                    ));
+                }
+                let stdout = resp.get("stdout").and_then(Value::as_str).unwrap_or("");
                 let exit_note = match resp.get("exitCode").and_then(Value::as_i64) {
                     Some(code) => format!("[exit code: {code}]"),
                     None => "[exit code: unknown]".to_string(),

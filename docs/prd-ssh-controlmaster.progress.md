@@ -18,6 +18,17 @@ completed: 2026-08-07
 | 2026-08-07 | src-tauri/src/ssh.rs | control_master_opts/dir/ensure + build_connect_command'a ekleme + 2 test + 4 test güncelleme | AC1,AC3,AC5 |
 | 2026-08-07 | src-tauri/src/lib.rs | broker start'ta ensure_control_master_dir() | AC3 |
 
+## v0.2.30 — operatör kanıtı + planı (kesin çözüm)
+Operatör 4 soket (43/17/6/2 dk, dördü de `Master running`) + soket-kapat→çalıştı testiyle KANITLADI:
+PSMP reuse HER ZAMAN başarısız (1. komut çalışır, 2.+ düşer); master idle sayılmadığı için ControlPersist
+reap etmez → ölü master alias'ı kilitler (kendiliğinden düzelmez). Operatörün prioritize planı uygulandı:
+- **Item 1 (PSMP `ControlMaster=no` + `ControlPath=none`):** `control_master_disabled_opts()`, PSMP dalı. Direct reuse korunur. (Yalnız `=no` yetmez, ssh var olan soketi kullanır → `ControlPath=none` şart.)
+- **Item 2 (sweep):** `sweep_control_master_sockets()` (startup, lib.rs) — her sokete `ssh -O exit` + unlink.
+- **Item 3 (`commands: []`):** tek bağlantıda çok komut, sentinel-çerçeveli (`build_batch_script`/`parse_batch_output`, nonce'lu), broker `handle_run` + sidecar ssh_run. Per-komut `{command, stdout, exitCode}`. En büyük verim kazancı.
+- **Item 4 (safety net):** item 1 PSMP reuse'u kapattığı için stale-hata artık oluşmuyor → gereksiz, EKLENMEDİ.
+- **Sonra (Faz 2, alias-başına kalıcı oturum):** operatörün sentinel tasarımı; PTY'siz `bash -s` ölçümü (`ssh -T -o ControlPath=none <alias> 'bash -s'`) operatörde bekliyor. Deferred.
+cargo 240 + sidecar test yeşil.
+
 ## Kararlar
 - **ControlPath=`<dir>/%C`:** ssh'ın bağlantı-param hash'i → aynı sunucuya run/interaktif aynı soketi paylaşır; kısa, çakışmaz, dizin `~/.claude/muya-cm` (0700).
 - **ControlPersist=10m:** iş patlaması reuse eder, sonra otomatik kapanır.

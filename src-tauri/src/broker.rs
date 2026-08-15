@@ -130,6 +130,10 @@ struct BrokerReq {
     /// The remote command for `run` (a SINGLE argv element passed to ssh; AC9).
     #[serde(default)]
     command: Option<String>,
+    /// `run` batch mode: many commands over ONE connection, each result framed +
+    /// returned separately. Preferred for PSMP (multiplexing is disabled there).
+    #[serde(default)]
+    commands: Option<Vec<String>>,
     /// The operation name for `run_operation` (Faz 3.1 — looked up in the
     /// operator-authored `~/.claude/muya-agent-ops.json` registry).
     #[serde(default)]
@@ -629,6 +633,48 @@ async fn handle_run_operation(app: &AppHandle, req: &BrokerReq) -> String {
 /// AC8/AC9/AC10 — resolve an alias, gate it, resolve the secret in Rust, and run
 /// ONE remote command over ssh with the password injected server-side. Returns
 /// `{ok,stdout,exitCode,timedOut}` — never the secret.
+/// Build ONE remote script that runs each command in sequence over a single connection
+/// and frames its output with a per-command marker carrying the exit code. This is how
+/// `commands: []` gets many results from ONE ssh connection — the efficient path for PSMP
+/// (no multiplexing needed). `nonce` makes the marker unguessable so command output can't
+/// forge it. Pure/testable.
+fn build_batch_script(commands: &[String], nonce: &str) -> String {
+    let mut s = String::new();
+    for (i, cmd) in commands.iter().enumerate() {
+        s.push_str(cmd);
+        s.push('\n');
+        // printf frames the marker on its own line (leading + trailing newline).
+        s.push_str(&format!(
+            "printf '\\n__MUYA_{nonce}_END:{i}:%d__\\n' \"$?\"\n"
+        ));
+    }
+    s
+}
+
+/// Parse the framed stdout of `build_batch_script` into `(output, exit_code)` per command,
+/// in order. Everything between markers is that command's stdout. Pure/testable.
+fn parse_batch_output(stdout: &str, nonce: &str) -> Vec<(String, i32)> {
+    let marker_prefix = format!("__MUYA_{nonce}_END:");
+    let mut results = Vec::new();
+    let mut buf = String::new();
+    for line in stdout.lines() {
+        if let Some(rest) = line.trim().strip_prefix(&marker_prefix) {
+            let rest = rest.strip_suffix("__").unwrap_or(rest);
+            let rc = rest
+                .rsplit(':')
+                .next()
+                .and_then(|s| s.parse::<i32>().ok())
+                .unwrap_or(-1);
+            results.push((buf.trim_end().to_string(), rc));
+            buf.clear();
+        } else {
+            buf.push_str(line);
+            buf.push('\n');
+        }
+    }
+    results
+}
+
 /// `ssh_send` (PRD `ssh-send`): type `text` into the PTY of a terminal the agent
 /// opened with ssh_open. Only ids currently in `SSH_SESSIONS` (opened, tab still open)
 /// are writable — a closed or foreign id is refused. Fire-and-forget: the human sees
@@ -711,9 +757,35 @@ async fn handle_run(app: &AppHandle, servers: &[Server], req: &BrokerReq) -> Str
         Some(a) if !a.trim().is_empty() => a,
         _ => return err_resp("`run` requires an `alias`"),
     };
-    let command = match req.command.as_deref() {
-        Some(c) if !c.trim().is_empty() => c.to_string(),
-        _ => return err_resp("`run` requires a non-empty `command`"),
+    // `commands: []` (batch) runs many commands over ONE connection and frames each
+    // result — the efficient path (esp. PSMP, where multiplexing is disabled). A single
+    // `command` keeps the original one-shot shape. `batch_nonce` = Some when batching.
+    let batch_commands: Option<Vec<String>> = req
+        .commands
+        .as_ref()
+        .filter(|c| !c.is_empty())
+        .map(|c| c.iter().map(|s| s.to_string()).collect());
+    let (command, batch_nonce) = if let Some(cmds) = &batch_commands {
+        if cmds.iter().all(|c| c.trim().is_empty()) {
+            return err_resp("`commands` must contain at least one non-empty command");
+        }
+        let nonce = format!(
+            "{:x}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        );
+        (build_batch_script(cmds, &nonce), Some(nonce))
+    } else {
+        match req.command.as_deref() {
+            Some(c) if !c.trim().is_empty() => (c.to_string(), None),
+            _ => {
+                return err_resp(
+                    "`run` requires a non-empty `command` (or a non-empty `commands` array)",
+                )
+            }
+        }
     };
 
     let server = match resolve_open(servers, alias) {
@@ -814,6 +886,23 @@ async fn handle_run(app: &AppHandle, servers: &[Server], req: &BrokerReq) -> Str
                 "exitCode": out.exit_code,
                 "timedOut": out.timed_out,
             });
+            // Batch mode: split the framed stdout into one result per command (each with
+            // its own exit code) so the agent gets N answers from this ONE connection.
+            if let (Some(nonce), Some(cmds)) = (&batch_nonce, &batch_commands) {
+                let parsed = parse_batch_output(&out.stdout, nonce);
+                let results: Vec<serde_json::Value> = cmds
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| {
+                        let (stdout, exit) = parsed
+                            .get(i)
+                            .cloned()
+                            .unwrap_or_else(|| (String::new(), -1));
+                        json!({ "command": c, "stdout": stdout, "exitCode": exit })
+                    })
+                    .collect();
+                resp["results"] = json!(results);
+            }
             // AC3 — timed out with NO prompt ever seen on a PSMP connection: most
             // likely a RADIUS push notification waiting for out-of-band approval,
             // which looks identical to a hung connection otherwise. Flag it so the
@@ -1150,6 +1239,36 @@ mod tests {
             tags: vec![],
             agent_added: false,
         }
+    }
+
+    #[test]
+    fn batch_script_frames_each_command_with_exit_marker() {
+        let script = build_batch_script(&["echo a".into(), "false".into()], "abc123");
+        assert!(script.contains("echo a\n"));
+        assert!(script.contains("__MUYA_abc123_END:0:%d__"));
+        assert!(script.contains("false\n"));
+        assert!(script.contains("__MUYA_abc123_END:1:%d__"));
+    }
+
+    #[test]
+    fn parse_batch_output_splits_per_command_with_rc() {
+        // Simulate what the remote emitted for the script above.
+        let out = "a\n__MUYA_abc123_END:0:0__\n__MUYA_abc123_END:1:1__";
+        let parsed = parse_batch_output(out, "abc123");
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0], ("a".to_string(), 0));
+        assert_eq!(parsed[1], (String::new(), 1)); // `false` → no output, rc 1
+    }
+
+    #[test]
+    fn parse_batch_ignores_forged_marker_with_wrong_nonce() {
+        // Command output that tries to look like a marker but has the wrong nonce is
+        // treated as plain output, not a frame boundary.
+        let out = "__MUYA_WRONG_END:0:0__\nreal\n__MUYA_right_END:0:0__";
+        let parsed = parse_batch_output(out, "right");
+        assert_eq!(parsed.len(), 1);
+        assert!(parsed[0].0.contains("real"));
+        assert!(parsed[0].0.contains("__MUYA_WRONG_END")); // forged line kept as output
     }
 
     #[test]
