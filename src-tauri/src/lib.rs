@@ -186,6 +186,9 @@ pub fn run() {
                 if let Err(e) = broker::register_mcp() {
                     log::warn!("[ssh-broker] mcp registration failed: {e}");
                 }
+                // ControlMaster socket dir (0700) — ssh reuses one connection per host
+                // via ControlPath in here, so it must exist before any ssh_run.
+                crate::ssh::ensure_control_master_dir();
             }
 
             Ok(())

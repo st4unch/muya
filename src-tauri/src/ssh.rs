@@ -447,6 +447,43 @@ fn extra_ssh_opts(server: &Server) -> Vec<String> {
         .collect()
 }
 
+/// Directory holding per-connection ControlMaster sockets (0700). `%C` (ssh's hash of
+/// the connection params) names each socket, so `ssh_run` and interactive `ssh_open`
+/// to the SAME server share ONE master connection — the agent reuses it instead of
+/// reconnecting/re-authing per command. CyberArk PSMP documents this for password auth.
+fn control_master_dir() -> String {
+    let home = std::env::var("HOME").unwrap_or_default();
+    format!("{home}/.claude/muya-cm")
+}
+
+/// Ensure the ControlMaster socket dir exists, private (0700). ssh does NOT create the
+/// ControlPath parent, so this must run before any connection. Idempotent.
+pub(crate) fn ensure_control_master_dir() {
+    let dir = control_master_dir();
+    if std::fs::create_dir_all(&dir).is_ok() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+        }
+    }
+}
+
+/// The three `-o` options that turn on connection reuse. Pure — the socket dir is
+/// passed in so the builder stays testable. `ControlMaster=auto` makes the first
+/// connection the master and later ones reuse it; `ControlPersist=10m` keeps the
+/// master alive briefly after the last command so a burst reuses it.
+fn control_master_opts(cm_dir: &str) -> Vec<String> {
+    vec![
+        "-o".to_string(),
+        "ControlMaster=auto".to_string(),
+        "-o".to_string(),
+        format!("ControlPath={cm_dir}/%C"),
+        "-o".to_string(),
+        "ControlPersist=10m".to_string(),
+    ]
+}
+
 /// Whether the connection needs the credential injected into the PTY after the
 /// password prompt (stored or CyberArk source). "prompt" lets the user type it.
 fn needs_injection(server: &Server) -> bool {
@@ -487,6 +524,7 @@ fn build_connect_command(
             ud = ud
         );
         let mut args = extra_ssh_opts(server);
+        args.extend(control_master_opts(&control_master_dir()));
         args.push(dest);
         return Ok(ConnectCommand {
             program: "ssh".into(),
@@ -501,6 +539,7 @@ fn build_connect_command(
         args.push(server.port.to_string());
     }
     args.extend(extra_ssh_opts(server));
+    args.extend(control_master_opts(&control_master_dir()));
     args.push(format!("{}@{}", server.username, server.host));
     Ok(ConnectCommand {
         program: "ssh".into(),
@@ -852,6 +891,63 @@ pub fn ssh_set_cyberark_config(config: CyberarkConfig) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    /// Drop the ControlMaster `-o` options so destination/port/opts-ordering assertions
+    /// stay focused. ControlMaster presence is covered by its own test below.
+    fn without_cm(args: &[String]) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < args.len() {
+            if args[i] == "-o"
+                && i + 1 < args.len()
+                && (args[i + 1] == "ControlMaster=auto"
+                    || args[i + 1].starts_with("ControlPath=")
+                    || args[i + 1].starts_with("ControlPersist="))
+            {
+                i += 2;
+            } else {
+                out.push(args[i].clone());
+                i += 1;
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn control_master_opts_shape() {
+        assert_eq!(
+            control_master_opts("/tmp/cm"),
+            vec![
+                "-o",
+                "ControlMaster=auto",
+                "-o",
+                "ControlPath=/tmp/cm/%C",
+                "-o",
+                "ControlPersist=10m",
+            ]
+        );
+    }
+
+    #[test]
+    fn connect_command_enables_control_master_reuse() {
+        // Both direct and PSMP connects carry the reuse options, before the destination.
+        let direct = build_connect_command(&srv("h", 22, "u"), None).unwrap();
+        assert!(direct.args.iter().any(|a| a == "ControlMaster=auto"));
+        assert!(direct
+            .args
+            .iter()
+            .any(|a| a.starts_with("ControlPath=") && a.ends_with("/%C")));
+        assert_eq!(direct.args.last().unwrap(), "u@h"); // destination stays last
+        let mut s = srv("10.0.0.5", 22, "oracle");
+        s.connection_type = "psmp".into();
+        s.psmp_profile_id = Some("p1".into());
+        let psmp_cmd = build_connect_command(&s, Some(&psmp())).unwrap();
+        assert!(psmp_cmd.args.iter().any(|a| a == "ControlMaster=auto"));
+        assert_eq!(
+            psmp_cmd.args.last().unwrap(),
+            "ferhat@oracle@10.0.0.5@bastion.corp"
+        );
+    }
+
     fn srv(host: &str, port: u16, user: &str) -> Server {
         Server {
             id: String::new(),
@@ -998,7 +1094,10 @@ mod tests {
         s.psmp_profile_id = Some("p1".into());
         let cmd = build_connect_command(&s, Some(&psmp())).unwrap();
         assert_eq!(cmd.program, "ssh");
-        assert_eq!(cmd.args, vec!["ferhat@oracle@10.0.0.5@bastion.corp"]);
+        assert_eq!(
+            without_cm(&cmd.args),
+            vec!["ferhat@oracle@10.0.0.5@bastion.corp"]
+        );
         assert!(!cmd.needs_password_injection);
     }
 
@@ -1009,16 +1108,19 @@ mod tests {
         s.connection_type = "psmp".into();
         s.psmp_profile_id = Some("p1".into());
         let cmd = build_connect_command(&s, Some(&psmp())).unwrap();
-        assert_eq!(cmd.args, vec!["ferhat@oracle@10.0.0.5#2222@bastion.corp"]);
+        assert_eq!(
+            without_cm(&cmd.args),
+            vec!["ferhat@oracle@10.0.0.5#2222@bastion.corp"]
+        );
     }
 
     // Direct: default port omits -p; non-standard adds `-p <port>`.
     #[test]
     fn direct_port_handling() {
         let cmd = build_connect_command(&srv("h", 22, "u"), None).unwrap();
-        assert_eq!(cmd.args, vec!["u@h"]);
+        assert_eq!(without_cm(&cmd.args), vec!["u@h"]);
         let cmd2 = build_connect_command(&srv("h", 2222, "u"), None).unwrap();
-        assert_eq!(cmd2.args, vec!["-p", "2222", "u@h"]);
+        assert_eq!(without_cm(&cmd2.args), vec!["-p", "2222", "u@h"]);
     }
 
     // Direct + stored credential → PTY password injection flagged (prompt does not).
@@ -1049,14 +1151,14 @@ mod tests {
         s.ssh_options = Some("-X -L 8080:localhost:80 -J jump@host".into());
         let cmd = build_connect_command(&s, None).unwrap();
         assert_eq!(
-            cmd.args,
+            without_cm(&cmd.args),
             vec!["-X", "-L", "8080:localhost:80", "-J", "jump@host", "u@h"]
         );
         // With a non-standard port, `-p N` comes first, then the extra opts, then dest.
         let mut s2 = srv("h", 2222, "u");
         s2.ssh_options = Some("-v".into());
         let cmd2 = build_connect_command(&s2, None).unwrap();
-        assert_eq!(cmd2.args, vec!["-p", "2222", "-v", "u@h"]);
+        assert_eq!(without_cm(&cmd2.args), vec!["-p", "2222", "-v", "u@h"]);
     }
 
     // A PSMP server with no profile is a clear error, not a broken string.

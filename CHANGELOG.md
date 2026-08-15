@@ -6,7 +6,10 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.2.27] - 2026-08-07
+## [0.2.28] - 2026-08-07
+
+### Added
+- **Agents reuse one SSH connection instead of reconnecting every command.** Muya now turns on SSH connection multiplexing (ControlMaster), so the first `ssh_run` to a server opens the connection and pays the login/OTP once, and every command after that reuses it — near-instant, no repeated reconnect. Works for both `ssh_run` and interactive `ssh_open` to the same server. (CyberArk PSMP documents this for password auth; verify once against your PSMP that a second command comes back without a new OTP.)
 
 ### Added
 - **Agents can type into an open SSH terminal (`ssh_send`).** After `ssh_open` hands back a session id, an agent can send keystrokes/commands into that same terminal — for interactive follow-ups `ssh_run` can't do (a prompt, a TUI, a multi-step flow). It can only write to a session it opened, while the tab is open, and the keystrokes are never logged.
