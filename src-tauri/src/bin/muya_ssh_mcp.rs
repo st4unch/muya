@@ -73,6 +73,13 @@ fn tool_ok(text: String, structured: Option<Value>) -> Value {
     v
 }
 
+/// The calling agent's OWN Claude Code session id, inherited from the environment when
+/// Claude Code spawns this MCP server. Lets Muya mark "this is you" in the session list
+/// and stamp the sender on a message without the agent having to know its own id.
+fn own_session_id() -> String {
+    std::env::var("CLAUDE_CODE_SESSION_ID").unwrap_or_default()
+}
+
 /// Turn a plan title into a filename-safe slug: alphanumerics kept (Unicode letters
 /// too, so Turkish titles survive), everything else collapses to single dashes, and
 /// leading/trailing dashes are trimmed. Empty result → caller rejects.
@@ -173,6 +180,39 @@ fn tools_list() -> Value {
                         "commands": { "type": "array", "items": { "type": "string" }, "description": "Several commands to run over ONE connection (much faster than many ssh_run calls, and the recommended way to run a batch against PSMP servers). Each is run in order and you get back a per-command result with its own exit code. State does NOT carry between them (each is a fresh shell line); if you need cd/env to persist, chain within a single command string using '&&' or ';'." }
                     },
                     "required": ["alias"],
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "list_sessions",
+                "description": "List the OTHER Claude Code sessions currently running in Muya, with the names the operator gave them (e.g. 'password hardening', 'frontend refactor'), their working directory and status. Use this whenever the user refers to another session by name ('tell the password-hardening session…', 'what is the migration session doing?') — Muya's names are authoritative, so this is how you find the right target among many sessions. The entry marked 'this is you' is your own session.",
+                "inputSchema": { "type": "object", "additionalProperties": false }
+            },
+            {
+                "name": "read_session",
+                "description": "Read another session's RECENT CONVERSATION (read-only) so you can answer 'what is that session up to / where did it get to?' WITHOUT messaging it and interrupting anyone. `target` is a session name or id from list_sessions (partial names work; if it's ambiguous you get the candidates back and should ask the user which one). `limit` caps how many recent turns you get (default 20), and `query` filters to turns containing a word. Never modifies the other session.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "target": { "type": "string", "description": "Session name or id (from list_sessions). Partial name is fine if unambiguous." },
+                        "limit": { "type": "integer", "description": "How many recent turns to return (default 20, max 200).", "minimum": 1, "maximum": 200 },
+                        "query": { "type": "string", "description": "Optional: only return turns containing this text." }
+                    },
+                    "required": ["target"],
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "send_to_session",
+                "description": "Send a message to ANOTHER running session, addressed by the operator's name for it. Muya resolves the name to exactly one session (if several match, you get the candidates — ASK THE USER which one, never guess), and stamps your own session as the sender. By default it hands you back the canonical target name to deliver with the native SendMessage tool, which reaches the other session without interrupting its running work. Pass deliver:\"muya\" to have Muya type the message into that session's terminal instead (use this only when SendMessage isn't available to you).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "target": { "type": "string", "description": "Target session name or id (from list_sessions)." },
+                        "text": { "type": "string", "description": "The message to send. Write it yourself — include the context the other session needs." },
+                        "deliver": { "type": "string", "enum": ["auto", "muya"], "description": "'auto' (default): resolve and deliver via the native SendMessage tool. 'muya': Muya types it into the target terminal." }
+                    },
+                    "required": ["target", "text"],
                     "additionalProperties": false
                 }
             },
@@ -470,6 +510,125 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                     resp.get("error")
                         .and_then(Value::as_str)
                         .unwrap_or("session close failed")
+                        .to_string(),
+                ))
+            }
+        }
+        "list_sessions" => {
+            let resp = app_call(&json!({ "op": "list_sessions", "sessionId": own_session_id() }))
+                .map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                let empty = vec![];
+                let list = resp
+                    .get("sessions")
+                    .and_then(Value::as_array)
+                    .unwrap_or(&empty);
+                let mut text = format!("{} running session(s):\n", list.len());
+                for s in list {
+                    let name = s.get("name").and_then(Value::as_str).unwrap_or("(unnamed)");
+                    let id = s.get("id").and_then(Value::as_str).unwrap_or("");
+                    let status = s.get("status").and_then(Value::as_str).unwrap_or("");
+                    let cwd = s.get("cwd").and_then(Value::as_str).unwrap_or("");
+                    let me = s.get("isCurrent").and_then(Value::as_bool) == Some(true);
+                    text.push_str(&format!(
+                        "- {name}{} [{status}] id={id} cwd={cwd}\n",
+                        if me { " (this is you)" } else { "" }
+                    ));
+                }
+                Ok(tool_ok(text, Some(json!({ "sessions": list }))))
+            } else {
+                Ok(tool_error(
+                    resp.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("list failed")
+                        .to_string(),
+                ))
+            }
+        }
+        "read_session" => {
+            let target = match args.get("target").and_then(Value::as_str) {
+                Some(t) if !t.trim().is_empty() => t.to_string(),
+                _ => return Ok(tool_error("missing required argument 'target'")),
+            };
+            let mut call = json!({ "op": "read_session", "target": target });
+            if let Some(l) = args.get("limit").and_then(Value::as_u64) {
+                call["limit"] = json!(l);
+            }
+            if let Some(q) = args.get("query").and_then(Value::as_str) {
+                call["query"] = json!(q);
+            }
+            let resp = app_call(&call).map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                let content = resp.get("content").and_then(Value::as_str).unwrap_or("");
+                let sname = resp
+                    .get("session")
+                    .and_then(|s| s.get("name"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                Ok(tool_ok(
+                    format!("Recent conversation in '{sname}':\n\n{content}"),
+                    Some(json!({
+                        "session": resp.get("session").cloned().unwrap_or(Value::Null),
+                        "content": content,
+                    })),
+                ))
+            } else {
+                Ok(tool_error(
+                    resp.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("read failed")
+                        .to_string(),
+                ))
+            }
+        }
+        "send_to_session" => {
+            let target = match args.get("target").and_then(Value::as_str) {
+                Some(t) if !t.trim().is_empty() => t.to_string(),
+                _ => return Ok(tool_error("missing required argument 'target'")),
+            };
+            let text = match args.get("text").and_then(Value::as_str) {
+                Some(t) if !t.trim().is_empty() => t.to_string(),
+                _ => return Ok(tool_error("missing required argument 'text'")),
+            };
+            let deliver = args
+                .get("deliver")
+                .and_then(Value::as_str)
+                .unwrap_or("auto")
+                .to_string();
+            let resp = app_call(&json!({
+                "op": "send_to_session",
+                "target": target,
+                "text": text,
+                "deliver": deliver,
+                "sessionId": own_session_id(),
+            }))
+            .map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                let tgt = resp.get("target").cloned().unwrap_or(Value::Null);
+                let name = tgt.get("name").and_then(Value::as_str).unwrap_or("");
+                if resp.get("delivered").and_then(Value::as_str) == Some("muya") {
+                    Ok(tool_ok(
+                        format!("Muya typed your message into '{name}'."),
+                        Some(json!({ "delivered": "muya", "target": tgt })),
+                    ))
+                } else {
+                    // Resolution done; the agent delivers with the native, non-interrupting tool.
+                    Ok(tool_ok(
+                        format!(
+                            "Target resolved to '{name}'. Now deliver it by calling SendMessage \
+                             with agent name exactly \"{name}\" and your message — that reaches the \
+                             session without interrupting its running work. (If SendMessage is not \
+                             available to you, call send_to_session again with deliver:\"muya\" and \
+                             Muya will type it into that terminal instead.)"
+                        ),
+                        Some(json!({ "deliverWith": "SendMessage", "target": tgt })),
+                    ))
+                }
+            } else {
+                Ok(tool_error(
+                    resp.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("send failed")
                         .to_string(),
                 ))
             }

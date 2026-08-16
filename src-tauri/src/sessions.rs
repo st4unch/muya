@@ -43,7 +43,7 @@ pub struct SessionMatch {
 }
 
 /// `~/.claude/projects/<cwd '/'→'-'>/<sessionId>.jsonl`.
-fn transcript_path(cwd: &str, session_id: &str) -> Option<PathBuf> {
+pub(crate) fn transcript_path(cwd: &str, session_id: &str) -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
     if cwd.is_empty() || session_id.is_empty() {
         return None;
@@ -60,7 +60,7 @@ fn transcript_path(cwd: &str, session_id: &str) -> Option<PathBuf> {
 /// Pull the human-readable text out of one transcript JSON line (message.content is
 /// either a plain string or an array of blocks; we keep `text` blocks and note tool
 /// uses). Non-message lines (meta) yield empty.
-fn line_text(v: &serde_json::Value) -> String {
+pub(crate) fn line_text(v: &serde_json::Value) -> String {
     let content = match v.get("message").and_then(|m| m.get("content")) {
         Some(c) => c,
         None => return String::new(),
@@ -187,6 +187,59 @@ fn resolve_transcript(s: &SessionRef) -> Option<PathBuf> {
     derived.is_file().then_some(derived)
 }
 
+/// Read the last `limit` conversation turns of a session's transcript as plain labelled
+/// text (PRD `session-messaging`): lets an agent SEE what another session is doing
+/// without messaging it. When `query` is set, only matching turns are kept (still the
+/// last `limit` of them). Streams line-by-line; the transcript is never modified.
+pub(crate) fn read_transcript_tail(
+    cwd: &str,
+    session_id: &str,
+    limit: usize,
+    query: Option<&str>,
+) -> Result<String, String> {
+    let path = transcript_path(cwd, session_id)
+        .filter(|p| p.is_file())
+        .ok_or_else(|| format!("no transcript found for session '{session_id}'"))?;
+    let file = std::fs::File::open(&path).map_err(|e| format!("open transcript: {e}"))?;
+    let reader = std::io::BufReader::new(file);
+    let needle = query.map(|q| q.to_lowercase());
+    let mut turns: std::collections::VecDeque<String> = std::collections::VecDeque::new();
+    for line in reader.lines() {
+        let Ok(line) = line else { break };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        let Some(heading) = role_heading(&v) else {
+            continue; // meta line
+        };
+        let text = line_text(&v);
+        if text.trim().is_empty() {
+            continue;
+        }
+        if let Some(n) = &needle {
+            if !text.to_lowercase().contains(n) {
+                continue;
+            }
+        }
+        // Keep each turn compact — an agent wants the gist, not a 40 MB dump.
+        let mut body = text.trim().to_string();
+        if body.chars().count() > 2000 {
+            body = body.chars().take(2000).collect::<String>() + "…";
+        }
+        turns.push_back(format!("{heading}\n{body}"));
+        while turns.len() > limit {
+            turns.pop_front();
+        }
+    }
+    if turns.is_empty() {
+        return Ok(match query {
+            Some(q) => format!("(no turns matching '{q}' in this session)"),
+            None => "(this session has no conversation turns yet)".to_string(),
+        });
+    }
+    Ok(turns.into_iter().collect::<Vec<_>>().join("\n\n"))
+}
+
 /// Grep the given sessions' transcripts for `query`; returns the ones whose
 /// CONVERSATION TEXT contains it, with a snippet. Blocking-pool'd (L31).
 #[tauri::command(async)]
@@ -217,7 +270,7 @@ pub async fn search_session_contents(
     .map_err(|e| format!("search task failed: {e}"))
 }
 
-fn role_heading(v: &serde_json::Value) -> Option<&'static str> {
+pub(crate) fn role_heading(v: &serde_json::Value) -> Option<&'static str> {
     match v.get("type").and_then(|t| t.as_str()) {
         Some("user") => Some("## 👤 User"),
         Some("assistant") => Some("## 🤖 Assistant"),

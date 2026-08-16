@@ -6,6 +6,11 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.33] - 2026-08-16
+
+### Added
+- **Talk to your other sessions by name.** Say "send the latest status to the password-hardening session" and Claude finds the right one: new `list_sessions` (the running sessions with the names you gave them), `send_to_session` (Muya resolves the name — if several match it asks you rather than guessing — and the message goes out stamped with the sending session), and `read_session` (read what another session has been doing, read-only, without messaging or interrupting it). Works the same whether you have 2 sessions or 10.
+
 ## [0.2.32] - 2026-08-07
 
 ### Fixed

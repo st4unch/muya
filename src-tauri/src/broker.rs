@@ -187,6 +187,17 @@ struct BrokerReq {
     /// `session_exec` (PRD `ssh-session`): optional per-command timeout in seconds.
     #[serde(rename = "timeoutSecs", default)]
     timeout_secs: Option<u64>,
+    /// `list_sessions`/`read_session`/`send_to_session` (PRD `session-messaging`):
+    /// the session to address (name or id, fuzzy), how many turns to read, an optional
+    /// filter, and the delivery mode ("auto" = native SendMessage, "muya" = Muya types it).
+    #[serde(default)]
+    target: Option<String>,
+    #[serde(default)]
+    limit: Option<u32>,
+    #[serde(default)]
+    query: Option<String>,
+    #[serde(default)]
+    deliver: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -429,6 +440,9 @@ async fn handle_request(app: &AppHandle, line: &str) -> String {
         "run" => handle_run(app, &servers, &req).await,
         "scp" => handle_scp(app, &servers, &req).await,
         "send" => handle_send(app, &req),
+        "list_sessions" => handle_list_sessions(&req).await,
+        "read_session" => handle_read_session(&req).await,
+        "send_to_session" => handle_send_to_session(app, &req).await,
         "session_open" => handle_session_open(app, &servers, &req).await,
         "session_exec" => handle_session_exec(app, &req).await,
         "session_close" => handle_session_close(app, &req).await,
@@ -756,6 +770,210 @@ fn stderr_tail(stderr: &str) -> String {
     } else {
         flat.chars().skip(n - 200).collect()
     }
+}
+
+/// Outcome of matching an agent-supplied `target` against the running sessions.
+/// Pure/testable: exact id > exact name (case-insensitive) > substring. Several matches
+/// stay ambiguous on purpose so the agent asks the OPERATOR which one — never guesses.
+#[derive(Debug, PartialEq)]
+pub(crate) enum TargetMatch {
+    One(usize),
+    Many(Vec<usize>),
+    None,
+}
+
+pub(crate) fn resolve_target(target: &str, sessions: &[(String, String)]) -> TargetMatch {
+    let t = target.trim().to_lowercase();
+    if t.is_empty() {
+        return TargetMatch::None;
+    }
+    // 1) exact id
+    if let Some(i) = sessions.iter().position(|(id, _)| id.to_lowercase() == t) {
+        return TargetMatch::One(i);
+    }
+    // 2) exact name
+    let exact: Vec<usize> = sessions
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, name))| name.to_lowercase() == t)
+        .map(|(i, _)| i)
+        .collect();
+    if exact.len() == 1 {
+        return TargetMatch::One(exact[0]);
+    }
+    if exact.len() > 1 {
+        return TargetMatch::Many(exact);
+    }
+    // 3) substring on name (or id prefix)
+    let loose: Vec<usize> = sessions
+        .iter()
+        .enumerate()
+        .filter(|(_, (id, name))| {
+            name.to_lowercase().contains(&t) || id.to_lowercase().starts_with(&t)
+        })
+        .map(|(i, _)| i)
+        .collect();
+    match loose.len() {
+        0 => TargetMatch::None,
+        1 => TargetMatch::One(loose[0]),
+        _ => TargetMatch::Many(loose),
+    }
+}
+
+/// Running sessions as `(id, name)` pairs plus the full records, for the tools below.
+fn running_sessions() -> Result<Vec<crate::agents::AgentSession>, String> {
+    let all = crate::agents::list_agent_sessions_sync(Some(true))?;
+    Ok(all
+        .into_iter()
+        .filter(|s| s.status != "stopped" && !s.id.is_empty())
+        .collect())
+}
+
+fn session_pairs(sessions: &[crate::agents::AgentSession]) -> Vec<(String, String)> {
+    sessions
+        .iter()
+        .map(|s| (s.id.clone(), s.name.clone()))
+        .collect()
+}
+
+/// `list_sessions` (PRD `session-messaging`): the RUNNING Claude sessions Muya knows,
+/// with the operator's own names — so an agent can address "the password-hardening
+/// session" by name instead of guessing.
+async fn handle_list_sessions(req: &BrokerReq) -> String {
+    let sessions = match tokio::task::spawn_blocking(running_sessions).await {
+        Ok(Ok(s)) => s,
+        Ok(Err(e)) => return err_resp(e),
+        Err(e) => return err_resp(format!("list task failed: {e}")),
+    };
+    let me = req.session_id.as_deref().unwrap_or("");
+    let list: Vec<serde_json::Value> = sessions
+        .iter()
+        .map(|s| {
+            json!({
+                "id": s.id,
+                "name": s.name,
+                "cwd": s.worktree,
+                "status": s.status,
+                "isCurrent": !me.is_empty() && s.id == me,
+            })
+        })
+        .collect();
+    json!({ "ok": true, "sessions": list }).to_string()
+}
+
+/// `read_session`: read another session's recent conversation (read-only) so an agent can
+/// answer "what is that session up to?" without messaging it.
+async fn handle_read_session(req: &BrokerReq) -> String {
+    let target = match req.target.as_deref() {
+        Some(t) if !t.trim().is_empty() => t.to_string(),
+        _ => return err_resp("`read_session` requires a `target` (session name or id)"),
+    };
+    let limit = req.limit.unwrap_or(20).clamp(1, 200) as usize;
+    let query = req.query.clone();
+    let result = tokio::task::spawn_blocking(move || -> Result<String, String> {
+        let sessions = running_sessions()?;
+        let pairs = session_pairs(&sessions);
+        match resolve_target(&target, &pairs) {
+            TargetMatch::None => Err(format!("no running session matches '{target}'")),
+            TargetMatch::Many(idxs) => Err(format!(
+                "'{target}' matches {} sessions ({}) — ask the operator which one and pass its exact name or id",
+                idxs.len(),
+                idxs.iter()
+                    .map(|i| pairs[*i].1.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+            TargetMatch::One(i) => {
+                let s = &sessions[i];
+                let body = crate::sessions::read_transcript_tail(
+                    &s.worktree,
+                    &s.id,
+                    limit,
+                    query.as_deref(),
+                )?;
+                Ok(json!({
+                    "ok": true,
+                    "session": { "id": s.id, "name": s.name, "cwd": s.worktree, "status": s.status },
+                    "content": body,
+                })
+                .to_string())
+            }
+        }
+    })
+    .await;
+    match result {
+        Ok(Ok(s)) => s,
+        Ok(Err(e)) => err_resp(e),
+        Err(e) => err_resp(format!("read task failed: {e}")),
+    }
+}
+
+/// `send_to_session`: resolve a fuzzy target to ONE running session. Default
+/// (`deliver: "auto"`) returns the canonical name so the agent delivers with the native,
+/// non-interrupting `SendMessage`; `deliver: "muya"` has Muya type it into the target's
+/// terminal instead (fallback when native cross-session messaging isn't available).
+async fn handle_send_to_session(app: &AppHandle, req: &BrokerReq) -> String {
+    let target = match req.target.as_deref() {
+        Some(t) if !t.trim().is_empty() => t.to_string(),
+        _ => return err_resp("`send_to_session` requires a `target` (session name or id)"),
+    };
+    let text = match req.text.as_deref() {
+        Some(t) if !t.trim().is_empty() => t.to_string(),
+        _ => return err_resp("`send_to_session` requires non-empty `text`"),
+    };
+    let deliver = req.deliver.clone().unwrap_or_else(|| "auto".to_string());
+    let from = req.session_id.clone().unwrap_or_default();
+
+    let resolved = tokio::task::spawn_blocking(move || -> Result<(String, String, String), String> {
+        let sessions = running_sessions()?;
+        let pairs = session_pairs(&sessions);
+        match resolve_target(&target, &pairs) {
+            TargetMatch::None => Err(format!("no running session matches '{target}'")),
+            TargetMatch::Many(idxs) => Err(format!(
+                "'{target}' matches {} sessions ({}) — ask the operator which one and pass its exact name or id",
+                idxs.len(),
+                idxs.iter().map(|i| pairs[*i].1.clone()).collect::<Vec<_>>().join(", ")
+            )),
+            TargetMatch::One(i) => {
+                let s = &sessions[i];
+                Ok((s.id.clone(), s.name.clone(), s.worktree.clone()))
+            }
+        }
+    })
+    .await;
+    let (id, name, cwd) = match resolved {
+        Ok(Ok(v)) => v,
+        Ok(Err(e)) => return err_resp(e),
+        Err(e) => return err_resp(format!("resolve task failed: {e}")),
+    };
+
+    if deliver == "muya" {
+        // Muya types it into the target terminal, tagged with the sender.
+        let sender = if from.is_empty() {
+            "another Muya session".to_string()
+        } else {
+            from.clone()
+        };
+        let payload = json!({ "sessionId": id, "text": text, "from": sender });
+        if let Err(e) = app.emit("muya://deliver-message", payload) {
+            return err_resp(format!("failed to deliver: {e}"));
+        }
+        return json!({
+            "ok": true,
+            "delivered": "muya",
+            "target": { "id": id, "name": name, "cwd": cwd },
+        })
+        .to_string();
+    }
+
+    json!({
+        "ok": true,
+        "deliverWith": "SendMessage",
+        "target": { "id": id, "name": name, "cwd": cwd },
+        "text": text,
+        "from": from,
+    })
+    .to_string()
 }
 
 /// `ssh_session_open` (PRD `ssh-session`, Faz 2): open a persistent, headless SSH session
@@ -1334,6 +1552,45 @@ mod tests {
             tags: vec![],
             agent_added: false,
         }
+    }
+
+    fn sess() -> Vec<(String, String)> {
+        vec![
+            ("abc123".into(), "password güçlendirme".into()),
+            ("def456".into(), "frontend refactor".into()),
+            ("ghi789".into(), "password rotation".into()),
+        ]
+    }
+
+    #[test]
+    fn resolve_target_prefers_exact_id_then_name_then_substring() {
+        // exact id
+        assert_eq!(resolve_target("def456", &sess()), TargetMatch::One(1));
+        // exact name (case-insensitive)
+        assert_eq!(
+            resolve_target("Frontend Refactor", &sess()),
+            TargetMatch::One(1)
+        );
+        // unique substring
+        assert_eq!(resolve_target("refactor", &sess()), TargetMatch::One(1));
+        assert_eq!(resolve_target("rotation", &sess()), TargetMatch::One(2));
+    }
+
+    #[test]
+    fn resolve_target_ambiguous_returns_candidates_never_guesses() {
+        // "password" hits two sessions → the agent must ask the operator.
+        assert_eq!(
+            resolve_target("password", &sess()),
+            TargetMatch::Many(vec![0, 2])
+        );
+        // …but the fuller name disambiguates.
+        assert_eq!(resolve_target("güçlendirme", &sess()), TargetMatch::One(0));
+    }
+
+    #[test]
+    fn resolve_target_none_for_unknown_or_empty() {
+        assert_eq!(resolve_target("nope", &sess()), TargetMatch::None);
+        assert_eq!(resolve_target("  ", &sess()), TargetMatch::None);
     }
 
     #[test]

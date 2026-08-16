@@ -878,6 +878,27 @@ export default function App() {
     return () => { void un.then((f) => f()); };
   }, [openSshServer]);
 
+  // muya-mcp → app: one session sent a message to ANOTHER session with
+  // send_to_session(deliver:"muya"). Muya types it into the target tab's terminal,
+  // tagged with the sender, so the receiving Claude reads it as ordinary input.
+  useEffect(() => {
+    const un = listen<{ sessionId: string; text: string; from?: string }>(
+      "muya://deliver-message",
+      (e) => {
+        const { sessionId, text, from } = e.payload;
+        const key = sessionIdToKeyRef.current[sessionId];
+        const ptyId = key ? terminalPtyIdsRef.current[key] : undefined;
+        if (!ptyId) return; // target tab not open here
+        const sender = from ? ` from ${from}` : "";
+        void invoke("pty_write", {
+          id: ptyId,
+          data: `[message${sender} via Muya] ${text}\n`,
+        }).catch(() => {});
+      },
+    );
+    return () => { void un.then((f) => f()); };
+  }, []);
+
   // muya-mcp → app: agent typed into an ssh_open terminal it owns (ssh_send). The
   // broker already checked the session id is one the agent opened; we just write the
   // text to that tab's PTY (as if the user typed it). Unknown/closed key → ignored.
@@ -937,6 +958,8 @@ export default function App() {
   // Always-fresh refs so the timer closure never goes stale.
   const scheduledPromptsRef = useRef(scheduledPrompts);
   useEffect(() => { scheduledPromptsRef.current = scheduledPrompts; }, [scheduledPrompts]);
+  /** claude session id → tab key, kept fresh by the session poll (message delivery). */
+  const sessionIdToKeyRef = useRef<Record<string, string>>({});
   const terminalPtyIdsRef = useRef(terminalPtyIds);
   useEffect(() => { terminalPtyIdsRef.current = terminalPtyIds; }, [terminalPtyIds]);
 
@@ -1069,6 +1092,11 @@ export default function App() {
           const info = byPtySession[ptyId];
           if (info?.id) sessionByKey[key] = info;
         }
+        // Reverse index (claude session id → tab key) so a message addressed to another
+        // session (send_to_session, deliver:"muya") can be typed into its terminal.
+        const byId: Record<string, string> = {};
+        for (const [key, info] of Object.entries(sessionByKey)) byId[info.id] = key;
+        sessionIdToKeyRef.current = byId;
         // `isClaude` reflects whether Claude is RUNNING in the tab RIGHT NOW —
         // it drives the icon. A polled tab with no live session flips back to the
         // terminal icon (Claude exited). `sessionId` is kept regardless so the tab
