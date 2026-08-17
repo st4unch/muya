@@ -57,6 +57,10 @@ pub struct Credential {
     /// Old store JSON lacking `description` loads as empty (serde `default`).
     #[serde(default)]
     pub description: String,
+    /// Operator-assigned group so the vault UI can show cards per group. Free text;
+    /// empty = "Ungrouped". Non-secret. Old store JSON without it loads as empty.
+    #[serde(default)]
+    pub group: String,
     #[serde(rename = "keyPassphrase", skip_serializing_if = "Option::is_none")]
     pub key_passphrase: Option<String>,
 }
@@ -71,6 +75,8 @@ pub struct CredMeta {
     pub secret_kind: String,
     #[serde(default)]
     pub description: String,
+    #[serde(default)]
+    pub group: String,
 }
 
 /// Input for upsert. Empty/absent `id` = create; otherwise update in place.
@@ -85,6 +91,8 @@ pub struct CredInput {
     pub secret: String,
     #[serde(default)]
     pub description: String,
+    #[serde(default)]
+    pub group: String,
     #[serde(rename = "keyPassphrase", default)]
     pub key_passphrase: Option<String>,
 }
@@ -397,6 +405,7 @@ pub fn credstore_import_key(
         secret_kind: "key".into(),
         secret: key_text,
         description: String::new(),
+        group: String::new(),
         key_passphrase: None,
     });
     seal_to_path(&path, &u.key, &u.kdf, &u.data)?;
@@ -510,6 +519,7 @@ pub fn credstore_cred_list(state: State<'_, CredStore>) -> Result<Vec<CredMeta>,
             username: c.username.clone(),
             secret_kind: c.secret_kind.clone(),
             description: c.description.clone(),
+            group: c.group.clone(),
         })
         .collect())
 }
@@ -531,6 +541,7 @@ pub(crate) fn list_meta(store: &CredStore) -> Result<Vec<CredMeta>, String> {
             username: c.username.clone(),
             secret_kind: c.secret_kind.clone(),
             description: c.description.clone(),
+            group: c.group.clone(),
         })
         .collect())
 }
@@ -589,6 +600,7 @@ fn add_credential_at(
         secret_kind: kind,
         secret: value,
         description,
+        group: String::new(),
         key_passphrase: None,
     };
     let meta = CredMeta {
@@ -597,6 +609,7 @@ fn add_credential_at(
         username: cred.username.clone(),
         secret_kind: cred.secret_kind.clone(),
         description: cred.description.clone(),
+        group: cred.group.clone(),
     };
     u.data.credentials.push(cred);
     seal_to_path(path, &u.key, &u.kdf, &u.data)?;
@@ -627,6 +640,7 @@ pub fn credstore_cred_upsert(
             slot.secret_kind = cred.secret_kind;
             slot.secret = cred.secret;
             slot.description = cred.description;
+            slot.group = cred.group;
             slot.key_passphrase = cred.key_passphrase;
             existing
         }
@@ -639,6 +653,7 @@ pub fn credstore_cred_upsert(
                 secret_kind: cred.secret_kind,
                 secret: cred.secret,
                 description: cred.description,
+                group: cred.group,
                 key_passphrase: cred.key_passphrase,
             });
             id
@@ -743,6 +758,7 @@ fn update_credential_at(
         username: cred.username.clone(),
         secret_kind: cred.secret_kind.clone(),
         description: cred.description.clone(),
+        group: cred.group.clone(),
     };
     seal_to_path(path, &u.key, &u.kdf, &u.data)?;
     Ok(meta)
@@ -797,6 +813,7 @@ mod tests {
             secret_kind: "password".into(),
             secret: "s3cr3t-x".into(),
             description: String::new(),
+            group: String::new(),
             key_passphrase: None,
         });
         seal_to_path(&path, &u.key, &u.kdf, &u.data).unwrap();
@@ -857,6 +874,7 @@ mod tests {
             secret_kind: "password".into(),
             secret: "keepme".into(),
             description: String::new(),
+            group: String::new(),
             key_passphrase: None,
         });
         seal_to_path(&path, &u.key, &u.kdf, &u.data).unwrap();
@@ -1161,6 +1179,22 @@ mod tests {
 
     // AC12 — CredMeta (the projection returned to agents/UI) carries no secret.
     #[test]
+    // A store written before `group` existed must still load — the field is optional
+    // and comes back empty ("Ungrouped" in the UI). PRD vault-ux AC1.
+    #[test]
+    fn credential_without_group_loads_as_empty() {
+        let old = r#"{"id":"1","label":"legacy","username":"u","secretKind":"password","secret":"s","description":"d"}"#;
+        let c: Credential = serde_json::from_str(old).expect("old JSON must still parse");
+        assert_eq!(c.group, "");
+        assert_eq!(c.label, "legacy");
+        // …and a new one round-trips its group.
+        let mut c2 = c.clone();
+        c2.group = "prod".into();
+        let round: Credential = serde_json::from_str(&serde_json::to_string(&c2).unwrap()).unwrap();
+        assert_eq!(round.group, "prod");
+    }
+
+    #[test]
     fn ac12_credmeta_has_no_secret_field() {
         let meta = CredMeta {
             id: "1".into(),
@@ -1168,6 +1202,7 @@ mod tests {
             username: "deploy".into(),
             secret_kind: "token".into(),
             description: "prod deploy token".into(),
+            group: String::new(),
         };
         let json = serde_json::to_string(&meta).unwrap();
         // `secretKind` is a legitimate non-secret label; the banned tokens are the
@@ -1192,6 +1227,7 @@ mod tests {
             secret_kind: "password".into(),
             secret: "TOPSECRETVALUE".into(),
             description: String::new(),
+            group: String::new(),
             key_passphrase: None,
         });
         seal_to_path(&path, &u.key, &u.kdf, &u.data).unwrap();

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Server as ServerIcon,
@@ -17,6 +17,8 @@ import {
   Copy,
   Check,
   Loader2,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 
 import CredentialPicker from "./CredentialPicker";
@@ -53,6 +55,8 @@ type Server = {
   agentAdded?: boolean;
   /** Extra raw ssh CLI options, e.g. `-X -L 8080:localhost:80 -J jump@host`. */
   sshOptions?: string | null;
+  /** Operator-assigned group card this server lives under; "" = Ungrouped. */
+  group: string;
   lastConnectedAt?: string | null;
   tags: string[];
 };
@@ -83,7 +87,7 @@ type SshConfig = {
   cyberark?: CyberarkConfig | null;
 };
 type SecretKind = "password" | "key" | "token" | "api_key";
-type CredMeta = { id: string; label: string; username: string; secretKind: SecretKind; description: string };
+type CredMeta = { id: string; label: string; username: string; secretKind: SecretKind; description: string; group: string };
 type CredStoreStatus = { initialized: boolean; unlocked: boolean };
 
 type Tab = "servers" | "cyberark" | "store";
@@ -107,8 +111,132 @@ const emptyServer = (): Server => ({
   psmpProfileId: null,
   credentialSource: { kind: "prompt" },
   agentAccess: false,
+  group: "",
   tags: [],
 });
+
+// ---------------------------------------------------------------------------
+// Grouping — shared by the Servers and Password Store tabs
+// ---------------------------------------------------------------------------
+// `group` is free text on both `Server` and `CredMeta`; empty means the item
+// has no group. It is bucketed under this literal name, always sorted last so
+// the operator's named groups stay at the top of the page.
+const UNGROUPED = "Ungrouped";
+
+function groupItems<T>(items: T[], groupOf: (item: T) => string): [string, T[]][] {
+  const buckets = new Map<string, T[]>();
+  for (const item of items) {
+    const name = (groupOf(item) || "").trim() || UNGROUPED;
+    const bucket = buckets.get(name);
+    if (bucket) bucket.push(item);
+    else buckets.set(name, [item]);
+  }
+  return [...buckets.entries()].sort(([a], [b]) =>
+    a === UNGROUPED ? 1 : b === UNGROUPED ? -1 : a.localeCompare(b),
+  );
+}
+
+/** Existing group names for the form's datalist — "Ungrouped" is not one of them. */
+function groupNames<T>(items: T[], groupOf: (item: T) => string): string[] {
+  return [...new Set(items.map((i) => (groupOf(i) || "").trim()).filter(Boolean))].sort();
+}
+
+// Collapse state is persisted so a folded group stays folded across reloads.
+// Groups that disappear simply leave a stale name behind — harmless, and a new
+// group defaults to expanded because absence means "open".
+function useCollapsedGroups(storageKey: string) {
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      return new Set<string>(raw ? (JSON.parse(raw) as string[]) : []);
+    } catch {
+      return new Set<string>();
+    }
+  });
+  const toggle = useCallback(
+    (name: string) => {
+      setCollapsed((prev) => {
+        const next = new Set(prev);
+        if (!next.delete(name)) next.add(name);
+        try {
+          localStorage.setItem(storageKey, JSON.stringify([...next]));
+        } catch {
+          // Cosmetic state only — a storage failure must never break the page.
+        }
+        return next;
+      });
+    },
+    [storageKey],
+  );
+  return { collapsed, toggle };
+}
+
+/** One card per group: clickable header (name · count · chevron) + a responsive item grid. */
+function GroupCard({
+  name,
+  count,
+  collapsed,
+  onToggle,
+  children,
+}: {
+  name: string;
+  count: number;
+  collapsed: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className={`${CARD} space-y-3`}>
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center gap-1.5 text-left cursor-pointer"
+        aria-expanded={!collapsed}
+      >
+        {collapsed ? (
+          <ChevronRight className="h-4 w-4 shrink-0 text-neutral-400" />
+        ) : (
+          <ChevronDown className="h-4 w-4 shrink-0 text-neutral-400" />
+        )}
+        <span className="text-sm font-medium truncate">{name}</span>
+        <span className="text-xs text-neutral-500 shrink-0">({count})</span>
+      </button>
+      {!collapsed && <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">{children}</div>}
+    </div>
+  );
+}
+
+/** Free-text group field backed by a datalist of the groups that already exist. */
+function GroupField({
+  value,
+  onChange,
+  listId,
+  options,
+  className,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  listId: string;
+  options: string[];
+  className?: string;
+}) {
+  return (
+    <>
+      <input
+        className={`${INPUT} ${className ?? ""}`}
+        placeholder="Group (optional)"
+        list={listId}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <datalist id={listId}>
+        {options.map((g) => (
+          <option key={g} value={g} />
+        ))}
+      </datalist>
+    </>
+  );
+}
 
 export default function SshPage({ onConnect }: { onConnect?: (serverId: string, label: string) => void } = {}) {
   const [tab, setTab] = useState<Tab>("servers");
@@ -139,7 +267,9 @@ export default function SshPage({ onConnect }: { onConnect?: (serverId: string, 
 
   return (
     <div className="flex-1 overflow-auto">
-      <div className="mx-auto max-w-4xl p-6 space-y-4">
+      {/* No width cap: group cards lay their items out in columns, so the page
+          earns the whole window instead of a centred 4xl strip. */}
+      <div className="w-full p-6 space-y-4">
         <div className="flex items-center gap-2">
           <ServerIcon className="h-5 w-5 text-indigo-500" />
           <h1 className="text-lg font-semibold">SSH Configuration</h1>
@@ -248,6 +378,26 @@ function ServersTab({
     }
   };
 
+  const { collapsed, toggle } = useCollapsedGroups("muya.servers.collapsed");
+  const groups = groupItems(cfg.servers, (s) => s.group);
+  const names = groupNames(cfg.servers, (s) => s.group);
+
+  // One draft at a time, so a single form element is reused wherever it belongs.
+  const form = draft && (
+    <ServerForm
+      draft={draft}
+      setDraft={setDraft}
+      cfg={cfg}
+      creds={creds}
+      unlocked={unlocked}
+      cyberAccounts={cyberAccounts}
+      groupOptions={names}
+      onChange={onChange}
+      setErr={setErr}
+      onSave={save}
+    />
+  );
+
   return (
     <div className="space-y-3">
       <div className="flex justify-between items-center">
@@ -261,145 +411,196 @@ function ServersTab({
         <div className={`${CARD} text-sm text-neutral-500`}>No servers yet. Start with "Add server".</div>
       )}
 
-      <div className="space-y-2">
-        {cfg.servers.map((s) => (
-          <div key={s.id} className={`${CARD} flex items-center justify-between`}>
-            <div className="min-w-0">
-              <div className="font-medium truncate flex items-center gap-1.5">
-                <span className="truncate">{s.label || `${s.username}@${s.host}`}</span>
-                {s.agentAdded && (
-                  <span
-                    className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
-                    title="Registered by a Claude agent via ssh_add_server — verify the host before attaching a credential."
-                  >
-                    agent-added
-                  </span>
-                )}
-              </div>
-              <div className="text-xs text-neutral-500 font-mono truncate">
-                {s.username}@{s.host}:{s.port} · {s.connectionType === "psmp" ? "PSMP" : "direct"} ·{" "}
-                {s.credentialSource.kind}
-                {s.lastConnectedAt ? ` · last: ${s.lastConnectedAt}` : ""}
-              </div>
-            </div>
-            <div className="flex gap-1 shrink-0 items-center">
-              {onConnect && (
-                <button type="button" className={BTN} onClick={() => onConnect(s.id, s.label || `${s.username}@${s.host}`)}>
-                  Connect
-                </button>
-              )}
-              <button type="button" className={BTN_GHOST} onClick={() => setDraft(s)}>
-                <Pencil className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                className={`${BTN_GHOST} text-rose-600`}
-                onClick={() => remove(s.id)}
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
+      {/* A brand-new server has no row to sit in, so its form leads the list. */}
+      {draft && !draft.id && form}
 
-      {draft && (
-        <div className={`${CARD} space-y-3`}>
-          <div className="font-medium text-sm">{draft.id ? "Edit server" : "New server"}</div>
-          <div className="grid grid-cols-2 gap-2">
-            <label className="text-xs space-y-1">
-              <span className="text-neutral-500">Label</span>
-              <input className={INPUT} value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} />
-            </label>
-            <label className="text-xs space-y-1">
-              <span className="text-neutral-500">Username</span>
-              <input className={INPUT} value={draft.username} onChange={(e) => setDraft({ ...draft, username: e.target.value })} />
-            </label>
-            <label className="text-xs space-y-1">
-              <span className="text-neutral-500">Host / address</span>
-              <input className={INPUT} value={draft.host} onChange={(e) => setDraft({ ...draft, host: e.target.value })} />
-            </label>
-            <label className="text-xs space-y-1">
-              <span className="text-neutral-500">Port</span>
-              <input
-                type="number"
-                className={INPUT}
-                value={draft.port}
-                onChange={(e) => setDraft({ ...draft, port: parseInt(e.target.value || "22", 10) })}
-              />
-            </label>
-            <label className="text-xs space-y-1">
-              <span className="text-neutral-500">Connection type</span>
-              <select
-                className={INPUT}
-                value={draft.connectionType}
-                onChange={(e) => setDraft({ ...draft, connectionType: e.target.value as Server["connectionType"] })}
-              >
-                <option value="direct">Direct</option>
-                <option value="psmp">PSMP (jump server)</option>
-              </select>
-            </label>
-            {draft.connectionType === "psmp" && (
-              <label className="text-xs space-y-1">
-                <span className="text-neutral-500">PSMP profile</span>
-                <select
-                  className={INPUT}
-                  value={draft.psmpProfileId ?? ""}
-                  onChange={(e) => setDraft({ ...draft, psmpProfileId: e.target.value || null })}
-                >
-                  <option value="">— select —</option>
-                  {cfg.psmpProfiles.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.label} ({p.psmpAddress})
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-            <label className="text-xs space-y-1 col-span-2">
-              <span className="text-neutral-500">Credential source</span>
-              <CredentialPicker
-                creds={creds}
-                unlocked={unlocked}
-                cyberarkAccounts={cyberAccounts}
-                value={draft.credentialSource}
-                onChange={(cs) => setDraft({ ...draft, credentialSource: cs })}
-                onRefresh={onChange}
-                setErr={setErr}
-              />
-            </label>
-            <label className="text-xs space-y-1 col-span-2">
-              <span className="text-neutral-500">Extra SSH options (optional)</span>
-              <input
-                className={`${INPUT} font-mono`}
-                placeholder="-X -L 8080:localhost:80 -J jump@host"
-                value={draft.sshOptions ?? ""}
-                onChange={(e) => setDraft({ ...draft, sshOptions: e.target.value || null })}
-              />
-            </label>
-            <label className="text-xs flex items-center gap-2 col-span-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={!!draft.agentAccess}
-                onChange={(e) => setDraft({ ...draft, agentAccess: e.target.checked })}
-              />
-              <span className="text-neutral-500">
-                Agent may use this server (exposes it by alias to Claude via the muya-mcp MCP; the password is never shared)
-              </span>
-            </label>
-          </div>
-          <div className="flex gap-2 justify-end">
-            <button type="button" className={BTN_GHOST} onClick={() => setDraft(null)}>
-              Cancel
-            </button>
-            <button type="button" className={BTN} onClick={save}>
-              Save
-            </button>
-          </div>
-        </div>
-      )}
+      {groups.map(([name, servers]) => (
+        <GroupCard
+          key={name}
+          name={name}
+          count={servers.length}
+          collapsed={collapsed.has(name)}
+          onToggle={() => toggle(name)}
+        >
+          {servers.map((s) =>
+            // Editing swaps the row for the form at the same spot — the operator
+            // never has to hunt for a form appended to the bottom of the page.
+            draft?.id === s.id ? (
+              <div key={s.id}>{form}</div>
+            ) : (
+              <div key={s.id} className={`${CARD} flex items-center justify-between gap-2`}>
+                <div className="min-w-0">
+                  <div className="font-medium truncate flex items-center gap-1.5">
+                    <span className="truncate">{s.label || `${s.username}@${s.host}`}</span>
+                    {s.agentAdded && (
+                      <span
+                        className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+                        title="Registered by a Claude agent via ssh_add_server — verify the host before attaching a credential."
+                      >
+                        agent-added
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-neutral-500 font-mono truncate">
+                    {s.username}@{s.host}:{s.port} · {s.connectionType === "psmp" ? "PSMP" : "direct"} ·{" "}
+                    {s.credentialSource.kind}
+                    {s.lastConnectedAt ? ` · last: ${s.lastConnectedAt}` : ""}
+                  </div>
+                </div>
+                <div className="flex gap-1 shrink-0 items-center">
+                  {onConnect && (
+                    <button type="button" className={BTN} onClick={() => onConnect(s.id, s.label || `${s.username}@${s.host}`)}>
+                      Connect
+                    </button>
+                  )}
+                  <button type="button" className={BTN_GHOST} title="Edit server" onClick={() => setDraft(s)}>
+                    <Pencil className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    className={`${BTN_GHOST} text-rose-600`}
+                    title="Delete server"
+                    onClick={() => remove(s.id)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            ),
+          )}
+        </GroupCard>
+      ))}
 
       <PsmpProfiles cfg={cfg} onChange={onChange} setErr={setErr} />
+    </div>
+  );
+}
+
+function ServerForm({
+  draft,
+  setDraft,
+  cfg,
+  creds,
+  unlocked,
+  cyberAccounts,
+  groupOptions,
+  onChange,
+  setErr,
+  onSave,
+}: {
+  draft: Server;
+  setDraft: (s: Server | null) => void;
+  cfg: SshConfig;
+  creds: CredMeta[];
+  unlocked: boolean;
+  cyberAccounts: CyberarkAccount[];
+  groupOptions: string[];
+  onChange: () => Promise<void>;
+  setErr: (e: string | null) => void;
+  onSave: () => Promise<void>;
+}) {
+  return (
+    <div className={`${CARD} space-y-3`}>
+      <div className="font-medium text-sm">{draft.id ? "Edit server" : "New server"}</div>
+      <div className="grid grid-cols-2 gap-2">
+        <label className="text-xs space-y-1">
+          <span className="text-neutral-500">Label</span>
+          <input className={INPUT} value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} />
+        </label>
+        <label className="text-xs space-y-1">
+          <span className="text-neutral-500">Username</span>
+          <input className={INPUT} value={draft.username} onChange={(e) => setDraft({ ...draft, username: e.target.value })} />
+        </label>
+        <label className="text-xs space-y-1">
+          <span className="text-neutral-500">Host / address</span>
+          <input className={INPUT} value={draft.host} onChange={(e) => setDraft({ ...draft, host: e.target.value })} />
+        </label>
+        <label className="text-xs space-y-1">
+          <span className="text-neutral-500">Port</span>
+          <input
+            type="number"
+            className={INPUT}
+            value={draft.port}
+            onChange={(e) => setDraft({ ...draft, port: parseInt(e.target.value || "22", 10) })}
+          />
+        </label>
+        <label className="text-xs space-y-1">
+          <span className="text-neutral-500">Group</span>
+          <GroupField
+            value={draft.group ?? ""}
+            onChange={(group) => setDraft({ ...draft, group })}
+            listId="muya-server-groups"
+            options={groupOptions}
+          />
+        </label>
+        <label className="text-xs space-y-1">
+          <span className="text-neutral-500">Connection type</span>
+          <select
+            className={INPUT}
+            value={draft.connectionType}
+            onChange={(e) => setDraft({ ...draft, connectionType: e.target.value as Server["connectionType"] })}
+          >
+            <option value="direct">Direct</option>
+            <option value="psmp">PSMP (jump server)</option>
+          </select>
+        </label>
+        {draft.connectionType === "psmp" && (
+          <label className="text-xs space-y-1">
+            <span className="text-neutral-500">PSMP profile</span>
+            <select
+              className={INPUT}
+              value={draft.psmpProfileId ?? ""}
+              onChange={(e) => setDraft({ ...draft, psmpProfileId: e.target.value || null })}
+            >
+              <option value="">— select —</option>
+              {cfg.psmpProfiles.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label} ({p.psmpAddress})
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <label className="text-xs space-y-1 col-span-2">
+          <span className="text-neutral-500">Credential source</span>
+          <CredentialPicker
+            creds={creds}
+            unlocked={unlocked}
+            cyberarkAccounts={cyberAccounts}
+            value={draft.credentialSource}
+            onChange={(cs) => setDraft({ ...draft, credentialSource: cs })}
+            onRefresh={onChange}
+            setErr={setErr}
+          />
+        </label>
+        <label className="text-xs space-y-1 col-span-2">
+          <span className="text-neutral-500">Extra SSH options (optional)</span>
+          <input
+            className={`${INPUT} font-mono`}
+            placeholder="-X -L 8080:localhost:80 -J jump@host"
+            value={draft.sshOptions ?? ""}
+            onChange={(e) => setDraft({ ...draft, sshOptions: e.target.value || null })}
+          />
+        </label>
+        <label className="text-xs flex items-center gap-2 col-span-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={!!draft.agentAccess}
+            onChange={(e) => setDraft({ ...draft, agentAccess: e.target.checked })}
+          />
+          <span className="text-neutral-500">
+            Agent may use this server (exposes it by alias to Claude via the muya-mcp MCP; the password is never shared)
+          </span>
+        </label>
+      </div>
+      <div className="flex gap-2 justify-end">
+        <button type="button" className={BTN_GHOST} onClick={() => setDraft(null)}>
+          Cancel
+        </button>
+        <button type="button" className={BTN} onClick={onSave}>
+          Save
+        </button>
+      </div>
     </div>
   );
 }
@@ -725,6 +926,17 @@ function CyberarkTester({
 // ---------------------------------------------------------------------------
 // Password Store tab
 // ---------------------------------------------------------------------------
+/** What the form edits — `CredInput` on the Rust side (secret included). */
+type CredDraft = {
+  id?: string;
+  label: string;
+  username: string;
+  secretKind: SecretKind;
+  secret: string;
+  description: string;
+  group: string;
+};
+
 function StoreTab({
   store,
   creds,
@@ -739,10 +951,12 @@ function StoreTab({
   const [master, setMaster] = useState("");
   const [busy, setBusy] = useState(false);
   const [showMaster, setShowMaster] = useState(false);
-  const [draft, setDraft] = useState<{ id?: string; label: string; username: string; secretKind: SecretKind; secret: string; description: string } | null>(null);
+  const [draft, setDraft] = useState<CredDraft | null>(null);
   const [importDraft, setImportDraft] = useState<{ label: string; username: string } | null>(null);
   const [revealed, setRevealed] = useState<Record<string, string>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  // Above the locked/uninitialised early returns — hooks must stay unconditional.
+  const { collapsed, toggle } = useCollapsedGroups("muya.vault.collapsed");
 
   const doInit = async () => {
     if (master.length < 4) return setErr("master password must be at least 4 characters");
@@ -870,7 +1084,7 @@ function StoreTab({
   const editCred = async (c: CredMeta) => {
     try {
       const secret = await invoke<string>("credstore_reveal_cred", { id: c.id });
-      setDraft({ id: c.id, label: c.label, username: c.username, secretKind: c.secretKind, secret, description: c.description ?? "" });
+      setDraft({ id: c.id, label: c.label, username: c.username, secretKind: c.secretKind, secret, description: c.description ?? "", group: c.group ?? "" });
     } catch (e) {
       setErr(String(e));
     }
@@ -946,6 +1160,14 @@ function StoreTab({
     );
   }
 
+  const groups = groupItems(creds, (c) => c.group);
+  const names = groupNames(creds, (c) => c.group);
+
+  // One draft at a time, so a single form element is reused wherever it belongs.
+  const form = draft && (
+    <CredForm draft={draft} setDraft={setDraft} groupOptions={names} onSave={addCred} />
+  );
+
   return (
     <div className="space-y-3">
       <div className="flex justify-between items-center">
@@ -953,7 +1175,7 @@ function StoreTab({
           <Unlock className="h-4 w-4" /> Unlocked · {creds.length} item(s)
         </span>
         <div className="flex gap-2">
-          <button type="button" className={BTN} onClick={() => setDraft({ label: "", username: "", secretKind: "password", secret: "", description: "" })}>
+          <button type="button" className={BTN} onClick={() => setDraft({ label: "", username: "", secretKind: "password", secret: "", description: "", group: "" })}>
             <Plus className="h-4 w-4 inline -mt-0.5 mr-1" /> Add credential
           </button>
           <button type="button" className={BTN_GHOST} onClick={() => setImportDraft({ label: "", username: "" })}>
@@ -968,42 +1190,7 @@ function StoreTab({
         </div>
       </div>
 
-      {creds.map((c) => (
-        <div key={c.id} className={`${CARD} flex flex-col gap-2`}>
-          <div className="flex justify-between items-center">
-            <div className="text-sm">
-              <span className="font-medium">{c.label}</span>{" "}
-              <span className="text-xs text-neutral-500 font-mono">
-                {c.username} · {c.secretKind === "key" ? "SSH key" : c.secretKind === "token" ? "token" : c.secretKind === "api_key" ? "API key" : "password"}
-              </span>
-              {c.description && <div className="text-xs text-neutral-400 mt-0.5">{c.description}</div>}
-            </div>
-            <div className="flex gap-1 shrink-0">
-              <button type="button" className={BTN_GHOST} onClick={() => toggleReveal(c.id)} title={c.id in revealed ? "Hide value" : "View value"}>
-                {c.id in revealed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
-              <button type="button" className={BTN_GHOST} onClick={() => copyCred(c.id)} title="Copy value">
-                {copiedId === c.id ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
-              </button>
-              <button type="button" className={BTN_GHOST} onClick={() => editCred(c)} title="Edit credential">
-                <Pencil className="h-4 w-4" />
-              </button>
-              <button type="button" className={BTN_GHOST} onClick={() => exportCred(c)} title={`Export ${c.secretKind}`}>
-                <Download className="h-4 w-4" />
-              </button>
-              <button type="button" className={`${BTN_GHOST} text-rose-600`} onClick={() => removeCred(c.id)}>
-                <Trash2 className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-          {c.id in revealed && (
-            <pre className="text-xs font-mono bg-neutral-100 dark:bg-neutral-800 rounded p-2 whitespace-pre-wrap break-all select-text max-h-40 overflow-auto">
-              {revealed[c.id]}
-            </pre>
-          )}
-        </div>
-      ))}
-
+      {/* New-item forms lead the list; nothing below them moves. */}
       {importDraft && (
         <div className={`${CARD} space-y-2`}>
           <div className="text-sm font-medium">Import SSH private key from file</div>
@@ -1019,36 +1206,108 @@ function StoreTab({
           </div>
         </div>
       )}
+      {draft && !draft.id && form}
 
-      {draft && (
-        <div className={`${CARD} space-y-2`}>
-          <div className="font-medium text-sm">{draft.id ? "Edit credential" : "New credential"}</div>
-          <div className="grid grid-cols-2 gap-2">
-            <input className={INPUT} placeholder="Label" value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} />
-            <input className={INPUT} placeholder="Username" value={draft.username} onChange={(e) => setDraft({ ...draft, username: e.target.value })} />
-            <select className={INPUT} value={draft.secretKind} onChange={(e) => setDraft({ ...draft, secretKind: e.target.value as SecretKind })}>
-              <option value="password">Password</option>
-              <option value="key">SSH private key</option>
-              <option value="token">Token</option>
-              <option value="api_key">API key</option>
-            </select>
-            {draft.secretKind === "password" ? (
-              <input type="password" className={INPUT} placeholder="Password" value={draft.secret} onChange={(e) => setDraft({ ...draft, secret: e.target.value })} />
-            ) : draft.secretKind === "token" ? (
-              <input type="password" className={INPUT} placeholder="Token / API key (or compact JSON)" value={draft.secret} onChange={(e) => setDraft({ ...draft, secret: e.target.value })} />
-            ) : draft.secretKind === "api_key" ? (
-              <input type="password" className={INPUT} placeholder="API key value" value={draft.secret} onChange={(e) => setDraft({ ...draft, secret: e.target.value })} />
+      {groups.map(([name, items]) => (
+        <GroupCard
+          key={name}
+          name={name}
+          count={items.length}
+          collapsed={collapsed.has(name)}
+          onToggle={() => toggle(name)}
+        >
+          {items.map((c) =>
+            // Editing swaps the card for the form at the same spot — the operator
+            // keeps their place instead of chasing a form at the bottom.
+            draft?.id === c.id ? (
+              <div key={c.id}>{form}</div>
             ) : (
-              <textarea className={`${INPUT} col-span-2 font-mono h-24`} placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" value={draft.secret} onChange={(e) => setDraft({ ...draft, secret: e.target.value })} />
-            )}
-            <input className={`${INPUT} col-span-2`} placeholder="Description (optional — shown to agents by name)" value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
-          </div>
-          <div className="flex gap-2 justify-end">
-            <button type="button" className={BTN_GHOST} onClick={() => setDraft(null)}>Cancel</button>
-            <button type="button" className={BTN} onClick={addCred}>Save</button>
-          </div>
-        </div>
-      )}
+              <div key={c.id} className={`${CARD} flex flex-col gap-2`}>
+                <div className="flex justify-between items-center gap-2">
+                  <div className="text-sm min-w-0">
+                    <span className="font-medium">{c.label}</span>{" "}
+                    <span className="text-xs text-neutral-500 font-mono">
+                      {c.username} · {c.secretKind === "key" ? "SSH key" : c.secretKind === "token" ? "token" : c.secretKind === "api_key" ? "API key" : "password"}
+                    </span>
+                    {c.description && <div className="text-xs text-neutral-400 mt-0.5">{c.description}</div>}
+                  </div>
+                  <div className="flex gap-1 shrink-0">
+                    <button type="button" className={BTN_GHOST} onClick={() => toggleReveal(c.id)} title={c.id in revealed ? "Hide value" : "View value"}>
+                      {c.id in revealed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                    <button type="button" className={BTN_GHOST} onClick={() => copyCred(c.id)} title="Copy value">
+                      {copiedId === c.id ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
+                    </button>
+                    <button type="button" className={BTN_GHOST} onClick={() => editCred(c)} title="Edit credential">
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                    <button type="button" className={BTN_GHOST} onClick={() => exportCred(c)} title={`Export ${c.secretKind}`}>
+                      <Download className="h-4 w-4" />
+                    </button>
+                    <button type="button" className={`${BTN_GHOST} text-rose-600`} onClick={() => removeCred(c.id)}>
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+                {c.id in revealed && (
+                  <pre className="text-xs font-mono bg-neutral-100 dark:bg-neutral-800 rounded p-2 whitespace-pre-wrap break-all select-text max-h-40 overflow-auto">
+                    {revealed[c.id]}
+                  </pre>
+                )}
+              </div>
+            ),
+          )}
+        </GroupCard>
+      ))}
+    </div>
+  );
+}
+
+function CredForm({
+  draft,
+  setDraft,
+  groupOptions,
+  onSave,
+}: {
+  draft: CredDraft;
+  setDraft: (d: CredDraft | null) => void;
+  groupOptions: string[];
+  onSave: () => Promise<void>;
+}) {
+  return (
+    <div className={`${CARD} space-y-2`}>
+      <div className="font-medium text-sm">{draft.id ? "Edit credential" : "New credential"}</div>
+      <div className="grid grid-cols-2 gap-2">
+        <input className={INPUT} placeholder="Label" value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} />
+        <input className={INPUT} placeholder="Username" value={draft.username} onChange={(e) => setDraft({ ...draft, username: e.target.value })} />
+        <select aria-label="Secret kind" className={INPUT} value={draft.secretKind} onChange={(e) => setDraft({ ...draft, secretKind: e.target.value as SecretKind })}>
+          <option value="password">Password</option>
+          <option value="key">SSH private key</option>
+          <option value="token">Token</option>
+          <option value="api_key">API key</option>
+        </select>
+        {draft.secretKind === "password" ? (
+          <input type="password" className={INPUT} placeholder="Password" value={draft.secret} onChange={(e) => setDraft({ ...draft, secret: e.target.value })} />
+        ) : draft.secretKind === "token" ? (
+          <input type="password" className={INPUT} placeholder="Token / API key (or compact JSON)" value={draft.secret} onChange={(e) => setDraft({ ...draft, secret: e.target.value })} />
+        ) : draft.secretKind === "api_key" ? (
+          <input type="password" className={INPUT} placeholder="API key value" value={draft.secret} onChange={(e) => setDraft({ ...draft, secret: e.target.value })} />
+        ) : (
+          <textarea className={`${INPUT} col-span-2 font-mono h-24`} placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" value={draft.secret} onChange={(e) => setDraft({ ...draft, secret: e.target.value })} />
+        )}
+        <GroupField
+          value={draft.group}
+          onChange={(group) => setDraft({ ...draft, group })}
+          listId="muya-cred-groups"
+          options={groupOptions}
+          className="col-span-2"
+        />
+        <input className={`${INPUT} col-span-2`} placeholder="Description (optional — shown to agents by name)" value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
+      </div>
+      <div className="flex gap-2 justify-end">
+        <button type="button" className={BTN_GHOST} onClick={() => setDraft(null)}>Cancel</button>
+        <button type="button" className={BTN} onClick={onSave}>Save</button>
+      </div>
     </div>
   );
 }

@@ -85,6 +85,10 @@ pub struct Server {
     pub last_connected_at: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Operator-assigned group so the Servers UI can show cards per group. Free text;
+    /// empty = "Ungrouped". Old config JSON without it loads as empty.
+    #[serde(default)]
+    pub group: String,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -390,6 +394,7 @@ pub(crate) fn agent_add_server_in(
         ssh_options: None,  // forced — agents never get raw ssh flags (`-o ProxyCommand=`)
         last_connected_at: None,
         tags: vec![],
+        group: String::new(),
         agent_added: true,
     };
 
@@ -1011,6 +1016,7 @@ mod tests {
             ssh_options: None,
             last_connected_at: None,
             tags: vec![],
+            group: String::new(),
             agent_added: false,
         }
     }

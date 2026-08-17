@@ -6,7 +6,17 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.2.33] - 2026-08-16
+## [0.2.34] - 2026-08-17
+
+### Added
+- **Group your credentials and servers.** Both the Password Store and Servers now let you put each entry in a group (type a new one or pick an existing one). Each group is its own card you can collapse or expand, and it remembers what you had open.
+
+### Changed
+- **Editing happens where the entry is.** Clicking edit on a credential or a server now turns that entry into the form in place, instead of opening a form at the bottom of the list and making you scroll back. Adding a new one opens at the top.
+- **The vault uses the whole window.** The SSH pages are no longer squeezed into a narrow centre column — on a wide screen entries lay out in two or three columns.
+
+### Fixed
+- **Clearer SSH tool guidance for agents.** `ssh_run` is now described as the default (one command, or several with `commands: []`), `ssh_session_*` as the choice when commands must share state, and `ssh_send` as driving the terminal a human is watching — so an agent picks the right one instead of guessing between them.
 
 ### Added
 - **Talk to your other sessions by name.** Say "send the latest status to the password-hardening session" and Claude finds the right one: new `list_sessions` (the running sessions with the names you gave them), `send_to_session` (Muya resolves the name — if several match it asks you rather than guessing — and the message goes out stamped with the sending session), and `read_session` (read what another session has been doing, read-only, without messaging or interrupting it). Works the same whether you have 2 sessions or 10.

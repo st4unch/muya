@@ -21,10 +21,12 @@ type Server = {
   connectionType: "direct" | "psmp";
   psmpProfileId?: string | null;
   credentialSource: { kind: string; localCredId?: string | null; cyberarkAccountId?: string | null };
+  /** Free-text group card; "" / absent = Ungrouped (mirrors ssh.rs). */
+  group?: string;
   lastConnectedAt?: string | null;
   tags: string[];
 };
-type Cred = { id: string; label: string; username: string; secretKind: "password" | "key" | "token" | "api_key"; secret: string; description?: string };
+type Cred = { id: string; label: string; username: string; secretKind: "password" | "key" | "token" | "api_key"; secret: string; description?: string; group?: string };
 
 type State = {
   ssh: { version: number; servers: Server[]; psmpProfiles: any[]; cyberark: Json | null };
@@ -146,6 +148,7 @@ export async function mockInvoke(cmd: string, payload: Json = {}): Promise<unkno
         username: c.username,
         secretKind: c.secretKind,
         description: c.description ?? "",
+        group: c.group ?? "",
       }));
     case "credstore_cred_upsert": {
       if (!state.store.unlocked) throw "store is locked";
@@ -158,6 +161,12 @@ export async function mockInvoke(cmd: string, payload: Json = {}): Promise<unkno
       const id = genId();
       state.store.creds.push({ ...c, id });
       return id;
+    }
+    case "credstore_reveal_cred": {
+      if (!state.store.unlocked) throw "store is locked";
+      const c = state.store.creds.find((x) => x.id === payload.id);
+      if (!c) throw "credential not found";
+      return c.secret;
     }
     case "credstore_cred_remove":
       if (!state.store.unlocked) throw "store is locked";

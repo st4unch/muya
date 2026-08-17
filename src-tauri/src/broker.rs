@@ -1550,6 +1550,7 @@ mod tests {
             ssh_options: None,
             last_connected_at: None,
             tags: vec![],
+            group: String::new(),
             agent_added: false,
         }
     }

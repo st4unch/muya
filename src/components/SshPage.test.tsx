@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { mockInvoke, resetMockBackend } from "../dev/mockBackend";
 import SshPage from "./SshPage";
@@ -11,7 +11,10 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, payload?: Record<string, unknown>) => mockInvoke(cmd, payload ?? {}),
 }));
 
-beforeEach(() => resetMockBackend());
+beforeEach(() => {
+  resetMockBackend();
+  localStorage.clear(); // group collapse state persists there — start each case expanded
+});
 
 describe("SshPage — Servers", () => {
   it("starts empty and adds a server", async () => {
@@ -106,8 +109,9 @@ describe("SshPage — credential description + token kind (AC16)", () => {
     await user.click(screen.getByText("Add credential"));
     await user.type(screen.getByPlaceholderText("Label"), "prod-aws");
     await user.type(screen.getByPlaceholderText("Username"), "deploy");
-    // The token option exists in the secretKind select.
-    await user.selectOptions(screen.getByRole("combobox"), "token");
+    // The token option exists in the secretKind select (the form's Group input
+    // is a datalist combobox too, so target the select by its label).
+    await user.selectOptions(screen.getByLabelText("Secret kind"), "token");
     await user.type(screen.getByPlaceholderText(/Token \/ API key/), "ghp_secret");
     await user.type(
       screen.getByPlaceholderText(/Description/),
@@ -135,7 +139,7 @@ describe("SshPage — API key kind (AC19)", () => {
     await user.type(screen.getByPlaceholderText("Label"), "openai");
     await user.type(screen.getByPlaceholderText("Username"), "svc");
     // The API key option exists in the secretKind select.
-    await user.selectOptions(screen.getByRole("combobox"), "api_key");
+    await user.selectOptions(screen.getByLabelText("Secret kind"), "api_key");
     await user.type(screen.getByPlaceholderText(/API key value/), "sk-test-123");
     await user.click(screen.getByText("Save"));
 
@@ -172,5 +176,85 @@ describe("SshPage — Password Store", () => {
     await user.type(input, "hunter2");
     await user.click(screen.getByText(/^Unlock$/));
     expect(await screen.findByText(/Unlocked ·/)).toBeTruthy();
+  });
+});
+
+describe("SshPage — group cards + in-place editing", () => {
+  const unlock = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(screen.getByText("Password Store"));
+    await user.type(screen.getByPlaceholderText("Master password"), "hunter2");
+    await user.click(screen.getByText("Create"));
+    await screen.findByText(/Unlocked ·/);
+  };
+
+  it("files a credential under its group and collapses the card", async () => {
+    const user = userEvent.setup();
+    render(<SshPage />);
+    await unlock(user);
+
+    await user.click(screen.getByText("Add credential"));
+    await user.type(screen.getByPlaceholderText("Label"), "prod-db");
+    await user.type(screen.getByPlaceholderText("Username"), "oracle");
+    await user.type(screen.getByPlaceholderText("Password"), "s3cret");
+    await user.type(screen.getByPlaceholderText(/^Group/), "prod");
+    await user.click(screen.getByText("Save"));
+
+    // One card per group, with the item count in the header.
+    const header = await screen.findByRole("button", { name: /prod\s*\(1\)/ });
+    expect(screen.getByText("prod-db")).toBeTruthy();
+
+    // Collapsing hides the group's items and persists the choice.
+    await user.click(header);
+    await waitFor(() => expect(screen.queryByText("prod-db")).toBeNull());
+    expect(JSON.parse(localStorage.getItem("muya.vault.collapsed") ?? "[]")).toEqual(["prod"]);
+
+    await user.click(header);
+    expect(await screen.findByText("prod-db")).toBeTruthy();
+  });
+
+  it("opens the credential edit form in place, inside its own group card", async () => {
+    const user = userEvent.setup();
+    render(<SshPage />);
+    await unlock(user);
+
+    await user.click(screen.getByText("Add credential"));
+    await user.type(screen.getByPlaceholderText("Label"), "prod-db");
+    await user.type(screen.getByPlaceholderText("Username"), "oracle");
+    await user.type(screen.getByPlaceholderText("Password"), "s3cret");
+    await user.type(screen.getByPlaceholderText(/^Group/), "prod");
+    await user.click(screen.getByText("Save"));
+    await screen.findByText("prod-db");
+
+    await user.click(screen.getByTitle("Edit credential"));
+
+    // The form replaces the row inside the "prod" card — not appended at the
+    // bottom of the page, which is what used to lose the operator's place.
+    const card = (await screen.findByRole("button", { name: /prod\s*\(1\)/ })).parentElement!;
+    expect(within(card).getByText("Edit credential")).toBeTruthy();
+    expect(within(card).getByDisplayValue("prod-db")).toBeTruthy();
+  });
+
+  it("opens the server edit form in place, inside its own group card", async () => {
+    await mockInvoke("ssh_upsert_server", {
+      server: {
+        id: "",
+        label: "db-1",
+        host: "10.0.0.5",
+        port: 22,
+        username: "oracle",
+        connectionType: "direct",
+        credentialSource: { kind: "prompt" },
+        group: "prod",
+        tags: [],
+      },
+    });
+    const user = userEvent.setup();
+    render(<SshPage />);
+
+    const card = (await screen.findByRole("button", { name: /prod\s*\(1\)/ })).parentElement!;
+    await user.click(within(card).getByTitle("Edit server"));
+
+    expect(within(card).getByText("Edit server")).toBeTruthy();
+    expect(within(card).getByDisplayValue("prod")).toBeTruthy();
   });
 });
