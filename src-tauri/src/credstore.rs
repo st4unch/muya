@@ -1179,6 +1179,74 @@ mod tests {
 
     // AC12 — CredMeta (the projection returned to agents/UI) carries no secret.
     #[test]
+    // MIGRATION SAFETY (PRD vault-ux): an ENCRYPTED store written by a build that had no
+    // `group` field must still unlock, with every credential and secret intact. This seals
+    // hand-written old-format JSON through the real crypto and unlocks it through the real
+    // `unlock_at`, so it exercises exactly what an existing vault hits after the upgrade.
+    #[test]
+    fn old_encrypted_store_without_group_unlocks_with_secrets_intact() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("legacy-vault.enc");
+        let master = b"correct horse battery";
+
+        // Old on-disk shape: no `group` anywhere, mixed secret kinds, a key passphrase.
+        let old_plaintext = br#"{"version":1,"credentials":[
+            {"id":"c1","label":"maydogan","username":"maydogan","secretKind":"password","secret":"S3cret!","description":"cyberark pw"},
+            {"id":"c2","label":"Azure_token","username":"","secretKind":"api_key","secret":"az-tok-xyz","description":""},
+            {"id":"c3","label":"deploy-key","username":"git","secretKind":"key","secret":"-----BEGIN KEY-----\nabc\n","description":"","keyPassphrase":"pp"}
+        ]}"#;
+
+        let salt = new_salt();
+        let key = derive_key(master, &salt).unwrap();
+        let (nonce, ciphertext) = seal(&key, old_plaintext).unwrap();
+        let blob = SealedBlob {
+            magic: MAGIC.to_string(),
+            version: BLOB_VERSION,
+            kdf: KdfParams {
+                algo: "argon2id".into(),
+                salt,
+                m: ARGON2_M_KIB,
+                t: ARGON2_T,
+                p: ARGON2_P,
+            },
+            nonce,
+            ciphertext,
+        };
+        std::fs::write(&path, serde_json::to_vec(&blob).unwrap()).unwrap();
+
+        // The real unlock path — this is what the upgraded app runs.
+        let u = unlock_at(&path, master).expect("legacy vault must still unlock");
+        assert_eq!(u.data.credentials.len(), 3, "no credential may be lost");
+        let c1 = &u.data.credentials[0];
+        assert_eq!(c1.label, "maydogan");
+        assert_eq!(c1.secret, "S3cret!", "secret must survive the migration");
+        assert_eq!(c1.description, "cyberark pw");
+        assert_eq!(
+            c1.group, "",
+            "missing group loads as empty (shown as Ungrouped)"
+        );
+        assert_eq!(u.data.credentials[1].secret, "az-tok-xyz");
+        assert_eq!(
+            u.data.credentials[2].key_passphrase.as_deref(),
+            Some("pp"),
+            "key passphrase must survive"
+        );
+
+        // …and re-sealing with the NEW struct (as the app does on any edit) keeps
+        // everything, now carrying a group.
+        let mut data = u.data;
+        data.credentials[0].group = "CyberArk".into();
+        seal_to_path(&path, &u.key, &u.kdf, &data).unwrap();
+        let again = unlock_at(&path, master).unwrap();
+        assert_eq!(again.data.credentials.len(), 3);
+        assert_eq!(again.data.credentials[0].group, "CyberArk");
+        assert_eq!(again.data.credentials[0].secret, "S3cret!");
+        assert_eq!(
+            again.data.credentials[2].secret,
+            "-----BEGIN KEY-----\nabc\n"
+        );
+    }
+
     // A store written before `group` existed must still load — the field is optional
     // and comes back empty ("Ungrouped" in the UI). PRD vault-ux AC1.
     #[test]

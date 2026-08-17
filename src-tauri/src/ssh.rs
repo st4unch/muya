@@ -1115,6 +1115,43 @@ mod tests {
 
     // Round-trip through disk keeps the servers.
     #[test]
+    // MIGRATION SAFETY (PRD vault-ux): a config written before `group` existed must load
+    // with every server, its PSMP profile link, credential binding and agent-access flag
+    // intact — this is the operator's real `~/.claude/muya-ssh-config.json` shape.
+    #[test]
+    fn old_config_without_group_loads_servers_intact() {
+        let old = r##"{
+          "version": 1,
+          "servers": [
+            {"id":"s1","label":"k3s_master","host":"10.0.0.5","port":22,"username":"murat",
+             "connectionType":"psmp","psmpProfileId":"p1",
+             "credentialSource":{"kind":"local","localCredId":"c1"},
+             "agentAccess":true,"sshOptions":"-o PubkeyAuthentication=no",
+             "lastConnectedAt":null,"tags":["prod"],"agentAdded":false}
+          ],
+          "psmpProfiles": [{"id":"p1","label":"corp","vaultUser":"ferhat","psmpAddress":"bastion.corp",
+             "userDelim":"@","paramDelim":"#","scpOptions":null}]
+        }"##;
+        let cfg: SshConfig = serde_json::from_str(old).expect("old config must still parse");
+        assert_eq!(cfg.servers.len(), 1, "no server may be lost");
+        let s = &cfg.servers[0];
+        assert_eq!(s.label, "k3s_master");
+        assert_eq!(s.group, "", "missing group loads as empty (shown as Ungrouped)");
+        assert_eq!(s.connection_type, "psmp");
+        assert_eq!(s.psmp_profile_id.as_deref(), Some("p1"));
+        assert_eq!(s.credential_source.kind, "local");
+        assert_eq!(s.credential_source.local_cred_id.as_deref(), Some("c1"));
+        assert!(s.agent_access, "agent opt-in must survive");
+        assert_eq!(s.tags, vec!["prod".to_string()], "tags untouched by grouping");
+        assert_eq!(cfg.psmp_profiles.len(), 1);
+        // Re-serializing (any UI save) keeps it loadable and carries the group.
+        let mut cfg2 = cfg;
+        cfg2.servers[0].group = "k3s".into();
+        let round: SshConfig = serde_json::from_str(&serde_json::to_string(&cfg2).unwrap()).unwrap();
+        assert_eq!(round.servers[0].group, "k3s");
+        assert_eq!(round.servers[0].credential_source.kind, "local");
+    }
+
     fn disk_round_trip() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("muya-ssh-config.json");
