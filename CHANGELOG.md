@@ -6,7 +6,15 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.2.35] - 2026-08-17
+## [0.2.36] - 2026-08-18
+
+### Added
+- **Images and PDFs now actually open.** Clicking a `.png`/`.jpg`/`.svg`/… or a `.pdf` shows the real thing in its own tab, instead of an error (the editor could only read text). Any other binary file you click now offers an "Open in default app" button instead of an error.
+- **Persistent SSH sessions clean up after themselves.** A session an agent opens and forgets to close (crash, context reset) is now automatically closed after 30 minutes of inactivity, instead of staying open for the life of the app.
+
+### Fixed
+- **Editor tabs now pick up external changes reliably.** A file opened via "Open With Muya", or by clicking a path in a terminal, wasn't being watched for changes — an outside edit (an agent, another app) never showed up in the tab. It's watched now, without widening what agents can read via `ssh_scp` or adding clutter to the sidebar.
+- **One long-running SSH session command no longer blocks every other session.** A command in one persistent SSH session held a lock that blocked opening, running, or closing any other session — and the idle cleanup above — for as long as it ran (up to 2 minutes). Sessions now run independently.
 
 ### Fixed
 - **Copy now actually works everywhere.** Copying a password/key/token — or a file path, session id, or chat PIN — could fail with "the request is not allowed" because the browser clipboard API doesn't work reliably inside Muya's window. Every Copy button now goes through the OS clipboard directly.

@@ -6,7 +6,7 @@
 
 export interface TabLike {
   key: string;
-  kind: "terminal" | "editor" | "mdview";
+  kind: "terminal" | "editor" | "mdview" | "imgview" | "pdfview";
 }
 
 // Terminals are one group; file tabs (editor + rendered markdown) are the other.

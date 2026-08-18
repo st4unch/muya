@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { relTime, shortCwd, langFromPath } from "./format";
+import { relTime, shortCwd, langFromPath, viewerKindFor } from "./format";
 
 describe("relTime", () => {
   const now = 1_000_000_000_000;
@@ -33,5 +33,25 @@ describe("langFromPath", () => {
   it("returns undefined for unknown", () => {
     expect(langFromPath("file.xyz")).toBeUndefined();
     expect(langFromPath("noext")).toBeUndefined();
+  });
+});
+
+describe("viewerKindFor", () => {
+  it("routes markdown to mdview", () => {
+    expect(viewerKindFor("README.md")).toBe("mdview");
+    expect(viewerKindFor("notes.MDX")).toBe("mdview");
+  });
+  it("routes images to imgview, case-insensitively", () => {
+    for (const ext of ["png", "JPG", "jpeg", "gif", "webp", "bmp", "ico", "svg"]) {
+      expect(viewerKindFor(`pic.${ext}`)).toBe("imgview");
+    }
+  });
+  it("routes pdf to pdfview", () => {
+    expect(viewerKindFor("report.pdf")).toBe("pdfview");
+  });
+  it("falls back to editor (Monaco) for everything else, including no extension", () => {
+    expect(viewerKindFor("src/App.tsx")).toBe("editor");
+    expect(viewerKindFor("Dockerfile")).toBe("editor");
+    expect(viewerKindFor("archive.pdf.bak")).toBe("editor"); // extension is .bak, not .pdf
   });
 });

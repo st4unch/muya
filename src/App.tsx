@@ -6,6 +6,7 @@ import {
   Folder,
   FileCode,
   FileText,
+  Image as ImageIcon,
   Terminal,
   Layers,
   Sparkles,
@@ -59,6 +60,8 @@ import SessionsPage from "./components/SessionsPage";
 import SessionsPanel from "./components/SessionsPanel";
 const FileEditor = lazy(() => import("./components/FileEditor"));
 const MarkdownView = lazy(() => import("./components/MarkdownView"));
+const ImageViewer = lazy(() => import("./components/ImageViewer"));
+const PdfViewer = lazy(() => import("./components/PdfViewer"));
 import SessionMonitor from "./components/SessionMonitor";
 import NewAgentModal, { type NewAgentSpec } from "./components/NewAgentModal";
 import QueuePage from "./components/QueuePage";
@@ -70,6 +73,7 @@ import SettingsModal from "./components/SettingsModal";
 import { buildAgentCommand } from "./lib/agent";
 import { invoke } from "@tauri-apps/api/core";
 import { copyToClipboard } from "./lib/clipboard";
+import { viewerKindFor } from "./lib/format";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -101,10 +105,10 @@ interface AgentSession {
 interface OpenTerminal {
   key: string; // unique tab id (session id, "resume:<id>", or "edit:<path>")
   name: string;
-  kind: "terminal" | "editor" | "mdview";
+  kind: "terminal" | "editor" | "mdview" | "imgview" | "pdfview";
   cwd?: string;
   initialCommand?: string; // terminals: auto-run on spawn, e.g. `claude attach <id>`
-  filePath?: string; // editors + mdview: absolute file path
+  filePath?: string; // editors + mdview + imgview + pdfview: absolute file path
   /** This tab runs a Claude session (vs a plain shell) — drives the icon + resume. */
   isClaude?: boolean;
   /** The Claude session THIS tab was running, captured live and persisted so a
@@ -367,22 +371,24 @@ export default function App() {
     });
   };
 
-  const isMarkdown = (p: string) => /\.mdx?$/i.test(p);
-
-  /** Default open (single-click / dispatch): markdown opens as a RENDERED read view;
-   *  everything else opens editable in Monaco. "Open in Muya" (right-click) always
-   *  routes to openEditor, so a .md can still be edited on demand. */
+  /** Default open (single-click / dispatch): markdown opens as a RENDERED read view,
+   *  images/PDFs open in their own viewer (Monaco can't render them — `read_file`
+   *  requires UTF-8 text), everything else opens editable in Monaco. "Open in Muya"
+   *  (right-click) always routes to openEditor, so any of these can still be forced
+   *  open as text on demand (unchanged pre-existing semantic for .md). */
   const openFile = (filePath: string) => {
-    if (isMarkdown(filePath)) {
-      openTerminal({
-        key: `mdview:${filePath}`,
-        name: filePath.split("/").pop() || filePath,
-        kind: "mdview",
-        filePath,
-      });
-    } else {
+    const kind = viewerKindFor(filePath);
+    if (kind === "editor") {
       openEditor(filePath);
+      return;
     }
+    const prefix = kind === "mdview" ? "mdview" : kind === "imgview" ? "img" : "pdf";
+    openTerminal({
+      key: `${prefix}:${filePath}`,
+      name: filePath.split("/").pop() || filePath,
+      kind,
+      filePath,
+    });
   };
 
   const [dirtyTabs, setDirtyTabs] = useState<Record<string, boolean>>({});
@@ -623,15 +629,43 @@ export default function App() {
     }
   };
 
+  // Files opened OUTSIDE any tracked workspace/worktree root (OS "Open With Muya",
+  // clicking a path in terminal output, a startup file-association open, …) fall
+  // outside the notify watcher's roots — an external edit to them never fires
+  // `fs-changed`, so Monaco silently keeps showing the stale content. Rather than
+  // remembering to call a tracker at every openEditor()/openFile() call site (the
+  // actual bug — some forgot to), derive the extra watch paths straight from the
+  // open tabs: it self-heals for every current and future call site, including
+  // tabs restored from a previous session. Deliberately NOT folded into
+  // `trackedPaths` — that also drives the ssh_scp local-path guardrail and the
+  // sidebar's workspace list, and an incidentally-opened file shouldn't widen
+  // either of those.
+  const openedFilePaths = useMemo(
+    () => [
+      ...new Set(
+        openTerminals
+          .filter((t): t is OpenTerminal & { filePath: string } =>
+            (t.kind === "editor" || t.kind === "mdview") && Boolean(t.filePath),
+          )
+          .map((t) => t.filePath)
+          .filter((p) => !trackedPaths.some((root) => p === root || p.startsWith(`${root}/`))),
+      ),
+    ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [openTerminals, trackedPaths.join("|")],
+  );
+
   // Watch tracked projects in real time (notify); refresh views on change.
   useEffect(() => {
-    void invoke("start_watching", { paths: trackedPaths }).catch(() => {});
+    void invoke("start_watching", { paths: [...trackedPaths, ...openedFilePaths] }).catch(() => {});
     // Mirror the same tracked paths to the Rust side as the `ssh_scp` MCP tool's
     // local-filesystem guardrail (PRD ssh-scp, AC3): agents may only read/write
     // localPath inside one of these roots. No secret involved — plain folder paths.
+    // Deliberately excludes `openedFilePaths` — that would widen the guardrail to
+    // wherever the operator happened to click a file, not a chosen workspace.
     void invoke("set_workspace_roots", { roots: trackedPaths }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaces, worktrees]);
+  }, [workspaces, worktrees, openedFilePaths.join("|")]);
 
   // Persist tracked roots so they reload on app restart.
   useEffect(() => {
@@ -809,11 +843,11 @@ export default function App() {
   useEffect(() => {
     // Files opened before webview was ready (startup).
     void invoke<string[]>("get_startup_files").then((files) => {
-      files.forEach((p) => { openEditor(p); setView("control"); });
+      files.forEach((p) => { openFile(p); setView("control"); });
     });
     // Files opened while app is already running.
     const un = listen<string>("apex://open-file", (e) => {
-      openEditor(e.payload);
+      openFile(e.payload);
       setView("control");
     });
     return () => { void un.then((f) => f()); };
@@ -2018,6 +2052,8 @@ export const loginHandler = async (req, res) => {
                     >
                       {tm.kind === "mdview" ? (
                         <FileText className="h-3.5 w-3.5 text-indigo-500 dark:text-indigo-400 shrink-0" />
+                      ) : tm.kind === "imgview" || tm.kind === "pdfview" ? (
+                        <ImageIcon className="h-3.5 w-3.5 text-emerald-500 dark:text-emerald-400 shrink-0" />
                       ) : (
                         <FileCode className="h-3.5 w-3.5 text-amber-500 dark:text-amber-400 shrink-0" />
                       )}
@@ -2245,7 +2281,7 @@ export const loginHandler = async (req, res) => {
                     const gridCol = (gridIdx % 2) + 1;
                     const gridRow = Math.floor(gridIdx / 2) + 1;
 
-                    if (tm.kind === "editor" || tm.kind === "mdview") {
+                    if (tm.kind === "editor" || tm.kind === "mdview" || tm.kind === "imgview" || tm.kind === "pdfview") {
                       return (
                         <div
                           key={tm.key}
@@ -2262,6 +2298,10 @@ export const loginHandler = async (req, res) => {
                                 reloadTick={fsTick}
                                 onEdit={(p) => { closeTerminal(tm.key); openEditor(p); }}
                               />
+                            ) : tm.kind === "imgview" ? (
+                              <ImageViewer path={tm.filePath!} />
+                            ) : tm.kind === "pdfview" ? (
+                              <PdfViewer path={tm.filePath!} />
                             ) : (
                               <FileEditor
                                 path={tm.filePath!}

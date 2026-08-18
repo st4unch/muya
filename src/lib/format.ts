@@ -27,3 +27,14 @@ const LANG: Record<string, string> = {
 export function langFromPath(p: string): string | undefined {
   return LANG[p.split(".").pop()?.toLowerCase() ?? ""];
 }
+
+/** Which viewer `openFile()` should route a path to (PRD file-viewer-dispatcher).
+ *  `read_file` requires UTF-8 text, so images/PDFs need their own tab kind instead
+ *  of failing into Monaco's error state. Order matters only in that each pattern
+ *  is mutually exclusive by extension. */
+export function viewerKindFor(p: string): "mdview" | "imgview" | "pdfview" | "editor" {
+  if (/\.mdx?$/i.test(p)) return "mdview";
+  if (/\.(png|jpe?g|gif|webp|bmp|ico|svg)$/i.test(p)) return "imgview";
+  if (/\.pdf$/i.test(p)) return "pdfview";
+  return "editor";
+}

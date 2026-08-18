@@ -216,7 +216,25 @@ export default function FileEditor({
       </div>
       <div className="flex-1 overflow-hidden">
         {status === "error" ? (
-          <div className="p-4 text-xs font-mono text-rose-600 dark:text-red-400">{error}</div>
+          error.includes("valid UTF-8") ? (
+            // `read_file` requires UTF-8 text (Monaco can't render arbitrary binary) —
+            // this is a real file the operator can still open in whatever app owns it,
+            // not a broken path. PRD file-viewer-dispatcher AC5.
+            <div className="p-4 flex flex-col items-start gap-2">
+              <p className="text-xs font-mono text-neutral-500 dark:text-neutral-400">
+                This file isn&apos;t text — it can&apos;t be previewed here.
+              </p>
+              <button
+                type="button"
+                onClick={() => void import("@tauri-apps/plugin-opener").then((m) => m.openPath(path))}
+                className="px-2 py-1 text-xs rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer"
+              >
+                Open in default app
+              </button>
+            </div>
+          ) : (
+            <div className="p-4 text-xs font-mono text-rose-600 dark:text-red-400">{error}</div>
+          )
         ) : mode === "diff" ? (
           <DiffEditor
             original={head ?? ""}

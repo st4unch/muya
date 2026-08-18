@@ -613,6 +613,20 @@ pub fn local_ip() -> Result<String, String> {
     }
 }
 
+/// Grant the webview's asset protocol (`convertFileSrc`/`asset://`) read access to ONE
+/// file (PRD `file-viewer-dispatcher`) — the image/PDF viewer tabs call this before
+/// rendering `<img>`/`<embed src=asset://...>`. File-scoped, not directory-scoped, so
+/// opening one image never exposes its whole folder to the webview. No extra path
+/// restriction beyond that: `read_file` already reads any local path unrestricted (this
+/// is the equivalent operator-facing "show me this file" action, not an agent path).
+#[tauri::command(async)]
+pub fn allow_asset_path(path: String, app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    app.asset_protocol_scope()
+        .allow_file(&path)
+        .map_err(|e| format!("failed to allow asset path: {e}"))
+}
+
 /// Open the given path in Finder (macOS: `open -R <path>`).
 #[tauri::command(async)]
 pub fn reveal_in_finder(path: String) -> Result<(), String> {

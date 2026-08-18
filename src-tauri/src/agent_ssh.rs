@@ -31,7 +31,17 @@ struct Session {
     buffer: Arc<Mutex<String>>,
     child: Box<dyn Child + Send + Sync>,
     _master: Box<dyn MasterPty + Send>,
+    /// Updated at the start of every `exec`. The idle reaper closes a session that
+    /// hasn't been used in `IDLE_TIMEOUT` — an agent that opens a session and then
+    /// forgets to `close` it (crashes, context reset) would otherwise leak the PTY
+    /// process and its PSMP-audited connection for the life of the app.
+    last_used: Mutex<Instant>,
 }
+
+/// A session idle this long is closed by the background reaper (see `reap_idle` /
+/// `lib.rs`'s periodic sweep). Generous — a real back-and-forth shouldn't trip it —
+/// but bounded, so a forgotten session doesn't run forever.
+pub const IDLE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 /// Cloneable (Arc inside) so a broker handler can move a handle into `spawn_blocking`
 /// for the blocking open/exec while the session map stays shared.
@@ -256,6 +266,7 @@ pub fn open(
             buffer,
             child,
             _master: pair.master,
+            last_used: Mutex::new(Instant::now()),
         },
     );
     Ok(session_id)
@@ -270,20 +281,27 @@ pub fn exec(
     timeout: Option<Duration>,
 ) -> Result<ExecOutput, String> {
     let timeout = timeout.unwrap_or(DEFAULT_EXEC_TIMEOUT);
-    let sessions = store.0.lock().unwrap();
-    let s = sessions
-        .get(session_id)
-        .ok_or_else(|| format!("no open session '{session_id}'"))?;
+    // Clone the Arc'd handles out and drop the map lock immediately — a command can run
+    // for up to `timeout` (minutes), and holding the STORE-WIDE lock for that whole span
+    // would block every other session's open/exec/close and the idle reaper behind it.
+    let (writer, buffer) = {
+        let sessions = store.0.lock().unwrap();
+        let s = sessions
+            .get(session_id)
+            .ok_or_else(|| format!("no open session '{session_id}'"))?;
+        *s.last_used.lock().unwrap() = Instant::now();
+        (Arc::clone(&s.writer), Arc::clone(&s.buffer))
+    };
     let n = nonce();
     // Mark where this exec's output starts, then write the framed command. The marker is
     // built from `$M` on the remote so the echoed input line never contains a FULL marker
     // (echo shows `%sB__`, output shows `__MUYA<n>B__`). One line → no continuation prompt.
-    let mark = s.buffer.lock().map(|b| b.len()).unwrap_or(0);
+    let mark = buffer.lock().map(|b| b.len()).unwrap_or(0);
     let line = format!(
         "M=__MUYA{n}; printf '\\n%sB__\\n' \"$M\"; {command}; printf '\\n%sE:%d__\\n' \"$M\" \"$?\"\n"
     );
     {
-        let mut w = s.writer.lock().map_err(|_| "writer poisoned".to_string())?;
+        let mut w = writer.lock().map_err(|_| "writer poisoned".to_string())?;
         w.write_all(line.as_bytes())
             .map_err(|e| format!("write failed: {e}"))?;
         w.flush().map_err(|e| format!("flush failed: {e}"))?;
@@ -292,7 +310,7 @@ pub fn exec(
     let deadline = Instant::now() + timeout;
     loop {
         {
-            let b = s.buffer.lock().unwrap();
+            let b = buffer.lock().unwrap();
             let region = &b[mark.min(b.len())..];
             if region.contains(&end_prefix) {
                 if let Some((out, rc)) = extract_framed(region, &n) {
@@ -306,12 +324,11 @@ pub fn exec(
         }
         if Instant::now() > deadline {
             // Interrupt the stuck command so the session stays usable (Ctrl-C + resync).
-            if let Ok(mut w) = s.writer.lock() {
+            if let Ok(mut w) = writer.lock() {
                 let _ = w.write_all(b"\x03");
                 let _ = w.flush();
             }
-            let partial = s
-                .buffer
+            let partial = buffer
                 .lock()
                 .map(|b| {
                     let r = &b[mark.min(b.len())..];
@@ -341,6 +358,30 @@ pub fn close(store: &AgentSshStore, session_id: &str) -> Result<(), String> {
         }
         None => Err(format!("no open session '{session_id}'")),
     }
+}
+
+/// Close every session idle longer than `idle_timeout`. Called periodically by a
+/// background task (`lib.rs`) so an agent that opens a session and never closes it
+/// (crash, context reset, just forgetting) doesn't leak the PTY/PSMP connection for
+/// the life of the app. Returns the ids it closed, for logging.
+pub fn reap_idle(store: &AgentSshStore, idle_timeout: Duration) -> Vec<String> {
+    let stale: Vec<String> = {
+        let sessions = store.0.lock().unwrap();
+        sessions
+            .iter()
+            .filter(|(_, s)| {
+                s.last_used
+                    .lock()
+                    .map(|t| t.elapsed() >= idle_timeout)
+                    .unwrap_or(false)
+            })
+            .map(|(id, _)| id.clone())
+            .collect()
+    };
+    for id in &stale {
+        let _ = close(store, id);
+    }
+    stale
 }
 
 fn kill_child(mut child: Box<dyn Child + Send + Sync>) -> Result<(), String> {
@@ -392,5 +433,36 @@ mod tests {
         assert_eq!(c.exit_code, 1);
         close(&store, &sid).unwrap();
         assert!(exec(&store, &sid, "echo x", None).is_err()); // closed
+    }
+
+    // Idle reaper: a session untouched past the timeout is closed; one used more
+    // recently is left alone. Real bash PTY (same reason as the test above).
+    #[test]
+    #[ignore = "spawns a real bash PTY; run explicitly"]
+    fn reap_idle_closes_only_sessions_past_the_timeout() {
+        let store = AgentSshStore::default();
+        let stale = open(&store, "bash", &[], None, false).expect("open stale session");
+        let fresh = open(&store, "bash", &[], None, false).expect("open fresh session");
+        exec(&store, &fresh, "echo hi", Some(Duration::from_secs(8))).unwrap();
+
+        // Backdate the stale session's last_used — same-module test, so the private
+        // field is directly reachable (no need to actually wait out a real timeout).
+        {
+            let sessions = store.0.lock().unwrap();
+            let s = sessions.get(&stale).unwrap();
+            *s.last_used.lock().unwrap() = Instant::now() - Duration::from_secs(3600);
+        }
+
+        let closed = reap_idle(&store, Duration::from_secs(1800));
+        assert_eq!(closed, vec![stale.clone()]);
+        assert!(
+            exec(&store, &stale, "echo x", None).is_err(),
+            "stale session reaped"
+        );
+        assert!(
+            exec(&store, &fresh, "echo x", Some(Duration::from_secs(8))).is_ok(),
+            "recently-used session must survive"
+        );
+        close(&store, &fresh).unwrap();
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "muya"
-version = "0.2.35"
+version = "0.2.36"
 description = "Muya — control plane for parallel Claude Code agents"
 authors = ["staunch"]
 edition = "2021"
@@ -34,7 +34,10 @@ path = "src/bin/muya_ssh_mcp.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# protocol-asset: serves a runtime-allowlisted local file to the webview as
+# asset://<path> (via convertFileSrc) — needed to render images/PDFs without
+# reading their bytes through the JS/IPC boundary as text.
+tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

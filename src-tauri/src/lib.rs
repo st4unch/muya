@@ -194,6 +194,27 @@ pub fn run() {
                 // Sweep stale masters from a previous run: ControlPersist doesn't reap
                 // PSMP masters (not idle), so a dead-for-reuse socket would lock the alias.
                 crate::ssh::sweep_control_master_sockets();
+
+                // Idle-session reaper (PRD ssh-session): agent_ssh sessions have no other
+                // garbage collector — an agent that opens one and never closes it (crash,
+                // context reset) would otherwise leak the PTY/PSMP connection for the life
+                // of the app. Sweep on a cadence well under IDLE_TIMEOUT so a leaked
+                // session is caught reasonably soon after going idle, not near-immediately.
+                let agent_ssh_store = app.state::<agent_ssh::AgentSshStore>().inner().clone();
+                tauri::async_runtime::spawn(async move {
+                    loop {
+                        tokio::time::sleep(std::time::Duration::from_secs(5 * 60)).await;
+                        let store = agent_ssh_store.clone();
+                        let closed = tokio::task::spawn_blocking(move || {
+                            agent_ssh::reap_idle(&store, agent_ssh::IDLE_TIMEOUT)
+                        })
+                        .await
+                        .unwrap_or_default();
+                        for id in closed {
+                            log::info!("[agent-ssh] reaped idle session {id}");
+                        }
+                    }
+                });
             }
 
             Ok(())
@@ -279,6 +300,7 @@ pub fn run() {
             fs::install_mcp,
             fs::git_status,
             fs::reveal_in_finder,
+            fs::allow_asset_path,
             fs::resolve_path_kind,
             fs::local_ip,
             fs::rename_entry,
