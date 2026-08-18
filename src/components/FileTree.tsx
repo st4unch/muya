@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { copyToClipboard } from "../lib/clipboard";
 import {
   ChevronRight,
   ChevronDown,
@@ -556,15 +557,15 @@ export default function FileTree({
               <MenuItem label="New Folder" onClick={() => setMenu((m) => m ? { ...m, creating: "folder" } : m)} />
               <Sep />
               <MenuItem label="Add as @ Reference" onClick={() => {
-                void navigator.clipboard.writeText(`@${menu.path}`);
+                void copyToClipboard(`@${menu.path}`);
                 onAddAtRef?.(menu.path); setMenu(null);
               }} />
-              <MenuItem label="Copy Path" onClick={() => { void navigator.clipboard.writeText(menu.path); setMenu(null); }} />
+              <MenuItem label="Copy Path" onClick={() => { void copyToClipboard(menu.path); setMenu(null); }} />
               <MenuItem label="Copy Relative Path" onClick={() => {
                 const rel = menu.path.startsWith(menu.rootPath)
                   ? menu.path.slice(menu.rootPath.length + 1)
                   : menu.path;
-                void navigator.clipboard.writeText(rel); setMenu(null);
+                void copyToClipboard(rel); setMenu(null);
               }} />
               <Sep />
               <MenuItem label="Reveal in Finder" onClick={() => { void invoke("reveal_in_finder", { path: menu.path }); setMenu(null); }} />
@@ -599,7 +600,7 @@ export default function FileTree({
               <MenuItem label="Open in Terminal Here" onClick={() => { onOpenTerminalHere?.(menu.path); setMenu(null); }} />
               <MenuItem label="Open Claude Here" onClick={() => { onOpenClaudeHere?.(menu.path); setMenu(null); }} />
               <Sep />
-              <MenuItem label="Copy Path" onClick={() => { void navigator.clipboard.writeText(menu.path); setMenu(null); }} />
+              <MenuItem label="Copy Path" onClick={() => { void copyToClipboard(menu.path); setMenu(null); }} />
               <MenuItem label="Reveal in Finder" onClick={() => { void invoke("reveal_in_finder", { path: menu.path }); setMenu(null); }} />
               <Sep />
               <MenuItem label="Rename" onClick={() => { setRenamingPath(menu.path); setMenu(null); }} />
@@ -632,7 +633,7 @@ export default function FileTree({
               <MenuItem label="Open in Terminal Here" onClick={() => { onOpenTerminalHere?.(menu.path); setMenu(null); }} />
               <MenuItem label="Open Claude Here" onClick={() => { onOpenClaudeHere?.(menu.path); setMenu(null); }} />
               <MenuItem label="Reveal in Finder" onClick={() => { void invoke("reveal_in_finder", { path: menu.path }); setMenu(null); }} />
-              <MenuItem label="Copy Path" onClick={() => { void navigator.clipboard.writeText(menu.path); setMenu(null); }} />
+              <MenuItem label="Copy Path" onClick={() => { void copyToClipboard(menu.path); setMenu(null); }} />
               {removableRoots?.has(menu.path) && (
                 <>
                   <Sep />

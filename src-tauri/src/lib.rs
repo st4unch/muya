@@ -88,6 +88,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             // Native menu bar. We rebuild it explicitly (instead of the default) so we
             // can add File > New File; the Edit submenu is re-added by hand because a
@@ -323,6 +324,7 @@ pub fn run() {
             credstore::credstore_export,
             credstore::credstore_export_master,
             credstore::credstore_import_key,
+            credstore::credstore_import_secret,
             credstore::credstore_export_cred,
             credstore::credstore_reveal_cred,
             ssh::ssh_get_config,

@@ -42,3 +42,4 @@ scripts/
 
 # Tauri externalBin staged sidecars (built by build-sign-notarize.sh)
 src-tauri/binaries/
+src-tauri/doc/

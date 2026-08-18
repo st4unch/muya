@@ -6,7 +6,14 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.2.34] - 2026-08-17
+## [0.2.35] - 2026-08-17
+
+### Fixed
+- **Copy now actually works everywhere.** Copying a password/key/token — or a file path, session id, or chat PIN — could fail with "the request is not allowed" because the browser clipboard API doesn't work reliably inside Muya's window. Every Copy button now goes through the OS clipboard directly.
+
+### Added
+- **Search the Password Store and Servers.** A search box filters by label, username, group, host, tag, or note; matching groups stay expanded even if you'd collapsed them.
+- **Import any credential, not just SSH keys.** "Import credential" reads a password, token, API key, or SSH key from a file straight into the vault — the existing "Import SSH key" still works as before. (Per-item export already existed — the download icon on each entry.)
 
 ### Added
 - **Group your credentials and servers.** Both the Password Store and Servers now let you put each entry in a group (type a new one or pick an existing one). Each group is its own card you can collapse or expand, and it remembers what you had open.

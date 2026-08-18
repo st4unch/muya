@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, type MouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { copyToClipboard } from "../lib/clipboard";
 import { listen } from "@tauri-apps/api/event";
 import {
   Plus, X, Wifi, HardDrive, Send, Radio, Shield, Bot, User,
@@ -86,7 +87,7 @@ export default function ChatView() {
   const copyPin = useCallback((e?: MouseEvent) => {
     e?.preventDefault();
     if (!invitePin) return;
-    void navigator.clipboard.writeText(invitePin).then(() => {
+    void copyToClipboard(invitePin).then(() => {
       setPinCopied(true);
       setTimeout(() => setPinCopied(false), 1400);
     });

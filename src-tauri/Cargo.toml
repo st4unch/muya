@@ -1,6 +1,6 @@
 [package]
 name = "muya"
-version = "0.2.34"
+version = "0.2.35"
 description = "Muya — control plane for parallel Claude Code agents"
 authors = ["staunch"]
 edition = "2021"
@@ -63,6 +63,10 @@ hkdf = "0.13.0"
 rand = "0.9"
 tauri-plugin-updater = "2.10.1"
 tauri-plugin-process = "2.3.1"
+# navigator.clipboard.writeText() is unreliable in Tauri's WKWebView (NotAllowedError —
+# the web permission model doesn't cleanly apply inside a native webview). This plugin
+# talks to the OS clipboard directly and is what every Copy button should use.
+tauri-plugin-clipboard-manager = "2"
 # Error logging → persistent file (App log dir) + stdout, so issues on another
 # machine can be diagnosed from the log.
 tauri-plugin-log = "2"

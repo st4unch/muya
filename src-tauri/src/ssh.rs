@@ -1136,18 +1136,26 @@ mod tests {
         assert_eq!(cfg.servers.len(), 1, "no server may be lost");
         let s = &cfg.servers[0];
         assert_eq!(s.label, "k3s_master");
-        assert_eq!(s.group, "", "missing group loads as empty (shown as Ungrouped)");
+        assert_eq!(
+            s.group, "",
+            "missing group loads as empty (shown as Ungrouped)"
+        );
         assert_eq!(s.connection_type, "psmp");
         assert_eq!(s.psmp_profile_id.as_deref(), Some("p1"));
         assert_eq!(s.credential_source.kind, "local");
         assert_eq!(s.credential_source.local_cred_id.as_deref(), Some("c1"));
         assert!(s.agent_access, "agent opt-in must survive");
-        assert_eq!(s.tags, vec!["prod".to_string()], "tags untouched by grouping");
+        assert_eq!(
+            s.tags,
+            vec!["prod".to_string()],
+            "tags untouched by grouping"
+        );
         assert_eq!(cfg.psmp_profiles.len(), 1);
         // Re-serializing (any UI save) keeps it loadable and carries the group.
         let mut cfg2 = cfg;
         cfg2.servers[0].group = "k3s".into();
-        let round: SshConfig = serde_json::from_str(&serde_json::to_string(&cfg2).unwrap()).unwrap();
+        let round: SshConfig =
+            serde_json::from_str(&serde_json::to_string(&cfg2).unwrap()).unwrap();
         assert_eq!(round.servers[0].group, "k3s");
         assert_eq!(round.servers[0].credential_source.kind, "local");
     }

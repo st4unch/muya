@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { copyToClipboard } from "../lib/clipboard";
 import {
   Server as ServerIcon,
   ShieldCheck,
@@ -19,6 +20,7 @@ import {
   Loader2,
   ChevronDown,
   ChevronRight,
+  Search as SearchIcon,
 } from "lucide-react";
 
 import CredentialPicker from "./CredentialPicker";
@@ -379,8 +381,19 @@ function ServersTab({
   };
 
   const { collapsed, toggle } = useCollapsedGroups("muya.servers.collapsed");
-  const groups = groupItems(cfg.servers, (s) => s.group);
+  const [query, setQuery] = useState("");
+  // Group options always come from the FULL list so the datalist keeps offering
+  // every group even while a search hides most servers.
   const names = groupNames(cfg.servers, (s) => s.group);
+  const q = query.trim().toLowerCase();
+  const filteredServers = q
+    ? cfg.servers.filter((s) =>
+        [s.label, s.host, s.username, s.group, ...s.tags].some((f) =>
+          (f ?? "").toLowerCase().includes(q),
+        ),
+      )
+    : cfg.servers;
+  const groups = groupItems(filteredServers, (s) => s.group);
 
   // One draft at a time, so a single form element is reused wherever it belongs.
   const form = draft && (
@@ -407,8 +420,23 @@ function ServersTab({
         </button>
       </div>
 
+      {cfg.servers.length > 0 && (
+        <div className="relative">
+          <SearchIcon className="h-4 w-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-400" />
+          <input
+            className={`${INPUT} pl-8`}
+            placeholder="Search servers — label, host, username, group, tag…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+      )}
+
       {cfg.servers.length === 0 && (
         <div className={`${CARD} text-sm text-neutral-500`}>No servers yet. Start with "Add server".</div>
+      )}
+      {q && groups.length === 0 && (
+        <p className="text-xs text-neutral-400 text-center py-4">No servers match &quot;{query}&quot;.</p>
       )}
 
       {/* A brand-new server has no row to sit in, so its form leads the list. */}
@@ -419,7 +447,9 @@ function ServersTab({
           key={name}
           name={name}
           count={servers.length}
-          collapsed={collapsed.has(name)}
+          // A search result stays visibly expanded regardless of the persisted
+          // collapse state — the operator is looking for something, not browsing.
+          collapsed={q ? false : collapsed.has(name)}
           onToggle={() => toggle(name)}
         >
           {servers.map((s) =>
@@ -953,8 +983,14 @@ function StoreTab({
   const [showMaster, setShowMaster] = useState(false);
   const [draft, setDraft] = useState<CredDraft | null>(null);
   const [importDraft, setImportDraft] = useState<{ label: string; username: string } | null>(null);
+  // Generic import (any secretKind) — the SSH-key import above predates secretKind/group
+  // and stays kind-locked; this covers passwords/tokens/API keys the same way.
+  const [importSecretDraft, setImportSecretDraft] = useState<{
+    label: string; username: string; secretKind: SecretKind; description: string; group: string;
+  } | null>(null);
   const [revealed, setRevealed] = useState<Record<string, string>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
   // Above the locked/uninitialised early returns — hooks must stay unconditional.
   const { collapsed, toggle } = useCollapsedGroups("muya.vault.collapsed");
 
@@ -1025,6 +1061,25 @@ function StoreTab({
       setErr(String(e));
     }
   };
+  const importSecret = async () => {
+    if (!importSecretDraft) return;
+    try {
+      const src = await pickOpenPath("Select file containing the secret value");
+      if (!src) return;
+      await invoke<string>("credstore_import_secret", {
+        label: importSecretDraft.label || "imported credential",
+        username: importSecretDraft.username,
+        secretKind: importSecretDraft.secretKind,
+        description: importSecretDraft.description,
+        group: importSecretDraft.group,
+        srcPath: src,
+      });
+      setImportSecretDraft(null);
+      await onChange();
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
   const exportCred = async (c: CredMeta) => {
     try {
       const ext = c.secretKind === "key" ? "" : ".txt";
@@ -1074,7 +1129,7 @@ function StoreTab({
   const copyCred = async (id: string) => {
     try {
       const value = revealed[id] ?? (await invoke<string>("credstore_reveal_cred", { id }));
-      await navigator.clipboard.writeText(value);
+      await copyToClipboard(value);
       setCopiedId(id);
       setTimeout(() => setCopiedId((c) => (c === id ? null : c)), 1500);
     } catch (e) {
@@ -1160,8 +1215,18 @@ function StoreTab({
     );
   }
 
-  const groups = groupItems(creds, (c) => c.group);
+  // Group options always come from the FULL list (not the filtered view) so the
+  // datalist keeps offering every group even while a search hides most of them.
   const names = groupNames(creds, (c) => c.group);
+  const q = query.trim().toLowerCase();
+  const filteredCreds = q
+    ? creds.filter((c) =>
+        [c.label, c.username, c.description, c.group, c.secretKind].some((f) =>
+          (f ?? "").toLowerCase().includes(q),
+        ),
+      )
+    : creds;
+  const groups = groupItems(filteredCreds, (c) => c.group);
 
   // One draft at a time, so a single form element is reused wherever it belongs.
   const form = draft && (
@@ -1181,6 +1246,13 @@ function StoreTab({
           <button type="button" className={BTN_GHOST} onClick={() => setImportDraft({ label: "", username: "" })}>
             <Upload className="h-4 w-4 inline -mt-0.5 mr-1" /> Import SSH key
           </button>
+          <button
+            type="button"
+            className={BTN_GHOST}
+            onClick={() => setImportSecretDraft({ label: "", username: "", secretKind: "password", description: "", group: "" })}
+          >
+            <Upload className="h-4 w-4 inline -mt-0.5 mr-1" /> Import credential
+          </button>
           <button type="button" className={BTN_GHOST} onClick={exportBackup}>
             Export backup
           </button>
@@ -1188,6 +1260,16 @@ function StoreTab({
             <Lock className="h-4 w-4 inline -mt-0.5 mr-1" /> Lock
           </button>
         </div>
+      </div>
+
+      <div className="relative">
+        <SearchIcon className="h-4 w-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-400" />
+        <input
+          className={`${INPUT} pl-8`}
+          placeholder="Search credentials — label, username, group, note…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
       </div>
 
       {/* New-item forms lead the list; nothing below them moves. */}
@@ -1206,14 +1288,54 @@ function StoreTab({
           </div>
         </div>
       )}
+      {importSecretDraft && (
+        <div className={`${CARD} space-y-2`}>
+          <div className="text-sm font-medium">Import a credential from file (password / token / API key / SSH key)</div>
+          <div className="grid grid-cols-2 gap-2">
+            <input className={INPUT} placeholder="Label" value={importSecretDraft.label} onChange={(e) => setImportSecretDraft({ ...importSecretDraft, label: e.target.value })} />
+            <input className={INPUT} placeholder="Username (optional)" value={importSecretDraft.username} onChange={(e) => setImportSecretDraft({ ...importSecretDraft, username: e.target.value })} />
+            <select
+              aria-label="Import kind"
+              className={INPUT}
+              value={importSecretDraft.secretKind}
+              onChange={(e) => setImportSecretDraft({ ...importSecretDraft, secretKind: e.target.value as SecretKind })}
+            >
+              <option value="password">Password</option>
+              <option value="token">Token</option>
+              <option value="api_key">API key</option>
+              <option value="key">SSH key</option>
+            </select>
+            <GroupField
+              value={importSecretDraft.group}
+              onChange={(v) => setImportSecretDraft({ ...importSecretDraft, group: v })}
+              options={names}
+              listId="import-secret-groups"
+            />
+            <input className={`${INPUT} col-span-2`} placeholder="Note (optional)" value={importSecretDraft.description} onChange={(e) => setImportSecretDraft({ ...importSecretDraft, description: e.target.value })} />
+          </div>
+          <p className="text-xs text-neutral-400">The file's contents become the secret value; a single trailing newline is dropped automatically (SSH keys are read byte-for-byte).</p>
+          <div className="flex gap-2 justify-end">
+            <button type="button" className={BTN_GHOST} onClick={() => setImportSecretDraft(null)}>Cancel</button>
+            <button type="button" className={BTN} onClick={importSecret}>
+              <Upload className="h-4 w-4 inline -mt-0.5 mr-1" /> Choose file & import
+            </button>
+          </div>
+        </div>
+      )}
       {draft && !draft.id && form}
+
+      {q && groups.length === 0 && (
+        <p className="text-xs text-neutral-400 text-center py-4">No credentials match &quot;{query}&quot;.</p>
+      )}
 
       {groups.map(([name, items]) => (
         <GroupCard
           key={name}
           name={name}
           count={items.length}
-          collapsed={collapsed.has(name)}
+          // A search result stays visibly expanded regardless of the persisted
+          // collapse state — the operator is looking for something, not browsing.
+          collapsed={q ? false : collapsed.has(name)}
           onToggle={() => toggle(name)}
         >
           {items.map((c) =>

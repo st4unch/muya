@@ -412,6 +412,60 @@ pub fn credstore_import_key(
     Ok(id)
 }
 
+/// Import ANY secret kind (password/token/api_key/key) from a file as a new
+/// credential — the generic counterpart to `credstore_import_key` (which is
+/// SSH-key-specific and predates `secretKind`/`group`). The file bytes are read in
+/// Rust and sealed directly; they never pass through the JS/webview layer (§9).
+/// A key's exact bytes matter (PEM framing) — never touched. Anything else is
+/// normally a single pasted value, so drop ONE trailing newline a text
+/// editor/`echo` adds (CRLF or LF). Pure/testable.
+pub(crate) fn trim_imported_secret(secret_kind: &str, raw: String) -> String {
+    if secret_kind == "key" {
+        return raw;
+    }
+    match raw.strip_suffix('\n') {
+        Some(s) => s.strip_suffix('\r').unwrap_or(s).to_string(),
+        None => raw,
+    }
+}
+
+#[tauri::command]
+pub fn credstore_import_secret(
+    label: String,
+    username: String,
+    secret_kind: String,
+    description: String,
+    group: String,
+    src_path: String,
+    state: State<'_, CredStore>,
+) -> Result<String, String> {
+    if !valid_secret_kind(&secret_kind) {
+        return Err(format!("unknown secret kind '{secret_kind}'"));
+    }
+    if label.trim().is_empty() {
+        return Err("label is required".into());
+    }
+    let bytes = std::fs::read(&src_path).map_err(|e| format!("read file: {e}"))?;
+    let raw = String::from_utf8(bytes).map_err(|_| "file is not valid UTF-8 text".to_string())?;
+    let secret = trim_imported_secret(&secret_kind, raw);
+    let path = default_store_path()?;
+    let mut guard = state.0.lock().map_err(|_| "state poisoned")?;
+    let u = guard.as_mut().ok_or("store is locked")?;
+    let id = new_id();
+    u.data.credentials.push(Credential {
+        id: id.clone(),
+        label,
+        username,
+        secret_kind,
+        secret,
+        description,
+        group,
+        key_passphrase: None,
+    });
+    seal_to_path(&path, &u.key, &u.kdf, &u.data)?;
+    Ok(id)
+}
+
 /// Export a stored credential's secret (password or key) to `dest` (0600). The
 /// secret is read from the unlocked in-memory store and written in Rust — it
 /// never passes through the JS/webview layer.
@@ -1179,6 +1233,24 @@ mod tests {
 
     // AC12 — CredMeta (the projection returned to agents/UI) carries no secret.
     #[test]
+    #[test]
+    fn trim_imported_secret_strips_one_trailing_newline_except_for_keys() {
+        assert_eq!(trim_imported_secret("token", "abc123\n".into()), "abc123");
+        assert_eq!(trim_imported_secret("token", "abc123\r\n".into()), "abc123");
+        assert_eq!(
+            trim_imported_secret("password", "no-newline".into()),
+            "no-newline"
+        );
+        // Only ONE trailing newline is dropped — extra blank lines are the file's content.
+        assert_eq!(
+            trim_imported_secret("token", "abc123\n\n".into()),
+            "abc123\n"
+        );
+        // A key's bytes are never touched, trailing newline or not.
+        let pem = "-----BEGIN KEY-----\nabc\n-----END KEY-----\n";
+        assert_eq!(trim_imported_secret("key", pem.into()), pem);
+    }
+
     // MIGRATION SAFETY (PRD vault-ux): an ENCRYPTED store written by a build that had no
     // `group` field must still unlock, with every credential and secret intact. This seals
     // hand-written old-format JSON through the real crypto and unlocks it through the real

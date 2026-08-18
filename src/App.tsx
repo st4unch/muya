@@ -69,6 +69,7 @@ import ScheduledPromptModal, { type ScheduledPrompt } from "./components/Schedul
 import SettingsModal from "./components/SettingsModal";
 import { buildAgentCommand } from "./lib/agent";
 import { invoke } from "@tauri-apps/api/core";
+import { copyToClipboard } from "./lib/clipboard";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -2750,7 +2751,7 @@ export const loginHandler = async (req, res) => {
               Reveal in Finder
             </button>
             <button type="button" className="w-full text-left px-3 py-1.5 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 cursor-pointer text-neutral-700 dark:text-neutral-200"
-              onClick={() => { void navigator.clipboard.writeText(pathMenu.resolved); setPathMenu(null); }}>
+              onClick={() => { void copyToClipboard(pathMenu.resolved); setPathMenu(null); }}>
               Copy Path
             </button>
           </div>

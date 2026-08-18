@@ -212,6 +212,49 @@ describe("SshPage — group cards + in-place editing", () => {
     expect(await screen.findByText("prod-db")).toBeTruthy();
   });
 
+  it("search filters credentials across groups and stays expanded during a search", async () => {
+    const user = userEvent.setup();
+    render(<SshPage />);
+    await unlock(user);
+
+    const add = async (label: string, group: string) => {
+      await user.click(screen.getByText("Add credential"));
+      await user.type(screen.getByPlaceholderText("Label"), label);
+      await user.type(screen.getByPlaceholderText("Password"), "s3cret");
+      await user.type(screen.getByPlaceholderText(/^Group/), group);
+      await user.click(screen.getByText("Save"));
+      await screen.findByText(label);
+    };
+    await add("prod-db", "prod");
+    await add("staging-db", "staging");
+
+    // Collapse "staging" — a later search must reveal it anyway (a search result
+    // is never hidden by a stale collapse choice).
+    await user.click(screen.getByRole("button", { name: /staging\s*\(1\)/ }));
+    await waitFor(() => expect(screen.queryByText("staging-db")).toBeNull());
+
+    await user.type(screen.getByPlaceholderText(/Search credentials/), "staging");
+    expect(await screen.findByText("staging-db")).toBeTruthy();
+    expect(screen.queryByText("prod-db")).toBeNull();
+
+    await user.clear(screen.getByPlaceholderText(/Search credentials/));
+    await user.type(screen.getByPlaceholderText(/Search credentials/), "nothing-matches-this");
+    expect(await screen.findByText(/No credentials match/)).toBeTruthy();
+  });
+
+  it("opens the generic import-credential form with a secret-kind selector", async () => {
+    const user = userEvent.setup();
+    render(<SshPage />);
+    await unlock(user);
+
+    await user.click(screen.getByText("Import credential"));
+    expect(screen.getByText(/Import a credential from file/)).toBeTruthy();
+    expect(screen.getByLabelText("Import kind")).toBeTruthy();
+
+    await user.click(screen.getByText("Cancel"));
+    expect(screen.queryByText(/Import a credential from file/)).toBeNull();
+  });
+
   it("opens the credential edit form in place, inside its own group card", async () => {
     const user = userEvent.setup();
     render(<SshPage />);

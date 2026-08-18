@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { copyToClipboard } from "../lib/clipboard";
 import { relTime, shortCwd } from "../lib/format";
 import { RefreshCw, Play, Plug, FolderGit2, Clock, Square, Search, X, MessageSquare, User, Bot, Copy, Check, Download } from "lucide-react";
 
@@ -359,7 +360,7 @@ export default function SessionsPage({
                         unusable for `claude --resume <id>`, so show it in full. */}
                     <button
                       type="button"
-                      onClick={(e) => { e.stopPropagation(); void navigator.clipboard.writeText(h.sessionId); setCopiedId(h.sessionId); setTimeout(() => setCopiedId(null), 1400); }}
+                      onClick={(e) => { e.stopPropagation(); void copyToClipboard(h.sessionId); setCopiedId(h.sessionId); setTimeout(() => setCopiedId(null), 1400); }}
                       title={`Resume id — click to copy\n${h.sessionId}`}
                       className="flex items-center gap-1 font-mono text-neutral-400 dark:text-neutral-500 hover:text-indigo-600 dark:hover:text-indigo-400 cursor-pointer transition-colors"
                     >
