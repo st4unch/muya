@@ -913,6 +913,29 @@ export default function App() {
     return () => { void un.then((f) => f()); };
   }, [openSshServer]);
 
+  // Auto-lock the password vault after 15 minutes of no interaction ANYWHERE in
+  // Muya (PRD vault-touchid-autolock) — not just while the SSH page is open, so
+  // walking away from an unlocked Mac doesn't leave secrets exposed indefinitely.
+  // A ref (not state) tracks last-activity so listeners never need to re-attach;
+  // the 1-minute poll is cheap and avoids a setTimeout-per-keystroke reset dance.
+  useEffect(() => {
+    const IDLE_LOCK_MS = 15 * 60 * 1000;
+    const lastActivity = { current: Date.now() };
+    const bump = () => { lastActivity.current = Date.now(); };
+    const events: (keyof WindowEventMap)[] = ["mousemove", "mousedown", "keydown", "wheel"];
+    events.forEach((ev) => window.addEventListener(ev, bump, { passive: true }));
+    const timer = window.setInterval(() => {
+      if (Date.now() - lastActivity.current < IDLE_LOCK_MS) return;
+      // credstore_lock is a cheap no-op when already locked — never worth guarding
+      // with a status check first (that's itself an extra round-trip per tick).
+      void invoke("credstore_lock").catch(() => {});
+    }, 60_000);
+    return () => {
+      events.forEach((ev) => window.removeEventListener(ev, bump));
+      window.clearInterval(timer);
+    };
+  }, []);
+
   // muya-mcp → app: one session sent a message to ANOTHER session with
   // send_to_session(deliver:"muya"). Muya types it into the target tab's terminal,
   // tagged with the sender, so the receiving Claude reads it as ordinary input.

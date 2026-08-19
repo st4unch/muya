@@ -2900,7 +2900,7 @@ dependencies = [
 
 [[package]]
 name = "muya"
-version = "0.2.35"
+version = "0.2.36"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -2915,6 +2915,7 @@ dependencies = [
  "reqwest 0.12.28",
  "rustls",
  "scraper",
+ "security-framework",
  "serde",
  "serde_json",
  "sha2 0.11.0",

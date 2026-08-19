@@ -187,6 +187,24 @@ describe("SshPage — group cards + in-place editing", () => {
     await screen.findByText(/Unlocked ·/);
   };
 
+  it("enables Touch ID unlock, then unlocks with it after locking", async () => {
+    const user = userEvent.setup();
+    render(<SshPage />);
+    await unlock(user);
+
+    // Not offered until explicitly enabled.
+    expect(screen.queryByText("Unlock with Touch ID")).toBeNull();
+    await user.click(screen.getByText("Enable Touch ID"));
+    await screen.findByText("Disable Touch ID");
+
+    await user.click(screen.getByText("Lock"));
+    await screen.findByText("Store locked");
+
+    // The Touch ID button appears once locked, and unlocks without the password field.
+    await user.click(screen.getByText("Unlock with Touch ID"));
+    expect(await screen.findByText(/Unlocked ·/)).toBeTruthy();
+  });
+
   it("files a credential under its group and collapses the card", async () => {
     const user = userEvent.setup();
     render(<SshPage />);

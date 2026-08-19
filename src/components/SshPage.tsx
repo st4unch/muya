@@ -21,6 +21,7 @@ import {
   ChevronDown,
   ChevronRight,
   Search as SearchIcon,
+  Fingerprint,
 } from "lucide-react";
 
 import CredentialPicker from "./CredentialPicker";
@@ -244,6 +245,9 @@ export default function SshPage({ onConnect }: { onConnect?: (serverId: string, 
   const [tab, setTab] = useState<Tab>("servers");
   const [cfg, setCfg] = useState<SshConfig>({ version: 1, servers: [], psmpProfiles: [], cyberark: null });
   const [store, setStore] = useState<CredStoreStatus>({ initialized: false, unlocked: false });
+  // Whether Touch ID unlock is enabled — a plain sync read (no Keychain access,
+  // so checking this never pops the biometry prompt on its own).
+  const [biometricAvailable, setBiometricAvailable] = useState(false);
   const [creds, setCreds] = useState<CredMeta[]>([]);
   // CyberArk accounts fetched after logon (lifted here so the Servers form's
   // credential picker can offer them too). Cleared on logoff.
@@ -256,6 +260,7 @@ export default function SshPage({ onConnect }: { onConnect?: (serverId: string, 
       setCfg(c);
       const s = await invoke<CredStoreStatus>("credstore_status");
       setStore(s);
+      setBiometricAvailable(await invoke<boolean>("credstore_biometric_available"));
       if (s.unlocked) setCreds(await invoke<CredMeta[]>("credstore_cred_list"));
       else setCreds([]);
     } catch (e) {
@@ -331,7 +336,7 @@ export default function SshPage({ onConnect }: { onConnect?: (serverId: string, 
           />
         )}
         {tab === "store" && (
-          <StoreTab store={store} creds={creds} onChange={refresh} setErr={setErr} />
+          <StoreTab store={store} creds={creds} biometricAvailable={biometricAvailable} onChange={refresh} setErr={setErr} />
         )}
       </div>
     </div>
@@ -970,11 +975,13 @@ type CredDraft = {
 function StoreTab({
   store,
   creds,
+  biometricAvailable,
   onChange,
   setErr,
 }: {
   store: CredStoreStatus;
   creds: CredMeta[];
+  biometricAvailable: boolean;
   onChange: () => Promise<void>;
   setErr: (e: string | null) => void;
 }) {
@@ -1022,6 +1029,36 @@ function StoreTab({
   const lock = async () => {
     await invoke("credstore_lock");
     await onChange();
+  };
+  const [biometricBusy, setBiometricBusy] = useState(false);
+  // Reads the Keychain-cached key — THIS is the call that pops the OS Touch
+  // ID/passcode prompt (nothing on the frontend drives biometry directly).
+  const doBiometricUnlock = async () => {
+    setBiometricBusy(true);
+    try {
+      await invoke("credstore_unlock_biometric");
+      await onChange();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBiometricBusy(false);
+    }
+  };
+  const enableBiometric = async () => {
+    try {
+      await invoke("credstore_enable_biometric_unlock");
+      await onChange();
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+  const disableBiometric = async () => {
+    try {
+      await invoke("credstore_disable_biometric_unlock");
+      await onChange();
+    } catch (e) {
+      setErr(String(e));
+    }
   };
   const exportBackup = async () => {
     try {
@@ -1185,6 +1222,27 @@ function StoreTab({
           <Lock className="h-4 w-4 text-amber-500" />
           <span className="font-medium text-sm">Store locked</span>
         </div>
+        {biometricAvailable && (
+          <button
+            type="button"
+            className={BTN}
+            disabled={biometricBusy}
+            onClick={doBiometricUnlock}
+          >
+            {biometricBusy ? (
+              <><Loader2 className="h-4 w-4 inline -mt-0.5 mr-1 animate-spin" /> Waiting for Touch ID…</>
+            ) : (
+              <><Fingerprint className="h-4 w-4 inline -mt-0.5 mr-1" /> Unlock with Touch ID</>
+            )}
+          </button>
+        )}
+        {biometricAvailable && (
+          <div className="flex items-center gap-2 text-[10px] text-neutral-400">
+            <div className="h-px flex-1 bg-neutral-200 dark:bg-neutral-700" />
+            or use your master password
+            <div className="h-px flex-1 bg-neutral-200 dark:bg-neutral-700" />
+          </div>
+        )}
         <div className="relative">
           <input
             type={showMaster ? "text" : "password"}
@@ -1206,10 +1264,8 @@ function StoreTab({
             <><Unlock className="h-4 w-4 inline -mt-0.5 mr-1" /> Unlock</>
           )}
         </button>
-        {busy ? (
+        {busy && (
           <p className="text-xs text-neutral-500">Deriving the key (Argon2id) — this can take a second or two, hang tight.</p>
-        ) : (
-          <p className="text-xs text-neutral-400">Touch ID auto-unlock arrives with Faz 1 (Keychain).</p>
         )}
       </div>
     );
@@ -1255,6 +1311,15 @@ function StoreTab({
           </button>
           <button type="button" className={BTN_GHOST} onClick={exportBackup}>
             Export backup
+          </button>
+          <button
+            type="button"
+            className={BTN_GHOST}
+            onClick={biometricAvailable ? disableBiometric : enableBiometric}
+            title={biometricAvailable ? "Stop offering Touch ID unlock" : "Unlock with Touch ID next time, without the master password"}
+          >
+            <Fingerprint className="h-4 w-4 inline -mt-0.5 mr-1" />
+            {biometricAvailable ? "Disable Touch ID" : "Enable Touch ID"}
           </button>
           <button type="button" className={BTN_GHOST} onClick={lock}>
             <Lock className="h-4 w-4 inline -mt-0.5 mr-1" /> Lock

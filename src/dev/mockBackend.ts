@@ -30,7 +30,7 @@ type Cred = { id: string; label: string; username: string; secretKind: "password
 
 type State = {
   ssh: { version: number; servers: Server[]; psmpProfiles: any[]; cyberark: Json | null };
-  store: { initialized: boolean; unlocked: boolean; master: string | null; creds: Cred[] };
+  store: { initialized: boolean; unlocked: boolean; master: string | null; creds: Cred[]; biometricEnabled: boolean };
 };
 
 let state: State = freshState();
@@ -38,7 +38,7 @@ let state: State = freshState();
 function freshState(): State {
   return {
     ssh: { version: 1, servers: [], psmpProfiles: [], cyberark: null },
-    store: { initialized: false, unlocked: false, master: null, creds: [] },
+    store: { initialized: false, unlocked: false, master: null, creds: [], biometricEnabled: false },
   };
 }
 
@@ -139,6 +139,19 @@ export async function mockInvoke(cmd: string, payload: Json = {}): Promise<unkno
       return null;
     case "credstore_lock":
       state.store.unlocked = false;
+      return null;
+    case "credstore_biometric_available":
+      return state.store.biometricEnabled;
+    case "credstore_enable_biometric_unlock":
+      if (!state.store.unlocked) throw "store is locked";
+      state.store.biometricEnabled = true;
+      return null;
+    case "credstore_disable_biometric_unlock":
+      state.store.biometricEnabled = false;
+      return null;
+    case "credstore_unlock_biometric":
+      if (!state.store.biometricEnabled) throw "Touch ID unlock is not available";
+      state.store.unlocked = true;
       return null;
     case "credstore_cred_list":
       if (!state.store.unlocked) throw "store is locked";

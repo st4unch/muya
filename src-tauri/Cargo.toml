@@ -1,6 +1,6 @@
 [package]
 name = "muya"
-version = "0.2.36"
+version = "0.2.37"
 description = "Muya — control plane for parallel Claude Code agents"
 authors = ["staunch"]
 edition = "2021"
@@ -83,6 +83,10 @@ argon2 = "0.5"
 zeroize = { version = "1", features = ["zeroize_derive"] }
 # SSH agent broker: getpeereid(2) peer-uid check on the owner-only broker socket.
 libc = "0.2"
+# Keychain + Touch-ID: OSX_10_15 for the modern "data protection keychain" (SecItem
+# + kSecAttrAccessControl) — the legacy file-based keychain APIs don't support the
+# biometry-gated access-control item this feature needs.
+security-framework = { version = "3.7.0", features = ["OSX_10_15"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"

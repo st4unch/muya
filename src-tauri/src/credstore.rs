@@ -367,6 +367,155 @@ pub fn credstore_lock(state: State<'_, CredStore>) -> Result<(), String> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Touch ID / Keychain unlock (PRD vault-touchid-autolock — applies "Model A"
+// from prd-ssh-cyberark.md's D1/D4/ARCH1). The Argon2id-derived KEY (never the
+// master password) is cached in the macOS Keychain behind an access-control item
+// that requires Touch ID (BIOMETRY_CURRENT_SET) OR the Mac's own login password
+// (DEVICE_PASSCODE) — reading it triggers that OS prompt automatically, no
+// LocalAuthentication calls needed on our side. Master-password unlock always
+// remains available as the fallback (Touch ID never enrolled/canceled/disabled).
+// ---------------------------------------------------------------------------
+
+const KEYCHAIN_SERVICE: &str = "com.staunch.muya.vault";
+const KEYCHAIN_ACCOUNT: &str = "master-key";
+
+/// Bit flags proven against the `security-framework` 3.7.0 source
+/// (`passwords_options.rs`): `OR` means EITHER constraint satisfies the gate.
+fn biometric_or_passcode_flags() -> security_framework::passwords::AccessControlOptions {
+    use security_framework::passwords::AccessControlOptions as F;
+    F::BIOMETRY_CURRENT_SET | F::DEVICE_PASSCODE | F::OR
+}
+
+/// Write `key` to the Keychain under the biometry-or-passcode gate. Deletes any
+/// existing item first — access-control attributes are safest set on a fresh
+/// insert rather than relying on `SecItemUpdate`'s partial-attribute semantics
+/// (see PRD §2 "Re-key uyumu").
+fn keychain_store_key(key: &[u8; KEY_LEN]) -> Result<(), String> {
+    use security_framework::passwords::{
+        delete_generic_password_options, set_generic_password_options, PasswordOptions,
+    };
+    let _ = delete_generic_password_options(PasswordOptions::new_generic_password(
+        KEYCHAIN_SERVICE,
+        KEYCHAIN_ACCOUNT,
+    ));
+    let mut opts = PasswordOptions::new_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
+    opts.use_protected_keychain();
+    opts.set_access_control_options(biometric_or_passcode_flags());
+    set_generic_password_options(key, opts).map_err(|e| format!("Keychain write failed: {e}"))
+}
+
+/// Read the cached key back. This is the call that triggers the OS Touch
+/// ID/passcode prompt (nothing on our side drives biometry directly).
+fn keychain_load_key() -> Result<[u8; KEY_LEN], String> {
+    use security_framework::passwords::{generic_password, PasswordOptions};
+    let mut opts = PasswordOptions::new_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
+    opts.use_protected_keychain();
+    let bytes = generic_password(opts).map_err(|e| {
+        e.message()
+            .unwrap_or_else(|| "Touch ID unlock is not available".to_string())
+    })?;
+    bytes.try_into().map_err(|_| {
+        "Keychain-cached key has the wrong length — re-enable Touch ID unlock".to_string()
+    })
+}
+
+fn keychain_delete_key() -> Result<(), String> {
+    use security_framework::passwords::{delete_generic_password_options, PasswordOptions};
+    delete_generic_password_options(PasswordOptions::new_generic_password(
+        KEYCHAIN_SERVICE,
+        KEYCHAIN_ACCOUNT,
+    ))
+    .or_else(|e| {
+        // Already gone is fine — "disable" is idempotent.
+        if e.message().unwrap_or_default().contains("not found") {
+            Ok(())
+        } else {
+            Err(format!("Keychain delete failed: {e}"))
+        }
+    })
+}
+
+/// `~/.claude/muya-vault-prefs.json` — deliberately its OWN file, not the shared
+/// `muya-settings.json` debug-logging uses: that file's writer overwrites the
+/// whole document with only its own keys (no merge), so sharing it would risk
+/// silently erasing the other setting on every save.
+fn vault_prefs_path() -> Result<PathBuf, String> {
+    let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
+    Ok(Path::new(&home).join(".claude/muya-vault-prefs.json"))
+}
+
+fn set_biometric_pref(enabled: bool) -> Result<(), String> {
+    set_biometric_pref_at(&vault_prefs_path()?, enabled)
+}
+
+/// Path-injectable core, so tests never touch the operator's real `~/.claude/`.
+fn set_biometric_pref_at(path: &Path, enabled: bool) -> Result<(), String> {
+    let bytes =
+        serde_json::to_vec_pretty(&serde_json::json!({ "biometricUnlockEnabled": enabled }))
+            .map_err(|e| e.to_string())?;
+    atomic_write(path, &bytes)
+}
+
+fn biometric_available_at(path: &Path) -> bool {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.get("biometricUnlockEnabled").and_then(|b| b.as_bool()))
+        .unwrap_or(false)
+}
+
+/// Sync, no Keychain access — never triggers the biometry prompt just to check
+/// whether the UI should offer the "Unlock with Touch ID" button.
+#[tauri::command]
+pub fn credstore_biometric_available() -> bool {
+    match vault_prefs_path() {
+        Ok(p) => biometric_available_at(&p),
+        Err(_) => false,
+    }
+}
+
+/// Cache the CURRENTLY unlocked store's key in the Keychain. Requires the store
+/// to already be unlocked (by master password) — this is an explicit opt-in
+/// action, never automatic.
+#[tauri::command]
+pub fn credstore_enable_biometric_unlock(state: State<'_, CredStore>) -> Result<(), String> {
+    let guard = state.0.lock().map_err(|_| "state poisoned")?;
+    let u = guard.as_ref().ok_or("store is locked")?;
+    keychain_store_key(&u.key)?;
+    set_biometric_pref(true)
+}
+
+#[tauri::command]
+pub fn credstore_disable_biometric_unlock() -> Result<(), String> {
+    keychain_delete_key()?;
+    set_biometric_pref(false)
+}
+
+/// Unlock using the Keychain-cached key instead of a master password — skips the
+/// Argon2id re-derivation entirely (the key is already the derived one), so this
+/// is near-instant once Touch ID/passcode is satisfied.
+#[tauri::command]
+pub async fn credstore_unlock_biometric(state: State<'_, CredStore>) -> Result<(), String> {
+    let path = default_store_path()?;
+    let unlocked = tokio::task::spawn_blocking(move || -> Result<Unlocked, String> {
+        let key = keychain_load_key()?;
+        let blob = read_blob(&path)?;
+        let plaintext = Zeroizing::new(open(&key, &blob.nonce, &blob.ciphertext)?);
+        let data: StoreData =
+            serde_json::from_slice(&plaintext).map_err(|e| format!("store decode: {e}"))?;
+        Ok(Unlocked {
+            key: Zeroizing::new(key),
+            kdf: blob.kdf,
+            data,
+        })
+    })
+    .await
+    .map_err(|e| format!("unlock task failed: {e}"))??;
+    *state.0.lock().map_err(|_| "state poisoned")? = Some(unlocked);
+    Ok(())
+}
+
 /// Export the master password itself to `dest` (0600). The app never persists
 /// the master, so this only works at the moment the caller supplies it (store
 /// create/unlock). PLAINTEXT on disk by explicit operator request — the UI warns.
@@ -556,6 +705,12 @@ pub async fn credstore_rekey(
     })
     .await
     .map_err(|e| format!("kdf task failed: {e}"))??;
+    // Keep Touch ID working after a master-password change: re-key means the
+    // encryption key changed, so a stale Keychain-cached key would silently fail
+    // (or worse, decrypt garbage) on the next biometric unlock. PRD AC5.
+    if credstore_biometric_available() {
+        let _ = keychain_store_key(&unlocked.key);
+    }
     *state.0.lock().map_err(|_| "state poisoned")? = Some(unlocked);
     Ok(())
 }
@@ -1321,6 +1476,42 @@ mod tests {
 
     // A store written before `group` existed must still load — the field is optional
     // and comes back empty ("Ungrouped" in the UI). PRD vault-ux AC1.
+    #[test]
+    // PRD vault-touchid-autolock — biometric-pref persistence, no real Keychain
+    // touched (the crypto/Keychain path itself needs a live Touch ID prompt per
+    // the original prd-ssh-cyberark.md note: "cargo test cannot exercise biometry").
+    #[test]
+    fn biometric_pref_defaults_false_then_persists_toggle() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("muya-vault-prefs.json");
+        // No file yet → default false, never panics on a missing prefs file.
+        assert!(!biometric_available_at(&path));
+        set_biometric_pref_at(&path, true).unwrap();
+        assert!(biometric_available_at(&path));
+        set_biometric_pref_at(&path, false).unwrap();
+        assert!(!biometric_available_at(&path));
+    }
+
+    #[test]
+    fn biometric_pref_own_file_never_shares_debuglog_settings() {
+        // Regression guard for the exact bug this design avoided: writing to the
+        // SAME file debug-logging uses would let one setting silently clobber the
+        // other (debug_log_set overwrites the whole document, no merge).
+        let dir = tempfile::tempdir().unwrap();
+        let prefs = dir.path().join("muya-vault-prefs.json");
+        let settings = dir.path().join("muya-settings.json");
+        std::fs::write(
+            &settings,
+            r#"{"debugLogging":true,"debugLogPath":"/tmp/x.log"}"#,
+        )
+        .unwrap();
+        set_biometric_pref_at(&prefs, true).unwrap();
+        // The debug-logging file is a DIFFERENT path and must be untouched.
+        let still_there = std::fs::read_to_string(&settings).unwrap();
+        assert!(still_there.contains("debugLogging"));
+        assert_ne!(prefs, settings);
+    }
+
     #[test]
     fn credential_without_group_loads_as_empty() {
         let old = r#"{"id":"1","label":"legacy","username":"u","secretKind":"password","secret":"s","description":"d"}"#;
