@@ -40,4 +40,22 @@ gerçek `npm run build`.
   de çalışmalı; her zaman mount App.tsx doğru yer.
 - **15 dakika sabit:** eski PRD'nin R2 mitigasyon değeriyle aynı (non-critical, araştır+karar).
 
+## P2 — operatörün "memory dump ile okunabilir mi?" sorusuna verilen cevabın gereği (2026-08-19/20)
+İncelerken 2 gerçek bulgu çıktı, ikisi de düzeltildi:
+1. **UI-tutarsızlığı:** idle-timer arka planda `credstore_lock` çağırıyordu ama `SshPage` bunu bilmiyordu
+   (mount'ta bir kez `refresh()`, polling yok) — ekran "Unlocked" gösterirken backend kilitli kalıyordu,
+   önceden `reveal` edilmiş bir değer JS state'inde açıkta kalıyordu. **Fix:** `credstore_lock` artık
+   `muya://vault-locked` event'i yayınlıyor (manuel + idle-tetiklemeli, ikisi de); `StoreTab` bunu dinleyip
+   `revealed` state'ini temizliyor + `refresh()` çağırıyor.
+2. **`Credential.secret`/`key_passphrase` zeroize edilmiyordu:** yalnız master anahtar (`Unlocked.key:
+   Zeroizing<[u8;32]>`) sıfırlanıyordu; tekil credential secret'ları düz `String` olarak store açıkken
+   bellekte kalıyordu (drop sadece serbest bırakır, sıfırlamaz). **Fix:** `Credential.secret`/`key_passphrase`
+   ve `CredInput`'un aynı alanları `Zeroizing<String>`/`Option<Zeroizing<String>>` oldu (`zeroize` crate'inin
+   `serde` feature'ı sayesinde disk formatı **değişmedi** — kaynaktan doğrulandı). 7 üretim + 9 test noktası
+   derleyici rehberliğinde düzeltildi (double-wrap riski `secret_for`/`secret_for_ref`'te fark edilip
+   önlendi). `blob_has_no_plaintext_secret`/`ac0_1_round_trip`/migration testleri dahil **25/25 credstore
+   testi** hâlâ geçiyor — format regresyonu yok.
+
+Doğrulama: cargo check (lib+bins) + 254 test / tsc temiz / npm 102.
+
 ## Dersler

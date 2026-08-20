@@ -42,8 +42,14 @@ const STORE_VERSION: u32 = 1;
 // Data types
 // ---------------------------------------------------------------------------
 
-/// One stored credential. `secret` (and `key_passphrase`) hold plaintext ONLY
-/// in the decrypted in-memory form; they are AES-GCM-sealed at rest.
+/// One stored credential. `secret` (and `key_passphrase`) hold plaintext ONLY in
+/// the decrypted in-memory form; they are AES-GCM-sealed at rest, AND — as of
+/// prd-vault-touchid-autolock — held as `Zeroizing<String>` so the plaintext
+/// bytes are actively wiped from RAM when a `Credential` drops (store lock, a
+/// row's slot gets replaced on edit, etc.), not just left for the allocator to
+/// reuse eventually. `Zeroizing<Z>` serializes exactly like `Z` (zeroize's
+/// "serde" feature), so the on-disk encrypted blob format is unchanged — this is
+/// a memory-safety hardening, not a migration.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Credential {
     pub id: String,
@@ -51,7 +57,7 @@ pub struct Credential {
     pub username: String,
     #[serde(rename = "secretKind")]
     pub secret_kind: String, // "password" | "key" | "token"
-    pub secret: String,
+    pub secret: Zeroizing<String>,
     /// Free-text operator note (e.g. "prod AWS deploy key"). Non-secret; surfaced
     /// to agents via `list_secrets` so they can pick the right secret BY NAME.
     /// Old store JSON lacking `description` loads as empty (serde `default`).
@@ -62,7 +68,7 @@ pub struct Credential {
     #[serde(default)]
     pub group: String,
     #[serde(rename = "keyPassphrase", skip_serializing_if = "Option::is_none")]
-    pub key_passphrase: Option<String>,
+    pub key_passphrase: Option<Zeroizing<String>>,
 }
 
 /// Non-secret projection returned to the UI — never carries `secret`.
@@ -88,13 +94,13 @@ pub struct CredInput {
     pub username: String,
     #[serde(rename = "secretKind")]
     pub secret_kind: String,
-    pub secret: String,
+    pub secret: Zeroizing<String>,
     #[serde(default)]
     pub description: String,
     #[serde(default)]
     pub group: String,
     #[serde(rename = "keyPassphrase", default)]
-    pub key_passphrase: Option<String>,
+    pub key_passphrase: Option<Zeroizing<String>>,
 }
 
 /// The secret kinds the store accepts. `token` (AC11) covers API tokens/JSON
@@ -361,9 +367,20 @@ pub async fn credstore_unlock(master: String, state: State<'_, CredStore>) -> Re
     Ok(())
 }
 
+/// Locks the store AND tells the frontend it happened. The event matters because
+/// lock can now fire from outside the Password Store screen (the app-wide idle
+/// timer, `App.tsx`) — without it, a tab that isn't actively polling would keep
+/// showing "Unlocked" (and any already-`reveal`ed secret still sitting in its
+/// React state) after the backend has already locked. Note on what actually gets
+/// zeroized: only the derived master KEY (`Unlocked.key: Zeroizing<...>`) is wiped
+/// on drop here — individual credential secrets in `Unlocked.data.credentials`
+/// are plain `String`s (never zeroized) for as long as the process ran unlocked;
+/// see the answer given when this was asked, `docs/prd-vault-touchid-autolock.md`.
 #[tauri::command]
-pub fn credstore_lock(state: State<'_, CredStore>) -> Result<(), String> {
-    *state.0.lock().map_err(|_| "state poisoned")? = None; // Unlocked::drop zeroizes the key
+pub fn credstore_lock(state: State<'_, CredStore>, app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Emitter;
+    *state.0.lock().map_err(|_| "state poisoned")? = None; // zeroizes ONLY the derived key
+    let _ = app.emit("muya://vault-locked", ());
     Ok(())
 }
 
@@ -552,7 +569,7 @@ pub fn credstore_import_key(
         label,
         username,
         secret_kind: "key".into(),
-        secret: key_text,
+        secret: Zeroizing::new(key_text),
         description: String::new(),
         group: String::new(),
         key_passphrase: None,
@@ -596,7 +613,7 @@ pub fn credstore_import_secret(
     }
     let bytes = std::fs::read(&src_path).map_err(|e| format!("read file: {e}"))?;
     let raw = String::from_utf8(bytes).map_err(|_| "file is not valid UTF-8 text".to_string())?;
-    let secret = trim_imported_secret(&secret_kind, raw);
+    let secret = Zeroizing::new(trim_imported_secret(&secret_kind, raw));
     let path = default_store_path()?;
     let mut guard = state.0.lock().map_err(|_| "state poisoned")?;
     let u = guard.as_mut().ok_or("store is locked")?;
@@ -661,7 +678,7 @@ pub(crate) fn reveal_cred(store: &CredStore, id: &str) -> Result<String, String>
         .credentials
         .iter()
         .find(|c| c.id == id)
-        .map(|c| c.secret.clone())
+        .map(|c| c.secret.to_string())
         .ok_or_else(|| "credential not found".into())
 }
 
@@ -807,7 +824,7 @@ fn add_credential_at(
         label,
         username: String::new(),
         secret_kind: kind,
-        secret: value,
+        secret: Zeroizing::new(value),
         description,
         group: String::new(),
         key_passphrase: None,
@@ -899,7 +916,7 @@ pub(crate) fn secret_for(store: &CredStore, id: &str) -> Result<Zeroizing<String
         .iter()
         .find(|c| c.id == id)
         .ok_or("stored credential not found")?;
-    Ok(Zeroizing::new(cred.secret.clone()))
+    Ok(cred.secret.clone())
 }
 
 /// Resolve a secret by human-facing REFERENCE — its NAME (label) or its id — for
@@ -922,7 +939,7 @@ pub(crate) fn secret_for_ref(
         .iter()
         .find(|c| c.label == reference || c.id == reference)
         .ok_or_else(|| format!("no stored secret named '{reference}' (check the name in muya-agent-ops.json matches a Password Store entry)"))?;
-    Ok(Zeroizing::new(cred.secret.clone()))
+    Ok(cred.secret.clone())
 }
 
 /// Update an EXISTING secret's value, matched by NAME (label) or id — the write
@@ -960,7 +977,7 @@ fn update_credential_at(
         .ok_or_else(|| {
             format!("no stored secret named '{reference}' — use add_secret to create it first")
         })?;
-    cred.secret = value;
+    cred.secret = Zeroizing::new(value);
     let meta = CredMeta {
         id: cred.id.clone(),
         label: cred.label.clone(),
@@ -1020,7 +1037,7 @@ mod tests {
             label: "homelab".into(),
             username: "root".into(),
             secret_kind: "password".into(),
-            secret: "s3cr3t-x".into(),
+            secret: Zeroizing::new("s3cr3t-x".to_string()),
             description: String::new(),
             group: String::new(),
             key_passphrase: None,
@@ -1029,7 +1046,7 @@ mod tests {
 
         let u2 = unlock_at(&path, b"correct horse").unwrap();
         assert_eq!(u2.data.credentials.len(), 1);
-        assert_eq!(u2.data.credentials[0].secret, "s3cr3t-x");
+        assert_eq!(u2.data.credentials[0].secret.as_str(), "s3cr3t-x");
     }
 
     // AC0.2 — wrong master password fails and never yields plaintext.
@@ -1081,7 +1098,7 @@ mod tests {
             label: "l".into(),
             username: "u".into(),
             secret_kind: "password".into(),
-            secret: "keepme".into(),
+            secret: Zeroizing::new("keepme".to_string()),
             description: String::new(),
             group: String::new(),
             key_passphrase: None,
@@ -1094,7 +1111,7 @@ mod tests {
             "old password must stop working"
         );
         let u2 = unlock_at(&path, b"new-pass").unwrap();
-        assert_eq!(u2.data.credentials[0].secret, "keepme");
+        assert_eq!(u2.data.credentials[0].secret.as_str(), "keepme");
     }
 
     // AC0.6 support — derive is deterministic per (password,salt) and diverges
@@ -1322,7 +1339,7 @@ mod tests {
             .iter()
             .find(|c| c.label == "dup")
             .unwrap();
-        assert_eq!(cred.secret, "v1");
+        assert_eq!(cred.secret.as_str(), "v1");
         assert_eq!(
             u.data
                 .credentials
@@ -1446,15 +1463,15 @@ mod tests {
         assert_eq!(u.data.credentials.len(), 3, "no credential may be lost");
         let c1 = &u.data.credentials[0];
         assert_eq!(c1.label, "maydogan");
-        assert_eq!(c1.secret, "S3cret!", "secret must survive the migration");
+        assert_eq!(c1.secret.as_str(), "S3cret!", "secret must survive the migration");
         assert_eq!(c1.description, "cyberark pw");
         assert_eq!(
             c1.group, "",
             "missing group loads as empty (shown as Ungrouped)"
         );
-        assert_eq!(u.data.credentials[1].secret, "az-tok-xyz");
+        assert_eq!(u.data.credentials[1].secret.as_str(), "az-tok-xyz");
         assert_eq!(
-            u.data.credentials[2].key_passphrase.as_deref(),
+            u.data.credentials[2].key_passphrase.as_ref().map(|z| z.as_str()),
             Some("pp"),
             "key passphrase must survive"
         );
@@ -1467,9 +1484,9 @@ mod tests {
         let again = unlock_at(&path, master).unwrap();
         assert_eq!(again.data.credentials.len(), 3);
         assert_eq!(again.data.credentials[0].group, "CyberArk");
-        assert_eq!(again.data.credentials[0].secret, "S3cret!");
+        assert_eq!(again.data.credentials[0].secret.as_str(), "S3cret!");
         assert_eq!(
-            again.data.credentials[2].secret,
+            again.data.credentials[2].secret.as_str(),
             "-----BEGIN KEY-----\nabc\n"
         );
     }
@@ -1556,7 +1573,7 @@ mod tests {
             label: "l".into(),
             username: "u".into(),
             secret_kind: "password".into(),
-            secret: "TOPSECRETVALUE".into(),
+            secret: Zeroizing::new("TOPSECRETVALUE".to_string()),
             description: String::new(),
             group: String::new(),
             key_passphrase: None,

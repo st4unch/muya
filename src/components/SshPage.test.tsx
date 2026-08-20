@@ -10,6 +10,12 @@ import SshPage from "./SshPage";
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, payload?: Record<string, unknown>) => mockInvoke(cmd, payload ?? {}),
 }));
+// listen() reaches into window.__TAURI_INTERNALS__ directly (not through the
+// invoke() mock above), which jsdom doesn't have — StoreTab's "muya://vault-locked"
+// subscription would otherwise throw an unhandled rejection on every render.
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: () => Promise.resolve(() => {}),
+}));
 
 beforeEach(() => {
   resetMockBackend();

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { copyToClipboard } from "../lib/clipboard";
 import {
   Server as ServerIcon,
@@ -1000,6 +1001,20 @@ function StoreTab({
   const [query, setQuery] = useState("");
   // Above the locked/uninitialised early returns — hooks must stay unconditional.
   const { collapsed, toggle } = useCollapsedGroups("muya.vault.collapsed");
+
+  // The store can now lock from OUTSIDE this screen (App.tsx's app-wide idle
+  // timer, not just the Lock button here) — without this, this tab would keep
+  // showing "Unlocked" (and any secret the operator had `reveal`ed stays sitting
+  // in `revealed`'s React state) until something else happened to call
+  // onChange(). Backend emits this on every lock, manual or idle-triggered.
+  useEffect(() => {
+    const un = listen("muya://vault-locked", () => {
+      setRevealed({});
+      void onChange();
+    });
+    return () => { void un.then((f) => f()); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const doInit = async () => {
     if (master.length < 4) return setErr("master password must be at least 4 characters");

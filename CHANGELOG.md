@@ -12,6 +12,10 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Unlock the Password Store with Touch ID.** Turn it on once (Password Store → Enable Touch ID) and unlock with your fingerprint — or your Mac's login password if Touch ID isn't available — instead of typing the master password every time. The master password still works as a fallback at all times.
 - **The vault locks itself when Muya has been idle.** After 15 minutes without any activity anywhere in the app, an unlocked Password Store locks automatically — you unlock it again with Touch ID or the master password when you're back.
 
+### Fixed
+- **Auto-lock now updates the Password Store screen immediately**, instead of it silently showing "Unlocked" (with any password you'd revealed still on screen) until you happened to do something that refreshed it.
+- **Stored passwords/tokens/keys are wiped from memory when the vault locks**, not just left for the operating system to eventually overwrite. (Previously only the master unlock key was cleared this way — each individual secret now is too.)
+
 ## [0.2.36] - 2026-08-18
 
 ### Added
