@@ -1,7 +1,8 @@
 ---
-status: active
+status: done
 prd: docs/prd-agent-session-open.md
 started: 2026-08-21
+completed: 2026-08-21
 ---
 
 ## Faz Çıktıları
@@ -45,3 +46,28 @@ JSON-RPC) 20 tool gösterdi, `open_session` şeması doğru.
   TAMAMEN bağımsız) — ilk tasarım taslağı yanlışlıkla `register_ssh_session`-stili bir registry
   gerektiğini varsaymıştı; kodu okuyunca (broker.rs:824-830, agents.rs:248-272) bunun gereksiz
   olduğu görüldü. Ders: "X nasıl çalışıyor olmalı" varsayımı yerine önce kodu oku (L128 aynı desen).
+- **Canlı doğrulama (2026-08-21, operatör "sen test yapabilirsin sanırım" dedi, haklıydı):**
+  gerçek `claude` CLI'ye karşı, bu makinede, PTY üzerinden 4 tur test koştum (host Muya'ya
+  DOKUNULMADI — ayrı, izole `pty.fork()` süreçleri, test-adıyla işaretli, temizlendi):
+  1. `claude --dangerously-skip-permissions --name X "<prompt>"` gerçekten pozisyonel prompt'u
+     REPL hazır olunca kendi işliyor (trust-prompt Enter'dan sonra) — tasarımın kilit varsayımı
+     doğrulandı.
+  2-3. İlk iki denemede taze session `claude agents --json`'da GÖRÜNMÜYORDU (scratch dizin ve
+     gerçek repo dizininde de aynı) — ciddi bir tasarım kırılması gibi göründü.
+  4. Kök neden bulundu: test harness'ım kendi ortamının `CLAUDE_CODE_SESSION_ID`/`CLAUDECODE=1`/
+     `CLAUDE_CODE_CHILD_SESSION=1` env değişkenlerini spawn edilen sürece SIZDIRIYORDU (python
+     `os.execvp` parent env'i miras alır) — taze session kendini benim session'ımın "child"ı sanıp
+     bağımsız kayıt olmuyordu. `pty.rs`'nin GERÇEK spawn kodu bu değişkenleri zaten STRIP ediyor
+     (`pty_strips_claude_env` testi tam bunu kanıtlıyor, pty.rs:1112+) — env'i taklit ederek
+     stripleyince (4. deneme) taze session **anında** `claude agents --json`'da "idle" olarak
+     göründü. **Sonuç: tasarım doğru, benim test harness'ım eksikti.** open_session'ın gerçek
+     implementasyonu zaten pty.rs üzerinden gidiyor, bu strip zaten var — ek kod gerekmedi.
+  **Ders:** Muya dışı bir araçla (python pty.fork vs.) "Muya nasıl davranır" simüle ederken,
+  CALLING process'in kendi CLAUDE*/AI_AGENT env'ini spawn edilen sürece SIZDIRMADIĞINDAN emin ol —
+  aksi halde yanlış-negatif bir "kırık" sonucuna varılır. Bu genel bir Claude-Code-içinde-Claude-Code
+  test etme deseni, sadece bu PRD'ye özgü değil.
+  **Ayrı, çözülmemiş edge-case (bilerek scope dışı bırakıldı):** ilk kez görülen bir `cwd`'de
+  "trust this folder?" onayı, `--dangerously-skip-permissions` ile bile REPL'i durdurur — pozisyonel
+  prompt işlenmeden önce Enter gerekir. Muya'nın workspace'leri operatörün zaten kullandığı/
+  güvendiği dizinler olduğundan pratikte nadiren tetiklenir, ama teorik bir gap — ileride
+  `open_session`'a otomatik-trust-accept eklenmesi gerekebilir.
