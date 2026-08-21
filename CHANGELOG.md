@@ -6,6 +6,15 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.38] - 2026-08-21
+
+### Added
+- **The MCP agent can open a new local Claude session in Muya for you.** It runs `claude --dangerously-skip-permissions --name <name>`, can be handed a first message right away, and can be messaged again afterwards by that name — no approval prompt needed for the first message.
+
+### Fixed
+- **The Branch screen's "WIP" list was always empty.** It only recognized branch names like `feature/...`/`fix/...`; now any branch checked out in an active worktree counts as WIP too, whatever it's named.
+- **The Branch/Queue list became unreachable once it grew past the visible area** — there was no way to scroll down to the rest of it. Added scrolling, plus a scrollbar you can actually see (macOS hides the default one until you're mid-scroll).
+
 ## [0.2.37] - 2026-08-19
 
 ### Added
