@@ -184,6 +184,20 @@ fn tools_list() -> Value {
                 }
             },
             {
+                "name": "open_session",
+                "description": "Open a NEW local Claude Code session as a terminal tab in Muya (the local analog of ssh_open — no server, no credentials) and, optionally, hand it a first message right away. Use this to spin up a session to work on something in parallel, then message it — WITHOUT asking the operator first. The new session runs with --dangerously-skip-permissions, same as Muya's own \"+ New Agent\" button. `name` becomes the session's own name (Claude Code's --name) — pass a short, descriptive one; you'll use it with send_to_session for any follow-up messages. `cwd` defaults to the operator's current workspace when omitted. If you pass `initial_message`, it's given to the new session as its first prompt directly on launch (reliable even before the session is fully up) — prefer this over opening the session and then immediately calling send_to_session, which may not find it yet. For follow-up messages after the session is running, use send_to_session(target: name, deliver: \"muya\") — the new session runs with bypassed permission prompts, and Claude Code's own SendMessage holds messages to a bypass-mode session for the operator's approval unless the sender also bypasses, so deliver:\"muya\" is the reliable path here.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string", "description": "Name for the new session (becomes --name; used later with send_to_session)." },
+                        "cwd": { "type": "string", "description": "Working directory for the new session. Defaults to the operator's current workspace." },
+                        "initial_message": { "type": "string", "description": "Optional first message/prompt to give the new session immediately on launch." }
+                    },
+                    "required": ["name"],
+                    "additionalProperties": false
+                }
+            },
+            {
                 "name": "list_sessions",
                 "description": "List the OTHER Claude Code sessions currently running in Muya, with the names the operator gave them (e.g. 'password hardening', 'frontend refactor'), their working directory and status. Use this whenever the user refers to another session by name ('tell the password-hardening session…', 'what is the migration session doing?') — Muya's names are authoritative, so this is how you find the right target among many sessions. The entry marked 'this is you' is your own session.",
                 "inputSchema": { "type": "object", "additionalProperties": false }
@@ -510,6 +524,45 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                     resp.get("error")
                         .and_then(Value::as_str)
                         .unwrap_or("session close failed")
+                        .to_string(),
+                ))
+            }
+        }
+        "open_session" => {
+            let name = match args.get("name").and_then(Value::as_str) {
+                Some(n) if !n.trim().is_empty() => n.trim().to_string(),
+                _ => return Ok(tool_error("missing required argument 'name'")),
+            };
+            let cwd = args
+                .get("cwd")
+                .and_then(Value::as_str)
+                .map(|s| s.to_string());
+            let initial_message = args
+                .get("initial_message")
+                .and_then(Value::as_str)
+                .map(|s| s.to_string());
+            let mut op = json!({ "op": "open_session", "name": name });
+            if let Some(c) = &cwd {
+                op["cwd"] = json!(c);
+            }
+            if let Some(m) = &initial_message {
+                op["initialMessage"] = json!(m);
+            }
+            let resp = app_call(&op).map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                Ok(tool_ok(
+                    format!(
+                        "Opening a new session named '{name}' in a Muya terminal. Use \
+                         send_to_session(target: \"{name}\", deliver: \"muya\") for any follow-up \
+                         messages once it's running."
+                    ),
+                    Some(json!({ "name": name })),
+                ))
+            } else {
+                Ok(tool_error(
+                    resp.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("open_session failed")
                         .to_string(),
                 ))
             }

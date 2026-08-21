@@ -70,7 +70,7 @@ import SshPage from "./components/SshPage";
 import PrdBoard from "./components/PrdBoard";
 import ScheduledPromptModal, { type ScheduledPrompt } from "./components/ScheduledPromptModal";
 import SettingsModal from "./components/SettingsModal";
-import { buildAgentCommand } from "./lib/agent";
+import { buildAgentCommand, singleQuote } from "./lib/agent";
 import { invoke } from "@tauri-apps/api/core";
 import { copyToClipboard } from "./lib/clipboard";
 import { viewerKindFor } from "./lib/format";
@@ -912,6 +912,31 @@ export default function App() {
     });
     return () => { void un.then((f) => f()); };
   }, [openSshServer]);
+
+  // muya-mcp → app: agent asked to open a NEW local Claude session (open_session,
+  // PRD agent-session-open — the local analog of ssh_open). Reuses the exact same
+  // command-building `launchAgent` uses for the "+ New Agent" button (buildAgentCommand
+  // + singleQuote) so an MCP-triggered open and a UI-clicked one behave identically.
+  useEffect(() => {
+    const un = listen<{ name: string; cwd?: string; initialMessage?: string }>(
+      "muya://open-agent-session",
+      (e) => {
+        const { name, cwd, initialMessage } = e.payload;
+        const ws = cwd || selectedRoot || workspaces[0];
+        if (!ws) return; // no workspace to run in — nothing sensible to open
+        const initialCommand = buildAgentCommand({
+          command: `claude --dangerously-skip-permissions --name ${singleQuote(name)}`,
+          prompt: initialMessage ?? "",
+          files: [],
+        });
+        const key = `agent:${Date.now()}:${Math.random().toString(36).slice(2, 7)}`;
+        openTerminal({ key, name, kind: "terminal", cwd: ws, initialCommand });
+        setView("control");
+      },
+    );
+    return () => { void un.then((f) => f()); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRoot, workspaces]);
 
   // Auto-lock the password vault after 15 minutes of no interaction ANYWHERE in
   // Muya (PRD vault-touchid-autolock) — not just while the SSH page is open, so
@@ -2536,7 +2561,7 @@ export const loginHandler = async (req, res) => {
               onRevealInFinder={revealTerminalInFinder}
             />
           ) : (
-          <div className="p-3 space-y-4">
+          <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-4">
 
             {/* Multi-repo selector */}
             {repoList.length > 1 && (

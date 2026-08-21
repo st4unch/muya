@@ -122,7 +122,7 @@ pub struct ServerMeta {
     pub connection_type: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct BrokerReq {
     op: String,
     #[serde(default)]
@@ -198,6 +198,13 @@ struct BrokerReq {
     query: Option<String>,
     #[serde(default)]
     deliver: Option<String>,
+    /// `open_session` (PRD `agent-session-open`): working directory for the new local
+    /// Claude session (defaults to the operator's current workspace when absent) and
+    /// an optional first prompt to hand it directly on launch. Reuses `name` above.
+    #[serde(default)]
+    cwd: Option<String>,
+    #[serde(rename = "initialMessage", default)]
+    initial_message: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -440,6 +447,7 @@ async fn handle_request(app: &AppHandle, line: &str) -> String {
         "run" => handle_run(app, &servers, &req).await,
         "scp" => handle_scp(app, &servers, &req).await,
         "send" => handle_send(app, &req),
+        "open_session" => handle_open_session(app, &req),
         "list_sessions" => handle_list_sessions(&req).await,
         "read_session" => handle_read_session(&req).await,
         "send_to_session" => handle_send_to_session(app, &req).await,
@@ -834,6 +842,39 @@ fn session_pairs(sessions: &[crate::agents::AgentSession]) -> Vec<(String, Strin
         .iter()
         .map(|s| (s.id.clone(), s.name.clone()))
         .collect()
+}
+
+/// `open_session` (PRD `agent-session-open`): the local analog of `ssh_open` — no
+/// server, no credentials, no session-id minting. Just tells the app to open a new
+/// terminal tab running `claude --dangerously-skip-permissions --name <name>`
+/// (optionally with an initial prompt). The new Claude process registers itself
+/// with `claude agents --json` on its own — Muya's `list_sessions`/`send_to_session`
+/// (backed by that same registry, see `running_sessions` above) can address it by
+/// `name` right away, independent of this app's own tab/PTY bookkeeping.
+/// Pure core of `open_session`: validate `name` and build the event payload.
+/// Split out so the validation/shape logic is testable without a Tauri `AppHandle`.
+fn build_open_session_payload(req: &BrokerReq) -> Result<(String, serde_json::Value), String> {
+    let name = match req.name.as_deref() {
+        Some(n) if !n.trim().is_empty() => n.trim().to_string(),
+        _ => return Err("`open_session` requires a non-empty `name`".to_string()),
+    };
+    let payload = json!({
+        "name": name,
+        "cwd": req.cwd,
+        "initialMessage": req.initial_message,
+    });
+    Ok((name, payload))
+}
+
+fn handle_open_session(app: &AppHandle, req: &BrokerReq) -> String {
+    let (name, payload) = match build_open_session_payload(req) {
+        Ok(v) => v,
+        Err(e) => return err_resp(e),
+    };
+    if let Err(e) = app.emit("muya://open-agent-session", payload) {
+        return err_resp(format!("failed to signal open_session: {e}"));
+    }
+    json!({"ok": true, "name": name}).to_string()
 }
 
 /// `list_sessions` (PRD `session-messaging`): the RUNNING Claude sessions Muya knows,
@@ -1561,6 +1602,49 @@ mod tests {
             ("def456".into(), "frontend refactor".into()),
             ("ghi789".into(), "password rotation".into()),
         ]
+    }
+
+    #[test]
+    fn open_session_payload_requires_nonempty_name() {
+        let req = BrokerReq {
+            op: "open_session".into(),
+            ..Default::default()
+        };
+        assert!(build_open_session_payload(&req).is_err());
+        let blank = BrokerReq {
+            op: "open_session".into(),
+            name: Some("   ".into()),
+            ..Default::default()
+        };
+        assert!(build_open_session_payload(&blank).is_err());
+    }
+
+    #[test]
+    fn open_session_payload_trims_name_and_carries_optional_fields() {
+        let req = BrokerReq {
+            op: "open_session".into(),
+            name: Some("  worker  ".into()),
+            cwd: Some("/tmp/x".into()),
+            initial_message: Some("start on the migration".into()),
+            ..Default::default()
+        };
+        let (name, payload) = build_open_session_payload(&req).unwrap();
+        assert_eq!(name, "worker");
+        assert_eq!(payload["name"], "worker");
+        assert_eq!(payload["cwd"], "/tmp/x");
+        assert_eq!(payload["initialMessage"], "start on the migration");
+    }
+
+    #[test]
+    fn open_session_payload_omits_optional_fields_when_absent() {
+        let req = BrokerReq {
+            op: "open_session".into(),
+            name: Some("worker".into()),
+            ..Default::default()
+        };
+        let (_, payload) = build_open_session_payload(&req).unwrap();
+        assert!(payload["cwd"].is_null());
+        assert!(payload["initialMessage"].is_null());
     }
 
     #[test]

@@ -369,7 +369,7 @@ export default function BranchDAG({
           )}
         </div>
       ) : (
-        <div className="border-t border-neutral-100 dark:border-neutral-800 bg-white dark:bg-neutral-900 overflow-y-auto max-h-[380px]">
+        <div className="border-t border-neutral-100 dark:border-neutral-800 bg-white dark:bg-neutral-900 overflow-y-auto max-h-[380px] custom-scrollbar">
           {/* Stats row */}
           <div className="grid grid-cols-3 divide-x divide-neutral-100 dark:divide-neutral-800 text-center font-mono text-[9px] border-b border-neutral-100 dark:border-neutral-800">
             <div className="py-2">

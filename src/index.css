@@ -35,6 +35,17 @@
 .dark .md-body hr { border-color: #3f3f46; }
 .md-body img { max-width: 100%; }
 
+/* Always-visible thin scrollbar for panels where content commonly overflows
+   (Branch/Queue lists, etc.) — macOS's default overlay scrollbar auto-hides until
+   actively scrolling, which reads as "no scrollbar at all" on a long list. */
+.custom-scrollbar { scrollbar-width: thin; scrollbar-color: #d4d4d8 transparent; }
+.dark .custom-scrollbar { scrollbar-color: #52525b transparent; }
+.custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: 4px; }
+.dark .custom-scrollbar::-webkit-scrollbar-thumb { background: #52525b; }
+.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #a1a1aa; }
+
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Space Grotesk", sans-serif;

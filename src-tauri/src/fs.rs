@@ -205,18 +205,49 @@ pub struct GitBranchState {
     pub parent: Option<String>,
 }
 
-fn branch_kind(name: &str) -> &'static str {
+/// `has_worktree`: true when a `git worktree` (linked or primary) currently has this
+/// branch checked out — the real signal that someone (a person or an agent) is
+/// actively working on it, regardless of naming convention. Falls back to common
+/// prefix conventions for branches without a worktree the app happens to know about,
+/// so a bare-checkout `feature/x` still classifies sensibly.
+fn branch_kind(name: &str, has_worktree: bool) -> &'static str {
     if name == "main" || name == "master" || name.starts_with("release/") {
         "PRD"
-    } else if name.starts_with("feature/")
+    } else if has_worktree
+        || name.starts_with("feature/")
+        || name.starts_with("feat/")
         || name.starts_with("fix/")
         || name.starts_with("bugfix/")
         || name.starts_with("hotfix/")
+        || name.starts_with("wip/")
+        || name.starts_with("chore/")
     {
         "WIP"
     } else {
         "OPEN"
     }
+}
+
+/// Branches currently checked out in any worktree of `repo` (primary + linked).
+/// Best-effort: an empty set on any git failure just means nothing gets the
+/// worktree-based WIP bump, falling back to prefix-only classification.
+fn worktree_branches(repo: &str) -> std::collections::HashSet<String> {
+    let mut set = std::collections::HashSet::new();
+    let out = match Command::new("git")
+        .args(["-C", repo, "worktree", "list", "--porcelain"])
+        .output()
+    {
+        Ok(o) if o.status.success() => o,
+        _ => return set,
+    };
+    let text = String::from_utf8_lossy(&out.stdout);
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("branch ") {
+            let name = rest.strip_prefix("refs/heads/").unwrap_or(rest);
+            set.insert(name.to_string());
+        }
+    }
+    set
 }
 
 fn track_to_status(track: &str) -> &'static str {
@@ -252,6 +283,7 @@ fn list_branches_sync(repo: String) -> Result<Vec<GitBranchState>, String> {
         return Ok(vec![]); // not a git repo
     }
     let text = String::from_utf8_lossy(&out.stdout);
+    let wt_branches = worktree_branches(&repo);
     let mut branches = Vec::new();
     for line in text.lines().filter(|l| !l.is_empty()) {
         let parts: Vec<&str> = line.split('\x1f').collect();
@@ -261,7 +293,7 @@ fn list_branches_sync(repo: String) -> Result<Vec<GitBranchState>, String> {
         }
         let track = parts.get(1).copied().unwrap_or("");
         branches.push(GitBranchState {
-            kind: branch_kind(&name).to_string(),
+            kind: branch_kind(&name, wt_branches.contains(&name)).to_string(),
             status: track_to_status(track).to_string(),
             author: parts.get(2).copied().unwrap_or("").to_string(),
             last_commit: parts.get(3).copied().unwrap_or("").to_string(),
@@ -1232,11 +1264,36 @@ mod tests {
 
     #[test]
     fn branch_kind_classifies() {
-        assert_eq!(branch_kind("main"), "PRD");
-        assert_eq!(branch_kind("release/1.0"), "PRD");
-        assert_eq!(branch_kind("feature/x"), "WIP");
-        assert_eq!(branch_kind("fix/y"), "WIP");
-        assert_eq!(branch_kind("random"), "OPEN");
+        assert_eq!(branch_kind("main", false), "PRD");
+        assert_eq!(branch_kind("release/1.0", false), "PRD");
+        assert_eq!(branch_kind("feature/x", false), "WIP");
+        assert_eq!(branch_kind("fix/y", false), "WIP");
+        assert_eq!(branch_kind("random", false), "OPEN");
+        // main always PRD even if (oddly) checked out in a worktree.
+        assert_eq!(branch_kind("main", true), "PRD");
+        // No naming convention, but a worktree has it checked out → WIP.
+        // This is the real fix: branches like "dev" or "backup/x" that don't
+        // follow feature/fix/... prefixes still surface as WIP when a worktree
+        // (an active agent's workspace) is on them.
+        assert_eq!(branch_kind("dev", true), "WIP");
+        assert_eq!(branch_kind("backup/pre-security-redact", true), "WIP");
+        // Same names, no worktree → falls back to OPEN (no prefix match).
+        assert_eq!(branch_kind("dev", false), "OPEN");
+        assert_eq!(branch_kind("backup/pre-security-redact", false), "OPEN");
+    }
+
+    #[test]
+    fn worktree_branches_lists_primary_and_linked() {
+        let r = init_repo();
+        run_git(&r.path, &["switch", "-c", "feature/wt-detect"]);
+        put_file(&r.path, "f.txt", "x");
+        run_git(&r.path, &["add", "."]);
+        run_git(&r.path, &["commit", "-m", "wip"]);
+        let set = worktree_branches(&r.path);
+        assert!(
+            set.contains("feature/wt-detect"),
+            "expected primary worktree's checked-out branch in set, got {set:?}"
+        );
     }
 
     #[test]
