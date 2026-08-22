@@ -18,9 +18,10 @@ a group** — you need real names/aliases, and guessing is never allowed (see be
 | I want to... | Tool |
 |---|---|
 | See what SSH servers I'm allowed to use | `ssh_list_servers` |
-| Run ONE remote command, get stdout back | `ssh_run(alias, command)` |
-| Run several INDEPENDENT remote commands (fast, one login) | `ssh_run(alias, commands: [...])` |
-| Run commands that must share shell state (cd/env/sudo), or many commands on a PSMP server | `ssh_session_open` → `ssh_session_exec` (repeat) → `ssh_session_close` |
+| **Do anything at all on a PSMP / CyberArk server** | `ssh_session_open` → `ssh_session_exec` (repeat) → `ssh_session_close` — **see the PSMP rule below, this is the default there** |
+| Run ONE remote command on a DIRECT (non-PSMP) server | `ssh_run(alias, command)` |
+| Run several INDEPENDENT commands on a DIRECT server | `ssh_run(alias, commands: [...])` |
+| Run commands that must share shell state (cd/env/sudo) | `ssh_session_open` → `ssh_session_exec` (repeat) → `ssh_session_close` |
 | Do interactive remote work a human should watch (login, 2FA/OTP/RADIUS, a TUI) | `ssh_open` (opens a visible tab) + `ssh_send` for follow-up keystrokes |
 | Register a new SSH server | `ssh_add_server` |
 | Copy a file to/from a server | `ssh_scp` |
@@ -36,13 +37,31 @@ a group** — you need real names/aliases, and guessing is never allowed (see be
 
 ## SSH group
 
-- **Default remote-exec is `ssh_run`**, not `ssh_session_open`. Only reach for a persistent
-  session when you genuinely need shared shell state or many round-trips against a
-  **PSMP** (CyberArk-proxied) server — PSMP binds one audited session per connection, so
-  a fresh `ssh_run` call each time means a fresh login/OTP each time. `ssh_run(commands:
-  [...])` already amortizes that for independent commands over one connection; only use
-  `ssh_session_open/exec/close` when commands must share state or the back-and-forth is
-  long. **Always `ssh_session_close` when done** — it's not automatic.
+### First, check the connection type — it changes which tool you should use
+
+`ssh_list_servers` returns a `connectionType` per server — either `"direct"` or `"psmp"`.
+**If it is `"psmp"` (a CyberArk-proxied server), the tool choice is different from a direct
+server** — read this before running anything:
+
+- **On a PSMP server, prefer `ssh_session_open` / `ssh_session_exec` / `ssh_session_close`**,
+  even for what looks like a one-off command, and especially for anything that will take
+  more than one step. Reason: **PSMP binds one audited session per connection, and every new
+  connection re-runs the whole authentication — including an OTP or a RADIUS push the human
+  has to physically approve.** A loop of `ssh_run` calls against PSMP is not just slower; it
+  spams the operator's phone with an approval prompt per command, and is the single most
+  common way to make Muya's SSH feel broken.
+  - Open the session **once** at the start of the work, run everything through
+    `ssh_session_exec`, and `ssh_session_close` at the end — one login, one OTP/push, and
+    shell state (`cd`, env vars, `sudo`) persists between commands as a bonus.
+  - If you genuinely only have a fixed set of independent commands and no follow-ups,
+    `ssh_run(commands: [...])` is the acceptable middle ground — it runs them over ONE
+    connection (one OTP), unlike N separate `ssh_run` calls.
+  - **Never** loop `ssh_run(command: ...)` per command against PSMP.
+- **On a direct (non-PSMP) server**, the default is the simpler `ssh_run(alias, command)`;
+  reach for a persistent session only when commands must share shell state or the
+  back-and-forth is long.
+- **Always `ssh_session_close` when done** — it is not automatic, and on PSMP an abandoned
+  session holds an audited connection open.
 - **PSMP + 2FA**: `ssh_run`/`ssh_scp` refuse (never guess) if PSMP shows a 2FA/OTP/RADIUS
   challenge — switch to `ssh_open` so a human completes it. A timeout with no prompt at
   all on a PSMP server usually means an out-of-band RADIUS push is pending approval.
