@@ -28,6 +28,14 @@ fn ssh_release_session(session_id: String) {
     crate::broker::release_ssh_session(&session_id);
 }
 
+/// Called by the frontend whenever an `open_session`-opened terminal tab closes
+/// (via `close_session` or the operator closing it by hand), so the broker stops
+/// considering that name closable/owned (PRD `close-session`).
+#[tauri::command]
+fn release_agent_session(name: String) {
+    crate::broker::release_agent_session(&name);
+}
+
 mod agent_ops;
 mod agent_ssh;
 mod agents;
@@ -307,6 +315,7 @@ pub fn run() {
             fs::delete_entry,
             get_startup_files,
             ssh_release_session,
+            release_agent_session,
             vault::vault_search,
             vault::vault_get_status,
             vault::vault_detect_candidates,

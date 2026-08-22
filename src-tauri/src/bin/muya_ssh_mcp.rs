@@ -231,6 +231,18 @@ fn tools_list() -> Value {
                 }
             },
             {
+                "name": "close_session",
+                "description": "Close a local Claude session's terminal tab in Muya. You may ONLY close a session YOU opened with open_session — closing the operator's own session or one they opened by hand (e.g. \"+ New Agent\") is refused. `target` is a session name or id (from list_sessions), resolved exactly like send_to_session — if it's ambiguous you get the candidates back and should ask the user which one, never guess. Use this when you're done with a session you opened.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "target": { "type": "string", "description": "Target session name or id (must be one YOU opened with open_session)." }
+                    },
+                    "required": ["target"],
+                    "additionalProperties": false
+                }
+            },
+            {
                 "name": "track_plan",
                 "description": "Publish a PRD or plan onto Muya's Kanban board so the human can watch its status. Writes docs/prd-<slug>.md (+ a progress file carrying the status) inside YOUR CURRENT PROJECT directory — the same folder you're working in — and Muya's Kanban picks it up automatically. Use it when you create or finish a plan/PRD and want it visible: call once with status 'active' when you start, and again (same title) with status 'done' when finished. `title` becomes the card name; `status` is one of active|draft|blocked|done (defaults to active); optional `body` is the Markdown plan contents. Re-calling with the same title updates that card.",
                 "inputSchema": {
@@ -682,6 +694,25 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                     resp.get("error")
                         .and_then(Value::as_str)
                         .unwrap_or("send failed")
+                        .to_string(),
+                ))
+            }
+        }
+        "close_session" => {
+            let target = match args.get("target").and_then(Value::as_str) {
+                Some(t) if !t.trim().is_empty() => t.to_string(),
+                _ => return Ok(tool_error("missing required argument 'target'")),
+            };
+            let resp = app_call(&json!({ "op": "close_session", "target": target }))
+                .map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                let name = resp.get("name").and_then(Value::as_str).unwrap_or(&target);
+                Ok(tool_ok(format!("Closed session '{name}'."), None))
+            } else {
+                Ok(tool_error(
+                    resp.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("close failed")
                         .to_string(),
                 ))
             }

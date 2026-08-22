@@ -74,6 +74,39 @@ pub fn release_ssh_session(id: &str) {
     }
 }
 
+/// Session NAMEs opened via `open_session` that `close_session` may close (PRD
+/// `close-session`). Keyed by name, not id — `open_session` doesn't mint its own
+/// session id, addressing goes through the same `claude agents --json`-backed
+/// registry as `list_sessions`/`send_to_session` (PRD `agent-session-open`). An
+/// entry is added when `open_session` signals the open and removed once
+/// `close_session` succeeds (or the tab closes by any other means) — mirrors
+/// `SSH_SESSIONS` above so an agent can never close a session it didn't open
+/// (the operator's own main chat, or a "+ New Agent" tab they opened by hand).
+static AGENT_OPENED_SESSIONS: LazyLock<StdMutex<HashSet<String>>> =
+    LazyLock::new(|| StdMutex::new(HashSet::new()));
+
+fn register_agent_session(name: &str) {
+    if let Ok(mut set) = AGENT_OPENED_SESSIONS.lock() {
+        set.insert(name.to_string());
+    }
+}
+
+fn agent_session_is_open(name: &str) -> bool {
+    AGENT_OPENED_SESSIONS
+        .lock()
+        .map(|s| s.contains(name))
+        .unwrap_or(false)
+}
+
+/// Drop a session name once it's closed (called from the app via the
+/// `release_agent_session` command, on ANY tab close — not just `close_session`
+/// ones — so a manually-closed tab's name doesn't stay falsely closable). Idempotent.
+pub fn release_agent_session(name: &str) {
+    if let Ok(mut set) = AGENT_OPENED_SESSIONS.lock() {
+        set.remove(name);
+    }
+}
+
 /// AC10 — cap on concurrent `ssh_run` commands. Over the cap the broker fails fast
 /// with a clear error instead of piling up PTYs / ssh processes (DoS protection).
 const MAX_CONCURRENT_RUNS: usize = 4;
@@ -451,6 +484,7 @@ async fn handle_request(app: &AppHandle, line: &str) -> String {
         "list_sessions" => handle_list_sessions(&req).await,
         "read_session" => handle_read_session(&req).await,
         "send_to_session" => handle_send_to_session(app, &req).await,
+        "close_session" => handle_close_session(app, &req).await,
         "session_open" => handle_session_open(app, &servers, &req).await,
         "session_exec" => handle_session_exec(app, &req).await,
         "session_close" => handle_session_close(app, &req).await,
@@ -871,7 +905,11 @@ fn handle_open_session(app: &AppHandle, req: &BrokerReq) -> String {
         Ok(v) => v,
         Err(e) => return err_resp(e),
     };
+    // Registered BEFORE the emit (and rolled back if it fails) so a `close_session`
+    // that races the tab actually opening still sees this name as ours.
+    register_agent_session(&name);
     if let Err(e) = app.emit("muya://open-agent-session", payload) {
+        release_agent_session(&name);
         return err_resp(format!("failed to signal open_session: {e}"));
     }
     json!({"ok": true, "name": name}).to_string()
@@ -1015,6 +1053,54 @@ async fn handle_send_to_session(app: &AppHandle, req: &BrokerReq) -> String {
         "from": from,
     })
     .to_string()
+}
+
+/// `close_session` (PRD `close-session`): close a terminal tab Muya itself opened via
+/// `open_session` — never a session the operator opened by hand. Resolves `target`
+/// exactly like `send_to_session` (id > exact name > substring, never guesses on a
+/// tie), then refuses unless the resolved session's name is one `open_session`
+/// actually opened (`AGENT_OPENED_SESSIONS` above).
+async fn handle_close_session(app: &AppHandle, req: &BrokerReq) -> String {
+    let target = match req.target.as_deref() {
+        Some(t) if !t.trim().is_empty() => t.to_string(),
+        _ => return err_resp("`close_session` requires a `target` (session name or id)"),
+    };
+
+    let resolved = tokio::task::spawn_blocking({
+        let target = target.clone();
+        move || -> Result<(String, String), String> {
+            let sessions = running_sessions()?;
+            let pairs = session_pairs(&sessions);
+            match resolve_target(&target, &pairs) {
+                TargetMatch::None => Err(format!("no running session matches '{target}'")),
+                TargetMatch::Many(idxs) => Err(format!(
+                    "'{target}' matches {} sessions ({}) — ask the operator which one and pass its exact name or id",
+                    idxs.len(),
+                    idxs.iter().map(|i| pairs[*i].1.clone()).collect::<Vec<_>>().join(", ")
+                )),
+                TargetMatch::One(i) => Ok((sessions[i].id.clone(), sessions[i].name.clone())),
+            }
+        }
+    })
+    .await;
+    let (id, name) = match resolved {
+        Ok(Ok(v)) => v,
+        Ok(Err(e)) => return err_resp(e),
+        Err(e) => return err_resp(format!("resolve task failed: {e}")),
+    };
+
+    if !agent_session_is_open(&name) {
+        return err_resp(format!(
+            "'{name}' was not opened with open_session — you may only close sessions you opened yourself"
+        ));
+    }
+
+    let payload = json!({ "sessionId": id });
+    if let Err(e) = app.emit("muya://close-agent-session", payload) {
+        return err_resp(format!("failed to signal close: {e}"));
+    }
+    release_agent_session(&name);
+    json!({"ok": true, "name": name}).to_string()
 }
 
 /// `ssh_session_open` (PRD `ssh-session`, Faz 2): open a persistent, headless SSH session
@@ -1741,6 +1827,24 @@ mod tests {
             !ssh_session_is_open(id),
             "released id is no longer writable"
         );
+    }
+
+    #[test]
+    fn agent_session_registration_gates_close() {
+        let name = "muya-close-session-test-registration";
+        assert!(
+            !agent_session_is_open(name),
+            "unregistered name must not be closable"
+        );
+        register_agent_session(name);
+        assert!(agent_session_is_open(name), "registered name is closable");
+        release_agent_session(name);
+        assert!(
+            !agent_session_is_open(name),
+            "released name is no longer closable"
+        );
+        // Idempotent — releasing twice must not panic.
+        release_agent_session(name);
     }
 
     // AC4 — only opted-in servers are visible; two servers, one opt-in → 1.

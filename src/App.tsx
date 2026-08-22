@@ -406,6 +406,16 @@ export default function App() {
     // If this was an agent-opened ssh_open session, tell the broker it's gone so a
     // later ssh_send to this id is refused (not written to a recycled/dead PTY).
     if (key.startsWith("ssh:")) void invoke("ssh_release_session", { sessionId: key }).catch(() => {});
+    // Same idea for open_session tabs (PRD close-session) — release the ownership
+    // entry on ANY close (agent-initiated via close_session, or the operator closing
+    // it by hand), so a stale name never stays falsely "closable".
+    if (key.startsWith("aopen:")) {
+      // Ref, not the `openTerminals` state closure — this can run from a mount-once
+      // listener (muya://close-agent-session) whose captured `openTerminals` would
+      // otherwise be stale from before this tab ever existed.
+      const openedTab = openTerminalsRef.current.find((t) => t.key === key);
+      if (openedTab?.name) void invoke("release_agent_session", { name: openedTab.name }).catch(() => {});
+    }
     setOpenTerminals((prev) => {
       // Focus a neighbouring tab of the SAME kind — closing a file must not jump
       // focus onto a terminal (where the next ⌘W would kill a Claude session). L19.
@@ -929,7 +939,10 @@ export default function App() {
           prompt: initialMessage ?? "",
           files: [],
         });
-        const key = `agent:${Date.now()}:${Math.random().toString(36).slice(2, 7)}`;
+        // "aopen:" (not "ssh:"/"new:") marks this tab as MCP-opened via open_session —
+        // closeTerminal uses the prefix to know it must release the broker's ownership
+        // registry entry (PRD close-session) when this tab closes, by any means.
+        const key = `aopen:${Date.now()}:${Math.random().toString(36).slice(2, 7)}`;
         openTerminal({ key, name, kind: "terminal", cwd: ws, initialCommand });
         setView("control");
       },
@@ -937,6 +950,21 @@ export default function App() {
     return () => { void un.then((f) => f()); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRoot, workspaces]);
+
+  // muya-mcp → app: an agent asked to close a session IT opened with open_session
+  // (close_session, PRD close-session — the broker already checked ownership before
+  // emitting this). Resolve the real Claude session id to this tab's key via the same
+  // sessionIdToKeyRef send_to_session(deliver:"muya") uses, then reuse closeTerminal
+  // verbatim — no separate kill path.
+  useEffect(() => {
+    const un = listen<{ sessionId: string }>("muya://close-agent-session", (e) => {
+      const key = sessionIdToKeyRef.current[e.payload.sessionId];
+      if (!key) return; // not (yet) discovered as one of this app's own tabs
+      void closeTerminal(key);
+    });
+    return () => { void un.then((f) => f()); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Auto-lock the password vault after 15 minutes of no interaction ANYWHERE in
   // Muya (PRD vault-touchid-autolock) — not just while the SSH page is open, so
