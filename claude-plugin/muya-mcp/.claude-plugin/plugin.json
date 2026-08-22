@@ -1,0 +1,13 @@
+{
+  "name": "muya-mcp",
+  "version": "1.0.0",
+  "description": "How to use Muya's muya-mcp MCP server tools well — SSH, cross-session messaging, opening/closing sessions, secrets, operations, and Kanban tracking.",
+  "author": {
+    "name": "staunch",
+    "url": "https://github.com/st4unch"
+  },
+  "homepage": "https://github.com/st4unch/muya#readme",
+  "repository": "https://github.com/st4unch/muya",
+  "keywords": ["muya", "mcp", "ssh", "sessions", "agents"],
+  "skills": "./skills/"
+}

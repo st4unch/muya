@@ -62,9 +62,27 @@ Apex puts all of it in one place — and lets you launch, attach to, and stop ag
 
 ## Download
 
-Get the latest signed & notarized macOS build from [Releases](https://github.com/st4unch/apex-mission-control/releases/latest).
+Get the latest signed & notarized macOS build from [Releases](https://github.com/st4unch/muya/releases/latest).
 
 Requires macOS (Apple Silicon). Just unzip and run — no installer needed.
+
+---
+
+## Agent skill (muya-mcp)
+
+Muya ships an MCP server (`muya-mcp`) that gives your Claude Code agents SSH access, cross-session
+messaging, the ability to open/close their own parallel sessions, and access to operator-managed
+secrets — all through tools like `ssh_run`, `send_to_session`, `open_session`. A companion Claude
+Code **skill** teaches an agent how to use that tool set well (which tool for which situation,
+delivery-mode gotchas, ownership rules) — install it once via this repo's plugin marketplace:
+
+```
+/plugin marketplace add st4unch/muya
+/plugin install muya-mcp
+```
+
+The skill lives at [`claude-plugin/muya-mcp`](claude-plugin/muya-mcp) in this repo if you'd rather
+read or copy it directly.
 
 ---
 
@@ -80,8 +98,8 @@ Requires macOS (Apple Silicon). Just unzip and run — no installer needed.
 **Prerequisites:** macOS (Apple Silicon), [Node.js](https://nodejs.org) 20+, [Rust](https://rustup.rs), Xcode Command Line Tools, `claude` CLI on `PATH`.
 
 ```bash
-git clone https://github.com/st4unch/apex-mission-control.git
-cd apex-mission-control
+git clone https://github.com/st4unch/muya.git
+cd muya
 npm install
 npm run tauri dev      # native window with hot reload
 ```

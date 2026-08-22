@@ -1,0 +1,23 @@
+{
+  "name": "muya",
+  "owner": {
+    "name": "staunch"
+  },
+  "metadata": {
+    "description": "Claude Code plugins for Muya — a desktop control plane for parallel Claude Code agents",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "muya-mcp",
+      "source": "./claude-plugin/muya-mcp",
+      "description": "How to use Muya's muya-mcp MCP server tools well — SSH, cross-session messaging, opening/closing sessions, secrets, operations, and Kanban tracking.",
+      "version": "1.0.0",
+      "author": {
+        "name": "staunch"
+      },
+      "category": "development",
+      "keywords": ["muya", "mcp", "ssh", "sessions", "agents"]
+    }
+  ]
+}
