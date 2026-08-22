@@ -6,6 +6,17 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.39] - 2026-08-22
+
+### Added
+- **Agents can now close the sessions they opened.** The counterpart to last release's "open a session" — an agent can tidy up after itself. It can only close sessions it opened itself; your own session and any tab you opened by hand are off limits.
+- **Agents can answer a prompt another session is stuck on** — a permission dialog, a yes/no question. The session list now shows *what* a waiting session is waiting for, so an agent can spot it and type the answer in.
+- **A `muya-mcp` skill you can install into Claude Code**, teaching agents how to use Muya's tools well. Install with `/plugin marketplace add st4unch/muya` then `/plugin install muya-mcp`.
+
+### Fixed
+- **A newly opened session no longer gets stuck** on Claude's "is this folder trusted?" screen when it starts in a folder it hasn't seen before — it's accepted automatically for folders you've opened in Muya.
+- Corrected two README links that still pointed at the old repository name.
+
 ## [0.2.38] - 2026-08-21
 
 ### Added
