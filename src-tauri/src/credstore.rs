@@ -1463,7 +1463,11 @@ mod tests {
         assert_eq!(u.data.credentials.len(), 3, "no credential may be lost");
         let c1 = &u.data.credentials[0];
         assert_eq!(c1.label, "maydogan");
-        assert_eq!(c1.secret.as_str(), "S3cret!", "secret must survive the migration");
+        assert_eq!(
+            c1.secret.as_str(),
+            "S3cret!",
+            "secret must survive the migration"
+        );
         assert_eq!(c1.description, "cyberark pw");
         assert_eq!(
             c1.group, "",
@@ -1471,7 +1475,10 @@ mod tests {
         );
         assert_eq!(u.data.credentials[1].secret.as_str(), "az-tok-xyz");
         assert_eq!(
-            u.data.credentials[2].key_passphrase.as_ref().map(|z| z.as_str()),
+            u.data.credentials[2]
+                .key_passphrase
+                .as_ref()
+                .map(|z| z.as_str()),
             Some("pp"),
             "key passphrase must survive"
         );

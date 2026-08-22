@@ -933,6 +933,10 @@ async fn handle_list_sessions(req: &BrokerReq) -> String {
                 "name": s.name,
                 "cwd": s.worktree,
                 "status": s.status,
+                // Why it's waiting, when status is waiting-for-input — e.g. "permission
+                // prompt" — so an agent can tell that apart from an ordinary chat wait
+                // before deciding to answer it (send_to_session deliver:"muya").
+                "waitingFor": s.waiting_for,
                 "isCurrent": !me.is_empty() && s.id == me,
             })
         })
@@ -990,7 +994,9 @@ async fn handle_read_session(req: &BrokerReq) -> String {
 /// `send_to_session`: resolve a fuzzy target to ONE running session. Default
 /// (`deliver: "auto"`) returns the canonical name so the agent delivers with the native,
 /// non-interrupting `SendMessage`; `deliver: "muya"` has Muya type it into the target's
-/// terminal instead (fallback when native cross-session messaging isn't available).
+/// terminal instead (fallback when native cross-session messaging isn't available),
+/// wrapped as a chat message; `deliver: "keys"` types `text` in VERBATIM with no
+/// wrapping, for answering an interactive prompt the target is stuck on.
 async fn handle_send_to_session(app: &AppHandle, req: &BrokerReq) -> String {
     let target = match req.target.as_deref() {
         Some(t) if !t.trim().is_empty() => t.to_string(),
@@ -1027,7 +1033,9 @@ async fn handle_send_to_session(app: &AppHandle, req: &BrokerReq) -> String {
     };
 
     if deliver == "muya" {
-        // Muya types it into the target terminal, tagged with the sender.
+        // Muya types it into the target terminal, tagged with the sender. This is a
+        // CHAT message (wrapped with a "[message from X via Muya]" tag) — not raw
+        // keystrokes; a session reads it as ordinary conversational input.
         let sender = if from.is_empty() {
             "another Muya session".to_string()
         } else {
@@ -1040,6 +1048,23 @@ async fn handle_send_to_session(app: &AppHandle, req: &BrokerReq) -> String {
         return json!({
             "ok": true,
             "delivered": "muya",
+            "target": { "id": id, "name": name, "cwd": cwd },
+        })
+        .to_string();
+    }
+
+    if deliver == "keys" {
+        // Raw keystrokes, verbatim, NO "[message from X via Muya]" wrapping — for
+        // answering an interactive screen (a permission prompt, the trust-folder
+        // dialog) where any extra characters would be typed INTO the menu itself and
+        // likely break it. The caller controls the exact bytes, including newlines.
+        let payload = json!({ "sessionId": id, "text": text, "raw": true });
+        if let Err(e) = app.emit("muya://deliver-message", payload) {
+            return err_resp(format!("failed to deliver: {e}"));
+        }
+        return json!({
+            "ok": true,
+            "delivered": "keys",
             "target": { "id": id, "name": name, "cwd": cwd },
         })
         .to_string();

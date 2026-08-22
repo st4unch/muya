@@ -199,7 +199,7 @@ fn tools_list() -> Value {
             },
             {
                 "name": "list_sessions",
-                "description": "List the OTHER Claude Code sessions currently running in Muya, with the names the operator gave them (e.g. 'password hardening', 'frontend refactor'), their working directory and status. Use this whenever the user refers to another session by name ('tell the password-hardening session…', 'what is the migration session doing?') — Muya's names are authoritative, so this is how you find the right target among many sessions. The entry marked 'this is you' is your own session.",
+                "description": "List the OTHER Claude Code sessions currently running in Muya, with the names the operator gave them (e.g. 'password hardening', 'frontend refactor'), their working directory and status. Use this whenever the user refers to another session by name ('tell the password-hardening session…', 'what is the migration session doing?') — Muya's names are authoritative, so this is how you find the right target among many sessions. The entry marked 'this is you' is your own session. A session stuck waiting on something (e.g. a permission prompt) is flagged with what it's waiting on — you can usually unblock it with send_to_session(deliver:\"keys\") to type the answer (e.g. the option number, or \"y\") into its terminal verbatim (deliver:\"muya\" would break it — that mode wraps the text as a chat message).",
                 "inputSchema": { "type": "object", "additionalProperties": false }
             },
             {
@@ -218,13 +218,13 @@ fn tools_list() -> Value {
             },
             {
                 "name": "send_to_session",
-                "description": "Send a message to ANOTHER running session, addressed by the operator's name for it. Muya resolves the name to exactly one session (if several match, you get the candidates — ASK THE USER which one, never guess), and stamps your own session as the sender. By default it hands you back the canonical target name to deliver with the native SendMessage tool, which reaches the other session without interrupting its running work. Pass deliver:\"muya\" to have Muya type the message into that session's terminal instead (use this only when SendMessage isn't available to you).",
+                "description": "Send a message to ANOTHER running session, addressed by the operator's name for it. Muya resolves the name to exactly one session (if several match, you get the candidates — ASK THE USER which one, never guess), and stamps your own session as the sender. By default it hands you back the canonical target name to deliver with the native SendMessage tool, which reaches the other session without interrupting its running work. Pass deliver:\"muya\" to have Muya type a CHAT message into that session's terminal instead (fallback when SendMessage isn't available). Pass deliver:\"keys\" to answer an interactive screen a session is stuck on instead (check list_sessions' waitingFor first) — `text` is typed VERBATIM with no wrapping, so pass exactly what a human would type (e.g. \"1\\n\" or \"y\\n\") to pick an option and confirm; deliver:\"muya\" would type its message-wrapping text INTO the prompt and likely break it, so never use it for this.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "target": { "type": "string", "description": "Target session name or id (from list_sessions)." },
-                        "text": { "type": "string", "description": "The message to send. Write it yourself — include the context the other session needs." },
-                        "deliver": { "type": "string", "enum": ["auto", "muya"], "description": "'auto' (default): resolve and deliver via the native SendMessage tool. 'muya': Muya types it into the target terminal." }
+                        "text": { "type": "string", "description": "The message to send (deliver:\"auto\"/\"muya\"), or the literal keystrokes to type (deliver:\"keys\")." },
+                        "deliver": { "type": "string", "enum": ["auto", "muya", "keys"], "description": "'auto' (default): resolve and deliver via the native SendMessage tool. 'muya': Muya types a wrapped chat message into the target terminal. 'keys': Muya types `text` in verbatim — for answering a prompt, not for chat." }
                     },
                     "required": ["target", "text"],
                     "additionalProperties": false
@@ -595,8 +595,12 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                     let status = s.get("status").and_then(Value::as_str).unwrap_or("");
                     let cwd = s.get("cwd").and_then(Value::as_str).unwrap_or("");
                     let me = s.get("isCurrent").and_then(Value::as_bool) == Some(true);
+                    let waiting_for = s.get("waitingFor").and_then(Value::as_str);
+                    let waiting_note = waiting_for
+                        .map(|w| format!(" — stuck waiting on: {w} (answer with send_to_session deliver:\"muya\")"))
+                        .unwrap_or_default();
                     text.push_str(&format!(
-                        "- {name}{} [{status}] id={id} cwd={cwd}\n",
+                        "- {name}{} [{status}] id={id} cwd={cwd}{waiting_note}\n",
                         if me { " (this is you)" } else { "" }
                     ));
                 }
@@ -671,10 +675,16 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
             if resp.get("ok").and_then(Value::as_bool) == Some(true) {
                 let tgt = resp.get("target").cloned().unwrap_or(Value::Null);
                 let name = tgt.get("name").and_then(Value::as_str).unwrap_or("");
-                if resp.get("delivered").and_then(Value::as_str) == Some("muya") {
+                let delivered = resp.get("delivered").and_then(Value::as_str);
+                if delivered == Some("muya") {
                     Ok(tool_ok(
                         format!("Muya typed your message into '{name}'."),
                         Some(json!({ "delivered": "muya", "target": tgt })),
+                    ))
+                } else if delivered == Some("keys") {
+                    Ok(tool_ok(
+                        format!("Muya typed the keystrokes into '{name}'."),
+                        Some(json!({ "delivered": "keys", "target": tgt })),
                     ))
                 } else {
                     // Resolution done; the agent delivers with the native, non-interrupting tool.

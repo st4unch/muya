@@ -36,3 +36,41 @@ mekanizması yazılmadı. Doğrulama: `cargo test --lib` 259/259 (+2 yeni), `tsc
 - `ssh_send`'in sahiplik-kısıtı deseni ikinci kez kullanıldı (önce SSH, şimdi open_session) —
   codebase'te kurulu bir "sadece kendi açtığını değiştirebilirsin" konvansiyonu var, yeni bir
   feature'da güvenlik kararını sıfırdan tasarlamak yerine bunu ara.
+
+## P2 — operatörün "popup'lara cevap verdirebilir miyiz?" sorusu (2026-08-22)
+Aynı oturumda, `close_session` bittikten hemen sonra gelen takip talebi. İncelerken **gerçek bir bug**
+bulundu ve düzeltildi — kod yazmadan önce test etmese idi fark edilmezdi:
+
+1. **`open_session` ile açılan taze bir oturum, hiç görmediği bir `cwd`'de "bu klasöre güveniyor
+   musun?" ekranında TAKILIYORDU** — `--dangerously-skip-permissions` bile bunu atlamıyor (PRD
+   agent-session-open'da zaten bilinen sınır olarak not edilmişti). Takılı kaldığı sürece
+   `claude agents --json`'a kaydolmuyor → `list_sessions`/`send_to_session` onu bulamıyor → tavuk-
+   yumurta. Operatör onayıyla (AskUserQuestion): **open_session artık bu ekranı otomatik "evet,
+   güveniyorum" ile geçiyor** (Muya workspace'leri zaten operatörün güvendiği yerler,
+   `--dangerously-skip-permissions` zaten daha yüksek bir güven eşiği). Uygulama: `Terminal.tsx`'e
+   yeni `autoAcceptTrust` prop'u — ilk komuttan (600ms) sonra, 4.6sn'de (canlı test edilmiş süre:
+   claude'nin kendi başlama + trust-prompt render süresi) boş bir Enter daha yazıyor. **Zaten
+   güvenilir bir `cwd`'de de zararsız** — canlı test edildi, prompt zaten işlenmeye başlamışken
+   gelen fazladan Enter hiçbir şeyi bozmuyor.
+2. **`send_to_session(deliver:"muya")` bir onay ekranını cevaplamak için KULLANILAMAZDI** — bu mod
+   metni her zaman `"[message from X via Muya] ..."` diye SARIYOR; bu sarma metni menünün üzerine
+   YAZILIRDI (her tuş vuruşu menüde işlenir), cevabı değil rastgele karakterleri gönderirdi. Bunu
+   fark etmeseydim "popup cevaplama" özelliği yayınlanır ama ilk denemede menüyü bozardı. **Fix:**
+   yeni `deliver:"keys"` modu — `text`'i SARMADAN ham tuş vuruşu olarak yazıyor (`broker.rs`
+   `muya://deliver-message`'a `raw:true` flag'i, `App.tsx` dinleyicisi buna göre dallanıyor).
+3. **`list_sessions` artık `waitingFor` alanını gösteriyor** (`claude agents --json`'ın kendi
+   verdiği ama önceden hiç okunmayan bir alan — `agents.rs` `RawAgent`/`AgentSession`'a eklendi) —
+   agent bir oturumun NEDEN beklediğini (örn. "permission prompt") görüp `deliver:"keys"` ile
+   cevaplayabiliyor.
+
+Doğrulama: `cargo test --lib` 260/260 (+2 yeni: agent_session_registration_gates_close zaten
+sayılmıştı, +map_agent_threads_waiting_for_through) / tsc temiz / npm 102 / sidecar canlı tools/list
+(21 tool, güncellenmiş şemalar). **Canlı PTY testi** (gerçek `claude` binary, izole süreç, host
+Muya'ya dokunulmadı): Muya'nın TAM sekansı (shell spawn → 600ms'de komut yaz → 4.6sn'de boş Enter)
+taze/güvenilmeyen bir dizine karşı çalıştırıldı — trust prompt otomatik geçildi, ilk mesaj işlendi
+ve "OK" cevabı geldi, oturum adı terminal başlığında doğru göründü. `list_sessions`/`send_to_session`
+tool açıklamalarındaki çapraz-referans hatası (list_sessions hâlâ eski `deliver:"muya"`'ya işaret
+ediyordu) canlı `tools/list` çıktısını okurken yakalandı, düzeltildi.
+
+İlgili: [[agent-session-open]] (trust-prompt sınırı orada belgeliydi), [[session-messaging]]
+(`send_to_session`'ın deliver modları orada tanımlıydı).

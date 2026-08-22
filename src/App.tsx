@@ -124,6 +124,11 @@ interface OpenTerminal {
    *  injects the stored/CyberArk password into the PTY — the secret never
    *  reaches JS) instead of running a login shell + initialCommand. */
   sshServerId?: string;
+  /** open_session-opened tab (PRD agent-session-open, close-session): auto-accept the
+   *  "is this folder trusted?" prompt claude shows on a cwd it's never seen before —
+   *  otherwise a freshly opened session can sit stuck waiting for a keypress before
+   *  it's even discoverable via `claude agents --json` for an agent to answer it. */
+  autoAcceptTrust?: boolean;
 }
 
 interface GitBranchState {
@@ -943,7 +948,7 @@ export default function App() {
         // closeTerminal uses the prefix to know it must release the broker's ownership
         // registry entry (PRD close-session) when this tab closes, by any means.
         const key = `aopen:${Date.now()}:${Math.random().toString(36).slice(2, 7)}`;
-        openTerminal({ key, name, kind: "terminal", cwd: ws, initialCommand });
+        openTerminal({ key, name, kind: "terminal", cwd: ws, initialCommand, autoAcceptTrust: true });
         setView("control");
       },
     );
@@ -989,22 +994,22 @@ export default function App() {
     };
   }, []);
 
-  // muya-mcp → app: one session sent a message to ANOTHER session with
-  // send_to_session(deliver:"muya"). Muya types it into the target tab's terminal,
-  // tagged with the sender, so the receiving Claude reads it as ordinary input.
+  // muya-mcp → app: one session sent a message (or raw keystrokes) to ANOTHER
+  // session with send_to_session(deliver:"muya"|"keys"). "muya" wraps the text as a
+  // tagged chat message the receiving Claude reads as ordinary input; "keys" (PRD
+  // close-session's answer-a-prompt follow-up) types `text` VERBATIM — no wrapping —
+  // for answering an interactive screen (a permission prompt, trust-folder dialog)
+  // where any extra characters would be typed into the menu itself.
   useEffect(() => {
-    const un = listen<{ sessionId: string; text: string; from?: string }>(
+    const un = listen<{ sessionId: string; text: string; from?: string; raw?: boolean }>(
       "muya://deliver-message",
       (e) => {
-        const { sessionId, text, from } = e.payload;
+        const { sessionId, text, from, raw } = e.payload;
         const key = sessionIdToKeyRef.current[sessionId];
         const ptyId = key ? terminalPtyIdsRef.current[key] : undefined;
         if (!ptyId) return; // target tab not open here
-        const sender = from ? ` from ${from}` : "";
-        void invoke("pty_write", {
-          id: ptyId,
-          data: `[message${sender} via Muya] ${text}\n`,
-        }).catch(() => {});
+        const data = raw ? text : `[message${from ? ` from ${from}` : ""} via Muya] ${text}\n`;
+        void invoke("pty_write", { id: ptyId, data }).catch(() => {});
       },
     );
     return () => { void un.then((f) => f()); };
@@ -2445,6 +2450,7 @@ export const loginHandler = async (req, res) => {
                             cwd={tm.cwd}
                             initialCommand={tm.initialCommand}
                             sshServerId={tm.sshServerId}
+                            autoAcceptTrust={tm.autoAcceptTrust}
                             theme={effectiveTheme}
                             active={show}
                             onPtyReady={(ptyId) => setTerminalPtyIds(prev => ({ ...prev, [tm.key]: ptyId }))}

@@ -33,6 +33,10 @@ struct RawAgent {
     /// Present when this session was spawned by another Claude session (sub-agent).
     #[serde(rename = "parentSessionId", default)]
     parent_session_id: Option<String>,
+    /// Present when `status`/`state` is a waiting kind — the reason, e.g. "permission
+    /// prompt". Absent for working/idle/stopped sessions.
+    #[serde(rename = "waitingFor", default)]
+    waiting_for: Option<String>,
 }
 
 /// Mirrors the frontend `AgentSession` TypeScript interface (camelCase via serde).
@@ -60,6 +64,11 @@ pub struct AgentSession {
     pub pid: Option<i64>,
     /// Set when this session was spawned by another Claude agent (sub-agent tree).
     pub parent_id: Option<String>,
+    /// Why the session is blocked, when `status == "waiting-for-input"` — e.g.
+    /// `"permission prompt"`. `claude agents --json` reports this as `waitingFor`;
+    /// surfaced so an agent can tell "waiting for a normal reply" apart from
+    /// "stuck on a Y/N dialog it should answer" before deciding to act.
+    pub waiting_for: Option<String>,
 }
 
 /// Resolve the `claude` binary once per process. The path never changes during a
@@ -210,6 +219,7 @@ fn map_agent(raw: RawAgent) -> AgentSession {
         attach_id,
         pid: raw.pid,
         parent_id: raw.parent_session_id,
+        waiting_for: raw.waiting_for,
     }
 }
 
@@ -346,6 +356,7 @@ mod tests {
             attach_id: String::new(),
             pid: None,
             parent_id: None,
+            waiting_for: None,
         }
     }
 
@@ -381,12 +392,48 @@ mod tests {
             status: Some("busy".into()),
             state: None,
             parent_session_id: None,
+            waiting_for: None,
         };
         assert_eq!(map_status(&r), "working");
         r.state = Some("blocked".into());
         assert_eq!(map_status(&r), "waiting-for-input"); // state wins over status
         r.state = Some("done".into());
         assert_eq!(map_status(&r), "idle");
+    }
+
+    #[test]
+    fn map_agent_threads_waiting_for_through() {
+        let r = RawAgent {
+            session_id: Some("id1".into()),
+            pid: None,
+            id: None,
+            name: Some("blocked-one".into()),
+            cwd: None,
+            kind: None,
+            started_at: None,
+            status: Some("waiting".into()),
+            state: None,
+            parent_session_id: None,
+            waiting_for: Some("permission prompt".into()),
+        };
+        let mapped = map_agent(r);
+        assert_eq!(mapped.status, "waiting-for-input");
+        assert_eq!(mapped.waiting_for.as_deref(), Some("permission prompt"));
+
+        let r2 = RawAgent {
+            session_id: Some("id2".into()),
+            pid: None,
+            id: None,
+            name: Some("idle-one".into()),
+            cwd: None,
+            kind: None,
+            started_at: None,
+            status: Some("idle".into()),
+            state: None,
+            parent_session_id: None,
+            waiting_for: None,
+        };
+        assert_eq!(map_agent(r2).waiting_for, None);
     }
 
     #[test]
