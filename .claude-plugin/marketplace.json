@@ -11,8 +11,8 @@
     {
       "name": "muya-mcp",
       "source": "./claude-plugin/muya-mcp",
-      "description": "How to use Muya's muya-mcp MCP server tools well — SSH, cross-session messaging, opening/closing sessions, secrets, operations, and Kanban tracking.",
-      "version": "1.0.0",
+      "description": "Skills for Muya: using its MCP tools (SSH, cross-session messaging, opening/closing sessions, secrets), plus building, debugging, and security/performance-reviewing the Muya codebase itself.",
+      "version": "1.1.0",
       "author": {
         "name": "staunch"
       },

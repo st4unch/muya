@@ -68,21 +68,28 @@ Requires macOS (Apple Silicon). Just unzip and run — no installer needed.
 
 ---
 
-## Agent skill (muya-mcp)
+## Agent skills
 
 Muya ships an MCP server (`muya-mcp`) that gives your Claude Code agents SSH access, cross-session
 messaging, the ability to open/close their own parallel sessions, and access to operator-managed
-secrets — all through tools like `ssh_run`, `send_to_session`, `open_session`. A companion Claude
-Code **skill** teaches an agent how to use that tool set well (which tool for which situation,
-delivery-mode gotchas, ownership rules) — install it once via this repo's plugin marketplace:
+secrets — through tools like `ssh_run`, `send_to_session`, `open_session`. A companion Claude Code
+plugin bundles four skills — install once via this repo's plugin marketplace:
 
 ```
 /plugin marketplace add st4unch/muya
 /plugin install muya-mcp
 ```
 
-The skill lives at [`claude-plugin/muya-mcp`](claude-plugin/muya-mcp) in this repo if you'd rather
-read or copy it directly.
+| Skill | For |
+|---|---|
+| `muya-mcp` | **Using** Muya's tools — which tool for which job, delivery-mode gotchas, ownership rules |
+| `muya-agent` | **Building** Muya — the MCP two-hop, Tauri commands, PTY/frontend conventions, release flow |
+| `muya-debugger` | **Diagnosing** Muya — symptom→layer triage, the three process boundaries, PTY/SSH/PSMP traps |
+| `muya-reviewer` | **Reviewing** changes — security first, performance second; style explicitly last |
+
+The last three are grounded in this repo's own recorded bugs (`tasks/lessons.md`), so they encode
+mistakes actually made here rather than generic advice. Sources live under
+[`claude-plugin/muya-mcp/skills/`](claude-plugin/muya-mcp/skills) if you'd rather read them directly.
 
 ---
 
