@@ -1159,6 +1159,62 @@ fn install_mcp_at(
     crate::credstore::atomic_write(cfg_path, &out)
 }
 
+const MUYA_PLUGIN_INSTALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Pure decision: does a failed `claude plugin` invocation's combined output actually
+/// mean "already added/installed" (idempotent success), given the process succeeded
+/// or failed? Extracted so the idempotency rule is unit-testable without spawning a
+/// real `claude` process.
+fn is_idempotent_success(exit_success: bool, stdout: &str, stderr: &str) -> bool {
+    if exit_success {
+        return true;
+    }
+    format!("{stdout} {stderr}")
+        .to_lowercase()
+        .contains("already")
+}
+
+/// Run a single `claude plugin ...` subcommand and treat "already added/installed"
+/// as success — the whole point of `install_muya_plugin` is idempotent end-state,
+/// not "did this exact invocation do fresh work".
+fn run_claude_plugin_cmd(args: &[&str]) -> Result<String, String> {
+    let out = Command::new("claude")
+        .args(args)
+        .output()
+        .map_err(|e| format!("claude CLI not found on PATH: {e}"))?;
+    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    if is_idempotent_success(out.status.success(), &stdout, &stderr) {
+        return Ok(stdout);
+    }
+    Err(if stderr.is_empty() { stdout } else { stderr })
+}
+
+/// One-click install of Muya's own Claude Code plugin (`muya-mcp` — teaches Claude
+/// how to use Muya's SSH/session MCP tools). Equivalent to the operator typing:
+///   claude plugin marketplace add st4unch/muya
+///   claude plugin install muya-mcp@muya
+/// Both `claude` subprocess calls are blocking, so they run on the blocking pool
+/// (never the tokio worker pool — see muya-agent skill §3 / lessons L16, L31) with a
+/// wall-clock timeout so a hung/prompting `claude` process can't leave the Marketplace
+/// panel's Install button spinning forever.
+#[tauri::command(async)]
+pub async fn install_muya_plugin() -> Result<String, String> {
+    let work = tokio::task::spawn_blocking(|| -> Result<String, String> {
+        run_claude_plugin_cmd(&["plugin", "marketplace", "add", "st4unch/muya"])?;
+        run_claude_plugin_cmd(&["plugin", "install", "muya-mcp@muya"])?;
+        Ok("muya-mcp plugin installed.".to_string())
+    });
+
+    match tokio::time::timeout(MUYA_PLUGIN_INSTALL_TIMEOUT, work).await {
+        Ok(join_result) => join_result.map_err(|e| format!("install task panicked: {e}"))?,
+        Err(_) => Err(format!(
+            "timed out after {}s waiting for the claude CLI",
+            MUYA_PLUGIN_INSTALL_TIMEOUT.as_secs()
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1642,5 +1698,36 @@ mod path_kind_tests {
         if std::env::var("HOME").is_ok() {
             assert_eq!(resolve_path_kind("~".into(), None).kind, "dir");
         }
+    }
+
+    // ----- install_muya_plugin: idempotency decision -----
+
+    #[test]
+    fn idempotent_success_when_exit_ok() {
+        assert!(is_idempotent_success(true, "installed", ""));
+    }
+
+    #[test]
+    fn idempotent_success_when_already_added() {
+        assert!(is_idempotent_success(
+            false,
+            "",
+            "Error: marketplace 'muya' already exists"
+        ));
+        assert!(is_idempotent_success(
+            false,
+            "plugin muya-mcp is already installed",
+            ""
+        ));
+    }
+
+    #[test]
+    fn not_idempotent_success_on_a_real_failure() {
+        assert!(!is_idempotent_success(
+            false,
+            "",
+            "Error: repository not found"
+        ));
+        assert!(!is_idempotent_success(false, "", ""));
     }
 }

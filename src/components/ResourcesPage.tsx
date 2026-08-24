@@ -16,6 +16,7 @@ import {
   ExternalLink,
   Star,
   RefreshCw,
+  Rocket,
 } from "lucide-react";
 import CreateWithClaudeModal from "./CreateWithClaudeModal";
 
@@ -116,6 +117,10 @@ export default function ResourcesPage({
   const [marketError, setMarketError]     = useState<string | null>(null);
   const [installingKey, setInstallingKey] = useState<string | null>(null);
   const [selectedMarket, setSelectedMarket] = useState<MarketSkill | MarketMcp | null>(null);
+
+  // ── Pinned: Muya's own plugin (muya-mcp) one-click install ────────────────
+  const [muyaPluginInstalling, setMuyaPluginInstalling] = useState(false);
+  const [muyaPluginResult, setMuyaPluginResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   // ── Create modal ─────────────────────────────────────────────────────────
   const [createOpen, setCreateOpen] = useState(false);
@@ -255,8 +260,24 @@ export default function ResourcesPage({
     }
   };
 
+  // Runs `claude plugin marketplace add st4unch/muya` + `claude plugin install
+  // muya-mcp@muya` on the Rust side (blocking-pool + timeout — see fs.rs). Idempotent:
+  // re-running when already installed still resolves as success.
+  const installMuyaPlugin = async () => {
+    setMuyaPluginInstalling(true);
+    setMuyaPluginResult(null);
+    try {
+      const message = await invoke<string>("install_muya_plugin");
+      setMuyaPluginResult({ ok: true, message });
+    } catch (e) {
+      setMuyaPluginResult({ ok: false, message: String(e) });
+    } finally {
+      setMuyaPluginInstalling(false);
+    }
+  };
+
   // ── Filtered local lists ─────────────────────────────────────────────────
-  const q = query.toLowerCase();
+  const q = query.trim().toLowerCase();
   const filteredSkills = resources?.skills.filter((s) => s.name.toLowerCase().includes(q)) ?? [];
   const filteredAgents = resources?.agents.filter((a) => a.name.toLowerCase().includes(q)) ?? [];
   const filteredHooks  = resources?.hooks.filter((h)  => h.name.toLowerCase().includes(q)) ?? [];
@@ -478,6 +499,46 @@ export default function ResourcesPage({
             {/* ── MARKETPLACE view ── */}
             {isMarketplace && (
               <>
+                {/* Pinned: Muya's own plugin — visible on every marketplace sub-tab */}
+                <div className="m-3 rounded-lg border border-indigo-200 dark:border-indigo-800 bg-indigo-50/60 dark:bg-indigo-950/20 p-3">
+                  <div className="flex items-start gap-2">
+                    <Rocket className="w-4 h-4 shrink-0 text-indigo-600 dark:text-indigo-400 mt-0.5" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-semibold text-neutral-800 dark:text-neutral-200">
+                        Muya plugin (muya-mcp)
+                      </p>
+                      <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5">
+                        Muya's own agent skill — teaches Claude how to use Muya's SSH/session tools.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => void installMuyaPlugin()}
+                        disabled={muyaPluginInstalling}
+                        className="mt-2 flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded border border-indigo-300 dark:border-indigo-700 bg-white dark:bg-neutral-900 hover:bg-indigo-100 dark:hover:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 disabled:opacity-50 transition-colors cursor-pointer"
+                      >
+                        {muyaPluginInstalling ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <Download className="w-3 h-3" />
+                        )}
+                        {muyaPluginInstalling ? "Yükleniyor…" : "Install"}
+                      </button>
+                      {muyaPluginResult && (
+                        <p
+                          className={`mt-1.5 text-[11px] ${
+                            muyaPluginResult.ok
+                              ? "text-emerald-600 dark:text-emerald-400"
+                              : "text-rose-600 dark:text-rose-400"
+                          }`}
+                        >
+                          {muyaPluginResult.ok ? "✓ " : "✗ "}
+                          {muyaPluginResult.message}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
                 {marketLoading && (
                   <div className="flex items-center justify-center py-12 text-neutral-400">
                     <Loader2 className="w-4 h-4 animate-spin mr-2" />

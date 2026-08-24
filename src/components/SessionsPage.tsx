@@ -164,6 +164,7 @@ export default function SessionsPage({
   const filteredLive = q
     ? live.filter(s =>
         s.name.toLowerCase().includes(q) ||
+        s.id.toLowerCase().includes(q) ||
         s.worktree.toLowerCase().includes(q) ||
         s.branch.toLowerCase().includes(q) ||
         s.status.toLowerCase().includes(q) ||

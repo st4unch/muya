@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
 import { nextAcked, deriveBlinkKeys } from "./lib/blink";
 import { pickNextActiveKey, newSshTabKey, addSshSession } from "./lib/tabs";
+import { installNoAutocorrect } from "./lib/noAutocorrect";
 import appIconUrl from "./assets/app-icon.png";
 import {
   Folder,
@@ -254,6 +255,15 @@ export default function App() {
 
   // Selected Active Agent context
   const [selectedAgentId, setSelectedAgentId] = useState<string>("agent-stripe");
+
+  // macOS WKWebView autocorrect/autocapitalize silently rewrites what the
+  // operator types into any <input>/<textarea> (hostnames, paths, branch
+  // names, SSH aliases, commands) — disable it globally, once, for the whole
+  // app's lifetime. See src/lib/noAutocorrect.ts.
+  useEffect(() => {
+    const stop = installNoAutocorrect();
+    return stop;
+  }, []);
 
   // LIVE: replace mock sessions with real `claude agents --json` data from the Rust
   // backend (PRD AC-13). Polls every 3s (PRD §14). Falls back to mock on error so the

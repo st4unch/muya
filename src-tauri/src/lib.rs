@@ -306,6 +306,7 @@ pub fn run() {
             fs::fetch_mcp_marketplace,
             fs::install_skill,
             fs::install_mcp,
+            fs::install_muya_plugin,
             fs::git_status,
             fs::reveal_in_finder,
             fs::allow_asset_path,
