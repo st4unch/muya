@@ -1,0 +1,12 @@
+{
+  "name": "staunch-agents",
+  "version": "1.0.0",
+  "description": "staunch's personal Claude Code subagent collection — software-architect, orchestrator/inference/rag/mcp/agent developers, issue-analyzer, project-manager, merge-coordinator, prd-run-* phase agents, and more.",
+  "author": {
+    "name": "staunch",
+    "url": "https://github.com/st4unch"
+  },
+  "homepage": "https://github.com/st4unch/claude-skills-agents#readme",
+  "repository": "https://github.com/st4unch/claude-skills-agents",
+  "keywords": ["agents", "subagents", "staunch"]
+}

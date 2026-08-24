@@ -68,22 +68,34 @@ Requires macOS (Apple Silicon). Just unzip and run — no installer needed.
 
 ---
 
-## Agent skill (muya-mcp)
+## Claude Code plugin marketplace
 
-Muya ships an MCP server (`muya-mcp`) that gives your Claude Code agents SSH access, cross-session
-messaging, the ability to open/close their own parallel sessions, and access to operator-managed
-secrets — all through tools like `ssh_run`, `send_to_session`, `open_session`. A companion Claude
-Code **skill** teaches an agent how to use that tool set well (which tool for which situation,
-PSMP/CyberArk cost model, delivery-mode gotchas, ownership rules) — install it once via this repo's
-plugin marketplace:
+This repo doubles as a plugin marketplace for Claude Code. Add it once, then install whichever
+plugins you want — each is opt-in, since every installed skill/agent adds a fixed "always-on" token
+cost to *every* session that has it enabled:
 
 ```
 /plugin marketplace add st4unch/muya
-/plugin install muya-mcp
+/plugin install muya-mcp        # or staunch-skills, or staunch-agents
 ```
 
-The skill lives at [`claude-plugin/muya-mcp`](claude-plugin/muya-mcp) in this repo if you'd rather
-read or copy it directly.
+| Plugin | What it ships | Source | Always-on cost |
+|---|---|---|---|
+| `muya-mcp` | 1 skill teaching agents to use Muya's own MCP tools well (SSH, cross-session messaging, secrets, PSMP/CyberArk cost model) | Vendored in [`claude-plugin/muya-mcp`](claude-plugin/muya-mcp) | ~250 tok |
+| `staunch-skills` | 23 personal workflow skills (PRD pipeline, kickoff, project audit, devops/docker helpers, and more) | Referenced live from [st4unch/claude-skills-agents](https://github.com/st4unch/claude-skills-agents) `skills/` | ~4.4k tok |
+| `staunch-agents` | 20 personal subagents (software-architect, orchestrator/inference/rag/mcp developers, issue-analyzer, project-manager, prd-run-* phases, and more) | Vendored in [`claude-plugin/staunch-agents`](claude-plugin/staunch-agents) | ~5.3k tok |
+
+**Why three plugins instead of one:** bundling all of this into `muya-mcp` would tax every Muya
+user with skills/agents they never asked for. Splitting by type lets people install only what they
+want.
+
+**Why `staunch-skills` references the upstream repo but `staunch-agents` doesn't:** Claude Code's
+marketplace format supports pointing a plugin entry at a subdirectory of another git repo
+(`git-subdir` source) instead of copying files in — one source of truth, no duplication. That works
+for skills (verified: `claude plugin details staunch-skills@muya` shows all 23). The installed
+Claude Code CLI's plugin schema (2.1.241) doesn't yet support the equivalent override for agents
+pointed at a flat directory, so `staunch-agents` vendors copies of the 20 agent files instead —
+worth re-attempting a pure reference once that's fixed upstream.
 
 ---
 
