@@ -4,14 +4,14 @@
     "name": "staunch"
   },
   "metadata": {
-    "description": "Claude Code plugins for Muya \u2014 a desktop control plane for parallel Claude Code agents",
+    "description": "Claude Code plugins for Muya — a desktop control plane for parallel Claude Code agents",
     "version": "1.0.0"
   },
   "plugins": [
     {
       "name": "muya-mcp",
       "source": "./claude-plugin/muya-mcp",
-      "description": "How to use Muya's muya-mcp MCP server tools well \u2014 SSH, cross-session messaging, opening/closing sessions, secrets, operations, and Kanban tracking.",
+      "description": "How to use Muya's muya-mcp MCP server tools well — SSH, cross-session messaging, opening/closing sessions, secrets, operations, and Kanban tracking.",
       "version": "1.0.1",
       "author": {
         "name": "staunch"
@@ -23,68 +23,6 @@
         "ssh",
         "sessions",
         "agents"
-      ]
-    },
-    {
-      "name": "staunch-skills",
-      "source": {
-        "source": "git-subdir",
-        "url": "https://github.com/st4unch/claude-skills-agents.git",
-        "path": "skills",
-        "ref": "main",
-        "sha": "d62257161321a57b5b31b2331a4c13382e5df606"
-      },
-      "description": "staunch's personal Claude Code skill collection \u2014 PRD workflow (spec-first-feature, mini-prd, prd-review, prd-run, prd-devils-advocate), project bootstrap/audit (kickoff, project-architect, project-auditor, review-project), dev-ops helpers (devops-expert, docker-expert), and misc workflow skills (impact-lens, issue-finder, verify-change, goal-based-loop, context-memory, and more).",
-      "version": "1.0.0",
-      "author": {
-        "name": "staunch"
-      },
-      "category": "workflow",
-      "keywords": [
-        "skills",
-        "prd",
-        "workflow",
-        "staunch"
-      ],
-      "skills": [
-        "./ci-cd-and-automation",
-        "./context-memory",
-        "./devops-expert",
-        "./docker-expert",
-        "./find-skills",
-        "./frontend-design",
-        "./goal-based-loop",
-        "./impact-lens",
-        "./issue-finder",
-        "./kickoff",
-        "./mini-prd",
-        "./prd-devils-advocate",
-        "./prd-review",
-        "./prd-run",
-        "./project-architect",
-        "./project-auditor",
-        "./prompt-engineer",
-        "./review-project",
-        "./spec-first-feature",
-        "./splunk-reference-expert",
-        "./submit-to-queue",
-        "./the-fool",
-        "./verify-change"
-      ]
-    },
-    {
-      "name": "staunch-agents",
-      "source": "./claude-plugin/staunch-agents",
-      "description": "staunch's personal Claude Code subagent collection \u2014 software-architect, orchestrator/inference/rag/mcp/agent developers, issue-analyzer, project-manager, merge-coordinator, prd-run-* phase agents, and more.",
-      "version": "1.0.0",
-      "author": {
-        "name": "staunch"
-      },
-      "category": "workflow",
-      "keywords": [
-        "agents",
-        "subagents",
-        "staunch"
       ]
     }
   ]

@@ -70,32 +70,24 @@ Requires macOS (Apple Silicon). Just unzip and run — no installer needed.
 
 ## Claude Code plugin marketplace
 
-This repo doubles as a plugin marketplace for Claude Code. Add it once, then install whichever
-plugins you want — each is opt-in, since every installed skill/agent adds a fixed "always-on" token
-cost to *every* session that has it enabled:
+This repo doubles as a plugin marketplace for Claude Code, shipping exactly one plugin — the skill
+that teaches an agent to use Muya's own MCP tools well:
 
 ```
 /plugin marketplace add st4unch/muya
-/plugin install muya-mcp        # or staunch-skills, or staunch-agents
+/plugin install muya-mcp
 ```
 
-| Plugin | What it ships | Source | Always-on cost |
-|---|---|---|---|
-| `muya-mcp` | 1 skill teaching agents to use Muya's own MCP tools well (SSH, cross-session messaging, secrets, PSMP/CyberArk cost model) | Vendored in [`claude-plugin/muya-mcp`](claude-plugin/muya-mcp) | ~250 tok |
-| `staunch-skills` | 23 personal workflow skills (PRD pipeline, kickoff, project audit, devops/docker helpers, and more) | Referenced live from [st4unch/claude-skills-agents](https://github.com/st4unch/claude-skills-agents) `skills/` | ~4.4k tok |
-| `staunch-agents` | 20 personal subagents (software-architect, orchestrator/inference/rag/mcp developers, issue-analyzer, project-manager, prd-run-* phases, and more) | Vendored in [`claude-plugin/staunch-agents`](claude-plugin/staunch-agents) | ~5.3k tok |
+| Plugin | What it ships | Always-on cost |
+|---|---|---|
+| `muya-mcp` | 1 skill: which Muya tool for which job, the PSMP/CyberArk connection-cost model, message-delivery modes, session ownership rules | ~250 tok |
 
-**Why three plugins instead of one:** bundling all of this into `muya-mcp` would tax every Muya
-user with skills/agents they never asked for. Splitting by type lets people install only what they
-want.
-
-**Why `staunch-skills` references the upstream repo but `staunch-agents` doesn't:** Claude Code's
-marketplace format supports pointing a plugin entry at a subdirectory of another git repo
-(`git-subdir` source) instead of copying files in — one source of truth, no duplication. That works
-for skills (verified: `claude plugin details staunch-skills@muya` shows all 23). The installed
-Claude Code CLI's plugin schema (2.1.241) doesn't yet support the equivalent override for agents
-pointed at a flat directory, so `staunch-agents` vendors copies of the 20 agent files instead —
-worth re-attempting a pure reference once that's fixed upstream.
+**Scope, deliberately narrow.** This marketplace carries Muya's own plugin and nothing else. A
+general-purpose skill/agent collection was evaluated for inclusion and rejected: most of it was
+built around one person's private workflow (referencing agents, scripts and vault paths that don't
+exist on anyone else's machine), so it wouldn't have errored — it would have *silently misbehaved*,
+which is worse. Every installed skill and agent also charges a fixed token cost to **every** session
+that enables the plugin, so shipping things people don't use is a real, recurring tax on them.
 
 ---
 
