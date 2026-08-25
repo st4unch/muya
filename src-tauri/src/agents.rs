@@ -80,16 +80,33 @@ pub(crate) fn claude_bin() -> &'static str {
     BIN.get_or_init(resolve_claude_bin).as_str()
 }
 
-/// GUI apps on macOS inherit a minimal PATH, so a bare `claude` may not be found.
-/// Try PATH first, then common install locations.
+/// GUI apps on macOS inherit a minimal PATH (`/usr/bin:/bin:/usr/sbin:/sbin`) that
+/// excludes every common `claude` install location, so a bare `claude` fails when
+/// Muya is launched from Finder/Dock rather than a terminal.
+///
+/// Resolution order — the shell probe is what makes this work for OTHER people's
+/// machines, not just ours: a hardcoded candidate list only covers install layouts
+/// we happened to think of, and silently fails for anyone using a Node version
+/// manager (nvm/fnm/volta), a custom prefix, or any other setup. Asking the user's
+/// OWN login shell resolves whatever *they* actually configured.
 fn resolve_claude_bin() -> String {
+    // 1. Already on PATH (true when launched from a terminal) — cheapest.
     if Command::new("claude").arg("--version").output().is_ok() {
         return "claude".to_string();
     }
+    // 2. Ask the user's login shell. `-l` sources their profile, so this picks up
+    //    nvm/fnm/volta shims, custom prefixes, anything on their real PATH.
+    if let Some(path) = claude_via_login_shell() {
+        return path;
+    }
+    // 3. Known default locations, in case the shell probe is unavailable (no $SHELL,
+    //    a profile that errors out, a restricted shell).
     if let Some(home) = std::env::var_os("HOME") {
-        let candidate = std::path::Path::new(&home).join(".local/bin/claude");
-        if candidate.exists() {
-            return candidate.to_string_lossy().into_owned();
+        for rel in [".local/bin/claude", ".local/share/claude/bin/claude"] {
+            let candidate = std::path::Path::new(&home).join(rel);
+            if candidate.exists() {
+                return candidate.to_string_lossy().into_owned();
+            }
         }
     }
     for p in ["/opt/homebrew/bin/claude", "/usr/local/bin/claude"] {
@@ -97,7 +114,30 @@ fn resolve_claude_bin() -> String {
             return p.to_string();
         }
     }
+    // 4. Give up and let the caller surface a real "not found" error.
     "claude".to_string()
+}
+
+/// Ask the operator's login shell where `claude` is. Returns an absolute path only
+/// when the shell resolved it to a file that actually exists — a shell function or
+/// alias (which `command -v` may echo back as a non-path) is rejected, since we need
+/// something `Command::new` can execute.
+fn claude_via_login_shell() -> Option<String> {
+    let shell = std::env::var("SHELL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())?;
+    let out = Command::new(&shell)
+        .args(["-l", "-c", "command -v claude"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if path.is_empty() || !std::path::Path::new(&path).is_file() {
+        return None;
+    }
+    Some(path)
 }
 
 /// Best-effort current branch for a working directory; "—" if not a git repo.
