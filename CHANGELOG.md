@@ -6,6 +6,14 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.42] - 2026-08-26
+
+### Fixed
+- **Claude sessions lost their ✨ icon and the Sessions tab went empty.** If more than one `claude` was installed, Muya could bind to an older one that doesn't support the command it needs, and then quietly showed nothing. It now checks that a `claude` can actually answer before using it, instead of trusting the first one it finds.
+
+### Removed
+- **The marketplace now offers only Muya's own plugin.** The bundled personal skill/agent collection was pulled: much of it referenced tools and files that only exist on the author's machine, so on anyone else's it wouldn't fail loudly — it would just quietly do the wrong thing. Every installed skill also costs tokens in every session, so shipping unused ones was a standing tax.
+
 ## [0.2.41] - 2026-08-25
 
 ### Fixed
