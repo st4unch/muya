@@ -75,7 +75,7 @@ pub struct AgentSession {
 /// run, but `list_agent_sessions` is polled on a timer — without caching, every
 /// refresh spawned a throwaway `claude --version` (~38 ms + a full Node startup)
 /// just to re-confirm the same path. `OnceLock` collapses that to a single probe.
-fn claude_bin() -> &'static str {
+pub(crate) fn claude_bin() -> &'static str {
     static BIN: OnceLock<String> = OnceLock::new();
     BIN.get_or_init(resolve_claude_bin).as_str()
 }

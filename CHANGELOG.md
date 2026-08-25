@@ -6,6 +6,11 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.41] - 2026-08-25
+
+### Fixed
+- **"Install" on the Muya plugin card failed with "claude CLI not found on PATH".** When Muya is launched from Finder or the Dock, macOS gives it a bare-minimum PATH that doesn't include where `claude` is usually installed, so the button could never find it. It now looks in the same places the rest of the app already did (`~/.local/bin`, Homebrew, `/usr/local/bin`).
+
 ## [0.2.40] - 2026-08-25
 
 ### Added

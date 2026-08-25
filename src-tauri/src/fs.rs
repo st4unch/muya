@@ -1178,10 +1178,16 @@ fn is_idempotent_success(exit_success: bool, stdout: &str, stderr: &str) -> bool
 /// as success — the whole point of `install_muya_plugin` is idempotent end-state,
 /// not "did this exact invocation do fresh work".
 fn run_claude_plugin_cmd(args: &[&str]) -> Result<String, String> {
-    let out = Command::new("claude")
+    // MUST use the resolver, not a bare "claude": a macOS GUI app launched from
+    // Finder/Dock inherits a minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin) that does
+    // NOT include ~/.local/bin or Homebrew, so `Command::new("claude")` fails with
+    // "No such file or directory" for every operator whose claude lives there —
+    // exactly what this button did on first release (v0.2.40).
+    let bin = crate::agents::claude_bin();
+    let out = Command::new(bin)
         .args(args)
         .output()
-        .map_err(|e| format!("claude CLI not found on PATH: {e}"))?;
+        .map_err(|e| format!("claude CLI not runnable at '{bin}': {e}"))?;
     let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
     if is_idempotent_success(out.status.success(), &stdout, &stderr) {
