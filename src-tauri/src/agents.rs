@@ -90,32 +90,54 @@ pub(crate) fn claude_bin() -> &'static str {
 /// manager (nvm/fnm/volta), a custom prefix, or any other setup. Asking the user's
 /// OWN login shell resolves whatever *they* actually configured.
 fn resolve_claude_bin() -> String {
-    // 1. Already on PATH (true when launched from a terminal) — cheapest.
-    if Command::new("claude").arg("--version").output().is_ok() {
-        return "claude".to_string();
-    }
-    // 2. Ask the user's login shell. `-l` sources their profile, so this picks up
-    //    nvm/fnm/volta shims, custom prefixes, anything on their real PATH.
+    // Candidates in preference order. EXISTING is not good enough — each is probed
+    // for the capability we actually need (see `supports_agents_json`).
+    let mut candidates: Vec<String> = vec!["claude".to_string()];
     if let Some(path) = claude_via_login_shell() {
-        return path;
+        candidates.push(path);
     }
-    // 3. Known default locations, in case the shell probe is unavailable (no $SHELL,
-    //    a profile that errors out, a restricted shell).
     if let Some(home) = std::env::var_os("HOME") {
         for rel in [".local/bin/claude", ".local/share/claude/bin/claude"] {
-            let candidate = std::path::Path::new(&home).join(rel);
-            if candidate.exists() {
-                return candidate.to_string_lossy().into_owned();
-            }
+            candidates.push(
+                std::path::Path::new(&home)
+                    .join(rel)
+                    .to_string_lossy()
+                    .into_owned(),
+            );
         }
     }
-    for p in ["/opt/homebrew/bin/claude", "/usr/local/bin/claude"] {
-        if std::path::Path::new(p).exists() {
-            return p.to_string();
+    candidates.push("/opt/homebrew/bin/claude".to_string());
+    candidates.push("/usr/local/bin/claude".to_string());
+
+    // First candidate that can actually answer `agents --json` wins.
+    for c in &candidates {
+        if supports_agents_json(c) {
+            return c.clone();
         }
     }
-    // 4. Give up and let the caller surface a real "not found" error.
-    "claude".to_string()
+    // Nothing works — return the first one that at least exists so the caller's
+    // error message names a real path, else a bare "claude" for a clean not-found.
+    candidates
+        .into_iter()
+        .find(|c| c != "claude" && std::path::Path::new(c).is_file())
+        .unwrap_or_else(|| "claude".to_string())
+}
+
+/// Does this `claude` actually support `agents --json`, the one call Muya's whole
+/// session layer is built on?
+///
+/// Existence and `--version` are NOT sufficient tests. Real incident (v0.2.41):
+/// this machine had a stale Homebrew `claude` 2.1.78 earlier on PATH than the
+/// current 2.1.245 in `~/.local/bin`. The old binary exists, runs, and answers
+/// `--version` happily — but rejects `--json` outright ("unknown option"), so
+/// `list_agent_sessions` returned nothing: Claude sessions lost their ✨ icon and
+/// the Sessions tab went empty. Probing the capability, not the path, is what
+/// prevents silently binding to a too-old CLI.
+fn supports_agents_json(bin: &str) -> bool {
+    let Ok(out) = Command::new(bin).args(["agents", "--json"]).output() else {
+        return false;
+    };
+    out.status.success() && serde_json::from_slice::<serde_json::Value>(&out.stdout).is_ok()
 }
 
 /// Ask the operator's login shell where `claude` is. Returns an absolute path only
