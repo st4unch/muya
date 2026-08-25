@@ -6,6 +6,12 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.43] - 2026-08-26
+
+### Fixed
+- **Clicking a restored terminal tab did nothing instead of resuming its Claude conversation.** Whether a tab could be resumed was decided by a flag that means "Claude is running here right now" — which is false for every tab waiting to be resumed. While the previous release's session bug was active, that flag also got saved as false onto every tab, so restore stayed broken even after the underlying bug was fixed. A tab is now resumable whenever it remembers which conversation it held, which is the fact that actually matters.
+
+
 ## [0.2.42] - 2026-08-26
 
 ### Fixed

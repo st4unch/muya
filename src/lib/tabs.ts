@@ -51,3 +51,20 @@ export function newSshTabKey(
 export function addSshSession<T extends { key: string }>(prev: T[], tab: T): T[] {
   return [...prev, tab];
 }
+
+/** Can a restored tab rejoin the Claude conversation it used to hold?
+ *
+ *  Gated on `sessionId` ALONE — deliberately NOT on `isClaude`. `isClaude` means
+ *  "Claude is running in this tab right now": it drives the icon, and the periodic
+ *  session poll sets it false whenever Claude isn't running, which is exactly the
+ *  state every restored tab is in. Gating a durable capability on that volatile
+ *  display flag is what broke restore in v0.2.41→42: while a stale CLI made session
+ *  discovery return nothing, `isClaude:false` was persisted onto every tab, and
+ *  clicking them afterwards silently did nothing. `sessionId` is only ever written
+ *  from real session discovery, so its presence alone is the durable proof. */
+export function canResumeTab(t: {
+  kind?: string;
+  sessionId?: string;
+}): boolean {
+  return t.kind === "terminal" && Boolean(t.sessionId);
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { pickNextActiveKey, newSshTabKey, addSshSession, type TabLike } from "./tabs";
+import { pickNextActiveKey, newSshTabKey, addSshSession, canResumeTab, type TabLike } from "./tabs";
 
 const T = (key: string, kind: TabLike["kind"]): TabLike => ({ key, kind });
 
@@ -67,5 +67,22 @@ describe("SSH multi-session — Connect opens independent parallel terminals (L2
     expect(next).toHaveLength(2);
     expect(next.some((t) => t.sshServerId === "hostA")).toBe(true);
     expect(next.some((t) => t.sshServerId === "hostB")).toBe(true);
+  });
+});
+
+describe("canResumeTab: restore must not depend on the volatile isClaude flag", () => {
+  it("resumes on sessionId alone, even when isClaude is false (the v0.2.41 regression)", () => {
+    // A stale CLI made session discovery return nothing, so isClaude was persisted
+    // false on every tab. The tab still knows its conversation — it must resume.
+    expect(canResumeTab({ kind: "terminal", sessionId: "abc-123" })).toBe(true);
+  });
+
+  it("does not resume a tab that never held a session", () => {
+    expect(canResumeTab({ kind: "terminal" })).toBe(false);
+    expect(canResumeTab({ kind: "terminal", sessionId: "" })).toBe(false);
+  });
+
+  it("never resumes a non-terminal tab (editor/viewer)", () => {
+    expect(canResumeTab({ kind: "editor", sessionId: "abc-123" })).toBe(false);
   });
 });

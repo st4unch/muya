@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
 import { nextAcked, deriveBlinkKeys } from "./lib/blink";
-import { pickNextActiveKey, newSshTabKey, addSshSession } from "./lib/tabs";
+import { pickNextActiveKey, newSshTabKey, addSshSession, canResumeTab } from "./lib/tabs";
 import { installNoAutocorrect } from "./lib/noAutocorrect";
 import appIconUrl from "./assets/app-icon.png";
 import {
@@ -174,7 +174,17 @@ function loadTabs(): OpenTerminal[] {
         // session it held, so clicking it resumes exactly that conversation.
         // sshServerId dropped too: a restored SSH tab is an inert shell, never an
         // auto-reconnect on startup (which would re-prompt / re-inject unexpectedly).
-        ? { ...t, initialCommand: undefined, sshServerId: undefined, needsResume: Boolean(t.isClaude && t.sessionId) }
+        // Resumability is gated on `sessionId` ALONE, never on `isClaude`.
+        // `isClaude` means "Claude is running in this tab RIGHT NOW" — it drives
+        // the icon and the ~15s poll flips it to false the moment Claude isn't
+        // running, which is precisely the state a restored tab is in. Gating a
+        // DURABLE capability on that VOLATILE display flag meant: any period where
+        // the poll couldn't see sessions (e.g. the v0.2.41 stale-CLI regression)
+        // persisted isClaude:false onto every tab, and clicking them then silently
+        // did nothing. `sessionId` is the durable fact — it is only ever written
+        // from real session discovery, so its presence alone means "this tab held
+        // conversation X and can rejoin it".
+        ? { ...t, initialCommand: undefined, sshServerId: undefined, needsResume: canResumeTab(t) }
         : t
     );
   } catch {
@@ -347,7 +357,9 @@ export default function App() {
     // A restored Claude tab has its initialCommand stripped (needsResume); rebuild
     // the resume command from its session id so "re-run" actually reconnects.
     let initialCommand = t.initialCommand;
-    if (!initialCommand && t.isClaude && t.sessionId)
+    // Same rule as the restore gate above: `sessionId` alone decides, not the
+    // volatile `isClaude` (which is false for exactly the tabs that need resuming).
+    if (!initialCommand && t.sessionId)
       initialCommand = `claude --resume ${t.sessionId} --dangerously-skip-permissions`;
     const newKey = t.sshServerId ? `ssh:${t.sshServerId}:${ts}` : `term-copy-${ts}`;
     openTerminal({
