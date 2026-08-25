@@ -6,6 +6,16 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.40] - 2026-08-25
+
+### Added
+- **One-click install of Muya's own Claude Code plugin**, pinned to the top of the Marketplace tab — sets up the marketplace and installs the `muya-mcp` skill for you. Safe to press again if it's already installed.
+- **More plugins in Muya's marketplace.** Alongside `muya-mcp`, you can now install `staunch-skills` (23 workflow skills) and `staunch-agents` (20 subagents). Each is separate and opt-in, so you only pay the context cost of what you actually want.
+
+### Fixed
+- **Search in Sessions and Resources returned wrong or empty results.** Live sessions couldn't be found by their ID even though the search box said you could, and any stray space around your search text silently broke every Resources/MCP search.
+- **macOS autocorrect was rewriting what you typed.** Hostnames, paths, branch names and commands are no longer "corrected" behind your back — autocorrect, autocapitalize and spellcheck are now off in every field, including ones that appear later in dialogs.
+
 ## [0.2.39] - 2026-08-22
 
 ### Added
