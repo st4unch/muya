@@ -38,3 +38,24 @@ export function viewerKindFor(p: string): "mdview" | "imgview" | "pdfview" | "ed
   if (/\.pdf$/i.test(p)) return "pdfview";
   return "editor";
 }
+
+/**
+ * A Monaco model path that can never be misread as a URI scheme.
+ *
+ * `@monaco-editor/react`'s `path` prop becomes a model URI via `Uri.parse`. Handing
+ * it a raw filename means anything before a `:` is taken as the scheme — and a
+ * scheme containing a space or non-ASCII character makes Monaco throw
+ * `[UriError]: Scheme contains illegal characters`, which (with no error boundary)
+ * unmounted the whole app into a black window. Reported 2026-08-26 opening a .csv.
+ *
+ * This bites on macOS especially: a filename shown as `Report 2026/08.csv` in Finder
+ * is stored on disk as `Report 2026:08.csv`, so ordinary downloaded files hit it.
+ *
+ * Percent-encoding leaves `.` untouched, so the extension survives — Monaco still
+ * infers the language from it. Encoding the FULL path (not just the basename) also
+ * fixes a latent collision: two same-named files in different folders previously
+ * shared one model path, and so shared an undo stack.
+ */
+export function monacoModelPath(fullPath: string): string {
+  return encodeURIComponent(fullPath);
+}

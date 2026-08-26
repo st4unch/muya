@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { relTime, shortCwd, langFromPath, viewerKindFor } from "./format";
+import { relTime, shortCwd, langFromPath, viewerKindFor, monacoModelPath } from "./format";
 
 describe("relTime", () => {
   const now = 1_000_000_000_000;
@@ -53,5 +53,23 @@ describe("viewerKindFor", () => {
     expect(viewerKindFor("src/App.tsx")).toBe("editor");
     expect(viewerKindFor("Dockerfile")).toBe("editor");
     expect(viewerKindFor("archive.pdf.bak")).toBe("editor"); // extension is .bak, not .pdf
+  });
+});
+
+describe("monacoModelPath: a filename must never be parsed as a URI scheme", () => {
+  it("neutralises the colon that made Monaco throw UriError", () => {
+    // macOS stores a Finder-displayed "Report 2026/08.csv" as "Report 2026:08.csv".
+    const out = monacoModelPath("/Users/x/Downloads/Report 2026:08.csv");
+    expect(out).not.toContain(":");
+    expect(out.endsWith(".csv")).toBe(true); // language detection still works
+  });
+
+  it("keeps the extension for every common type", () => {
+    expect(monacoModelPath("/a/b.ts").endsWith(".ts")).toBe(true);
+    expect(monacoModelPath("/a/b c.json").endsWith(".json")).toBe(true);
+  });
+
+  it("gives same-named files in different folders distinct model paths", () => {
+    expect(monacoModelPath("/one/a.csv")).not.toBe(monacoModelPath("/two/a.csv"));
   });
 });

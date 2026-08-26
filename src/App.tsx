@@ -59,6 +59,7 @@ import FileTree from "./components/FileTree";
 import ChatView from "./components/ChatView";
 import SessionsPage from "./components/SessionsPage";
 import SessionsPanel from "./components/SessionsPanel";
+import ViewerErrorBoundary from "./components/ViewerErrorBoundary";
 const FileEditor = lazy(() => import("./components/FileEditor"));
 const MarkdownView = lazy(() => import("./components/MarkdownView"));
 const ImageViewer = lazy(() => import("./components/ImageViewer"));
@@ -2393,6 +2394,7 @@ export const loginHandler = async (req, res) => {
                             : { display: "none" }}
                           className="overflow-hidden bg-white dark:bg-[#25272b] rounded-lg border border-neutral-200 dark:border-neutral-700 shadow-inner"
                         >
+                          <ViewerErrorBoundary label={tm.filePath ?? tm.key}>
                           <Suspense fallback={<div className="flex-1 flex items-center justify-center text-xs text-neutral-400">Loading…</div>}>
                             {tm.kind === "mdview" ? (
                               <MarkdownView
@@ -2415,6 +2417,7 @@ export const loginHandler = async (req, res) => {
                               />
                             )}
                           </Suspense>
+                          </ViewerErrorBoundary>
                         </div>
                       );
                     }

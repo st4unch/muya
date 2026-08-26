@@ -6,6 +6,13 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.44] - 2026-08-26
+
+### Fixed
+- **Opening some files turned the whole app into a blank window.** The editor built its internal id straight from the filename, and a filename containing a colon made it fail — which on macOS is common, because a name shown as `Report 2026/08.csv` in Finder is stored on disk with a colon. Filenames are now escaped, and the fix also stops two same-named files in different folders from sharing one undo history.
+- **A failing file viewer can no longer take the whole app down with it.** Previously any error while displaying a file unmounted everything, leaving a black window with no message. Now only that tab shows the problem — with the actual error text — the rest of Muya keeps working, and the failure is written to the app log so it can be diagnosed.
+
+
 ## [0.2.43] - 2026-08-26
 
 ### Fixed

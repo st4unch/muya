@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import Editor, { DiffEditor, loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
-import { langFromPath } from "../lib/format";
+import { langFromPath, monacoModelPath } from "../lib/format";
 import editorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 import jsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
 import cssWorker from "monaco-editor/esm/vs/language/css/css.worker?worker";
@@ -141,7 +141,6 @@ export default function FileEditor({
     }
   };
 
-  const fileName = path.split("/").pop() || path;
 
   return (
     <div className="flex flex-col h-full w-full">
@@ -259,7 +258,7 @@ export default function FileEditor({
         ) : (
           <Editor
             key={path}
-            path={fileName}
+            path={monacoModelPath(path)}
             value={value}
             theme={monacoTheme}
             loading={<div className="p-4 text-xs font-mono text-neutral-400 dark:text-neutral-500">loading…</div>}
