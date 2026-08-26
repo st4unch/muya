@@ -38,6 +38,48 @@ Muya puts all of it in one place — and lets you launch, attach to, message, an
 
 ---
 
+## Getting started
+
+### 1. Add a workspace
+
+Muya works against folders you choose. Open the **Control** screen and use **+ Workspace** to add a
+project directory. The file tree, git status, branch topology and collision detection all follow the
+workspaces you add — nothing is scanned without you asking.
+
+### 2. Open a Claude terminal
+
+Press **+** in the tab bar (or **+ New Agent**) and pick a workspace. Muya opens a real terminal and
+starts Claude Code in it with `--dangerously-skip-permissions`, so the agent can work without
+stopping to ask about every file.
+
+Two things worth knowing straight away:
+
+- **Optionally give the agent its own branch.** In the New Agent dialog, filling in a branch name
+  makes Muya create a real `git worktree` for it — a separate checkout of the same repository. Two
+  agents on two worktrees can work at the same time without touching each other's files.
+- **The tab is the session.** Each tab keeps its own Claude conversation. Tabs marked with the
+  Claude glyph are live agents; a plain `>_` is an ordinary shell.
+
+### 3. Work with several agents at once
+
+| You want to… | Do this |
+|---|---|
+| See four agents at once | **⊞ Grid** — up to 4 terminals in a 2×2 grid, drag to rearrange |
+| Rename a tab | Double-click its title |
+| Find which agent said something | **Sessions** → search — it greps the actual conversation text, not just names |
+| Resume a session after restarting Muya | Click its tab — Muya reconnects it to the same conversation |
+| Send the same prompt to several agents later | **Scheduled Prompt** — pick the terminals, pick a time |
+| Check nobody is editing the same file twice | **Queue** — collisions are flagged automatically |
+| Push or merge an agent's work | **Queue** — shows ahead/behind, trial-merges first, cleans up the worktree after |
+
+### 4. Keep an eye on the whole fleet
+
+**Sessions** lists every Claude session on the machine — live and past — with what each one is doing
+and whether it's *working* or *waiting for input*. From there you can attach, stop, resume, or export
+a conversation to Markdown.
+
+---
+
 ## Features
 
 Muya is organised as seven screens.
@@ -103,7 +145,37 @@ An agent can open a parallel session, hand it a task, read what another session 
 
 **Transport:** a stdio sidecar binary the MCP client spawns, talking to the app over a Unix socket that is owner-only (`0600`) and checks the peer's uid. No network port is opened.
 
-### Install the companion skill
+### Setting it up
+
+**The server itself needs no installation.** Muya registers `muya-mcp` in your Claude Code MCP
+config the first time it runs, and ships the sidecar binary inside the app bundle. Any Claude Code
+session you start afterwards can call the tools.
+
+If an agent doesn't see the tools, it's almost always one of these two:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Tools missing in a session that was already open | An MCP client reads the tool list **once, when it connects** | Restart that Claude Code session |
+| `Muya app not running` | The sidecar talks to the app over a socket; without the app there's nothing to talk to | Launch Muya |
+
+Verify the server is answering — this asks the sidecar directly and should list the tools:
+
+```bash
+printf '%s\n%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
+  | /Applications/Muya.app/Contents/MacOS/muya-ssh-mcp
+```
+
+(Adjust the path if you keep Muya somewhere other than `/Applications`.)
+
+### Install the companion skill (recommended)
+
+The tools work without it, but agents use them far better with it — it explains which tool suits
+which job, and the gotchas that aren't obvious from the tool descriptions alone.
+
+Easiest way: open **Resources → Marketplace** in Muya and press **Install** on the *Muya plugin*
+card at the top. Or do the same by hand:
 
 ```
 /plugin marketplace add st4unch/muya
@@ -113,6 +185,33 @@ An agent can open a parallel session, hand it a task, read what another session 
 | Plugin | What it ships | Always-on cost |
 |---|---|---|
 | `muya-mcp` | 1 skill: which tool for which job, the PSMP/CyberArk connection-cost model, message-delivery modes, session ownership rules | ~250 tok |
+
+### Letting an agent use your servers and secrets
+
+Nothing is exposed by default — this is opt-in per item, from Muya's **SSH** screen:
+
+1. **Unlock the vault.** Agents can't reach a locked store; SSH tools refuse rather than guess.
+2. **Tick "Agent may use this server"** on each server you're willing to expose. Servers without it
+   stay invisible to `ssh_list_servers`.
+3. Secrets are referenced **by name**. `ssh_run` and `run_operation` inject the value inside Rust —
+   the agent never receives it. Only an explicit `get_secret` returns a value.
+
+### What this actually enables
+
+```
+You:  "Spin up a session on the API repo and have it fix the failing tests,
+       then tell me when it's done."
+
+Agent: open_session(name: "api-tests", initial_message: "…")
+       → a new terminal tab appears in Muya, already working
+       list_sessions()      → sees it running, and every other session
+       read_session(...)    → checks progress without interrupting it
+       send_to_session(...) → answers a prompt it got stuck on
+       close_session(...)   → tidies up when finished
+```
+
+An agent may only close sessions **it** opened — your own session and any tab you opened by hand are
+off limits.
 
 ---
 
