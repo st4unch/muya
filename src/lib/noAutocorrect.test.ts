@@ -18,20 +18,32 @@ describe("noAutocorrect: macOS WKWebView autocorrect must never mutate typed tex
     stop();
   });
 
-  it("hardens a field mounted later (modal opened after install)", async () => {
+  it("hardens a field mounted later, at the moment it can actually be typed in", () => {
+    // The guarantee that matters is "the OS cannot rewrite what you type", and
+    // you can only type into a focused field. Hardening on focusin (rather than
+    // observing every DOM mutation) keeps that guarantee while doing no work
+    // while terminals stream output.
     const stop = installNoAutocorrect();
     const modal = document.createElement("div");
     modal.innerHTML = `<input id="c" />`;
     document.body.appendChild(modal);
 
-    // MutationObserver callbacks fire on a microtask.
-    await Promise.resolve();
-    await new Promise((r) => setTimeout(r, 0));
+    const input = document.getElementById("c") as HTMLInputElement;
+    input.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
 
-    const input = document.getElementById("c")!;
     expect(input.getAttribute("autocorrect")).toBe("off");
     expect(input.getAttribute("autocapitalize")).toBe("off");
+    expect(input.getAttribute("spellcheck")).toBe("false");
     stop();
+  });
+
+  it("stops hardening after cleanup", () => {
+    const stop = installNoAutocorrect();
+    stop();
+    const late = document.createElement("input");
+    document.body.appendChild(late);
+    late.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    expect(late.getAttribute("autocorrect")).toBeNull();
   });
 
   it("does not touch non-field elements", () => {

@@ -138,6 +138,25 @@ fn detect_vaults() -> Vec<String> {
     scan_roots_for_vaults(roots)
 }
 
+/// Names never descended into during an AUTO scan, because merely `stat`ing them
+/// makes macOS raise a TCC privacy prompt:
+/// - `Library` — Containers / Application Support / CloudStorage, i.e. "other apps' data"
+/// - `Pictures` / `Music` / `Movies` — Photos and Music libraries
+/// - `Desktop` / `Documents` / `Downloads` — the protected "Files and Folders" set
+/// - anything hidden (`.`-prefixed)
+///
+/// A vault living in one of these is still fully usable — it is chosen explicitly
+/// via `OBSIDIAN_VAULT_PATH` or the vault config panel, where a one-time prompt is
+/// expected because the operator asked for it. L43.
+fn is_tcc_protected_name(name: &std::ffi::OsStr) -> bool {
+    let name = name.to_string_lossy();
+    name.starts_with('.')
+        || matches!(
+            name.as_ref(),
+            "Library" | "Pictures" | "Music" | "Movies" | "Desktop" | "Documents" | "Downloads"
+        )
+}
+
 /// Depth-limited (root, root/*, root/*/*) `.obsidian` scan over explicit
 /// root directories — split out from `detect_vaults` so tests can scan a
 /// temp dir instead of the real HOME.
@@ -160,20 +179,19 @@ fn scan_roots_for_vaults(roots: Vec<String>) -> Vec<String> {
             continue;
         };
         for entry in entries.flatten() {
-            let p = entry.path();
-            if !p.is_dir() {
+            // The exclusion MUST come before any filesystem call on the entry.
+            // `is_dir()` is a stat(), and stat'ing into ~/Library is itself what
+            // fires the "wants to access data from other apps" prompt — checking
+            // the name afterwards protected nothing, because the syscall that
+            // triggers TCC had already run. `file_name()` reads the directory
+            // listing we already have and touches nothing. (L43 fix was correct
+            // in intent but ordered one step too late; reported still firing
+            // 2026-08-28.)
+            if is_tcc_protected_name(&entry.file_name()) {
                 continue;
             }
-            // Never descend into TCC-protected home subfolders while auto-scanning: even
-            // stat'ing into ~/Library (Containers/App Support/CloudStorage — "other apps'
-            // data"), ~/Pictures/~/Music/~/Movies (Photos/Music), or hidden dirs fires the
-            // macOS privacy prompt repeatedly. A vault in one of these is selected
-            // explicitly, never auto-scanned. L43.
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if name.starts_with('.')
-                || matches!(name.as_ref(), "Library" | "Pictures" | "Music" | "Movies")
-            {
+            let p = entry.path();
+            if !p.is_dir() {
                 continue;
             }
             if is_obsidian_vault(&p) {
@@ -189,6 +207,12 @@ fn scan_roots_for_vaults(roots: Vec<String>) -> Vec<String> {
                 continue;
             };
             for sub in sub_entries.flatten() {
+                // Same guard, same reason: the second level had NO exclusion at
+                // all, so a protected directory one level down was stat'ed even
+                // though its sibling one level up would have been skipped.
+                if is_tcc_protected_name(&sub.file_name()) {
+                    continue;
+                }
                 let sp = sub.path();
                 if sp.is_dir() && is_obsidian_vault(&sp) {
                     let mtime = sp
@@ -680,6 +704,38 @@ mod vault_config_tests {
         std::fs::create_dir_all(&fake).unwrap();
         std::fs::write(fake.join(".obsidian"), "not a dir").unwrap();
         assert!(!is_obsidian_vault(&fake));
+    }
+
+    #[test]
+    fn scan_never_descends_into_tcc_protected_dirs_at_any_depth() {
+        // Regression: the exclusion existed but ran AFTER `is_dir()` — and that
+        // stat() is itself what raises macOS's "access data from other apps"
+        // prompt, so the guard protected nothing. Level 2 had no guard at all.
+        // A vault planted inside a protected name must stay undiscovered at
+        // BOTH depths; finding one proves we walked in and would have prompted.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        for rel in ["Library/vault-l1", "Pictures/x/vault-l2", ".hidden/vault-h"] {
+            let d = root.join(rel);
+            std::fs::create_dir_all(d.join(".obsidian")).unwrap();
+        }
+        // A normal vault at the same depths must still be found, so we know the
+        // scan itself still works and the test isn't passing vacuously.
+        std::fs::create_dir_all(root.join("Notes/real-vault/.obsidian")).unwrap();
+
+        let found = scan_roots_for_vaults(vec![root.to_string_lossy().into_owned()]);
+
+        assert!(
+            found.iter().any(|p| p.ends_with("real-vault")),
+            "an unprotected vault must still be found: {found:?}"
+        );
+        for bad in ["Library", "Pictures", ".hidden"] {
+            assert!(
+                !found.iter().any(|p| p.contains(bad)),
+                "must never descend into {bad}: {found:?}"
+            );
+        }
     }
 
     #[test]

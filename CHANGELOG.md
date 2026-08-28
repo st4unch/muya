@@ -6,6 +6,13 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.45] - 2026-08-28
+
+### Fixed
+- **The "wants to access data from other apps" permission popup should stop appearing.** Muya looks for an Obsidian vault in a few folders, and was told to skip the protected ones — but it checked the folder's name only *after* asking the system about it, and that question is itself what makes macOS raise the prompt. The check now happens first, and applies at every depth (it was missing entirely one level down).
+- **High CPU in the window process.** The guard that stops macOS autocorrect from rewriting what you type was watching the whole page for changes — including terminal output, which changes constantly. It now acts only when you focus a field, which is the only moment autocorrect can affect anything.
+
+
 ## [0.2.44] - 2026-08-26
 
 ### Fixed
