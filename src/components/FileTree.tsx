@@ -76,12 +76,20 @@ function TreeNode({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshSignal]);
 
+  // The "…" placeholder is only for the FIRST load of a folder. A refresh of
+  // already-listed children must swap silently: the placeholder is an extra ROW,
+  // so toggling it on every refresh made each open folder grow and shrink by one
+  // line — and the filesystem watcher fires on every file event, which with agents
+  // writing files is many times a second. That is the tree "shaking", and it made
+  // the right-click menu look like it was vibrating because the rows under it kept
+  // jumping. Reported 2026-08-28.
   const load = async () => {
-    setLoading(true);
+    const firstLoad = children === null;
+    if (firstLoad) setLoading(true);
     try {
       setChildren(await invoke<Entry[]>("list_dir", { path: entry.path }));
     } catch { setChildren([]); }
-    finally { setLoading(false); }
+    finally { if (firstLoad) setLoading(false); }
   };
 
   const toggle = () => {
@@ -209,7 +217,15 @@ export default function FileTree({
   // Bumped locally to force an immediate tree reload after a create/rename/delete,
   // rather than waiting for the fs-watcher's debounced `fs-changed` (L38).
   const [localRefresh, setLocalRefresh] = useState(0);
-  const treeRefresh = (refreshSignal ?? 0) + localRefresh;
+  // Freeze tree refreshes while the context menu is open. Reloading the listing
+  // under an open menu is wrong on its own — the entry you right-clicked can move
+  // or disappear mid-gesture — and a create/rename/delete performed FROM the menu
+  // still refreshes, because closing it releases the freeze and `localRefresh` has
+  // advanced by then.
+  const liveRefresh = (refreshSignal ?? 0) + localRefresh;
+  const frozenRefresh = useRef(liveRefresh);
+  if (!menu) frozenRefresh.current = liveRefresh;
+  const treeRefresh = menu ? frozenRefresh.current : liveRefresh;
   const createInputRef = useRef<HTMLInputElement>(null);
   // flat file list for search
   const [allFiles, setAllFiles] = useState<Entry[]>([]);

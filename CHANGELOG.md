@@ -6,6 +6,12 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.46] - 2026-08-28
+
+### Fixed
+- **The file tree no longer shakes, and the right-click menu stays still.** Every filesystem change made each open folder briefly add and remove a "…" line while it reloaded — and with agents writing files that happened many times a second, so the rows kept jumping and the menu looked like it was vibrating. Refreshing is now silent; the "…" only appears the first time a folder is opened. The tree also stops reloading entirely while a right-click menu is open, so the item you clicked can't move out from under you.
+
+
 ## [0.2.45] - 2026-08-28
 
 ### Fixed
