@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { FolderLock, ExternalLink, AlertTriangle } from "lucide-react";
+import { FolderLock, ExternalLink, AlertTriangle, Check } from "lucide-react";
 
 // Why this component exists.
 //
@@ -44,6 +44,7 @@ function readDismissed(): boolean {
 export default function FileAccessGate() {
   const [status, setStatus] = useState<FileAccessStatus | null>(null);
   const [checking, setChecking] = useState(false);
+  const [probed, setProbed] = useState(false);
   const [dismissed, setDismissed] = useState(readDismissed);
 
   useEffect(() => {
@@ -60,6 +61,7 @@ export default function FileAccessGate() {
       // probe:true is what raises macOS's prompts — deliberately, now that the
       // user has pressed a button explaining why.
       setStatus(await invoke<FileAccessStatus>("file_access_status", { probe: true }));
+      setProbed(true);
     } catch {
       /* leave the previous status in place */
     } finally {
@@ -69,6 +71,15 @@ export default function FileAccessGate() {
 
   const openSettings = () => {
     invoke("open_privacy_settings").catch(() => {});
+  };
+
+  const dismiss = () => {
+    try {
+      localStorage.setItem(DISMISS_KEY, "1");
+    } catch {
+      /* private window — dismissing for this session is enough */
+    }
+    setDismissed(true);
   };
 
   if (!status) return null;
@@ -101,11 +112,72 @@ export default function FileAccessGate() {
   }
 
   const denied = status.folders.filter((f) => !f.granted);
-  // Before the first probe every folder reads as not-granted, which is the
-  // state we want to offer the grant in. After a probe, only genuinely blocked
-  // folders remain — those need System Settings, since macOS will not re-ask.
-  if (dismissed || (checking === false && status.folders.length === 0)) return null;
+  if (dismissed) return null;
+
+  // Everything the probe asked for came back readable. Say so rather than just
+  // vanishing: a button that silently removes itself reads as a button that did
+  // nothing, which is exactly how the first version was reported.
+  if (probed && denied.length === 0) {
+    return (
+      <div className="fixed bottom-4 right-4 z-50 w-[26rem] rounded-xl border border-emerald-300 dark:border-emerald-700 bg-white dark:bg-neutral-900 shadow-2xl p-4">
+        <div className="flex items-center gap-2 mb-1">
+          <Check className="w-4 h-4 text-emerald-500" />
+          <h3 className="text-sm font-semibold">Muya can read your folders</h3>
+        </div>
+        <p className="text-xs text-neutral-600 dark:text-neutral-300 mb-3">
+          Documents, Desktop and Downloads are all readable. You will not be
+          asked again.
+        </p>
+        <button
+          onClick={() => setDismissed(true)}
+          className="px-3 py-1.5 text-xs rounded-md bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
+        >
+          Done
+        </button>
+      </div>
+    );
+  }
+
   if (denied.length === 0) return null;
+
+  // Probed, and macOS still says no. It did NOT show a dialog and it never
+  // will: a Files-and-Folders decision is remembered the first time it is
+  // answered, and only System Settings can change it afterwards. Without saying
+  // this, pressing Grant looks like pressing a dead button.
+  if (probed) {
+    return (
+      <div className="fixed bottom-4 right-4 z-50 w-[26rem] rounded-xl border border-amber-300 dark:border-amber-700 bg-white dark:bg-neutral-900 shadow-2xl p-4">
+        <div className="flex items-center gap-2 mb-1">
+          <AlertTriangle className="w-4 h-4 text-amber-500" />
+          <h3 className="text-sm font-semibold">macOS will not ask again</h3>
+        </div>
+        <p className="text-xs text-neutral-600 dark:text-neutral-300 mb-2">
+          Access to {denied.map((f) => f.name).join(", ")} was refused earlier,
+          and macOS only asks once. It can be changed in System Settings →
+          Privacy &amp; Security → Files and Folders, or by turning on Full Disk
+          Access for Muya.
+        </p>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={openSettings}
+            className="px-3 py-1.5 text-xs rounded-md bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 flex items-center gap-1"
+          >
+            Open Settings <ExternalLink className="w-3 h-3" />
+          </button>
+          <button
+            onClick={grant}
+            disabled={checking}
+            className="px-3 py-1.5 text-xs rounded-md border border-neutral-300 dark:border-neutral-600 disabled:opacity-50"
+          >
+            {checking ? "Checking…" : "Check again"}
+          </button>
+          <button onClick={dismiss} className="ml-auto px-2 py-1.5 text-xs text-neutral-500">
+            Not now
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed bottom-4 right-4 z-50 w-[26rem] rounded-xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 shadow-2xl p-4">
@@ -132,17 +204,7 @@ export default function FileAccessGate() {
         >
           Open Settings <ExternalLink className="w-3 h-3" />
         </button>
-        <button
-          onClick={() => {
-            try {
-              localStorage.setItem(DISMISS_KEY, "1");
-            } catch {
-              /* private window — dismissing for this session is enough */
-            }
-            setDismissed(true);
-          }}
-          className="ml-auto px-2 py-1.5 text-xs text-neutral-500"
-        >
+        <button onClick={dismiss} className="ml-auto px-2 py-1.5 text-xs text-neutral-500">
           Not now
         </button>
       </div>

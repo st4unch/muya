@@ -6,6 +6,16 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.49] - 2026-08-30
+
+### Fixed
+- The **Grant access** button no longer looks dead. Pressing it now always says
+  what happened: that access was granted, or that macOS refused to ask because
+  the question was already answered once — in which case only System Settings can
+  change it, and the button to get there is right next to the explanation.
+- **Open Settings** brings System Settings to the front. It was opening behind
+  the Muya window, so pressing it looked like nothing happened at all.
+
 ## [0.2.48] - 2026-08-30
 
 ### Fixed

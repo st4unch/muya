@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  NOT WIRED INTO tauri.conf.json YET — DO NOT ENABLE ON ITS OWN.
+
+	  `keychain-access-groups` is a RESTRICTED entitlement. Signing with it but
+	  without an embedded provisioning profile that authorises it makes macOS
+	  kill the process at exec: the app would not launch at all. Verified
+	  2026-08-30 with a minimal signed probe — Developer ID signature, this exact
+	  entitlement, no profile: SIGKILL (exit 137) on every run, while the same
+	  binary signed WITHOUT the entitlement ran and reproduced the original
+	  errSecMissingEntitlement.
+
+	  To use this file: register the App ID com.staunch.muya with the Keychain
+	  Sharing capability, create a Developer ID provisioning profile for it,
+	  ship it as Muya.app/Contents/embedded.provisionprofile, and only then set
+	  bundle.macOS.entitlements to this file.
+	-->
+	<!--
+	  The vault stores its master key in the DATA PROTECTION keychain, because
+	  that is the only keychain on macOS that supports a biometry-gated item
+	  (kSecAttrAccessControl with BIOMETRY_CURRENT_SET) — see credstore.rs
+	  `keychain_store_key`, which calls `use_protected_keychain()`. The legacy
+	  file-based keychain cannot express "unlock this with Touch ID".
+
+	  Using that keychain requires this entitlement. Without it every write
+	  fails with errSecMissingEntitlement, surfaced to the user as
+	  "Keychain write failed: A required entitlement isn't present." The app
+	  shipped with NO entitlements at all until now, so Touch ID unlock could
+	  never have worked on a clean install. Reported 2026-08-30.
+
+	  The prefix is the Team ID that signs the app. It is a property of the
+	  product's signing identity, not of any one machine — but a fork signing
+	  with a different team must change it to match, or the entitlement will not
+	  be honoured.
+	-->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>7PG95YYJ64.com.staunch.muya</string>
+	</array>
+</dict>
+</plist>

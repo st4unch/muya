@@ -812,10 +812,14 @@ pub fn file_access_status(probe: bool) -> FileAccessStatus {
 /// Open macOS's privacy settings so the operator can grant folder access.
 ///
 /// This is the app's ONLY recourse after a denial — see `access_denied_message`.
-/// The pane anchor has moved between macOS releases, so the modern
-/// Files-and-Folders anchor is tried first and the app-level Privacy & Security
-/// pane is the fallback; `-g` keeps System Settings in the background instead of
-/// yanking focus away from whatever the operator was doing.
+/// The pane anchor has moved between macOS releases, so the Files-and-Folders
+/// anchor is tried first and the Privacy & Security pane is the fallback.
+///
+/// Deliberately NOT `open -g`. The first version backgrounded System Settings to
+/// avoid stealing focus — but the user pressed a button whose entire purpose is
+/// "show me that window", and it opened behind Muya where they could not see it.
+/// The button looked broken. Focus-stealing is wrong when the app decides to do
+/// it; it is the correct and expected result of a click that asks for it.
 #[tauri::command(async)]
 pub fn open_privacy_settings() -> Result<(), String> {
     const PANES: [&str; 2] = [
@@ -824,7 +828,7 @@ pub fn open_privacy_settings() -> Result<(), String> {
     ];
     let mut last_err = String::new();
     for pane in PANES {
-        match Command::new("open").args(["-g", pane]).status() {
+        match Command::new("open").arg(pane).status() {
             Ok(st) if st.success() => return Ok(()),
             Ok(st) => last_err = format!("open exited with {st}"),
             Err(e) => last_err = format!("open failed: {e}"),

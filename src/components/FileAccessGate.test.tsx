@@ -59,6 +59,37 @@ describe("FileAccessGate", () => {
     );
   });
 
+  it("confirms out loud when the grant worked, instead of just vanishing", async () => {
+    // A button that silently removes itself reads as a button that did nothing —
+    // which is exactly how the first version was reported.
+    invokeMock
+      .mockResolvedValueOnce({ translocated: false, exe_path: "/Applications/Muya.app", folders: folders(false) })
+      .mockResolvedValueOnce({ translocated: false, exe_path: "/Applications/Muya.app", folders: folders(true) });
+
+    render(<FileAccessGate />);
+    await userEvent.click(await screen.findByRole("button", { name: /Grant access/i }));
+
+    expect(await screen.findByText(/Muya can read your folders/i)).toBeTruthy();
+  });
+
+  it("explains that macOS will not re-ask when the folders stay blocked", async () => {
+    // macOS remembers a Files-and-Folders answer and never prompts again, so
+    // pressing Grant produces no dialog at all. Saying nothing makes the button
+    // look dead; System Settings is the only remaining route.
+    invokeMock.mockResolvedValue({
+      translocated: false,
+      exe_path: "/Applications/Muya.app",
+      folders: folders(false),
+    });
+
+    render(<FileAccessGate />);
+    await userEvent.click(await screen.findByRole("button", { name: /Grant access/i }));
+
+    expect(await screen.findByText(/macOS will not ask again/i)).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: /Open Settings/i }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("open_privacy_settings"));
+  });
+
   it("stays out of the way once every folder is granted", async () => {
     invokeMock.mockResolvedValue({ translocated: false, exe_path: "/Applications/Muya.app", folders: folders(true) });
 
