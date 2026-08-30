@@ -6,6 +6,21 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.47] - 2026-08-30
+
+### Fixed
+- The macOS permission popup asking for access to your Documents folder no longer
+  appears on its own. Muya was scanning `~/Documents` at every startup looking for
+  an Obsidian vault, which made macOS ask a question you never asked for — and a
+  popup you dismiss instead of answering is not recorded as a decision, so it came
+  back on the next launch, and the next. The startup scan now stays out of
+  Documents, Desktop, Downloads and Library entirely. A vault living in one of
+  those still works; you pick it once in the vault panel.
+- A folder macOS blocks is no longer reported as "not a directory". Muya now says
+  access was denied and where to turn it back on, and can open the Privacy &
+  Security settings pane for you — necessary because once you answer "Don't Allow",
+  macOS never asks again on its own.
+
 ## [0.2.46] - 2026-08-28
 
 ### Fixed

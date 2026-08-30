@@ -309,6 +309,7 @@ pub fn run() {
             fs::install_muya_plugin,
             fs::git_status,
             fs::reveal_in_finder,
+            fs::open_privacy_settings,
             fs::allow_asset_path,
             fs::resolve_path_kind,
             fs::local_ip,

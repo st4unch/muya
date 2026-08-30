@@ -23,11 +23,26 @@ pub struct DirEntry {
 #[tauri::command(async)]
 pub fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
     let p = Path::new(&path);
-    if !p.is_dir() {
-        return Err(format!("not a directory: {path}"));
+    // `Path::is_dir()` swallows the error and answers `false`, so a folder the
+    // operator is merely BLOCKED from used to be reported as "not a directory" —
+    // the one diagnosis guaranteed to send them looking in the wrong place.
+    // Ask for the metadata directly so EPERM stays distinguishable from ENOENT.
+    match std::fs::metadata(p) {
+        Ok(m) if m.is_dir() => {}
+        Ok(_) => return Err(format!("not a directory: {path}")),
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            return Err(access_denied_message(&path))
+        }
+        Err(e) => return Err(format!("cannot read {path}: {e}")),
     }
     let mut entries: Vec<DirEntry> = std::fs::read_dir(p)
-        .map_err(|e| format!("read_dir failed: {e}"))?
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                access_denied_message(&path)
+            } else {
+                format!("read_dir failed: {e}")
+            }
+        })?
         .filter_map(|res| res.ok())
         .map(|e| {
             let is_directory = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
@@ -657,6 +672,46 @@ pub fn allow_asset_path(path: String, app: tauri::AppHandle) -> Result<(), Strin
     app.asset_protocol_scope()
         .allow_file(&path)
         .map_err(|e| format!("failed to allow asset path: {e}"))
+}
+
+/// What to tell the operator when macOS blocks a path.
+///
+/// macOS raises its privacy prompt the first time the app touches a protected
+/// folder (Documents / Desktop / Downloads / iCloud / removable volumes). Once
+/// that prompt is ANSWERED the decision is permanent — and if the answer was
+/// "Don't Allow", the OS never prompts again: every read just returns EPERM
+/// forever. There is no API to ask a second time. So the only honest thing to
+/// show is where the switch actually lives.
+fn access_denied_message(path: &str) -> String {
+    format!(
+        "macOS is blocking Muya from reading {path}. Grant access in \
+         System Settings › Privacy & Security › Files and Folders (or turn on \
+         Full Disk Access for Muya), then try again."
+    )
+}
+
+/// Open macOS's privacy settings so the operator can grant folder access.
+///
+/// This is the app's ONLY recourse after a denial — see `access_denied_message`.
+/// The pane anchor has moved between macOS releases, so the modern
+/// Files-and-Folders anchor is tried first and the app-level Privacy & Security
+/// pane is the fallback; `-g` keeps System Settings in the background instead of
+/// yanking focus away from whatever the operator was doing.
+#[tauri::command(async)]
+pub fn open_privacy_settings() -> Result<(), String> {
+    const PANES: [&str; 2] = [
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders",
+        "x-apple.systempreferences:com.apple.preference.security?Privacy",
+    ];
+    let mut last_err = String::new();
+    for pane in PANES {
+        match Command::new("open").args(["-g", pane]).status() {
+            Ok(st) if st.success() => return Ok(()),
+            Ok(st) => last_err = format!("open exited with {st}"),
+            Err(e) => last_err = format!("open failed: {e}"),
+        }
+    }
+    Err(format!("could not open privacy settings: {last_err}"))
 }
 
 /// Open the given path in Finder (macOS: `open -R <path>`).

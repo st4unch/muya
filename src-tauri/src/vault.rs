@@ -130,12 +130,43 @@ fn detect_vaults() -> Vec<String> {
         Ok(h) => h,
         Err(_) => return vec![],
     };
-    let roots = vec![
-        format!("{home}/Documents"),
-        format!("{home}/Obsidian"),
-        home.clone(),
-    ];
-    scan_roots_for_vaults(roots)
+    scan_roots_for_vaults(auto_scan_roots(&home))
+}
+
+/// The roots the UNATTENDED startup scan is allowed to walk.
+///
+/// Never a TCC-protected directory. `detect_vaults` runs on its own at startup,
+/// and the first `stat` on `~/Documents` raises "Muya would like to access files
+/// in your Documents folder" — a prompt the operator never asked for. An
+/// unexplained prompt gets dismissed rather than answered, and a dismissed
+/// prompt is not a recorded decision, so macOS raises it again on the next
+/// launch. That is the "the popup keeps coming back" report (2026-08-30).
+///
+/// The entry-level guard in `scan_roots_for_vaults` could not catch this: it
+/// filters what the scan descends INTO, never the roots it starts FROM, and
+/// `~/Documents` was hardcoded as a root. `~` itself stays — the home directory
+/// is not protected, and its protected children are skipped on the way down.
+///
+/// A vault under a protected folder is still fully usable: it is chosen
+/// explicitly via `OBSIDIAN_VAULT_PATH` or the vault panel, where the operator
+/// asked for it and a one-time prompt is the expected, answerable thing.
+fn auto_scan_roots(home: &str) -> Vec<String> {
+    [format!("{home}/Obsidian"), home.to_string()]
+        .into_iter()
+        .filter(|r| !is_tcc_protected_path(Path::new(r), home))
+        .collect()
+}
+
+/// Is `path` inside (or equal to) a TCC-protected directory directly under
+/// `home`? Pure path-component work — deliberately no filesystem call, because
+/// the syscall is the very thing that raises the prompt.
+fn is_tcc_protected_path(path: &Path, home: &str) -> bool {
+    let Ok(rel) = path.strip_prefix(home) else {
+        return false;
+    };
+    rel.components()
+        .next()
+        .is_some_and(|c| is_tcc_protected_name(c.as_os_str()))
 }
 
 /// Names never descended into during an AUTO scan, because merely `stat`ing them
@@ -736,6 +767,63 @@ mod vault_config_tests {
                 "must never descend into {bad}: {found:?}"
             );
         }
+    }
+
+    #[test]
+    fn auto_scan_never_starts_from_a_tcc_protected_root() {
+        // Regression: `detect_vaults` hardcoded `~/Documents` as a scan root, so
+        // the unattended startup scan stat'ed it and macOS raised the Documents
+        // prompt on every launch. The descend-guard could not catch this — the
+        // root is where the scan STARTS, not somewhere it descends into. A vault
+        // under a protected folder must be left for the operator to pick.
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        std::fs::create_dir_all(home.join("Documents/work-notes/.obsidian")).unwrap();
+        std::fs::create_dir_all(home.join("Obsidian/personal/.obsidian")).unwrap();
+
+        let roots = auto_scan_roots(&home.to_string_lossy());
+        for protected in ["Documents", "Desktop", "Downloads", "Library", "Pictures"] {
+            assert!(
+                !roots.iter().any(|r| r.ends_with(protected)),
+                "auto scan must not start from ~/{protected}: {roots:?}"
+            );
+        }
+
+        // Non-vacuous: the scan still runs and still finds an unprotected vault.
+        let found = scan_roots_for_vaults(roots);
+        assert!(
+            found.iter().any(|p| p.ends_with("Obsidian/personal")),
+            "an unprotected vault must still be auto-found: {found:?}"
+        );
+        assert!(
+            !found.iter().any(|p| p.contains("Documents")),
+            "must never reach a vault under ~/Documents: {found:?}"
+        );
+    }
+
+    #[test]
+    fn tcc_protected_path_classifies_by_first_component_under_home() {
+        let home = "/Users/someone";
+        for p in ["Documents", "Desktop", "Downloads", "Library", ".config"] {
+            assert!(
+                is_tcc_protected_path(Path::new(&format!("{home}/{p}")), home),
+                "~/{p} must be treated as protected"
+            );
+        }
+        // The home directory itself, and ordinary children, are not protected.
+        assert!(!is_tcc_protected_path(Path::new(home), home));
+        assert!(!is_tcc_protected_path(
+            Path::new(&format!("{home}/Obsidian")),
+            home
+        ));
+        // Only the FIRST component counts — a protected NAME deeper down is a
+        // different question, handled by the descend-guard.
+        assert!(!is_tcc_protected_path(
+            Path::new(&format!("{home}/Obsidian/Documents")),
+            home
+        ));
+        // Paths outside HOME are not classified here at all.
+        assert!(!is_tcc_protected_path(Path::new("/tmp/Documents"), home));
     }
 
     #[test]
