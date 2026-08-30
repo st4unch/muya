@@ -219,7 +219,9 @@ off limits.
 
 Get the latest signed & notarized build from [Releases](https://github.com/st4unch/muya/releases/latest). Requires macOS on Apple Silicon.
 
-**Unzip it, then drag `Muya.app` into your `Applications` folder before opening it.** This matters more than it looks: macOS runs a downloaded app that is opened in place from a temporary, read-only copy whose path changes on every launch. Every file-access permission you grant is recorded against a copy that no longer exists next time, so Muya would ask again on every single launch — and it could not install its own updates. Moving it to `Applications` first makes the permission stick the first time you grant it.
+**Download `Muya-<version>-arm64.pkg` and run it.** The installer puts Muya in `/Applications`, which is the whole point: macOS runs a *downloaded* app that is opened in place from a temporary, read-only copy whose path changes on every launch, so every file-access permission you grant is filed against a copy that no longer exists next time. You would be asked for the same permission on every single launch, and Muya could not install its own updates. Installing to `/Applications` avoids that entirely — you grant file access once.
+
+The `.zip` is still there if you prefer it. If you use it, **drag `Muya.app` into `Applications` before opening it**, for the same reason.
 
 The app updates itself from signed releases.
 

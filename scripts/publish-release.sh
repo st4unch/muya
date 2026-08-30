@@ -157,6 +157,19 @@ ASSETS=("$ZIP")
 # The .app.tar.gz is what the auto-updater downloads (latest.json points at it);
 # the .zip stays for manual download.
 [ -f "$TARGZ" ] && ASSETS+=("$TARGZ")
+# The .pkg is the RECOMMENDED download for new users: it installs into
+# /Applications, so the app is never quarantined-and-opened-in-place and macOS
+# never App-Translocates it. That matters because a translocated app is run from
+# a path that changes every launch, so every file-access permission the user
+# grants is filed against a copy that no longer exists — they get asked again,
+# forever. Built by scripts/build-pkg.sh (needs the Developer ID Installer cert);
+# optional here so a release still ships if that step was skipped.
+PKG="$ROOT/Muya-${VERSION}-${ARCH}.pkg"
+if [ -f "$PKG" ]; then
+  ASSETS+=("$PKG")
+else
+  printf '\033[1;33m  !\033[0m no %s — run scripts/build-pkg.sh to ship the installer too\n' "$(basename "$PKG")"
+fi
 [ -n "$LATEST" ] && [ -f "$LATEST" ] && ASSETS+=("$LATEST")
 if [ -n "$DMG" ] && [ -f "$DMG" ]; then
   if spctl --assess --type install "$DMG" >/dev/null 2>&1; then

@@ -75,19 +75,36 @@ ok "app signature valid"
 # --- stage: pkgbuild --root takes a directory tree that mirrors the install
 # location, so the staging dir must contain exactly Muya.app and nothing else.
 STAGE="$(mktemp -d)"
-trap 'rm -rf "$STAGE"' EXIT
+trap 'rm -rf "$STAGE" "$STAGE.plist"' EXIT
 say "Staging $PRODUCT.app…"
 # ditto, not cp: cp -R mangles the signature on bundles with symlinked
 # frameworks, and a mangled signature fails notarization after the fact.
 ditto "$APP" "$STAGE/$PRODUCT.app"
 ok "staged"
 
+# --- component plist: turn OFF bundle relocation --------------------------------
+# pkgbuild marks app bundles BundleIsRelocatable=true by default. With that set,
+# the installer does NOT install where --install-location says: it looks up the
+# bundle id in Launch Services and installs over whatever existing copy it finds
+# — the user's ~/Desktop/Muya.app, ~/Downloads/Muya.app, anywhere. That silently
+# defeats the entire reason this package exists, because the copy outside
+# /Applications is exactly the one macOS translocates. Caught by test-installing
+# the first build: it landed on ~/Desktop/Muya.app instead of /Applications.
+COMPONENT_PLIST="$STAGE.plist"
+pkgbuild --analyze --root "$STAGE" "$COMPONENT_PLIST" >/dev/null
+/usr/libexec/PlistBuddy -c "Set :0:BundleIsRelocatable false" "$COMPONENT_PLIST" 2>/dev/null \
+  || die "could not disable bundle relocation in $COMPONENT_PLIST"
+[ "$(/usr/libexec/PlistBuddy -c "Print :0:BundleIsRelocatable" "$COMPONENT_PLIST")" = "false" ] \
+  || die "BundleIsRelocatable is still true — the pkg would install over an existing copy"
+ok "bundle relocation disabled (installs to /Applications, always)"
+
 INSTALLER_ID="$(security find-identity -v 2>/dev/null | grep "Developer ID Installer" | head -1 | sed -E 's/.*"(.*)"/\1/' || true)"
 
 rm -f "$PKG"
 if [ -z "$INSTALLER_ID" ]; then
   say "Building UNSIGNED pkg (no Developer ID Installer certificate found)…"
-  pkgbuild --root "$STAGE" --install-location /Applications \
+  pkgbuild --root "$STAGE" --component-plist "$COMPONENT_PLIST" \
+           --install-location /Applications \
            --identifier "$IDENT" --version "$VER" "$PKG"
   warn "pkg written to $PKG but it is UNSIGNED — Gatekeeper will block it."
   warn "Create a 'Developer ID Installer' certificate at"
@@ -97,7 +114,8 @@ if [ -z "$INSTALLER_ID" ]; then
 fi
 
 say "Building + signing pkg as: $INSTALLER_ID"
-pkgbuild --root "$STAGE" --install-location /Applications \
+pkgbuild --root "$STAGE" --component-plist "$COMPONENT_PLIST" \
+         --install-location /Applications \
          --identifier "$IDENT" --version "$VER" \
          --sign "$INSTALLER_ID" "$PKG"
 ok "pkg signed"

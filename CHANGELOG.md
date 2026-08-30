@@ -27,10 +27,11 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   its own once you have answered.
 
 ### Added
-- `scripts/build-pkg.sh` builds a signed, notarized installer package that puts
-  Muya in /Applications. Needs a "Developer ID Installer" certificate; the
-  script says how to create one and refuses to produce a publishable package
-  without it.
+- **An installer package.** `Muya-<version>-arm64.pkg` is now the recommended
+  download: it installs into /Applications, so the app is never opened from a
+  temporary copy and the file permission you grant is the last one you are asked
+  for. Signed, notarized and stapled like the app itself. The `.zip` remains for
+  anyone who prefers it.
 
 ### Changed
 - The download instructions now say to move Muya into Applications before
