@@ -6,6 +6,36 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.48] - 2026-08-30
+
+### Fixed
+- **Muya no longer asks for file permission on every single launch.** If you
+  opened Muya straight out of the downloaded zip, macOS was running it from a
+  temporary read-only copy whose location changes each time — so every
+  permission you granted was filed against a copy that no longer existed, and
+  you were asked again the next launch, forever. It also stopped Muya updating
+  itself. Muya now detects this and tells you the one thing that fixes it: move
+  it to your Applications folder. Grant permission once there and it sticks.
+- The fix survives updates. An update replaces the app bundle, and a replaced
+  bundle can come back marked as downloaded — which would put the app right back
+  into the temporary-copy state on its next launch and reset your permission
+  again. Muya now clears that mark from itself on every launch, so an update
+  cannot undo the fix.
+- File access is now requested by a button that explains what it is for, instead
+  of a bare macOS prompt appearing on its own. If access was previously refused,
+  Muya can open the Privacy & Security settings for you — macOS never re-asks on
+  its own once you have answered.
+
+### Added
+- `scripts/build-pkg.sh` builds a signed, notarized installer package that puts
+  Muya in /Applications. Needs a "Developer ID Installer" certificate; the
+  script says how to create one and refuses to produce a publishable package
+  without it.
+
+### Changed
+- The download instructions now say to move Muya into Applications before
+  opening it, and why that matters.
+
 ## [0.2.47] - 2026-08-30
 
 ### Fixed

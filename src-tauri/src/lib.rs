@@ -98,6 +98,12 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
+            // Must run before anything else: an updated bundle can come back
+            // quarantined, and a quarantined app outside /Applications is
+            // translocated on its next launch — which resets the user's file
+            // permission all over again. See fs::strip_own_quarantine.
+            crate::fs::strip_own_quarantine();
+
             // Native menu bar. We rebuild it explicitly (instead of the default) so we
             // can add File > New File; the Edit submenu is re-added by hand because a
             // custom menu drops the platform defaults that terminal/editor copy-paste
@@ -310,6 +316,7 @@ pub fn run() {
             fs::git_status,
             fs::reveal_in_finder,
             fs::open_privacy_settings,
+            fs::file_access_status,
             fs::allow_asset_path,
             fs::resolve_path_kind,
             fs::local_ip,

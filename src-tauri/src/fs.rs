@@ -690,6 +690,125 @@ fn access_denied_message(path: &str) -> String {
     )
 }
 
+/// Reported to the UI so a fresh install can explain itself instead of just
+/// failing. `translocated` is the one that silently breaks everything.
+#[derive(serde::Serialize)]
+pub struct FileAccessStatus {
+    pub translocated: bool,
+    pub exe_path: String,
+    pub folders: Vec<FolderAccess>,
+}
+
+#[derive(serde::Serialize)]
+pub struct FolderAccess {
+    pub name: String,
+    pub path: String,
+    pub granted: bool,
+}
+
+/// Is this executable running from an App Translocation mount?
+///
+/// macOS runs a QUARANTINED app (i.e. one that was downloaded, which is every
+/// zip we ship) from a randomized read-only copy under
+/// `/private/var/folders/.../AppTranslocation/<UUID>/d/Muya.app` whenever it is
+/// launched from outside a trusted install location. The UUID is different on
+/// every launch, so macOS sees a DIFFERENT APP each time: every privacy grant
+/// the user gives is recorded against a path that will never exist again, and
+/// the next launch asks for the same permission from scratch — forever. It also
+/// makes the self-updater fail, because the mount is read-only.
+///
+/// Moving the app to /Applications (Finder's move strips the quarantine flag)
+/// ends it permanently. Nothing the app can do at runtime fixes it from inside,
+/// so all we can do is detect it and say so — which beats looking broken.
+/// Reported by users on fresh installs, 2026-08-30; never reproducible on a
+/// developer machine, where the app was long since moved and de-quarantined.
+fn path_is_translocated(exe_path: &str) -> bool {
+    exe_path.contains("/AppTranslocation/")
+}
+
+/// The `.app` bundle root for a given executable path, if it is inside one.
+///
+/// `<bundle>/Contents/MacOS/<exe>` — three levels up. Returns None for a bare
+/// binary (`cargo run`, tests), which must never be touched.
+fn bundle_root_from_exe(exe_path: &str) -> Option<String> {
+    let p = Path::new(exe_path);
+    let root = p.parent()?.parent()?.parent()?;
+    root.extension()
+        .filter(|e| *e == "app")
+        .map(|_| root.to_string_lossy().into_owned())
+}
+
+/// Strip `com.apple.quarantine` from our own bundle, every launch.
+///
+/// Not a one-time chore: the updater REPLACES the bundle in place, and a
+/// replaced bundle can come back carrying the quarantine flag. A quarantined app
+/// living anywhere outside /Applications gets App Translocation on its NEXT
+/// launch — so an update would silently reintroduce exactly the bug this release
+/// fixes, and the user's file permission would reset all over again.
+///
+/// Safe by construction: we are already running, so macOS has already assessed
+/// and admitted this exact bundle. Removing the flag from a binary the system
+/// just executed grants nothing new. Skipped when translocated, because there
+/// the path is the throwaway copy and the real bundle is out of reach — that
+/// case is handled by telling the user to move the app.
+///
+/// Best-effort: a failure here is not worth blocking startup over.
+pub fn strip_own_quarantine() {
+    let Ok(exe) = std::env::current_exe() else { return };
+    let exe = exe.to_string_lossy().into_owned();
+    if path_is_translocated(&exe) {
+        return;
+    }
+    let Some(bundle) = bundle_root_from_exe(&exe) else { return };
+    let _ = Command::new("/usr/bin/xattr")
+        .args(["-d", "-r", "com.apple.quarantine", &bundle])
+        .output();
+}
+
+/// The protected folders a workspace realistically lives in.
+fn protected_folders(home: &str) -> Vec<(String, String)> {
+    ["Documents", "Desktop", "Downloads"]
+        .iter()
+        .map(|n| ((*n).to_string(), format!("{home}/{n}")))
+        .collect()
+}
+
+/// Report whether Muya can actually read the user's folders.
+///
+/// `probe = true` deliberately lists each folder, which is what raises macOS's
+/// permission prompt. That is the point: the prompt should appear when the user
+/// pressed a button that explains why, not at random later. Already-granted
+/// folders raise nothing, and an already-denied folder returns EPERM silently
+/// (macOS never re-asks once answered), so probing is safe to repeat.
+#[tauri::command(async)]
+pub fn file_access_status(probe: bool) -> FileAccessStatus {
+    let exe_path = std::env::current_exe()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let home = std::env::var("HOME").unwrap_or_default();
+    let folders = if home.is_empty() {
+        Vec::new()
+    } else {
+        protected_folders(&home)
+            .into_iter()
+            .map(|(name, path)| {
+                // `read_dir` is the operation that actually needs the grant.
+                let granted = probe && std::fs::read_dir(&path).is_ok();
+                FolderAccess {
+                    name,
+                    path,
+                    granted,
+                }
+            })
+            .collect()
+    };
+    FileAccessStatus {
+        translocated: path_is_translocated(&exe_path),
+        exe_path,
+        folders,
+    }
+}
+
 /// Open macOS's privacy settings so the operator can grant folder access.
 ///
 /// This is the app's ONLY recourse after a denial — see `access_denied_message`.
@@ -1278,6 +1397,50 @@ pub async fn install_muya_plugin() -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn translocation_is_detected_from_the_executable_path() {
+        // The real shape macOS hands a downloaded app that was launched from
+        // outside a trusted install location. The UUID changes every launch,
+        // which is exactly why privacy grants never stick.
+        assert!(path_is_translocated(
+            "/private/var/folders/96/xk_1/T/AppTranslocation/9F0C1B2A-0000-4E11-9C3E-AAAABBBBCCCC/d/Muya.app/Contents/MacOS/muya"
+        ));
+        // Normal install locations must never be reported as translocated —
+        // a false positive would nag every correctly-installed user forever.
+        for ok in [
+            "/Applications/Muya.app/Contents/MacOS/muya",
+            "/Users/someone/Applications/Muya.app/Contents/MacOS/muya",
+            "/Users/someone/Desktop/Muya.app/Contents/MacOS/muya",
+            "/Users/someone/Documents/claude-control-plane/src-tauri/target/debug/muya",
+        ] {
+            assert!(!path_is_translocated(ok), "false positive on {ok}");
+        }
+        assert!(!path_is_translocated(""));
+    }
+
+    #[test]
+    fn bundle_root_is_found_only_for_real_app_bundles() {
+        assert_eq!(
+            bundle_root_from_exe("/Applications/Muya.app/Contents/MacOS/muya").as_deref(),
+            Some("/Applications/Muya.app")
+        );
+        // A bare binary (cargo run, test harness) has no bundle — we must never
+        // run xattr against some unrelated parent directory.
+        assert_eq!(bundle_root_from_exe("/Users/x/proj/target/debug/muya"), None);
+        assert_eq!(bundle_root_from_exe("muya"), None);
+        assert_eq!(bundle_root_from_exe(""), None);
+    }
+
+    #[test]
+    fn protected_folders_are_the_three_tcc_gated_ones_under_home() {
+        let f = protected_folders("/Users/someone");
+        let names: Vec<&str> = f.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["Documents", "Desktop", "Downloads"]);
+        assert_eq!(f[0].1, "/Users/someone/Documents");
+    }
+
     use super::*;
     use crate::testutil::*;
 

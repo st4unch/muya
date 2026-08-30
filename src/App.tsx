@@ -65,6 +65,7 @@ const MarkdownView = lazy(() => import("./components/MarkdownView"));
 const ImageViewer = lazy(() => import("./components/ImageViewer"));
 const PdfViewer = lazy(() => import("./components/PdfViewer"));
 import SessionMonitor from "./components/SessionMonitor";
+import FileAccessGate from "./components/FileAccessGate";
 import NewAgentModal, { type NewAgentSpec } from "./components/NewAgentModal";
 import QueuePage from "./components/QueuePage";
 import ResourcesPage from "./components/ResourcesPage";
@@ -1713,6 +1714,10 @@ export const loginHandler = async (req, res) => {
 
   return (
     <div id="vs-ctrl-plane" className="min-h-screen bg-neutral-50 dark:bg-[#25272b] text-neutral-800 dark:text-neutral-200 flex flex-col font-sans select-none overflow-hidden h-screen text-xs">
+
+      {/* macOS file-access gate: blocks on App Translocation, otherwise offers a
+          one-time, explained permission request. Renders nothing once granted. */}
+      <FileAccessGate />
 
       {/* OS drag-drop hint: shown while a file/folder is dragged over the window. */}
       {dropActive && (

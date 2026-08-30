@@ -36,6 +36,11 @@ tasks/
 # Signed/notarized distribution artifacts (released via GitHub, not git)
 ApexMissionControl-*.zip
 *-arm64.zip
+# Build outputs — never committed. An unsigned .pkg in particular must never
+# reach a release: Gatekeeper blocks it and the user sees a broken installer.
+*-arm64.pkg
+*-arm64.app.tar.gz
+*-arm64.app.tar.gz.sig
 
 # Local release scripts (build/sign/notarize/publish) — machine-local, not committed
 scripts/
