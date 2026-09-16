@@ -881,25 +881,75 @@ pub fn ssh_remove_server(id: String) -> Result<(), String> {
     save(&cfg)
 }
 
-#[tauri::command]
-pub fn ssh_upsert_psmp_profile(mut profile: PsmpProfile) -> Result<String, String> {
-    if profile.psmp_address.trim().is_empty() || profile.vault_user.trim().is_empty() {
-        return Err("psmpAddress and vaultUser are required".into());
+/// Reject a PSMP profile that cannot produce a usable destination.
+///
+/// The connect string is assembled by interpolation —
+/// `vaultUser<delim>targetUser<delim>targetAddress<delim>psmpAddress` (see
+/// `psmp_destination`). Nothing downstream re-parses it, so a delimiter sitting
+/// INSIDE one of the fields silently shifts every following segment: ssh then
+/// dials a destination nobody wrote, and the operator gets an opaque login
+/// failure with a correct-looking profile on screen. Whitespace does the same to
+/// argv. Emptiness was the only thing checked before.
+///
+/// Validated against the profile's OWN delimiter rather than a hardcoded '@',
+/// because `userDelim` exists precisely so a site can use something else — and
+/// on such a site an '@' inside the vault user is perfectly legitimate.
+fn validate_psmp_profile(profile: &PsmpProfile) -> Result<(), String> {
+    let delim = if profile.user_delim.is_empty() {
+        "@"
+    } else {
+        profile.user_delim.as_str()
+    };
+    for (field, value) in [
+        ("vaultUser", &profile.vault_user),
+        ("psmpAddress", &profile.psmp_address),
+    ] {
+        if value.trim().is_empty() {
+            return Err(format!("{field} is required"));
+        }
+        if value.chars().any(|c| c.is_whitespace() || c.is_control()) {
+            return Err(format!(
+                "{field} must not contain whitespace or control characters"
+            ));
+        }
+        if value.contains(delim) {
+            return Err(format!(
+                "{field} must not contain the user delimiter '{delim}' — enter only the \
+                 {field} itself, not a full destination string"
+            ));
+        }
     }
-    let mut cfg = load()?;
-    let id = if profile.id.is_empty() {
+    Ok(())
+}
+
+/// Validate + upsert, split out from the command so a test can drive the REAL
+/// save path against a temp config. Testing `validate_psmp_profile` on its own
+/// proves the rule but not that anything calls it — unwiring the check left
+/// those tests green, which is how this split came about.
+pub(crate) fn upsert_psmp_profile_in(
+    cfg: &mut SshConfig,
+    mut profile: PsmpProfile,
+) -> Result<String, String> {
+    validate_psmp_profile(&profile)?;
+    if profile.id.is_empty() {
         profile.id = crate::credstore::new_id();
         let id = profile.id.clone();
         cfg.psmp_profiles.push(profile);
-        id
+        Ok(id)
     } else {
         let id = profile.id.clone();
         match cfg.psmp_profiles.iter_mut().find(|p| p.id == id) {
             Some(slot) => *slot = profile,
             None => cfg.psmp_profiles.push(profile),
         }
-        id
-    };
+        Ok(id)
+    }
+}
+
+#[tauri::command]
+pub fn ssh_upsert_psmp_profile(profile: PsmpProfile) -> Result<String, String> {
+    let mut cfg = load()?;
+    let id = upsert_psmp_profile_in(&mut cfg, profile)?;
     save(&cfg)?;
     Ok(id)
 }
@@ -1264,6 +1314,74 @@ mod tests {
         let mut s = srv("h", 22, "u");
         s.connection_type = "psmp".into();
         assert!(build_connect_command(&s, None).is_err());
+    }
+
+    // ---- validate_psmp_profile -------------------------------------------
+
+    fn profile(vault_user: &str, psmp_address: &str, user_delim: &str) -> PsmpProfile {
+        PsmpProfile {
+            id: "p1".into(),
+            label: "murat".into(),
+            psmp_address: psmp_address.into(),
+            vault_user: vault_user.into(),
+            user_delim: user_delim.into(),
+            param_delim: "#".into(),
+            scp_options: None,
+        }
+    }
+
+    #[test]
+    fn saving_a_profile_actually_runs_the_validation() {
+        // The wiring test. The rule-level tests below call the validator
+        // directly, so they stayed green even when the save path stopped
+        // calling it — they prove the rule, not that anything enforces it.
+        let mut cfg = SshConfig::default();
+        let bad = upsert_psmp_profile_in(&mut cfg, profile("maydogan@target@host", "psmp.corp", "@"));
+        assert!(bad.is_err(), "save path must reject a pasted destination");
+        assert!(cfg.psmp_profiles.is_empty(), "nothing may be persisted on reject");
+
+        // Non-vacuous: a good profile still saves through the same path.
+        let ok = upsert_psmp_profile_in(&mut cfg, profile("maydogan", "psmp.corp", "@"));
+        assert!(ok.is_ok(), "{ok:?}");
+        assert_eq!(cfg.psmp_profiles.len(), 1);
+        assert_eq!(cfg.psmp_profiles[0].vault_user, "maydogan");
+    }
+
+    #[test]
+    fn psmp_profile_rejects_a_full_destination_pasted_into_vault_user() {
+        // The reported shape: the connect string is built by interpolation, so a
+        // delimiter inside vaultUser shifts every later segment and ssh dials a
+        // destination nobody wrote — an opaque login failure with a profile that
+        // looks right on screen.
+        let err = validate_psmp_profile(&profile("maydogan@target@host", "psmp.corp", "@"))
+            .unwrap_err();
+        assert!(err.contains("vaultUser"), "{err}");
+        assert!(err.contains("delimiter"), "{err}");
+    }
+
+    #[test]
+    fn psmp_profile_accepts_a_plain_vault_user() {
+        // Non-vacuous: the ordinary profile must still save.
+        assert!(validate_psmp_profile(&profile("maydogan", "psmp.corp", "@")).is_ok());
+    }
+
+    #[test]
+    fn psmp_profile_validates_against_its_own_delimiter_not_a_hardcoded_at() {
+        // userDelim exists so a site can use something else. On such a site an
+        // '@' in the vault user is legitimate and must not be rejected…
+        assert!(validate_psmp_profile(&profile("maydogan@corp.local", "psmp.corp", "%")).is_ok());
+        // …while the delimiter that site DOES use must still be caught.
+        assert!(validate_psmp_profile(&profile("maydogan%target", "psmp.corp", "%")).is_err());
+    }
+
+    #[test]
+    fn psmp_profile_rejects_whitespace_and_empties() {
+        assert!(validate_psmp_profile(&profile("may dogan", "psmp.corp", "@")).is_err());
+        assert!(validate_psmp_profile(&profile("maydogan", "psmp corp", "@")).is_err());
+        assert!(validate_psmp_profile(&profile("", "psmp.corp", "@")).is_err());
+        assert!(validate_psmp_profile(&profile("maydogan", "", "@")).is_err());
+        // An empty userDelim falls back to '@', the documented default.
+        assert!(validate_psmp_profile(&profile("a@b", "psmp.corp", "")).is_err());
     }
 
     // ---- agent_add_server_in (PRD ssh-agent-add-server) ------------------
