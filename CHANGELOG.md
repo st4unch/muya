@@ -6,6 +6,16 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.50] - 2026-09-17
+
+### Fixed
+- A PSMP jump-server profile with a bad Vault User is now refused when you save
+  it, with a message saying what is wrong. The connect address is assembled from
+  these fields in order, so a stray `@` inside one of them silently pushes
+  everything after it into the wrong slot — SSH then dials an address nobody
+  typed and the login fails for no visible reason, while the profile still looks
+  correct on screen. Only emptiness was checked before.
+
 ## [0.2.49] - 2026-08-30
 
 ### Fixed
