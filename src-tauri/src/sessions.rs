@@ -102,18 +102,53 @@ pub(crate) fn line_text(v: &serde_json::Value) -> String {
     out
 }
 
+/// Build the `…match…` preview around the first case-insensitive hit.
+///
+/// The offsets here are the whole problem. The previous version searched a
+/// `to_lowercase()` COPY and then sliced the ORIGINAL string with the index it
+/// found. Unicode lowercasing is not length-preserving — 'İ' (U+0130, 2 bytes)
+/// lowercases to "i̇" (U+0069 + U+0307, 3 bytes) — so after any such character
+/// the two strings no longer agree on byte offsets, and slicing the original at
+/// the copy's index lands mid-character. Rust panics rather than mangling:
+/// `byte index 8340 is not a char boundary; it is inside 'ı'`. Turkish text
+/// trips it immediately; the session-search poller panicked on the same skill
+/// file roughly once an hour for weeks.
+///
+/// So lowercase character by character while remembering where each piece came
+/// from, and translate the hit back to an ORIGINAL offset before slicing.
 fn make_snippet(text: &str, needle_lower: &str) -> Option<String> {
-    let lower = text.to_lowercase();
-    let pos = lower.find(needle_lower)?;
+    let mut lower = String::with_capacity(text.len());
+    // (offset in `lower`, offset in `text`) at every character boundary.
+    let mut offsets: Vec<(usize, usize)> = Vec::new();
+    for (orig_i, ch) in text.char_indices() {
+        offsets.push((lower.len(), orig_i));
+        for lc in ch.to_lowercase() {
+            lower.push(lc);
+        }
+    }
+    // Sentinel, so a hit at the very end still maps to a real boundary.
+    offsets.push((lower.len(), text.len()));
+
+    let lpos = lower.find(needle_lower)?;
+    // A match always begins at a character boundary, so the owning entry is the
+    // last one at or before it.
+    let idx = offsets
+        .partition_point(|&(lo, _)| lo <= lpos)
+        .saturating_sub(1);
+    let pos = offsets[idx].1;
+
     let start = text[..pos]
         .char_indices()
         .rev()
         .nth(SNIPPET_RADIUS)
         .map(|(i, _)| i)
         .unwrap_or(0);
+    // Characters, not bytes: `needle_lower.len()` is a BYTE count, so a non-ASCII
+    // search term used to stretch the window well past its intended width.
+    let needle_chars = needle_lower.chars().count();
     let end = text[pos..]
         .char_indices()
-        .nth(needle_lower.len() + SNIPPET_RADIUS)
+        .nth(needle_chars + SNIPPET_RADIUS)
         .map(|(i, _)| pos + i)
         .unwrap_or(text.len());
     let mut s = text[start..end].replace('\n', " ");
@@ -338,6 +373,46 @@ pub async fn export_session_markdown(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn snippet_survives_turkish_text_whose_lowercase_is_longer() {
+        // The exact crash: 'İ' is 2 bytes but lowercases to 3, so an index found
+        // in the lowercased copy pointed one byte into the next character of the
+        // ORIGINAL — here, straight into 'ı'. The old code sliced there and Rust
+        // panicked: "byte index N is not a char boundary; it is inside 'ı'".
+        let out = make_snippet("İıabc", "ıabc").expect("needle is present");
+        assert!(out.contains("ıabc"), "{out}");
+
+        // The shape that actually did it in the wild — a Turkish skill file.
+        let text = "İmaj oluşturulurken Jenkins'te bir MCP sunucu imajını derliyoruz";
+        let out = make_snippet(text, "imajını").expect("needle is present");
+        assert!(out.contains("imajını"), "{out}");
+    }
+
+    #[test]
+    fn snippet_still_finds_and_trims_ordinary_text() {
+        // Non-vacuous: the ordinary path must keep working, case-insensitively,
+        // with the original casing preserved in the output.
+        let text = "The QUICK brown fox jumps over the lazy dog";
+        let out = make_snippet(text, "quick").expect("needle is present");
+        assert!(out.contains("QUICK"), "original casing must survive: {out}");
+
+        // A needle that is not there yields nothing rather than a bogus window.
+        assert!(make_snippet(text, "zebra").is_none());
+    }
+
+    #[test]
+    fn snippet_window_is_measured_in_characters_not_bytes() {
+        // needle_lower.len() is a BYTE count; a non-ASCII term used to stretch the
+        // window past its intended width. Guard the boundary arithmetic itself.
+        let filler = "ş".repeat(200);
+        let text = format!("{filler}ARANAN{filler}");
+        let out = make_snippet(&text, "aranan").expect("needle is present");
+        assert!(out.contains("ARANAN"), "{out}");
+        assert!(out.starts_with('…') && out.ends_with('…'), "must be elided both ends: {out}");
+    }
+
     use super::*;
 
     const SAMPLE: &str = r#"{"type":"custom-title","customTitle":"x","sessionId":"s1"}

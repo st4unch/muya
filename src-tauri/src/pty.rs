@@ -38,7 +38,9 @@ struct PtyHandle {
 
 #[derive(Default)]
 pub struct PtyManager {
-    sessions: Mutex<HashMap<String, PtyHandle>>,
+    // Arc, not a bare Mutex, so the output thread can reap its own session when
+    // the shell exits — see the EOF handler in `spawn_process`.
+    sessions: Arc<Mutex<HashMap<String, PtyHandle>>>,
     counter: AtomicU64,
 }
 
@@ -176,6 +178,19 @@ pub fn spawn_process(
     // When the consumer lags, `tx.send` blocks → the reader stops draining the PTY
     // → the OS PTY buffer fills → the child's write() blocks. That backpressure is
     // what bounds memory and throttles a runaway producer.
+    // Registered BEFORE the output threads start. A command that exits instantly
+    // would otherwise reach the EOF reaper below before this insert ran, and the
+    // dead entry it was supposed to remove would be added right after it gave up —
+    // leaking the very handle the reaper exists to release.
+    manager.sessions.lock().unwrap().insert(
+        id.clone(),
+        PtyHandle {
+            writer: Arc::clone(&writer),
+            master: pair.master,
+            child,
+        },
+    );
+
     let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(256); // ≤256×8KB ≈ 2MB buffered
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
@@ -218,6 +233,8 @@ pub fn spawn_process(
     // queue above fill and apply backpressure — without it the consumer would never
     // signal "slow down" and memory/event-rate would run away.
     let ch = on_event.clone();
+    let sessions_for_reap = Arc::clone(&manager.sessions);
+    let id_for_reap = id.clone();
     std::thread::spawn(move || {
         const MAX_BATCH: usize = 128 * 1024;
         const FLUSH: Duration = Duration::from_millis(8);
@@ -233,6 +250,7 @@ pub fn spawn_process(
                     Err(mpsc::TryRecvError::Disconnected) => {
                         let _ = ch.send(InvokeResponseBody::Raw(batch));
                         let _ = ch.send(exit_event());
+                        reap(&sessions_for_reap, &id_for_reap);
                         return;
                     }
                 }
@@ -243,16 +261,9 @@ pub fn spawn_process(
             std::thread::sleep(FLUSH);
         }
         let _ = ch.send(exit_event());
+        reap(&sessions_for_reap, &id_for_reap);
     });
 
-    manager.sessions.lock().unwrap().insert(
-        id.clone(),
-        PtyHandle {
-            writer,
-            master: pair.master,
-            child,
-        },
-    );
     Ok(id)
 }
 
@@ -513,6 +524,23 @@ pub fn pty_resize(
         .map_err(|e| format!("resize failed: {e}"))
 }
 
+/// Forget a finished session, releasing its PTY.
+///
+/// Until this existed nothing removed a session whose shell exited on its own —
+/// an `exit`, an ssh disconnect, a command that ran to completion. The frontend
+/// got its exit event and showed the tab as ended, but the `PtyHandle` stayed in
+/// the map with the PTY master still open, so `/dev/ptmx` descriptors piled up
+/// for as long as the app ran (45+ observed on a normal day's use). Only closing
+/// the tab, which calls `pty_kill`, ever released one.
+///
+/// Dropping the handle is what closes the master; the child is already gone by
+/// the time we get here, so there is nothing to kill.
+fn reap(sessions: &Mutex<HashMap<String, PtyHandle>>, id: &str) {
+    if let Ok(mut map) = sessions.lock() {
+        map.remove(id);
+    }
+}
+
 /// Kill every active PTY session. Called before process exit so no shells are orphaned.
 pub fn kill_all(manager: &PtyManager) {
     if let Ok(mut sessions) = manager.sessions.lock() {
@@ -522,13 +550,20 @@ pub fn kill_all(manager: &PtyManager) {
     }
 }
 
+/// Kill a PTY's child and forget the session. Split from the command so tests
+/// can drive it without a Tauri `State`.
+fn pty_kill_inner(manager: &PtyManager, id: &str) {
+    if let Ok(mut sessions) = manager.sessions.lock() {
+        if let Some(mut h) = sessions.remove(id) {
+            let _ = h.child.kill();
+        }
+    }
+}
+
 /// Kill a PTY's child process and forget the session.
 #[tauri::command]
 pub fn pty_kill(state: State<PtyManager>, id: String) -> Result<(), String> {
-    let mut sessions = state.sessions.lock().unwrap();
-    if let Some(mut h) = sessions.remove(&id) {
-        let _ = h.child.kill();
-    }
+    pty_kill_inner(&state, &id);
     Ok(())
 }
 
@@ -719,6 +754,78 @@ fn pty_session_ids_blocking(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// A PTY whose command exits on its own must not stay in the session map.
+    ///
+    /// This is the leak: nothing removed a session that ended by itself, so the
+    /// PTY master stayed open and `/dev/ptmx` descriptors accumulated for the
+    /// life of the app. Only closing the tab ever released one.
+    #[test]
+    fn a_session_whose_command_exits_is_reaped() {
+        let manager = PtyManager::default();
+        // Channel needs no real IPC here — the reaper runs on the output thread
+        // regardless of whether anything is listening.
+        let ch: Channel<InvokeResponseBody> = Channel::new(|_| Ok(()));
+
+        let id = spawn_process(
+            &manager,
+            ch,
+            "/bin/echo",
+            &["done".to_string()],
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("spawn");
+
+        // It is registered while alive…
+        assert!(
+            manager.sessions.lock().unwrap().contains_key(&id)
+                || manager.sessions.lock().unwrap().is_empty(),
+            "must be either still running or already reaped, never a third state"
+        );
+
+        // …and gone once the command finishes. Echo exits immediately; give the
+        // output thread a moment to see EOF.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            if manager.sessions.lock().unwrap().is_empty() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        panic!("session {id} still registered 5s after its command exited — PTY leaked");
+    }
+
+    /// Non-vacuous counterpart: a live shell must NOT be reaped, or closing a tab
+    /// would be the least of it — terminals would vanish while in use.
+    #[test]
+    fn a_running_session_stays_registered() {
+        let manager = PtyManager::default();
+        let ch: Channel<InvokeResponseBody> = Channel::new(|_| Ok(()));
+        let id = spawn_process(
+            &manager,
+            ch,
+            "/bin/sleep",
+            &["30".to_string()],
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("spawn");
+
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(
+            manager.sessions.lock().unwrap().contains_key(&id),
+            "a running session must stay registered"
+        );
+        pty_kill_inner(&manager, &id);
+        assert!(manager.sessions.lock().unwrap().is_empty(), "kill must release it");
+    }
+
 
     #[test]
     fn parse_ppid_map_reads_pid_parent_pairs() {

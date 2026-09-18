@@ -6,6 +6,23 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.51] - 2026-09-18
+
+### Fixed
+- **Finished terminals no longer hold their PTY open.** When a shell ended on its
+  own — an `exit`, an SSH disconnect, a command running to completion — the tab
+  showed as ended but the session was never released, so open PTY descriptors
+  piled up for as long as the app ran. Only closing the tab by hand freed one.
+- **Session search no longer crashes on Turkish text.** Searching a transcript
+  containing characters like İ could panic the background search, because the
+  match position was found in a lowercased copy and then applied to the original
+  text — and lowercasing does not preserve byte lengths, so the position landed
+  mid-character. The same file crashed the search roughly once an hour.
+- **Esc in fullscreen works as intended again.** The two-press guard needed a
+  window permission the app never granted, so a single Esc always left
+  fullscreen and every press wrote an error to the log. That error was the bulk
+  of the log file.
+
 ## [0.2.50] - 2026-09-17
 
 ### Fixed
