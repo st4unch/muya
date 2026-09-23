@@ -3,6 +3,21 @@ import { invoke } from "@tauri-apps/api/core";
 import { copyToClipboard } from "../lib/clipboard";
 import { relTime, shortCwd } from "../lib/format";
 import { RefreshCw, Play, Plug, FolderGit2, Clock, Square, Search, X, MessageSquare, User, Bot, Copy, Check, Download } from "lucide-react";
+import { buildResumeCommand, type AgentKind } from "../lib/agent";
+
+/// The command that opens a session row in a terminal.
+///
+/// Each CLI spells this differently and rejects the other's flags: Claude attaches
+/// a background session with `claude attach <id>`, opencode resumes any session
+/// with `--session <id>`. A Claude interactive session has nothing to attach to,
+/// so it opens a plain shell in its directory — unchanged from before.
+function openCommandFor(s: AgentSession): string | undefined {
+  if (s.agent === "opencode") return buildResumeCommand("opencode", s.id);
+  if (s.attachable && s.attachId) {
+    return `claude attach ${s.attachId} --dangerously-skip-permissions`;
+  }
+  return undefined;
+}
 
 interface AgentSession {
   id: string;
@@ -14,6 +29,9 @@ interface AgentSession {
   modelsUsed: string;
   attachable?: boolean;
   attachId?: string;
+  /** Which CLI this session belongs to. Absent on rows from an older backend,
+   *  which were all Claude — so the fallback preserves today's behavior. */
+  agent?: AgentKind;
 }
 
 interface HistoryEntry {
@@ -185,7 +203,7 @@ export default function SessionsPage({
     <div className="flex-1 overflow-y-auto bg-neutral-50/50 dark:bg-[#25272b] p-5">
       <div className="flex items-center justify-between mb-3">
         <h1 className="text-sm font-display font-bold text-neutral-800 dark:text-neutral-200 flex items-center gap-2">
-          <Plug className="h-4 w-4 text-indigo-500 dark:text-indigo-400" /> Claude Sessions
+          <Plug className="h-4 w-4 text-indigo-500 dark:text-indigo-400" /> Agent Sessions
         </h1>
         <button
           type="button"
@@ -248,6 +266,14 @@ export default function SessionsPage({
                   <span className="font-mono text-xs font-bold text-neutral-900 dark:text-neutral-100 truncate max-w-[260px]">
                     {s.name}
                   </span>
+                  {/* Which CLI this row came from. Only shown for opencode: the list
+                      was all-Claude until now, so badging every Claude row would add
+                      noise to the common case for no information. */}
+                  {s.agent === "opencode" && (
+                    <span className="text-[8px] font-mono font-bold px-1.5 py-0.5 rounded border uppercase border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300">
+                      opencode
+                    </span>
+                  )}
                   <span
                     className={`text-[8px] font-mono font-bold px-1.5 py-0.5 rounded border uppercase ${statusColor(
                       s.status
@@ -292,17 +318,15 @@ export default function SessionsPage({
                       key: s.id,
                       name: s.name,
                       cwd: s.worktree.startsWith("/") ? s.worktree : undefined,
-                      initialCommand:
-                        s.attachable && s.attachId
-                          ? `claude attach ${s.attachId} --dangerously-skip-permissions`
-                          : undefined,
+                      initialCommand: openCommandFor(s),
                     })
                   }
                   className="flex items-center gap-1.5 text-[11px] font-mono font-semibold px-2.5 py-1 rounded border border-indigo-200 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/40 cursor-pointer transition-colors"
                 >
-                  <Plug className="h-3 w-3" /> {s.attachable ? "Attach" : "Aç"}
+                  <Plug className="h-3 w-3" />{" "}
+                  {s.agent === "opencode" ? "Resume" : s.attachable ? "Attach" : "Aç"}
                 </button>
-                {s.attachable && (
+                {s.attachable && s.agent !== "opencode" && (
                   <button
                     type="button"
                     onClick={() => void stop(s)}
@@ -404,7 +428,7 @@ export default function SessionsPage({
                         key: `resume:${h.sessionId}`,
                         name: `↻ ${name}`,
                         cwd: h.cwd.startsWith("/") ? h.cwd : undefined,
-                        initialCommand: `claude --resume ${h.sessionId} --dangerously-skip-permissions`,
+                        initialCommand: buildResumeCommand("claude", h.sessionId),
                       })
                     }
                     className="flex items-center gap-1.5 text-[11px] font-mono font-semibold px-2.5 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#25272b] text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer transition-colors"

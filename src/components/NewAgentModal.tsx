@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { X, Plus, FileText, FolderSearch } from "lucide-react";
+import { AGENT_BASE_COMMAND } from "../lib/agent";
 
 export interface NewAgentSpec {
-  type: "claude" | "terminal";
+  type: "claude" | "opencode" | "terminal";
   workspace: string;
   branch: string;
   title: string;
@@ -12,12 +13,16 @@ export interface NewAgentSpec {
   files: string[];
 }
 
-type Preset = "skip-permissions" | "agents" | "blank";
+type Preset = "skip-permissions" | "agents" | "opencode" | "blank";
 
-const PRESETS: { value: Preset; label: string; command: string }[] = [
-  { value: "skip-permissions", label: "claude --dangerously-skip-permissions", command: "claude --dangerously-skip-permissions" },
-  { value: "agents",           label: "claude agents",                         command: "claude agents" },
-  { value: "blank",            label: "Blank Terminal",                        command: "" },
+/// Each agent's own auto-approve flag. They are NOT interchangeable — opencode
+/// rejects --dangerously-skip-permissions and Claude rejects --auto — so the
+/// preset carries the whole command rather than a flag assembled elsewhere.
+const PRESETS: { value: Preset; label: string; command: string; type: NewAgentSpec["type"] }[] = [
+  { value: "skip-permissions", label: AGENT_BASE_COMMAND.claude,   command: AGENT_BASE_COMMAND.claude,   type: "claude" },
+  { value: "agents",           label: "claude agents",            command: "claude agents",            type: "claude" },
+  { value: "opencode",         label: AGENT_BASE_COMMAND.opencode, command: AGENT_BASE_COMMAND.opencode, type: "opencode" },
+  { value: "blank",            label: "Blank Terminal",           command: "",                         type: "terminal" },
 ];
 
 export default function NewAgentModal({
@@ -68,6 +73,10 @@ export default function NewAgentModal({
   // workspace state may be "" if workspaces weren't loaded when this component first mounted
   const activeWorkspace = workspace || defaultWs;
   const isBlank = preset === "blank";
+  // The launched type comes from the preset table, so adding an agent never means
+  // remembering to update a ternary here.
+  const agentType: NewAgentSpec["type"] =
+    PRESETS.find((p) => p.value === preset)?.type ?? "claude";
 
   const handlePresetChange = (v: Preset) => {
     setPreset(v);
@@ -86,7 +95,7 @@ export default function NewAgentModal({
     setError("");
     try {
       await onLaunch({
-        type: isBlank ? "terminal" : "claude",
+        type: agentType,
         workspace: isBlank ? defaultWs : activeWorkspace.trim(),
         branch,
         title,

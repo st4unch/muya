@@ -901,6 +901,10 @@ pub struct ClaudeMcp {
     pub name: String,
     pub command: String,
     pub description: String,
+    /// Which agent's config this server is registered in — "claude" or
+    /// "opencode". The same server is commonly installed in both, and without
+    /// this the two entries look like one duplicated row.
+    pub agent: String,
 }
 
 #[derive(Serialize)]
@@ -1014,6 +1018,7 @@ pub fn list_claude_resources() -> Result<ClaudeResources, String> {
                             name: name.clone(),
                             command,
                             description,
+                            agent: "claude".to_string(),
                         });
                     }
                 }
@@ -1021,12 +1026,76 @@ pub fn list_claude_resources() -> Result<ClaudeResources, String> {
         }
     }
 
+    mcps.extend(read_opencode_mcps());
+
     Ok(ClaudeResources {
         skills,
         agents,
         hooks,
         mcps,
     })
+}
+
+/// The MCP servers registered in opencode's config, for the Resources list.
+///
+/// Separate from the Claude loop because the shape is different — top-level
+/// `mcp`, and the binary and its arguments in ONE `command` array rather than
+/// Claude's `command` + `args` pair. Deduping against the Claude names would be
+/// wrong: the same server installed in both really is two registrations, and an
+/// operator debugging "why doesn't opencode see muya-mcp" needs to see which of
+/// the two is missing.
+fn read_opencode_mcps() -> Vec<ClaudeMcp> {
+    let Ok(path) = opencode_config_path() else {
+        return Vec::new();
+    };
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return Vec::new(); // opencode not configured on this machine — normal
+    };
+    parse_opencode_mcps(&content)
+}
+
+/// Pure parse half of `read_opencode_mcps`, so the shape can be tested against a
+/// real opencode config without reading the operator's actual file.
+fn parse_opencode_mcps(content: &str) -> Vec<ClaudeMcp> {
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(content) else {
+        return Vec::new();
+    };
+    let Some(servers) = val["mcp"].as_object() else {
+        return Vec::new();
+    };
+    let mut sorted: Vec<_> = servers.iter().collect();
+    sorted.sort_by_key(|(k, _)| k.as_str());
+    sorted
+        .into_iter()
+        .map(|(name, cfg)| {
+            // `command` is an array here; show it as the line that would be run.
+            let command = cfg["command"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .or_else(|| cfg["url"].as_str().map(str::to_string))
+                .unwrap_or_default();
+            let mut description = cfg["description"].as_str().unwrap_or("").to_string();
+            // A disabled server still exists; hiding it would make it un-debuggable.
+            if cfg["enabled"] == serde_json::Value::Bool(false) {
+                description = if description.is_empty() {
+                    "disabled".to_string()
+                } else {
+                    format!("disabled — {description}")
+                };
+            }
+            ClaudeMcp {
+                name: name.clone(),
+                command,
+                description,
+                agent: "opencode".to_string(),
+            }
+        })
+        .collect()
 }
 
 // ── Marketplace ───────────────────────────────────────────────────────────
@@ -1337,6 +1406,78 @@ fn install_mcp_at(
     crate::credstore::atomic_write(cfg_path, &out)
 }
 
+/// Where opencode reads its configuration (global scope).
+fn opencode_config_path() -> Result<std::path::PathBuf, String> {
+    let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
+    Ok(Path::new(&home).join(".config/opencode/opencode.json"))
+}
+
+/// Merge an MCP entry into the user's opencode config.
+///
+/// Same guarantees as `install_mcp_at` for Claude — preserve every other key,
+/// refuse to touch an unparseable file, write atomically — but a DIFFERENT shape,
+/// which is the whole reason this cannot reuse that function:
+///
+/// ```json
+/// { "mcp": { "muya-mcp": { "type": "local",
+///                            "command": ["/path/to/bin", "arg"],
+///                            "enabled": true } } }
+/// ```
+///
+/// versus Claude's `mcpServers.<name> = {command, args}`. Three differences:
+/// the top-level key is `mcp`, the binary and its arguments live in ONE array,
+/// and there is an explicit `type` discriminator (`local` vs `remote`).
+///
+/// Preserving the rest is not hypothetical: the config that prompted this work
+/// already had an unrelated `mcp.pencil` server in it.
+pub fn install_opencode_mcp(name: String, command: String, args: Vec<String>) -> Result<(), String> {
+    install_opencode_mcp_at(&opencode_config_path()?, name, command, args)
+}
+
+fn install_opencode_mcp_at(
+    cfg_path: &Path,
+    name: String,
+    command: String,
+    args: Vec<String>,
+) -> Result<(), String> {
+    let name = crate::validate::valid_name(&name, "name")?;
+    let command = crate::validate::clean_arg(&command, "command", true)?;
+
+    let mut root: serde_json::Value = if cfg_path.exists() {
+        let content = std::fs::read_to_string(cfg_path).map_err(|e| e.to_string())?;
+        serde_json::from_str(&content).map_err(|e| {
+            format!("{} is not valid JSON — refusing to modify it: {e}", cfg_path.display())
+        })?
+    } else {
+        serde_json::json!({})
+    };
+
+    let obj = root
+        .as_object_mut()
+        .ok_or("opencode.json is not a JSON object")?;
+    let servers = obj
+        .entry("mcp")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .ok_or("opencode.json 'mcp' is not an object")?;
+
+    // command + args in ONE array — opencode has no separate `args` field.
+    let mut argv: Vec<serde_json::Value> = vec![serde_json::json!(command)];
+    argv.extend(args.iter().map(|a| serde_json::json!(a)));
+    servers.insert(
+        name,
+        serde_json::json!({ "type": "local", "command": argv, "enabled": true }),
+    );
+
+    // Create the directory: unlike ~/.claude.json, this config lives in a nested
+    // path that need not exist yet on a machine where opencode has never run.
+    if let Some(dir) = cfg_path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let out = serde_json::to_vec_pretty(&root).map_err(|e| e.to_string())?;
+    crate::credstore::atomic_write(cfg_path, &out)
+}
+
 const MUYA_PLUGIN_INSTALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Pure decision: does a failed `claude plugin` invocation's combined output actually
@@ -1447,6 +1588,140 @@ mod tests {
 
     use super::*;
     use crate::testutil::*;
+
+    #[test]
+    fn opencode_mcps_are_read_from_the_real_config_shape() {
+        // Byte-for-byte the operator's actual ~/.config/opencode/opencode.json at
+        // the time this feature was written (only the home path anonymised). If
+        // opencode's format assumptions are wrong, this is where it shows.
+        let mcps = parse_opencode_mcps(REAL_OPENCODE_CONFIG);
+        assert_eq!(mcps.len(), 1);
+        assert_eq!(mcps[0].name, "pencil");
+        assert_eq!(mcps[0].agent, "opencode");
+        // The array is flattened to the line that would actually run — Claude's
+        // rows show a single command string, so both read the same way in the list.
+        assert_eq!(
+            mcps[0].command,
+            "/Users/someone/.pencil/mcp/out/mcp-server-darwin-arm64 --app visual_studio_code"
+        );
+    }
+
+    #[test]
+    fn a_disabled_opencode_server_is_shown_as_disabled_not_hidden() {
+        // Hiding it would make "why isn't my server working" undebuggable from
+        // the UI — the row is exactly what the operator needs to see.
+        let mcps = parse_opencode_mcps(
+            r#"{"mcp":{"x":{"type":"local","command":["/bin/true"],"enabled":false}}}"#,
+        );
+        assert_eq!(mcps.len(), 1);
+        assert!(mcps[0].description.contains("disabled"), "{:?}", mcps[0].description);
+    }
+
+    #[test]
+    fn a_missing_or_unreadable_opencode_config_yields_no_rows() {
+        // Not having opencode is the normal case, not an error worth surfacing.
+        assert!(parse_opencode_mcps("").is_empty());
+        assert!(parse_opencode_mcps("{ not json").is_empty());
+        assert!(parse_opencode_mcps(r#"{"other":1}"#).is_empty());
+    }
+
+    // ----- install_opencode_mcp: opencode's different config shape -----
+
+    /// The real config from the machine this feature was written on. It already
+    /// had an unrelated MCP server in it, which is exactly what must survive.
+    const REAL_OPENCODE_CONFIG: &str = r#"{
+  "mcp": {
+    "pencil": {
+      "command": [
+        "/Users/someone/.pencil/mcp/out/mcp-server-darwin-arm64",
+        "--app",
+        "visual_studio_code"
+      ],
+      "enabled": true,
+      "type": "local"
+    }
+  }
+}"#;
+
+    #[test]
+    fn install_opencode_mcp_writes_opencodes_shape_not_claudes() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join(".config/opencode/opencode.json");
+        std::fs::create_dir_all(cfg.parent().unwrap()).unwrap();
+        std::fs::write(&cfg, REAL_OPENCODE_CONFIG).unwrap();
+
+        install_opencode_mcp_at(
+            &cfg,
+            "muya-mcp".into(),
+            "/Applications/Muya.app/Contents/MacOS/muya-ssh-mcp".into(),
+            vec![],
+        )
+        .unwrap();
+
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&cfg).unwrap()).unwrap();
+
+        // opencode's shape: top-level `mcp`, command is ONE array, explicit type.
+        assert_eq!(v["mcp"]["muya-mcp"]["type"], "local");
+        assert_eq!(v["mcp"]["muya-mcp"]["enabled"], true);
+        assert_eq!(
+            v["mcp"]["muya-mcp"]["command"][0],
+            "/Applications/Muya.app/Contents/MacOS/muya-ssh-mcp"
+        );
+        // Claude's spelling must NOT appear — writing mcpServers/args here would
+        // produce a file opencode silently ignores.
+        assert!(v.get("mcpServers").is_none());
+        assert!(v["mcp"]["muya-mcp"].get("args").is_none());
+
+        // The operator's existing server is untouched.
+        assert_eq!(v["mcp"]["pencil"]["command"][1], "--app");
+        assert_eq!(v["mcp"]["pencil"]["enabled"], true);
+    }
+
+    #[test]
+    fn install_opencode_mcp_folds_args_into_the_command_array() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join("opencode.json");
+        install_opencode_mcp_at(
+            &cfg,
+            "x".into(),
+            "npx".into(),
+            vec!["-y".into(), "some-mcp".into()],
+        )
+        .unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&cfg).unwrap()).unwrap();
+        assert_eq!(
+            v["mcp"]["x"]["command"],
+            serde_json::json!(["npx", "-y", "some-mcp"])
+        );
+    }
+
+    #[test]
+    fn install_opencode_mcp_creates_the_config_and_its_directory() {
+        // opencode may never have run on this machine, so the nested config dir
+        // need not exist — a plain write would fail with ENOENT.
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join("fresh/.config/opencode/opencode.json");
+        install_opencode_mcp_at(&cfg, "muya-mcp".into(), "/bin/true".into(), vec![]).unwrap();
+        assert!(cfg.exists());
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&cfg).unwrap()).unwrap();
+        assert_eq!(v["mcp"]["muya-mcp"]["type"], "local");
+    }
+
+    #[test]
+    fn install_opencode_mcp_refuses_to_clobber_an_unparseable_config() {
+        // This file holds the operator's whole opencode setup. Replacing it with a
+        // fresh object because we could not read it would destroy their config.
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join("opencode.json");
+        std::fs::write(&cfg, "{ this is not json").unwrap();
+        let err = install_opencode_mcp_at(&cfg, "muya-mcp".into(), "/bin/true".into(), vec![])
+            .unwrap_err();
+        assert!(err.contains("refusing to modify"), "{err}");
+        assert_eq!(std::fs::read_to_string(&cfg).unwrap(), "{ this is not json");
+    }
 
     // ----- install_mcp: merges into ~/.claude.json safely -----
 

@@ -1,5 +1,8 @@
 /** Pure logic for building the shell command a new agent terminal runs. */
 
+/** The agent CLIs Muya can run in a terminal tab. */
+export type AgentKind = "claude" | "opencode";
+
 export interface AgentCommandSpec {
   command: string;
   prompt: string;
@@ -12,6 +15,44 @@ export function singleQuote(s: string): string {
 }
 
 /**
+ * The command that starts each agent with tool-use auto-approved.
+ *
+ * The flags are NOT interchangeable: opencode rejects
+ * `--dangerously-skip-permissions` outright, and Claude rejects `--auto`. Keeping
+ * them in one table is what stops a copy-paste from silently producing a terminal
+ * that opens and immediately dies.
+ */
+export const AGENT_BASE_COMMAND: Record<AgentKind, string> = {
+  claude: "claude --dangerously-skip-permissions",
+  opencode: "opencode --auto",
+};
+
+/** Display name for an agent, for buttons/labels/tooltips. */
+export const AGENT_LABEL: Record<AgentKind, string> = {
+  claude: "Claude",
+  opencode: "opencode",
+};
+
+/**
+ * Which agent, if any, a command line starts.
+ *
+ * Matched on a word boundary against the FIRST word, so `opencoded`, `my-claude`
+ * and a path mentioned mid-prompt don't count, while `/usr/local/bin/opencode
+ * --auto` does — the resolver hands us absolute paths on machines where the bare
+ * name isn't on PATH, and those must still be recognised as agent sessions or the
+ * tab silently loses its icon and its resume behavior.
+ */
+export function detectAgent(command: string | undefined | null): AgentKind | null {
+  if (!command) return null;
+  const first = command.trim().split(/\s+/)[0] ?? "";
+  // Strip any directory prefix so an absolute path matches by its binary name.
+  const bin = first.split("/").pop() ?? "";
+  if (bin === "claude") return "claude";
+  if (bin === "opencode") return "opencode";
+  return null;
+}
+
+/**
  * Build the initial command for a new agent. Files become `@path` references,
  * combined with the prompt and passed as one quoted positional arg to the base
  * command (default `claude --dangerously-skip-permissions`).
@@ -19,6 +60,31 @@ export function singleQuote(s: string): string {
 export function buildAgentCommand(spec: AgentCommandSpec): string {
   const refs = spec.files.map((f) => `@${f}`).join(" ");
   const promptArg = [refs, spec.prompt.trim()].filter(Boolean).join(" ");
-  const base = spec.command.trim() || "claude --dangerously-skip-permissions";
+  const base = spec.command.trim() || AGENT_BASE_COMMAND.claude;
   return promptArg ? `${base} ${singleQuote(promptArg)}` : base;
+}
+
+/**
+ * Build the command that resumes an existing session of the given agent.
+ *
+ * The two CLIs spell this differently — `claude --resume <id>` vs
+ * `opencode --session <id>` — and each rejects the other's flag.
+ */
+export function buildResumeCommand(agent: AgentKind, sessionId: string): string {
+  return agent === "opencode"
+    ? `opencode --session ${sessionId} --auto`
+    : `claude --resume ${sessionId} --dangerously-skip-permissions`;
+}
+
+/**
+ * The agent a tab is running, for tabs persisted before `agent` existed.
+ *
+ * Old tabs carry only `isClaude`. Reading `agent` alone would silently demote
+ * every restored Claude tab to a plain shell — losing its icon and its resume
+ * behavior — which is exactly the kind of quiet regression a stored boolean
+ * invites. Prefer the new field, fall back to the old one.
+ */
+export function tabAgent(t: { agent?: AgentKind; isClaude?: boolean }): AgentKind | null {
+  if (t.agent) return t.agent;
+  return t.isClaude ? "claude" : null;
 }

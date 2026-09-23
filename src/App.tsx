@@ -73,7 +73,7 @@ import SshPage from "./components/SshPage";
 import PrdBoard from "./components/PrdBoard";
 import ScheduledPromptModal, { type ScheduledPrompt } from "./components/ScheduledPromptModal";
 import SettingsModal from "./components/SettingsModal";
-import { buildAgentCommand, singleQuote } from "./lib/agent";
+import { buildAgentCommand, singleQuote, detectAgent, AGENT_BASE_COMMAND, type AgentKind } from "./lib/agent";
 import { invoke } from "@tauri-apps/api/core";
 import { copyToClipboard } from "./lib/clipboard";
 import { viewerKindFor } from "./lib/format";
@@ -112,8 +112,13 @@ interface OpenTerminal {
   cwd?: string;
   initialCommand?: string; // terminals: auto-run on spawn, e.g. `claude attach <id>`
   filePath?: string; // editors + mdview + imgview + pdfview: absolute file path
-  /** This tab runs a Claude session (vs a plain shell) — drives the icon + resume. */
+  /** This tab runs a Claude session (vs a plain shell) — drives the icon + resume.
+   *  Kept alongside `agent` because it is derived, never authoritative (see
+   *  src/lib/tabs.ts): a tab persisted before opencode support simply re-derives. */
   isClaude?: boolean;
+  /** Which agent CLI this tab runs, when it runs one. Derived from the command the
+   *  same way `isClaude` is, so no migration of persisted tabs is needed. */
+  agent?: AgentKind;
   /** The Claude session THIS tab was running, captured live and persisted so a
    *  restored tab resumes its own conversation (not merely the newest one). */
   sessionId?: string;
@@ -322,9 +327,17 @@ export default function App() {
   // Open (or focus) a persistent terminal tab. Used by session cards and the
   // Sessions page (attach / resume).
   const openTerminal = (spec: OpenTerminal) => {
-    const withKind: OpenTerminal = spec.isClaude === undefined && spec.kind === "terminal"
-      ? { ...spec, isClaude: /(^|\s)claude(\s|$)/.test(spec.initialCommand ?? "") }
-      : spec;
+    // Derive the agent from the command whenever the caller didn't state one.
+    // `detectAgent` replaces the old inline regex: it also matches an absolute
+    // path (which is what the backend resolver hands us on machines where the bare
+    // name isn't on PATH) and refuses substrings like "opencoded".
+    const withKind: OpenTerminal =
+      spec.agent === undefined && spec.isClaude === undefined && spec.kind === "terminal"
+        ? (() => {
+            const agent = detectAgent(spec.initialCommand);
+            return { ...spec, agent: agent ?? undefined, isClaude: agent === "claude" };
+          })()
+        : spec;
     setOpenTerminals((prev) =>
       prev.some((tm) => tm.key === withKind.key) ? prev : [...prev, withKind]
     );
@@ -957,19 +970,27 @@ export default function App() {
     return () => { void un.then((f) => f()); };
   }, [openSshServer]);
 
-  // muya-mcp → app: agent asked to open a NEW local Claude session (open_session,
+  // muya-mcp → app: agent asked to open a NEW local agent session (open_session,
   // PRD agent-session-open — the local analog of ssh_open). Reuses the exact same
   // command-building `launchAgent` uses for the "+ New Agent" button (buildAgentCommand
   // + singleQuote) so an MCP-triggered open and a UI-clicked one behave identically.
   useEffect(() => {
-    const un = listen<{ name: string; cwd?: string; initialMessage?: string }>(
+    const un = listen<{ name: string; cwd?: string; initialMessage?: string; agent?: AgentKind }>(
       "muya://open-agent-session",
       (e) => {
-        const { name, cwd, initialMessage } = e.payload;
+        const { name, cwd, initialMessage, agent } = e.payload;
         const ws = cwd || selectedRoot || workspaces[0];
         if (!ws) return; // no workspace to run in — nothing sensible to open
+        // Only Claude can be told its own name on the command line; opencode has no
+        // --name for its TUI, so there the Muya tab name IS the name — which is what
+        // send_to_session addresses anyway, since delivery types into the PTY.
+        const kind: AgentKind = agent === "opencode" ? "opencode" : "claude";
+        const base =
+          kind === "claude"
+            ? `${AGENT_BASE_COMMAND.claude} --name ${singleQuote(name)}`
+            : AGENT_BASE_COMMAND.opencode;
         const initialCommand = buildAgentCommand({
-          command: `claude --dangerously-skip-permissions --name ${singleQuote(name)}`,
+          command: base,
           prompt: initialMessage ?? "",
           files: [],
         });
@@ -1316,12 +1337,16 @@ export default function App() {
     const ws = spec.workspace || selectedRoot || workspaces[0];
     if (!ws) throw new Error("Pick a workspace first (+ Workspace).");
     let cwd = ws;
-    if (spec.type === "claude" && spec.branch.trim()) {
+    // Every agent gets the worktree + command treatment; only a blank terminal
+    // opts out. Testing for "claude" here was how opencode would have silently
+    // launched as an empty shell.
+    const isAgent = spec.type !== "terminal";
+    if (isAgent && spec.branch.trim()) {
       cwd = await invoke<string>("create_worktree", { repo: ws, branch: spec.branch.trim() });
       setWorktrees((prev) => (prev.includes(cwd) ? prev : [...prev, cwd]));
     }
-    const initialCommand = spec.type === "claude" ? buildAgentCommand(spec) : undefined;
-    const defaultName = spec.title.trim() || spec.branch.trim() || ws.split("/").filter(Boolean).pop() || (spec.type === "claude" ? "agent" : "terminal");
+    const initialCommand = isAgent ? buildAgentCommand(spec) : undefined;
+    const defaultName = spec.title.trim() || spec.branch.trim() || ws.split("/").filter(Boolean).pop() || (isAgent ? "agent" : "terminal");
     openTerminal({
       key: `new:${Date.now()}`,
       name: defaultName,

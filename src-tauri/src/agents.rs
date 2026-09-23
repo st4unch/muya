@@ -69,6 +69,10 @@ pub struct AgentSession {
     /// surfaced so an agent can tell "waiting for a normal reply" apart from
     /// "stuck on a Y/N dialog it should answer" before deciding to act.
     pub waiting_for: Option<String>,
+    /// Which CLI this session belongs to — "claude" or "opencode". The Sessions
+    /// list merges both, and every action on a row (resume, attach, stop) spells
+    /// its flags differently per CLI, so the row must carry its own origin.
+    pub agent: String,
 }
 
 /// Resolve the `claude` binary once per process. The path never changes during a
@@ -145,11 +149,22 @@ fn supports_agents_json(bin: &str) -> bool {
 /// alias (which `command -v` may echo back as a non-path) is rejected, since we need
 /// something `Command::new` can execute.
 fn claude_via_login_shell() -> Option<String> {
+    bin_via_login_shell("claude")
+}
+
+/// Ask the operator's login shell where `name` is, for any agent CLI.
+///
+/// Shared by every CLI Muya can launch: a hardcoded candidate list only covers
+/// install layouts we happened to think of and silently fails for anyone using a
+/// version manager or custom prefix. The user's own login shell knows what they
+/// actually configured — that is what makes resolution work on OTHER people's
+/// machines, which is the whole point (Golden Rule §9).
+pub(crate) fn bin_via_login_shell(name: &str) -> Option<String> {
     let shell = std::env::var("SHELL")
         .ok()
         .filter(|s| !s.trim().is_empty())?;
     let out = Command::new(&shell)
-        .args(["-l", "-c", "command -v claude"])
+        .args(["-l", "-c", &format!("command -v {name}")])
         .output()
         .ok()?;
     if !out.status.success() {
@@ -282,6 +297,46 @@ fn map_agent(raw: RawAgent) -> AgentSession {
         pid: raw.pid,
         parent_id: raw.parent_session_id,
         waiting_for: raw.waiting_for,
+        agent: "claude".to_string(),
+    }
+}
+
+/// Map an opencode session into the same row shape as a Claude one.
+///
+/// Most fields are simply not available from `opencode session list`: there is no
+/// pid, no parent, no working/waiting state, no cwd. They are left empty rather
+/// than invented — a fabricated "idle" would be indistinguishable from a real one
+/// and would make the status column lie.
+fn map_opencode(s: crate::opencode::OpencodeSession) -> AgentSession {
+    let short = s.id.split('_').next_back().unwrap_or(&s.id).to_string();
+    let name = if s.title.trim().is_empty() {
+        short
+    } else {
+        s.title.clone()
+    };
+    AgentSession {
+        name,
+        branch: "—".to_string(),
+        // opencode reports no live state, so claiming one would be a lie. "idle"
+        // is the honest floor: the row exists and can be resumed.
+        status: "idle".to_string(),
+        duration: String::new(),
+        created_at: s.created_at,
+        worktree: String::new(),
+        attach_id: s.id.clone(),
+        id: s.id,
+        active_task: String::new(),
+        active_file: String::new(),
+        tokens_used: 0,
+        models_used: String::new(),
+        quota_burn: 0.0,
+        // Not attachable in the `claude attach` sense — opencode resumes with
+        // `--session <id>`, which the frontend builds from `agent` + `id`.
+        attachable: false,
+        pid: None,
+        parent_id: None,
+        waiting_for: None,
+        agent: "opencode".to_string(),
     }
 }
 
@@ -338,6 +393,10 @@ pub(crate) fn list_agent_sessions_sync(
     let raw: Vec<RawAgent> = serde_json::from_slice(&output.stdout)
         .map_err(|e| format!("failed to parse claude agents JSON: {e}"))?;
     let mut sessions: Vec<AgentSession> = raw.into_iter().map(map_agent).collect();
+    // opencode sessions join the same list. `list_sessions` never errors — a
+    // machine without opencode is the normal case, and a broken opencode must not
+    // be able to empty the Claude list, which is the one people depend on.
+    sessions.extend(crate::opencode::list_sessions().into_iter().map(map_opencode));
     disambiguate_names(&mut sessions);
     sort_newest_first(&mut sessions);
     Ok(sessions)
@@ -400,8 +459,40 @@ pub fn stop_agent(id: String) -> Result<String, String> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn opencode_rows_are_tagged_and_never_invent_a_status() {
+        let row = map_opencode(crate::opencode::OpencodeSession {
+            id: "ses_abc123".into(),
+            title: "refactor auth".into(),
+            created_at: "1750000000000".into(),
+        });
+        // The row must say which CLI it came from — every action on it (resume,
+        // stop) spells its flags differently per agent.
+        assert_eq!(row.agent, "opencode");
+        assert_eq!(row.name, "refactor auth");
+        assert_eq!(row.id, "ses_abc123");
+        // `opencode session list` reports no pid, parent or live state. Leaving them
+        // empty is the point: a fabricated value would be indistinguishable from a
+        // real one and would make the status column lie.
+        assert_eq!(row.pid, None);
+        assert_eq!(row.parent_id, None);
+        assert_eq!(row.waiting_for, None);
+        assert!(!row.attachable, "opencode resumes with --session, not claude attach");
+    }
+
+    #[test]
+    fn an_untitled_opencode_session_still_gets_a_usable_name() {
+        let row = map_opencode(crate::opencode::OpencodeSession {
+            id: "ses_xyz".into(),
+            title: String::new(),
+            created_at: String::new(),
+        });
+        assert_eq!(row.name, "xyz", "a nameless row is unusable in a list");
+    }
+
     fn session(id: &str, name: &str) -> AgentSession {
         AgentSession {
+            agent: "claude".into(),
             id: id.into(),
             name: name.into(),
             branch: "—".into(),

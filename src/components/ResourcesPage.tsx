@@ -25,7 +25,7 @@ import CreateWithClaudeModal from "./CreateWithClaudeModal";
 interface ClaudeSkill   { name: string; path: string }
 interface ClaudeAgent   { name: string; path: string }
 interface ClaudeHook    { name: string; path: string }
-interface ClaudeMcp     { name: string; command: string; description: string }
+interface ClaudeMcp     { name: string; command: string; description: string; agent?: string }
 interface ClaudeResources {
   skills: ClaudeSkill[];
   agents: ClaudeAgent[];
@@ -483,6 +483,16 @@ export default function ResourcesPage({
                           <div className="flex items-center gap-2">
                             <Plug className="w-3.5 h-3.5 shrink-0 text-cyan-600 dark:text-cyan-400" />
                             <span className="text-xs font-medium truncate">{m.name}</span>
+                            {/* Which agent's config this registration lives in. The
+                                same server is commonly installed in both, and the
+                                two rows are otherwise indistinguishable — which is
+                                exactly what you need to see when one of them is
+                                missing. */}
+                            {m.agent === "opencode" && (
+                              <span className="text-[8px] font-mono font-bold px-1 py-0.5 rounded border uppercase shrink-0 border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300">
+                                opencode
+                              </span>
+                            )}
                           </div>
                           {m.description && (
                             <p className="text-[11px] text-neutral-500 dark:text-neutral-400 truncate pl-5">{m.description}</p>

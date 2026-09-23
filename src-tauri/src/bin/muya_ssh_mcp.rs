@@ -185,11 +185,12 @@ fn tools_list() -> Value {
             },
             {
                 "name": "open_session",
-                "description": "Open a NEW local Claude Code session as a terminal tab in Muya (the local analog of ssh_open — no server, no credentials) and, optionally, hand it a first message right away. Use this to spin up a session to work on something in parallel, then message it — WITHOUT asking the operator first. The new session runs with --dangerously-skip-permissions, same as Muya's own \"+ New Agent\" button. `name` becomes the session's own name (Claude Code's --name) — pass a short, descriptive one; you'll use it with send_to_session for any follow-up messages. `cwd` defaults to the operator's current workspace when omitted. If you pass `initial_message`, it's given to the new session as its first prompt directly on launch (reliable even before the session is fully up) — prefer this over opening the session and then immediately calling send_to_session, which may not find it yet. For follow-up messages after the session is running, use send_to_session(target: name, deliver: \"muya\") — the new session runs with bypassed permission prompts, and Claude Code's own SendMessage holds messages to a bypass-mode session for the operator's approval unless the sender also bypasses, so deliver:\"muya\" is the reliable path here.",
+                "description": "Open a NEW local agent session as a terminal tab in Muya (the local analog of ssh_open — no server, no credentials) and, optionally, hand it a first message right away. Use this to spin up a session to work on something in parallel, then message it — WITHOUT asking the operator first. The new session runs with --dangerously-skip-permissions, same as Muya's own \"+ New Agent\" button. `agent` picks which CLI to run: \"claude\" (default) or \"opencode\" — use opencode when the user asks for it by name, or to run a second opinion alongside a Claude session. `name` is the session name — for Claude it also becomes the CLI's own --name; opencode has no equivalent flag, so for opencode it names the Muya tab, which is what you address with send_to_session either way. Pass a short, descriptive one. `cwd` defaults to the operator's current workspace when omitted. If you pass `initial_message`, it's given to the new session as its first prompt directly on launch (reliable even before the session is fully up) — prefer this over opening the session and then immediately calling send_to_session, which may not find it yet. For follow-up messages after the session is running, use send_to_session(target: name, deliver: \"muya\") — the new session runs with bypassed permission prompts, and Claude Code's own SendMessage holds messages to a bypass-mode session for the operator's approval unless the sender also bypasses, so deliver:\"muya\" is the reliable path here.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "name": { "type": "string", "description": "Name for the new session (becomes --name; used later with send_to_session)." },
+                        "name": { "type": "string", "description": "Name for the new session (used later with send_to_session; also the CLI --name for claude)." },
+                        "agent": { "type": "string", "enum": ["claude", "opencode"], "description": "Which agent CLI to launch. Defaults to claude." },
                         "cwd": { "type": "string", "description": "Working directory for the new session. Defaults to the operator's current workspace." },
                         "initial_message": { "type": "string", "description": "Optional first message/prompt to give the new session immediately on launch." }
                     },
@@ -553,7 +554,16 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                 .get("initial_message")
                 .and_then(Value::as_str)
                 .map(|s| s.to_string());
+            // Absent `agent` is forwarded as absent, so the broker applies its own
+            // default (claude) rather than this proxy guessing one.
+            let agent = args
+                .get("agent")
+                .and_then(Value::as_str)
+                .map(str::to_string);
             let mut op = json!({ "op": "open_session", "name": name });
+            if let Some(a) = &agent {
+                op["agent"] = json!(a);
+            }
             if let Some(c) = &cwd {
                 op["cwd"] = json!(c);
             }

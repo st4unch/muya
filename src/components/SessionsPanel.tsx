@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Terminal, GripHorizontal, Pencil, X, Plus, Sparkles, Copy, FolderOpen } from "lucide-react";
+import { Terminal, GripHorizontal, Pencil, X, Plus, Sparkles, SquareCode, Copy, FolderOpen } from "lucide-react";
+import { tabAgent, type AgentKind } from "../lib/agent";
 
 interface TerminalEntry {
   key: string;
@@ -7,6 +8,9 @@ interface TerminalEntry {
   cwd?: string;
   /** Claude session tab (vs plain shell) — selects the row icon. */
   isClaude?: boolean;
+  /** Which agent CLI this tab runs, when it runs one. Takes precedence over
+   *  `isClaude`, which stays for tabs opened before opencode support. */
+  agent?: AgentKind;
 }
 
 interface Props {
@@ -116,6 +120,7 @@ export default function SessionsPanel({
             const hasPty = Boolean(terminalPtyIds[t.key]);
             const needsDecision = Boolean(waitingKeys?.has(t.key));
             const isWorking = Boolean(workingKeys?.has(t.key));
+            const agentKind = tabAgent(t);
             // A finished job pulses green — but a pending decision (orange) wins.
             const isDone = Boolean(doneKeys?.has(t.key)) && !needsDecision;
 
@@ -156,12 +161,18 @@ export default function SessionsPanel({
                   className="flex-1 min-w-0 text-left py-1.5 pr-1"
                 >
                   <div className="flex items-center gap-1.5">
-                    {/* Claude sessions get the Claude mark; plain shells the
-                        terminal glyph — so the two are told apart at a glance. */}
-                    {t.isClaude ? (
+                    {/* One glyph per agent, plus the plain terminal glyph — so
+                        which agent a tab is running reads at a glance, which is the
+                        point of running two of them side by side. */}
+                    {agentKind === "claude" ? (
                       <Sparkles
                         className={`h-3 w-3 shrink-0 ${isWorking ? "animate-pulse text-amber-500" : isActive ? "text-amber-500" : "text-amber-500/80 dark:text-amber-400/80"}`}
                         aria-label={isWorking ? "Claude session (working)" : "Claude session"}
+                      />
+                    ) : agentKind === "opencode" ? (
+                      <SquareCode
+                        className={`h-3 w-3 shrink-0 ${isWorking ? "animate-pulse text-emerald-500" : isActive ? "text-emerald-500" : "text-emerald-500/80 dark:text-emerald-400/80"}`}
+                        aria-label={isWorking ? "opencode session (working)" : "opencode session"}
                       />
                     ) : (
                       <Terminal

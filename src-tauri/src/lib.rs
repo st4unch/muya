@@ -51,6 +51,7 @@ mod fs;
 mod history;
 mod local_guard;
 mod metrics;
+mod opencode;
 mod pm;
 mod pty;
 mod sessions;

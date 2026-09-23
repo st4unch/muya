@@ -238,6 +238,10 @@ struct BrokerReq {
     cwd: Option<String>,
     #[serde(rename = "initialMessage", default)]
     initial_message: Option<String>,
+    /// `open_session`: which agent CLI to launch — "claude" (default) or
+    /// "opencode". Absent means Claude, so every existing caller keeps working.
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -892,12 +896,31 @@ fn build_open_session_payload(req: &BrokerReq) -> Result<(String, serde_json::Va
         Some(n) if !n.trim().is_empty() => n.trim().to_string(),
         _ => return Err("`open_session` requires a non-empty `name`".to_string()),
     };
+    let agent = normalize_agent(req.agent.as_deref())?;
     let payload = json!({
         "name": name,
         "cwd": req.cwd,
         "initialMessage": req.initial_message,
+        "agent": agent,
     });
     Ok((name, payload))
+}
+
+/// Which agent CLI `open_session` should launch.
+///
+/// Absent ⇒ "claude": every caller written before opencode existed keeps its
+/// exact behavior. An unknown value is an ERROR rather than a silent fallback to
+/// Claude — an agent that asked for opencode and quietly got Claude would send its
+/// next message to the wrong kind of session and have no way to notice.
+fn normalize_agent(raw: Option<&str>) -> Result<String, String> {
+    match raw.map(str::trim).filter(|s| !s.is_empty()) {
+        None => Ok("claude".to_string()),
+        Some(a) if a.eq_ignore_ascii_case("claude") => Ok("claude".to_string()),
+        Some(a) if a.eq_ignore_ascii_case("opencode") => Ok("opencode".to_string()),
+        Some(other) => Err(format!(
+            "unknown agent '{other}' — expected \"claude\" or \"opencode\""
+        )),
+    }
 }
 
 fn handle_open_session(app: &AppHandle, req: &BrokerReq) -> String {
@@ -1673,6 +1696,13 @@ pub(crate) fn mcp_binary_path() -> Result<String, String> {
 pub(crate) fn register_mcp() -> Result<(), String> {
     let command = mcp_binary_path()?;
     let _ = crate::fs::remove_mcp(MCP_LEGACY_ENTRY_NAME.to_string());
+    // opencode reads a different file in a different shape. Best-effort: a machine
+    // without opencode should not fail Claude's registration, which is the one that
+    // must always work. Logged so a genuine failure is still findable.
+    if let Err(e) = crate::fs::install_opencode_mcp(MCP_ENTRY_NAME.to_string(), command.clone(), vec![])
+    {
+        crate::debuglog::log(&format!("[mcp] opencode registration skipped: {e}"));
+    }
     crate::fs::install_mcp(MCP_ENTRY_NAME.to_string(), command, vec![])
 }
 
@@ -1852,6 +1882,42 @@ mod tests {
             !ssh_session_is_open(id),
             "released id is no longer writable"
         );
+    }
+
+    #[test]
+    #[test]
+    fn open_session_defaults_to_claude_and_rejects_an_unknown_agent() {
+        // Absent ⇒ claude: every caller written before opencode existed must keep
+        // its exact behavior.
+        assert_eq!(normalize_agent(None).unwrap(), "claude");
+        assert_eq!(normalize_agent(Some("")).unwrap(), "claude");
+        assert_eq!(normalize_agent(Some("  ")).unwrap(), "claude");
+        assert_eq!(normalize_agent(Some("OpenCode")).unwrap(), "opencode");
+        assert_eq!(normalize_agent(Some(" claude ")).unwrap(), "claude");
+
+        // An unknown agent must NOT silently become Claude: an agent that asked for
+        // opencode and quietly got Claude would address the wrong session next and
+        // have no way to notice.
+        let err = normalize_agent(Some("gpt")).unwrap_err();
+        assert!(err.contains("gpt"), "{err}");
+        assert!(err.contains("opencode"), "error must name the valid options: {err}");
+    }
+
+    #[test]
+    fn open_session_payload_carries_the_agent_to_the_frontend() {
+        let mut req = BrokerReq {
+            name: Some("migration".into()),
+            agent: Some("opencode".into()),
+            ..Default::default()
+        };
+        let (name, payload) = build_open_session_payload(&req).unwrap();
+        assert_eq!(name, "migration");
+        assert_eq!(payload["agent"], "opencode");
+
+        // Default path unchanged.
+        req.agent = None;
+        let (_, payload) = build_open_session_payload(&req).unwrap();
+        assert_eq!(payload["agent"], "claude");
     }
 
     #[test]
