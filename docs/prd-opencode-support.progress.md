@@ -7,8 +7,28 @@ finished: 2026-09-23
 
 ## Faz Çıktıları
 
-Tek fazda uygulandı. Tüm AC'ler karşılandı; AC7'nin canlı yarısı (gerçek opencode
-oturumlarının listede görünmesi) doğrulanamadı — opencode bu makinede kurulu değil.
+Tek fazda uygulandı. Tüm AC'ler karşılandı.
+
+**opencode kurulduktan sonra canlı doğrulandı (opencode 1.18.32):**
+
+| Kontrol | Sonuç |
+|---|---|
+| `opencode_bin()` çözümleme + yetenek probu | ✅ `opencode` çözüldü, `session list --format json` yanıtladı |
+| Gerçek oturumun ayrıştırılması | ✅ id / başlık (Türkçe) / zaman / dizin doğru |
+| MCP kaydı (gerçek config'in kopyası) | ✅ mevcut `pencil` bozulmadan korundu, `muya-mcp` eklendi |
+| `--auto` ve `--session` kabulü | ✅ hatalı bayrak yardım bastı, bizimkiler sessizce başladı |
+
+Canlı testler `#[ignore]` ile repoda duruyor:
+`cargo test --lib opencode::tests::live -- --ignored --nocapture`
+
+**Canlı test bir HATA yakaladı — fixture'ların yakalayamayacağı türden:**
+opencode'da pozisyonel argüman **proje dizini** (`opencode [project]` — "path to
+start opencode in"), prompt değil. `buildAgentCommand` promptu Claude'daki gibi
+pozisyonel geçiyordu, yani opencode onu dizin yolu sanardı ve oturum yanlış yerde
+açılırdı — sessizce. Düzeltildi: opencode için prompt `--prompt` bayrağıyla gidiyor.
+
+Gerçek çıktıda ayrıca beklemediğim bir `directory` alanı çıktı; oturum satırlarına
+çalışma dizini — ve dolayısıyla git branch'i — olarak bağlandı.
 
 ## Değişiklikler
 

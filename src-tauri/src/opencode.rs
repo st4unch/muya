@@ -104,6 +104,10 @@ pub(crate) struct OpencodeSession {
     /// Millisecond epoch as a string, or empty when the CLI reported none. Same
     /// convention as `AgentSession::created_at` so both sort with one comparator.
     pub created_at: String,
+    /// Where the session runs. opencode reports this as `directory`; it is what
+    /// gives the row a working directory and therefore a git branch, like a
+    /// Claude row's `cwd`.
+    pub directory: String,
 }
 
 /// Parse `opencode session list --format json`.
@@ -140,10 +144,13 @@ pub(crate) fn parse_sessions(json: &[u8]) -> Vec<OpencodeSession> {
             }
             let title = first_string(item, &["title", "name", "summary"]).unwrap_or_default();
             let created_at = first_epoch_ms(item, &["time", "updated", "created", "createdAt"]);
+            let directory =
+                first_string(item, &["directory", "cwd", "path"]).unwrap_or_default();
             Some(OpencodeSession {
                 id,
                 title,
                 created_at,
+                directory,
             })
         })
         .collect()
@@ -220,6 +227,62 @@ mod tests {
             resume_command("ses_abc"),
             "opencode --session ses_abc --auto"
         );
+    }
+
+    /// LIVE check against the opencode actually installed on this machine.
+    ///
+    /// `#[ignore]` because it shells out to a real CLI that most machines will not
+    /// have — run it deliberately with:
+    ///     cargo test --lib opencode::tests::live -- --ignored --nocapture
+    /// Everything else in this module works from captured fixtures; this is the one
+    /// that proves the fixtures still describe reality.
+    #[test]
+    #[ignore = "requires opencode installed"]
+    fn live_opencode_resolves_and_lists_sessions() {
+        let bin = opencode_bin();
+        println!("resolved binary: {bin}");
+        assert!(
+            supports_session_list(bin),
+            "resolver returned {bin}, which cannot answer 'session list --format json'"
+        );
+
+        let sessions = list_sessions();
+        println!("parsed {} session(s)", sessions.len());
+        for s in &sessions {
+            println!(
+                "  id={} title={:?} created_at={:?} dir={:?}",
+                s.id, s.title, s.created_at, s.directory
+            );
+            // A row with no id would have been dropped; one with no timestamp sorts
+            // last and looks broken in the list. Both are worth knowing about.
+            assert!(!s.id.is_empty());
+        }
+    }
+
+    #[test]
+    fn parses_the_real_output_of_opencode_1_18_32() {
+        // Captured verbatim from `opencode session list --format json` on a real
+        // install. Everything above this test was written before opencode was
+        // available, against an unpublished schema — this is the check that the
+        // guesses actually match the CLI.
+        let json = r#"[
+          {
+            "id": "ses_f310ec032ffeOzEdsT4uJrZ7VU",
+            "title": "Türkçe selamlaşma",
+            "updated": 1790178325280,
+            "created": 1790178312141,
+            "projectId": "89a031fbe0ec7f81a9e103101baa616454f09098",
+            "directory": "/Users/someone/Documents/project"
+          }
+        ]"#;
+        let s = parse_sessions(json.as_bytes());
+        assert_eq!(s.len(), 1);
+        assert_eq!(s[0].id, "ses_f310ec032ffeOzEdsT4uJrZ7VU");
+        assert_eq!(s[0].title, "Türkçe selamlaşma");
+        // `updated` is a bare number here, not the nested object the fallback also
+        // accepts — both shapes must work.
+        assert_eq!(s[0].created_at, "1790178325280");
+        assert_eq!(s[0].directory, "/Users/someone/Documents/project");
     }
 
     #[test]

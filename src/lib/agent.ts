@@ -61,7 +61,16 @@ export function buildAgentCommand(spec: AgentCommandSpec): string {
   const refs = spec.files.map((f) => `@${f}`).join(" ");
   const promptArg = [refs, spec.prompt.trim()].filter(Boolean).join(" ");
   const base = spec.command.trim() || AGENT_BASE_COMMAND.claude;
-  return promptArg ? `${base} ${singleQuote(promptArg)}` : base;
+  if (!promptArg) return base;
+  // WHERE THE PROMPT GOES DIFFERS, and getting it wrong is silent:
+  //   claude   <prompt>   → a positional arg IS the prompt
+  //   opencode [project]  → the positional is "path to start opencode in"
+  // So handing opencode a positional prompt makes it treat the whole sentence as
+  // a directory path. Its prompt has its own flag. (Verified against opencode
+  // 1.18.32 --help.)
+  return detectAgent(base) === "opencode"
+    ? `${base} --prompt ${singleQuote(promptArg)}`
+    : `${base} ${singleQuote(promptArg)}`;
 }
 
 /**

@@ -1589,6 +1589,50 @@ mod tests {
     use super::*;
     use crate::testutil::*;
 
+    /// LIVE check against this machine's ACTUAL opencode config — on a COPY, so
+    /// the operator's file is never touched. Run with:
+    ///     cargo test --lib fs::tests::live -- --ignored --nocapture
+    #[test]
+    #[ignore = "requires a real ~/.config/opencode/opencode.json"]
+    fn live_install_preserves_the_operators_real_opencode_config() {
+        let real = opencode_config_path().unwrap();
+        if !real.exists() {
+            println!("no opencode config on this machine — nothing to check");
+            return;
+        }
+        let before = std::fs::read_to_string(&real).unwrap();
+        let before_json: serde_json::Value = serde_json::from_str(&before).unwrap();
+        let existing: Vec<String> = before_json["mcp"]
+            .as_object()
+            .map(|o| o.keys().cloned().collect())
+            .unwrap_or_default();
+        println!("real config servers before: {existing:?}");
+
+        let dir = tempfile::tempdir().unwrap();
+        let copy = dir.path().join("opencode.json");
+        std::fs::write(&copy, &before).unwrap();
+
+        install_opencode_mcp_at(&copy, "muya-mcp".into(), "/tmp/muya-ssh-mcp".into(), vec![])
+            .unwrap();
+
+        let after: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&copy).unwrap()).unwrap();
+        println!(
+            "after: {:?}",
+            after["mcp"].as_object().map(|o| o.keys().cloned().collect::<Vec<_>>())
+        );
+
+        // Every server the operator already had must still be there, byte-identical.
+        for name in &existing {
+            assert_eq!(
+                after["mcp"][name], before_json["mcp"][name],
+                "existing server '{name}' was modified"
+            );
+        }
+        assert_eq!(after["mcp"]["muya-mcp"]["type"], "local");
+        assert_eq!(after["mcp"]["muya-mcp"]["command"][0], "/tmp/muya-ssh-mcp");
+    }
+
     #[test]
     fn opencode_mcps_are_read_from_the_real_config_shape() {
         // Byte-for-byte the operator's actual ~/.config/opencode/opencode.json at

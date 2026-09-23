@@ -96,3 +96,40 @@ describe("tabAgent", () => {
     expect(tabAgent({ agent: "claude", isClaude: true })).toBe("claude");
   });
 });
+
+describe("buildAgentCommand — per-agent prompt placement", () => {
+  it("gives opencode its prompt by flag, never as a positional", () => {
+    // `opencode [project]` — the positional is "path to start opencode in"
+    // (verified against opencode 1.18.32 --help). A positional prompt would be
+    // read as a directory path and the session would start in the wrong place,
+    // silently.
+    const cmd = buildAgentCommand({
+      command: AGENT_BASE_COMMAND.opencode,
+      prompt: "fix the migration",
+      files: [],
+    });
+    expect(cmd).toBe("opencode --auto --prompt 'fix the migration'");
+  });
+
+  it("still gives claude its prompt as a positional", () => {
+    const cmd = buildAgentCommand({
+      command: AGENT_BASE_COMMAND.claude,
+      prompt: "fix the migration",
+      files: [],
+    });
+    expect(cmd).toBe("claude --dangerously-skip-permissions 'fix the migration'");
+    expect(cmd).not.toContain("--prompt");
+  });
+
+  it("keeps file references with the prompt for both agents", () => {
+    expect(
+      buildAgentCommand({ command: AGENT_BASE_COMMAND.opencode, prompt: "go", files: ["/a.ts"] })
+    ).toBe("opencode --auto --prompt '@/a.ts go'");
+  });
+
+  it("adds no prompt flag when there is no prompt", () => {
+    expect(buildAgentCommand({ command: AGENT_BASE_COMMAND.opencode, prompt: "", files: [] })).toBe(
+      "opencode --auto"
+    );
+  });
+});

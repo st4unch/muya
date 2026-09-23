@@ -314,15 +314,21 @@ fn map_opencode(s: crate::opencode::OpencodeSession) -> AgentSession {
     } else {
         s.title.clone()
     };
+    let cwd = s.directory.clone();
     AgentSession {
         name,
-        branch: "—".to_string(),
+        // A real directory means a real branch, exactly as for a Claude row.
+        branch: if cwd.is_empty() {
+            "—".to_string()
+        } else {
+            branch_for(&cwd)
+        },
         // opencode reports no live state, so claiming one would be a lie. "idle"
         // is the honest floor: the row exists and can be resumed.
         status: "idle".to_string(),
         duration: String::new(),
         created_at: s.created_at,
-        worktree: String::new(),
+        worktree: cwd,
         attach_id: s.id.clone(),
         id: s.id,
         active_task: String::new(),
@@ -465,6 +471,7 @@ mod tests {
             id: "ses_abc123".into(),
             title: "refactor auth".into(),
             created_at: "1750000000000".into(),
+            directory: String::new(),
         });
         // The row must say which CLI it came from — every action on it (resume,
         // stop) spells its flags differently per agent.
@@ -486,6 +493,7 @@ mod tests {
             id: "ses_xyz".into(),
             title: String::new(),
             created_at: String::new(),
+            directory: String::new(),
         });
         assert_eq!(row.name, "xyz", "a nameless row is unusable in a list");
     }
