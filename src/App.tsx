@@ -645,7 +645,12 @@ export default function App() {
   const [workspaces, setWorkspaces] = useState<string[]>(() => loadList("apex.workspaces"));
 
   // All paths the PM/watcher tracks: workspaces + created worktrees.
-  const trackedPaths = [...new Set([...workspaces, ...worktrees])];
+  // Memoized: FileTree/QueuePage key their git-spawning effects on this array's
+  // identity, so a fresh array per render ran `git status` on every App render.
+  const trackedPaths = useMemo(
+    () => [...new Set([...workspaces, ...worktrees])],
+    [workspaces, worktrees],
+  );
 
   // Workspace root the user explicitly selected in the tree. New terminals and
   // agents open here (falls back to the active terminal's cwd, then first workspace).

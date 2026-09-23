@@ -533,11 +533,13 @@ pub fn pty_resize(
 /// for as long as the app ran (45+ observed on a normal day's use). Only closing
 /// the tab, which calls `pty_kill`, ever released one.
 ///
-/// Dropping the handle is what closes the master; the child is already gone by
-/// the time we get here, so there is nothing to kill.
+/// Dropping the handle is what closes the master. The child has exited but stays
+/// a `<defunct>` zombie until waited on, so collect its status — off the lock, and
+/// on this dedicated reader thread, so a slow wait never blocks anything else.
 fn reap(sessions: &Mutex<HashMap<String, PtyHandle>>, id: &str) {
-    if let Ok(mut map) = sessions.lock() {
-        map.remove(id);
+    let handle = sessions.lock().ok().and_then(|mut map| map.remove(id));
+    if let Some(mut h) = handle {
+        let _ = h.child.wait();
     }
 }
 
@@ -601,8 +603,8 @@ fn parse_lsof_cwds(out: &str) -> HashMap<u32, String> {
 ///
 /// Ids with no live process, or whose cwd can't be read, are simply omitted.
 #[tauri::command(async)]
-pub fn pty_cwds(
-    state: State<PtyManager>,
+pub async fn pty_cwds(
+    state: State<'_, PtyManager>,
     ids: Vec<String>,
 ) -> Result<HashMap<String, String>, String> {
     // id → pid for the requested, still-running sessions.
@@ -626,10 +628,16 @@ pub fn pty_cwds(
         .collect::<Vec<_>>()
         .join(",");
 
-    let output = std::process::Command::new("/usr/sbin/lsof")
-        .args(["-a", "-p", &pid_csv, "-d", "cwd", "-Fpn"])
-        .output()
-        .map_err(|e| format!("lsof failed: {e}"))?;
+    // Blocking pool, not a tokio worker: this is polled every 3s and a sync `lsof`
+    // on a worker starved the pool shared with fs commands (L31).
+    let output = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("/usr/sbin/lsof")
+            .args(["-a", "-p", &pid_csv, "-d", "cwd", "-Fpn"])
+            .output()
+    })
+    .await
+    .map_err(|e| format!("lsof task join failed: {e}"))?
+    .map_err(|e| format!("lsof failed: {e}"))?;
     // lsof exits non-zero when *some* pids are gone; parse whatever it produced.
     let by_pid = parse_lsof_cwds(&String::from_utf8_lossy(&output.stdout));
 
@@ -797,6 +805,43 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         panic!("session {id} still registered 5s after its command exited — PTY leaked");
+    }
+
+    /// Removing the session isn't enough: an exited child nobody `wait()`s on stays a
+    /// `<defunct>` zombie of the app for its whole lifetime (seen live, 40+ min old).
+    #[test]
+    fn a_reaped_session_leaves_no_zombie() {
+        let manager = PtyManager::default();
+        let ch: Channel<InvokeResponseBody> = Channel::new(|_| Ok(()));
+        let id = spawn_process(
+            &manager,
+            ch,
+            "/bin/sh",
+            &["-c".to_string(), "sleep 0.5".to_string()],
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("spawn");
+        let pid = manager.sessions.lock().unwrap()[&id]
+            .child
+            .process_id()
+            .expect("pid");
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !manager.sessions.lock().unwrap().is_empty() {
+            assert!(std::time::Instant::now() < deadline, "session never reaped");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        // Reap and wait run back-to-back on the reader thread; allow it to finish.
+        std::thread::sleep(Duration::from_millis(200));
+        let out = std::process::Command::new("ps")
+            .args(["-o", "stat=", "-p", &pid.to_string()])
+            .output()
+            .expect("ps");
+        let stat = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        assert!(!stat.starts_with('Z'), "pid {pid} left as a zombie (stat={stat})");
     }
 
     /// Non-vacuous counterpart: a live shell must NOT be reaped, or closing a tab

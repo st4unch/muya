@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { copyToClipboard } from "../lib/clipboard";
 import {
@@ -268,17 +268,23 @@ export default function FileTree({
     if (menu?.creating) requestAnimationFrame(() => createInputRef.current?.focus());
   }, [menu?.creating]);
 
+  // Key on content, not identity: a parent passing a fresh equal array each render
+  // re-fired these effects on every render (a `git status` spawn storm).
+  const rootsKey = roots.join("\n");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const stableRoots = useMemo(() => roots, [rootsKey]);
+
   // Poll git status for all roots
   const refreshGitStatus = useCallback(async () => {
     const entries: [string, string][] = [];
-    for (const root of roots) {
+    for (const root of stableRoots) {
       try {
         const pairs = await invoke<[string, string][]>("git_status", { root });
         entries.push(...pairs);
       } catch { /* not a git repo */ }
     }
     setGitStatus(new Map(entries));
-  }, [roots]);
+  }, [stableRoots]);
 
   useEffect(() => {
     void refreshGitStatus();
@@ -307,9 +313,9 @@ export default function FileTree({
       } catch { return []; }
     };
     const all: Entry[] = [];
-    for (const root of roots) all.push(...await collect(root, 0));
+    for (const root of stableRoots) all.push(...await collect(root, 0));
     setAllFiles(all);
-  }, [roots]);
+  }, [stableRoots]);
 
   useEffect(() => {
     if (searchOpen) void buildFileList();

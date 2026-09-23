@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { relTime, shortCwd } from "../lib/format";
 import {
@@ -116,20 +116,25 @@ export default function QueuePage({
     localStorage.setItem(QKEY, JSON.stringify(queue));
   }, [queue]);
 
+  // Content-keyed so a fresh equal `paths` array doesn't re-run pm_status (git per repo).
+  const pathsKey = paths.join("\n");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const stablePaths = useMemo(() => paths, [pathsKey]);
+
   const refresh = useCallback(async () => {
-    if (!paths.length) {
+    if (!stablePaths.length) {
       setProjects([]);
       return;
     }
     setLoading(true);
     try {
-      setProjects(await invoke<ProjectStatus[]>("pm_status", { paths }));
+      setProjects(await invoke<ProjectStatus[]>("pm_status", { paths: stablePaths }));
     } catch (e) {
       console.warn("[apex] pm_status failed:", e);
     } finally {
       setLoading(false);
     }
-  }, [paths]);
+  }, [stablePaths]);
 
   // Load once on mount (page is always mounted now, so this runs a single time).
   useEffect(() => {
