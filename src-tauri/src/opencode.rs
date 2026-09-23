@@ -19,24 +19,76 @@
 //! → `muya://deliver-message`) rather than going through the CLI.
 
 use std::process::Command;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 
 /// Auto-approve flag — opencode's analogue of `--dangerously-skip-permissions`.
 /// "Auto-approve permissions that are not explicitly denied."
 pub(crate) const AUTO_FLAG: &str = "--auto";
 
-/// Resolve the `opencode` binary once per process, the same way `claude` is resolved
-/// (`agents::claude_bin`): probe the CAPABILITY we need, never mere existence.
+/// How long a FAILED resolution stays cached. Long enough that the session list,
+/// polled every few seconds, does not shell out to a missing binary on every tick;
+/// short enough that installing opencode takes effect without restarting the app.
+const RESOLVE_RETRY: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Resolve the `opencode` binary, probing the CAPABILITY we need rather than mere
+/// existence.
 ///
 /// L48, learned the hard way on the Claude side: a stale binary earlier on PATH
 /// exists, runs, and answers `--version` happily while rejecting the one flag the
 /// feature depends on. Checking that the path resolves proves nothing.
-pub(crate) fn opencode_bin() -> &'static str {
-    static BIN: OnceLock<String> = OnceLock::new();
-    BIN.get_or_init(resolve_opencode_bin).as_str()
+///
+/// A SUCCESS is cached for the life of the process; a FAILURE is only cached for
+/// `RESOLVE_RETRY`. That asymmetry is the point. This used to be a plain
+/// `OnceLock`, which made the first probe final — and the first probe is exactly
+/// the fragile one: Muya is usually already running when opencode gets installed,
+/// and opencode runs `brew upgrade opencode` on its own startup, which unlinks and
+/// relinks `/opt/homebrew/bin/opencode` while we may be probing it. Either way the
+/// process cached "no opencode here" forever, and the user saw a running opencode
+/// session that never appeared in Sessions or in `list_sessions`, with an app
+/// restart as the only cure.
+pub(crate) fn opencode_bin() -> String {
+    static CACHE: OnceLock<Mutex<Option<Resolved>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(None));
+
+    // A poisoned lock must not disable opencode outright — resolve uncached rather
+    // than hand back a name that was never probed.
+    let Ok(mut slot) = cache.lock() else {
+        return resolve_opencode_bin().bin;
+    };
+    if let Some(prev) = slot.as_ref() {
+        if still_usable(prev) {
+            return prev.bin.clone();
+        }
+    }
+    let resolved = resolve_opencode_bin();
+    let bin = resolved.bin.clone();
+    *slot = Some(resolved);
+    bin
 }
 
-fn resolve_opencode_bin() -> String {
+/// A resolution attempt: which binary we settled on, whether it actually answered
+/// the probe, and when. `working: false` is what makes the entry retryable — the
+/// binary may be a real path that merely could not answer at that moment.
+struct Resolved {
+    bin: String,
+    working: bool,
+    at: Instant,
+}
+
+/// May a cached resolution be reused? A binary that answered the probe never
+/// expires — nothing about it can go stale that a re-probe would catch sooner than
+/// the next failed call. A failure expires, because the thing that caused it
+/// (opencode not installed yet, a `brew upgrade` mid-flight) routinely goes away
+/// on its own.
+fn still_usable(prev: &Resolved) -> bool {
+    prev.working || prev.at.elapsed() < RESOLVE_RETRY
+}
+
+/// What resolution falls back to when it found nothing at all.
+const FALLBACK_BIN: &str = "opencode";
+
+fn resolve_opencode_bin() -> Resolved {
     let mut candidates: Vec<String> = vec!["opencode".to_string()];
     if let Some(path) = crate::agents::bin_via_login_shell("opencode") {
         candidates.push(path);
@@ -57,15 +109,23 @@ fn resolve_opencode_bin() -> String {
 
     for c in &candidates {
         if supports_session_list(c) {
-            return c.clone();
+            return Resolved {
+                bin: c.clone(),
+                working: true,
+                at: Instant::now(),
+            };
         }
     }
     // Nothing usable. Name a real path if one at least exists, so the error the
     // caller shows points somewhere, else a bare name for a clean not-found.
-    candidates
-        .into_iter()
-        .find(|c| c != "opencode" && std::path::Path::new(c).is_file())
-        .unwrap_or_else(|| "opencode".to_string())
+    Resolved {
+        bin: candidates
+            .into_iter()
+            .find(|c| c != FALLBACK_BIN && std::path::Path::new(c).is_file())
+            .unwrap_or_else(|| FALLBACK_BIN.to_string()),
+        working: false,
+        at: Instant::now(),
+    }
 }
 
 /// Can this binary answer `session list --format json` — the call the session list
@@ -215,6 +275,49 @@ pub(crate) fn list_sessions() -> Vec<OpencodeSession> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn a_failed_resolution_is_retried_but_a_working_one_is_not() {
+        // The bug this guards: as a plain `OnceLock`, the FIRST probe was final.
+        // Muya is normally already running when opencode gets installed, and
+        // opencode itself runs `brew upgrade opencode` on startup — which unlinks
+        // and relinks the binary we probe. One unlucky moment and the process was
+        // stuck reporting "no opencode" until the app was restarted.
+        let failed_long_ago = Resolved {
+            bin: FALLBACK_BIN.to_string(),
+            working: false,
+            at: Instant::now() - RESOLVE_RETRY - Duration::from_secs(1),
+        };
+        assert!(!still_usable(&failed_long_ago), "a stale failure must be retried");
+
+        let failed_just_now = Resolved {
+            bin: FALLBACK_BIN.to_string(),
+            working: false,
+            at: Instant::now(),
+        };
+        assert!(
+            still_usable(&failed_just_now),
+            "a fresh failure must be reused — the session list polls every few \
+             seconds and must not shell out on every tick"
+        );
+
+        // A failure that named a real path is still a failure: it did not answer
+        // the probe, so it must expire like any other.
+        let found_but_unusable = Resolved {
+            bin: "/opt/homebrew/bin/opencode".to_string(),
+            working: false,
+            at: Instant::now() - RESOLVE_RETRY - Duration::from_secs(1),
+        };
+        assert!(!still_usable(&found_but_unusable));
+
+        let working_old = Resolved {
+            bin: "/opt/homebrew/bin/opencode".to_string(),
+            working: true,
+            at: Instant::now() - Duration::from_secs(60 * 60 * 24),
+        };
+        assert!(still_usable(&working_old), "a working binary must not expire");
+    }
 
     #[test]
     fn commands_use_opencode_flags_not_claude_ones() {
@@ -242,7 +345,7 @@ mod tests {
         let bin = opencode_bin();
         println!("resolved binary: {bin}");
         assert!(
-            supports_session_list(bin),
+            supports_session_list(&bin),
             "resolver returned {bin}, which cannot answer 'session list --format json'"
         );
 
@@ -256,6 +359,37 @@ mod tests {
             // A row with no id would have been dropped; one with no timestamp sorts
             // last and looks broken in the list. Both are worth knowing about.
             assert!(!s.id.is_empty());
+        }
+    }
+
+    /// LIVE check that opencode rows actually SURVIVE the merge into the session
+    /// list the app and the MCP broker read (`agents::list_agent_sessions_sync`).
+    ///
+    /// The test above proves `list_sessions()` works in isolation. That is not the
+    /// same claim: a row can parse perfectly and still be dropped a layer up by a
+    /// status filter, an id rule, or a merge that was never wired. This one fails
+    /// if the merge stops happening — which is the failure a user actually sees
+    /// (an opencode session running, but absent from Sessions and from
+    /// `list_sessions`).
+    #[test]
+    #[ignore = "requires opencode and claude installed"]
+    fn live_opencode_rows_reach_the_merged_session_list() {
+        let direct = list_sessions();
+        if direct.is_empty() {
+            println!("no opencode sessions on this machine — nothing to merge");
+            return;
+        }
+        let merged = crate::agents::list_agent_sessions_sync(Some(true))
+            .expect("list_agent_sessions_sync failed");
+        println!("opencode: {} row(s), merged list: {} row(s)", direct.len(), merged.len());
+        for s in &direct {
+            assert!(
+                merged.iter().any(|m| m.id == s.id),
+                "opencode session {} ({:?}) is missing from the merged list — \
+                 it parses but never reaches the app",
+                s.id,
+                s.title
+            );
         }
     }
 
