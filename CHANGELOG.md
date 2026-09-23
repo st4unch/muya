@@ -6,6 +6,26 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-23
+
+### Added
+- **opencode runs alongside Claude.** Muya is no longer Claude-only: open an
+  opencode terminal from **+ New Agent**, see its sessions in the same list, and
+  let a Claude agent open an opencode session and message it over MCP — the two
+  working side by side in the split view, which already existed.
+  - New terminals: an **opencode** preset next to the Claude ones.
+  - Sessions: opencode sessions appear in the list, badged, with their working
+    directory and branch, and open with opencode's own resume flag.
+  - Resources: MCP servers registered with opencode are listed and badged, so
+    you can see at a glance which of the two configs a server is missing from.
+  - muya-mcp registers itself with opencode as well as Claude, automatically.
+  - Tab icons tell the two agents apart.
+
+### Note
+The two CLIs take different flags for the same things — auto-approve, resume,
+and where a prompt goes — so each gets its own command, never a shared one with
+a swapped word.
+
 ## [0.2.51] - 2026-09-18
 
 ### Fixed
