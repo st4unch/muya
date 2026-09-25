@@ -203,10 +203,7 @@ pub fn spawn_process(
                     // Watch the output tail for a password prompt, then inject once.
                     if let (false, Some((w, secret))) = (injected, inject.as_ref()) {
                         tail.push_str(&String::from_utf8_lossy(&buf[..n]));
-                        if tail.len() > 512 {
-                            let cut = tail.len() - 512;
-                            tail.drain(..cut);
-                        }
+                        trim_prompt_tail(&mut tail, 512);
                         if looks_like_password_prompt(&tail) {
                             if let Ok(mut wl) = w.lock() {
                                 let _ = wl.write_all(secret.as_bytes());
@@ -299,13 +296,37 @@ pub struct CommandOutput {
 /// command can never grow memory without bound.
 const CAPTURE_CAP: usize = 256 * 1024;
 
+/// Keep the prompt-watch tail bounded WITHOUT ever slicing through a character.
+///
+/// `String::len` is bytes and PTY output is arbitrary UTF-8 — server banners,
+/// box-drawing TUI frames, Turkish text. Draining to a raw `len - LIMIT` offset
+/// panics the moment that offset lands inside a multi-byte character, which kills
+/// the reader thread and freezes that session's output for good. Rounding the cut
+/// forward to the next boundary keeps the bound and drops at most 3 extra bytes.
+fn trim_prompt_tail(tail: &mut String, limit: usize) {
+    if tail.len() <= limit {
+        return;
+    }
+    let mut cut = tail.len() - limit;
+    while cut < tail.len() && !tail.is_char_boundary(cut) {
+        cut += 1;
+    }
+    tail.drain(..cut);
+}
+
 /// Remove the password-prompt line (and any trailing CR/LF/space) from captured
 /// output so the returned stdout starts at the remote command's own output. The
 /// prompt is always the FIRST `password:`/`passcode:` occurrence (it precedes any
 /// remote output), so matching the first hit is correct. The password itself is
 /// never echoed by ssh, so it never appears here — this only hides the prompt text.
 fn strip_injected_prompt(raw: &str) -> String {
-    let lower = raw.to_lowercase();
+    // ASCII-only lowercasing, NOT `to_lowercase()`. Unicode lowercasing is not
+    // length-preserving — 'İ' (U+0130, 2 bytes) lowercases to "i\u{307}" (3 bytes) —
+    // so an offset found in a `to_lowercase()` copy does not address the same place
+    // in `raw`. Slicing `raw` at it either panics on a non-char-boundary or silently
+    // cuts the wrong text. The markers below are pure ASCII, so ASCII folding finds
+    // exactly the same matches while keeping every byte offset valid in `raw`.
+    let lower = raw.to_ascii_lowercase();
     let mut best: Option<usize> = None;
     for marker in ["password:", "passcode:"] {
         if let Some(pos) = lower.find(marker) {
@@ -406,10 +427,7 @@ pub fn run_with_injection(
                     // exactly as before (AC4).
                     if let (false, Some((w, secret))) = (injected, inject.as_ref()) {
                         tail.push_str(&String::from_utf8_lossy(&buf[..n]));
-                        if tail.len() > 512 {
-                            let cut = tail.len() - 512;
-                            tail.drain(..cut);
-                        }
+                        trim_prompt_tail(&mut tail, 512);
                         if is_psmp && looks_like_challenge_prompt(&tail) {
                             injected = true; // one-shot: never (re)consider injecting this run
                             chf.store(true, Ordering::Relaxed);
@@ -764,6 +782,50 @@ fn pty_session_ids_blocking(
 mod tests {
     use super::*;
 
+    /// Unicode lowercasing is NOT length-preserving, so an offset found in a
+    /// lowercased copy does not address the same byte in the original.
+    ///
+    /// 'İ' (U+0130) is 2 bytes; `to_lowercase()` turns it into "i" + U+0307, which
+    /// is 3. Every offset after it is then one byte too far in the original — far
+    /// enough to land inside the next multi-byte character and panic the thread
+    /// that strips the prompt. A Turkish hostname or username in an SSH banner is
+    /// all it takes.
+    #[test]
+    fn stripping_the_prompt_survives_unicode_that_changes_length_when_lowercased() {
+        let out = strip_injected_prompt("İ password:ığ-kalan");
+        assert_eq!(out, "ığ-kalan");
+
+        // The ordinary ASCII path must be untouched by the fix.
+        assert_eq!(strip_injected_prompt("host's Password: rest"), "rest");
+        assert_eq!(strip_injected_prompt("PASSCODE:  rest"), "rest");
+        assert_eq!(strip_injected_prompt("no marker here"), "no marker here");
+    }
+
+    /// The prompt-watch tail is bounded in BYTES while holding arbitrary UTF-8.
+    /// Cutting it at a raw `len - limit` offset panics as soon as that offset falls
+    /// inside a character — killing the reader thread, so the session's output
+    /// simply stops forever.
+    #[test]
+    fn trimming_the_tail_never_cuts_through_a_character() {
+        // 3-byte characters, so `len - limit` is guaranteed to miss a boundary.
+        let mut tail: String = "→".repeat(200); // 600 bytes
+        trim_prompt_tail(&mut tail, 512);
+        assert!(tail.len() <= 512, "tail must be bounded");
+        assert!(tail.chars().all(|c| c == '→'), "no character may be sliced apart");
+
+        // Under the limit: untouched.
+        let mut small = "kısa".to_string();
+        let before = small.clone();
+        trim_prompt_tail(&mut small, 512);
+        assert_eq!(small, before);
+
+        // A prompt at the very end must still be findable after trimming — that is
+        // the whole point of keeping a tail.
+        let mut long = format!("{}user@host's password:", "ığüş".repeat(400));
+        trim_prompt_tail(&mut long, 512);
+        assert!(looks_like_password_prompt(&long));
+    }
+
     /// A PTY whose command exits on its own must not stay in the session map.
     ///
     /// This is the leak: nothing removed a session that ended by itself, so the
@@ -1067,10 +1129,7 @@ mod tests {
                     Ok(n) => {
                         if !injected {
                             tail.push_str(&String::from_utf8_lossy(&buf[..n]));
-                            if tail.len() > 512 {
-                                let cut = tail.len() - 512;
-                                tail.drain(..cut);
-                            }
+                            trim_prompt_tail(&mut tail, 512);
                             if super::looks_like_password_prompt(&tail) {
                                 let mut wl = w.lock().unwrap();
                                 wl.write_all(b"Sup3rSecret!\n").unwrap();
