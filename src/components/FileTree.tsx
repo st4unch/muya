@@ -177,6 +177,27 @@ function TreeNode({
 
 interface Agent { id: string; name: string; worktree: string; }
 
+// Menu parts live at module level, NOT inside FileTree's render. A component declared
+// in a render body is a new type on every render, so React replaced every menu button
+// with a fresh DOM node each time the tree re-rendered (git-status poll, the parent's
+// polls, new inline callbacks): the highlight blinked, and a click whose mousedown hit
+// the old node and mouseup the new one never fired at all. See L55.
+const MenuItem = ({ label, onClick, danger }: { label: string; onClick: () => void; danger?: boolean }) => (
+  <button
+    type="button"
+    className={`w-full text-left px-3 py-1.5 flex items-center gap-2 text-xs font-mono cursor-pointer transition-colors ${
+      danger
+        ? "text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20"
+        : "text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-700"
+    }`}
+    onClick={(e) => { e.stopPropagation(); onClick(); }}
+  >
+    {label}
+  </button>
+);
+
+const Sep = () => <div className="border-t border-neutral-100 dark:border-neutral-700 my-1" />;
+
 export default function FileTree({
   roots,
   removableRoots,
@@ -378,21 +399,6 @@ export default function FileTree({
     setMenu((prev) => prev ? { ...prev, confirmDelete: true } : null);
   };
 
-  const MenuItem = ({ label, onClick, danger }: { label: string; onClick: () => void; danger?: boolean }) => (
-    <button
-      type="button"
-      className={`w-full text-left px-3 py-1.5 flex items-center gap-2 text-xs font-mono cursor-pointer transition-colors ${
-        danger
-          ? "text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20"
-          : "text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-700"
-      }`}
-      onClick={(e) => { e.stopPropagation(); onClick(); }}
-    >
-      {label}
-    </button>
-  );
-
-  const Sep = () => <div className="border-t border-neutral-100 dark:border-neutral-700 my-1" />;
 
   if (!roots.length)
     return (
