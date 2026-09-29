@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<title>Muya Grid</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500;700&amp;display=swap">
+<style>
+body{margin:0;font-family:'IBM Plex Sans',system-ui,sans-serif;color:#E6E8EC;background:#0F1115}
+a{color:#8FB3FF}a:hover{color:#B8CEFF}
+button{font-family:inherit;cursor:pointer}
+</style>
+</helmet>
+<div style="width: 1440px; height: 900px; display: flex; flex-direction: column; background: #0F1115; overflow: hidden">
+
+<header style="height: 48px; flex-shrink: 0; display: flex; align-items: center; gap: 16px; padding: 0 16px 0 88px; border-bottom: 1px solid #262B35; background: #13161B">
+<div style="display: flex; align-items: center; gap: 10px">
+<div style="width: 26px; height: 26px; border-radius: 7px; background: #E6E8EC; color: #0F1115; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px">M</div>
+<span style="font-weight: 600; font-size: 15px">Muya</span>
+</div>
+<span style="color: #7C8595">/</span>
+<span style="font-size: 14px; font-weight: 500">Grid</span>
+<span style="font-size: 13px; color: #9AA3B2">4 panel</span>
+<div style="flex-grow: 1"></div>
+<div role="tablist" aria-label="Düzen" style="display: flex; gap: 4px; padding: 3px; border-radius: 8px; background: #1B1F27">
+<button type="button" role="tab" style="height: 28px; padding: 0 10px; border-radius: 6px; border: none; background: transparent; color: #B4BCC8; font-size: 12px">1</button>
+<button type="button" role="tab" style="height: 28px; padding: 0 10px; border-radius: 6px; border: none; background: transparent; color: #B4BCC8; font-size: 12px">1×2</button>
+<button type="button" role="tab" style="height: 28px; padding: 0 10px; border-radius: 6px; border: none; background: #2A303C; color: #FFFFFF; font-size: 12px">2×2</button>
+<button type="button" role="tab" style="height: 28px; padding: 0 10px; border-radius: 6px; border: none; background: transparent; color: #B4BCC8; font-size: 12px">3×2</button>
+</div>
+<button type="button" style="height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid #2A2F3A; background: #1A1E25; color: #E6E8EC; font-size: 13px">Bekleyenleri öne al</button>
+<button type="button" style="height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid #2A2F3A; background: #1A1E25; color: #E6E8EC; font-size: 13px">Hepsine yayınla…</button>
+</header>
+
+<div style="flex-grow: 1; min-height: 0; display: flex">
+<nav aria-label="Ana gezinme" style="width: 64px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 0; border-right: 1px solid #262B35; background: #13161B">
+<button type="button" aria-label="Control" style="width: 48px; height: 48px; border-radius: 10px; border: none; background: #232936; color: #FFFFFF; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 10px">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="m7 9 3 3-3 3"></path><path d="M13 15h4"></path></svg>Control</button>
+<button type="button" aria-label="Queue" style="width: 48px; height: 48px; border-radius: 10px; border: none; background: transparent; color: #9AA3B2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 10px">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"></path></svg>Queue</button>
+<button type="button" aria-label="Kanban" style="width: 48px; height: 48px; border-radius: 10px; border: none; background: transparent; color: #9AA3B2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 10px">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="5" height="18" rx="1"></rect><rect x="10" y="3" width="5" height="12" rx="1"></rect><rect x="17" y="3" width="4" height="8" rx="1"></rect></svg>Kanban</button>
+<button type="button" aria-label="Resources" style="width: 48px; height: 48px; border-radius: 10px; border: none; background: transparent; color: #9AA3B2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 10px">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>Kaynak</button>
+<button type="button" aria-label="SSH" style="width: 48px; height: 48px; border-radius: 10px; border: none; background: transparent; color: #9AA3B2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 10px">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="7" rx="2"></rect><rect x="2" y="13" width="20" height="7" rx="2"></rect><path d="M6 7.5h.01M6 16.5h.01"></path></svg>SSH</button>
+<button type="button" aria-label="Chat" style="width: 48px; height: 48px; border-radius: 10px; border: none; background: transparent; color: #9AA3B2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 10px">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>Chat</button>
+</nav>
+
+<div style="flex-grow: 1; min-width: 0; padding: 16px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 12px">
+
+<section aria-label="documents-44" style="display: flex; flex-direction: column; min-height: 0; border-radius: 12px; border: 2px solid #F2B34B; background: #0B0D11; overflow: hidden">
+<div style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: #211B10; border-bottom: 1px solid #5C4A22">
+<span style="width: 8px; height: 8px; border-radius: 4px; background: #F2B34B"></span>
+<span style="font-weight: 600; font-size: 14px">documents-44</span>
+<span style="font-size: 12px; color: #F2B34B">İzin bekliyor · 1 dk</span>
+<div style="flex-grow: 1"></div>
+<button type="button" aria-label="Büyüt" style="width: 28px; height: 28px; border-radius: 6px; border: none; background: transparent; color: #E9D6AE; display: flex; align-items: center; justify-content: center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"></path></svg></button>
+</div>
+<div style="flex-grow: 1; padding: 14px 16px; font-family: 'JetBrains Mono',monospace; font-size: 12.5px; line-height: 1.6; color: #D4D9E1; display: flex; flex-direction: column; gap: 8px">
+<div style="color: #9AA3B2">⎿ [önceki çıktı]</div>
+<div><span style="color: #F2B34B">?</span> fs_write_file çağrısına izin verilsin mi?</div>
+<div style="color: #E9D6AE; padding-left: 16px">docs/[dosya yolu]</div>
+</div>
+<div style="display: flex; gap: 8px; padding: 12px 14px; border-top: 1px solid #262B35; background: #13161B">
+<button type="button" style="height: 34px; padding: 0 16px; border-radius: 7px; border: none; background: #F2B34B; color: #1A1206; font-size: 13px; font-weight: 600">İzin ver <span style="font-family: 'JetBrains Mono',monospace; font-weight: 400; font-size: 11px">Y</span></button>
+<button type="button" style="height: 34px; padding: 0 16px; border-radius: 7px; border: 1px solid #5C4A22; background: transparent; color: #E9D6AE; font-size: 13px">Reddet <span style="font-family: 'JetBrains Mono',monospace; font-size: 11px">N</span></button>
+<button type="button" style="height: 34px; padding: 0 16px; border-radius: 7px; border: 1px solid #333946; background: transparent; color: #B4BCC8; font-size: 13px">Bu oturumda hep izin ver</button>
+</div>
+</section>
+
+<section aria-label="muya-all" style="display: flex; flex-direction: column; min-height: 0; border-radius: 12px; border: 1px solid #3B5B9A; background: #0B0D11; overflow: hidden">
+<div style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: #161B26; border-bottom: 1px solid #262B35">
+<span style="width: 8px; height: 8px; border-radius: 4px; background: #4FD1A5"></span>
+<span style="font-weight: 600; font-size: 14px">muya-all</span>
+<span style="font-size: 12px; color: #7BE3BF">Çalışıyor · 4m 15s</span>
+<span style="font-size: 11px; padding: 2px 7px; border-radius: 9px; background: #3A1D1D; color: #FFA8A0">bypass</span>
+<div style="flex-grow: 1"></div>
+<span style="font-family: 'JetBrains Mono',monospace; font-size: 11px; color: #9AA3B2">16.9k tok</span>
+</div>
+<div style="flex-grow: 1; padding: 14px 16px; font-family: 'JetBrains Mono',monospace; font-size: 12.5px; line-height: 1.6; color: #D4D9E1; display: flex; flex-direction: column; gap: 8px">
+<div><span style="color: #7BE3BF">●</span> pty.rs'te 3 UTF-8 byte-offset hatası bulundu, düzeltildi + test edildi</div>
+<div style="color: #9AA3B2">⎿ 301 test geçiyor</div>
+<div style="color: #7BE3BF">✻ Unfurling… (4m 15s · ↓ 16.9k token)</div>
+</div>
+<div style="padding: 10px 14px; border-top: 1px solid #262B35; background: #13161B">
+<div style="height: 34px; border-radius: 8px; border: 1px solid #2A2F3A; background: #171A20; display: flex; align-items: center; padding: 0 12px; font-size: 13px; color: #9AA3B2">muya-all'a yaz…</div>
+</div>
+</section>
+
+<section aria-label="opencode-review" style="display: flex; flex-direction: column; min-height: 0; border-radius: 12px; border: 1px solid #262B35; background: #0B0D11; overflow: hidden">
+<div style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: #14171C; border-bottom: 1px solid #262B35">
+<span style="width: 8px; height: 8px; border-radius: 4px; background: #4FD1A5"></span>
+<span style="font-weight: 600; font-size: 14px">opencode-review</span>
+<span style="font-size: 12px; color: #7BE3BF">Çalışıyor · [süre]</span>
+</div>
+<div style="flex-grow: 1; padding: 14px 16px; font-family: 'JetBrains Mono',monospace; font-size: 12.5px; line-height: 1.6; color: #9AA3B2">[terminal çıktısı]</div>
+<div style="padding: 10px 14px; border-top: 1px solid #262B35; background: #13161B">
+<div style="height: 34px; border-radius: 8px; border: 1px solid #2A2F3A; background: #171A20; display: flex; align-items: center; padding: 0 12px; font-size: 13px; color: #9AA3B2">opencode-review'a yaz…</div>
+</div>
+</section>
+
+<section aria-label="iptv-2a" style="display: flex; flex-direction: column; min-height: 0; border-radius: 12px; border: 1px solid #262B35; background: #0B0D11; overflow: hidden">
+<div style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: #14171C; border-bottom: 1px solid #262B35">
+<span style="width: 8px; height: 8px; border-radius: 4px; border: 1.5px solid #7C8595; box-sizing: border-box"></span>
+<span style="font-weight: 600; font-size: 14px">iptv-2a</span>
+<span style="font-size: 12px; color: #9AA3B2">Boşta</span>
+<div style="flex-grow: 1"></div>
+<span style="font-family: 'JetBrains Mono',monospace; font-size: 11px; color: #9AA3B2">~/Documents/iptv</span>
+</div>
+<div style="flex-grow: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: #9AA3B2; font-size: 13px">
+<span>Görev bekliyor</span>
+<div style="display: flex; gap: 8px">
+<button type="button" style="height: 32px; padding: 0 12px; border-radius: 7px; border: 1px solid #2A2F3A; background: #1A1E25; color: #E6E8EC; font-size: 13px">Queue'dan görev ata</button>
+<button type="button" style="height: 32px; padding: 0 12px; border-radius: 7px; border: 1px solid #2A2F3A; background: transparent; color: #B4BCC8; font-size: 13px">Paneli değiştir</button>
+</div>
+</div>
+</section>
+
+</div>
+</div>
+
+<footer style="height: 28px; flex-shrink: 0; display: flex; align-items: center; gap: 18px; padding: 0 16px; border-top: 1px solid #262B35; background: #13161B; font-size: 12px; color: #9AA3B2">
+<span style="display: flex; align-items: center; gap: 6px"><span style="width: 6px; height: 6px; border-radius: 3px; background: #4FD1A5"></span>Hazır</span>
+<span>3 workspace</span>
+<span>7 agent · <span style="color: #7BE3BF">2 çalışıyor</span> · <span style="color: #F2B34B">1 bekliyor</span></span>
+<span>0 çakışma</span>
+<div style="flex-grow: 1"></div>
+<span>Tab ile paneller arası · ⌘⏎ büyüt</span>
+<span>Muya v0.3.0</span>
+</footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>
