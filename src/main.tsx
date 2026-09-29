@@ -1,3 +1,6 @@
+// Browser-only mock backend for the redesign pixel diff (?mock=1, dev builds only).
+// Must stay the first import — see src/mock/boot.ts.
+import "./mock/boot";
 import React, { Profiler } from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
