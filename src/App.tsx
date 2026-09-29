@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
 import { nextAcked, deriveBlinkKeys } from "./lib/blink";
 import { pickNextActiveKey, newSshTabKey, addSshSession, canResumeTab } from "./lib/tabs";
+import { terminalIsVisible } from "./lib/terminalVisibility";
 import { installNoAutocorrect } from "./lib/noAutocorrect";
 import appIconUrl from "./assets/app-icon.png";
 import {
@@ -316,6 +317,14 @@ export default function App() {
   const [activeTerminalKey, setActiveTerminalKey] = useState<string | null>(
     () => loadTabs()[0]?.key ?? null
   );
+  // Bumped every time the operator deliberately picks a tab (tab strip, sessions
+  // list). In grid mode `active` never flips — every grid terminal stays visible —
+  // so picking one there would otherwise leave the keyboard wherever it was.
+  const [tabPickCount, setTabPickCount] = useState(0);
+  const pickTab = useCallback((key: string) => {
+    setActiveTerminalKey(key);
+    setTabPickCount((n) => n + 1);
+  }, []);
   // Grid view mode — shows up to 4 terminals simultaneously
   const [viewMode, setViewMode] = useState<"tabs" | "grid">(
     () => (localStorage.getItem("apex.viewMode") as "tabs" | "grid") ?? "tabs"
@@ -348,7 +357,7 @@ export default function App() {
    *  Claude session (with --dangerously-skip-permissions) instead of leaving an
    *  empty shell. Runs once per tab — the flag clears after the command is sent. */
   const activateTerminal = (key: string) => {
-    setActiveTerminalKey(key);
+    pickTab(key);
     const tab = openTerminalsRef.current.find((t) => t.key === key);
     if (!tab?.needsResume || !tab.sessionId) return;
     const ptyId = terminalPtyIdsRef.current[key];
@@ -2178,7 +2187,7 @@ export const loginHandler = async (req, res) => {
                         tabDragFromRef.current = tm.key;
                         setTabDragOver(null);
                       } : undefined}
-                      onClick={() => { if (renamingKey !== tm.key && !tabDragHappenedRef.current) setActiveTerminalKey(tm.key); }}
+                      onClick={() => { if (renamingKey !== tm.key && !tabDragHappenedRef.current) pickTab(tm.key); }}
                       className={`group flex items-center gap-1 px-2 h-full border-b-2 transition-colors shrink-0 select-none ${
                         !layoutLocked ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
                       } ${
@@ -2415,7 +2424,15 @@ export const loginHandler = async (req, res) => {
                     const gridIdx = viewMode === "grid" ? validGridKeys.indexOf(tm.key) : -1;
                     const inGrid = gridIdx !== -1;
                     const isActiveTab = viewMode === "tabs" && tm.key === activeTerminalKey;
-                    const show = inGrid || isActiveTab;
+                    // The page counts as much as the tab: while another page is on
+                    // top the whole Control pane is display:none, and a terminal that
+                    // still called itself visible never re-ran its show-effect on the
+                    // way back — visible, but deaf until clicked. See L54.
+                    const show = terminalIsVisible({
+                      controlPageVisible: view === "control",
+                      inGrid,
+                      isActiveTab,
+                    });
 
                     const gridCol = (gridIdx % 2) + 1;
                     const gridRow = Math.floor(gridIdx / 2) + 1;
@@ -2513,6 +2530,7 @@ export const loginHandler = async (req, res) => {
                             autoAcceptTrust={tm.autoAcceptTrust}
                             theme={effectiveTheme}
                             active={show}
+                            focusToken={tm.key === activeTerminalKey ? tabPickCount : undefined}
                             onPtyReady={(ptyId) => setTerminalPtyIds(prev => ({ ...prev, [tm.key]: ptyId }))}
                             onPathMenu={(resolved, kind, x, y) => setPathMenu({ resolved, kind, x, y })}
                           />

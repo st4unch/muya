@@ -114,6 +114,23 @@ describe("Terminal: WebGL lease follows visibility", () => {
     expect(focus).toHaveBeenCalled();
   });
 
+  // Grid mode keeps every grid terminal `active`, so picking one in the sessions list
+  // produces no flip for the effect above to see — the keyboard would stay wherever
+  // the click left it.
+  it("focuses a visible terminal when the operator picks its tab, with no active flip", () => {
+    const { rerender } = render(<Terminal active focusToken={1} />);
+    focus.mockClear();
+    rerender(<Terminal active focusToken={2} />);
+    expect(focus).toHaveBeenCalled();
+  });
+
+  it("ignores a pick aimed at a terminal that is off screen", () => {
+    const { rerender } = render(<Terminal active={false} focusToken={1} />);
+    focus.mockClear();
+    rerender(<Terminal active={false} focusToken={2} />);
+    expect(focus).not.toHaveBeenCalled();
+  });
+
   it("re-acquires after a GPU loss while visible, but gives up after 3 in a row", async () => {
     render(<Terminal active />);
     await waitFor(() => expect(leases).toHaveLength(1));
