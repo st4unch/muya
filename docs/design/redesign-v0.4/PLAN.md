@@ -104,3 +104,11 @@ Parse edilemeyenler `tasks/todo.md`'ye yazılır. Parser gerçek Claude ekran ö
    `minWidth/minHeight` 1280×800 + pencere sürükleme izni (capabilities). Rust koduna dokunulmaz.
 3. **Eksik veriler ekrandan okunur** (token, aktivite, izin detayı, mod); okunamazsa sade gösterim
    + `tasks/todo.md` notu.
+
+## Kontrast düzeltmesi (§1.1 kuralı)
+
+| Token | Spec light | Uygulanan | Önce | Sonra |
+|---|---|---|---|---|
+| `--text-faint` | `#8A93A3` | `#6B727E` | 2.96:1 (`--bg-panel`), 3.10:1 (`--bg-chrome`) | 4.64:1, 4.85:1 |
+
+Aynı ton koyulaştırıldı; `--text-muted` (5.53:1) ile hiyerarşi korunuyor. Diğer 51 light ve 52 dark çift 4.5:1'in üstünde.

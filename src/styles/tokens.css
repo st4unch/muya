@@ -122,7 +122,7 @@
   --text-secondary: #3D4452;
   --text-tertiary: #4A5261;
   --text-muted: #5E6675;
-  --text-faint: #8A93A3;
+  --text-faint: #6B727E; /* spec #8A93A3 was 2.96:1 on --bg-panel; darkened to 4.64:1 (brief §1.1 contrast rule) */
   --text-terminal: #2A2F38;
 
   --accent: #2F5BD3;
