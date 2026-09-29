@@ -85,6 +85,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openDialog, save as saveDialog, confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { useTheme } from "./theme/theme";
 
 // Types matching the user's workflow model
 interface AgentSession {
@@ -499,21 +500,13 @@ export default function App() {
   const [rightWidth, setRightWidth] = useState(() => Number(localStorage.getItem("muya.rightWidth")) || 320);
   // Branch picked for inspection — shown as a detail card on the Queue page.
   const [branchInspect, setBranchInspect] = useState<{ repo: string; name: string } | null>(null);
-  // App-wide color theme. "system" follows the OS until the user explicitly toggles.
-  // The resolved effectiveTheme drives the `.dark` class on <html>, the terminal, and
-  // the Monaco editor — so one toggle themes the whole app together.
-  const [themeMode, setThemeMode] = useState<"system" | "light" | "dark">(
-    () => (localStorage.getItem("apex.theme") as "system" | "light" | "dark") || "system"
-  );
-  const [systemDark, setSystemDark] = useState(
-    () => window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false
-  );
-  useEffect(() => {
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = (e: MediaQueryListEvent) => setSystemDark(e.matches);
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, []);
+  // App-wide color theme. "system" follows the OS until the user explicitly picks
+  // one. useTheme() (src/theme/theme.ts) owns the "system"/"light"/"dark"
+  // preference + live prefers-color-scheme tracking, persists it under the
+  // legacy "apex.theme" key, and keeps <html data-theme> + the legacy `.dark`
+  // class in sync — the resolved theme drives the terminal and the Monaco
+  // editor too, so one toggle themes the whole app together.
+  const { preference: themeMode, resolved: effectiveTheme, setPreference: setThemeMode } = useTheme();
 
   // Track fullscreen state in a ref so the ESC handler can check it synchronously.
   const isFullscreenRef = useRef(false);
@@ -558,13 +551,9 @@ export default function App() {
       window.removeEventListener("keydown", handleKeyDown, { capture: true });
     };
   }, []);
-  const effectiveTheme: "dark" | "light" =
-    themeMode === "system" ? (systemDark ? "dark" : "light") : themeMode;
+  // Native title bar / menu bar theme — useTheme() only owns the web-side
+  // data-theme/.dark class; the OS chrome needs its own Tauri call.
   useEffect(() => {
-    localStorage.setItem("apex.theme", themeMode);
-  }, [themeMode]);
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", effectiveTheme === "dark");
     getCurrentWindow()
       .setTheme(effectiveTheme === "dark" ? "dark" : "light")
       .catch((e) => console.warn("[apex] window setTheme failed (native title bar/menu bar may stay light):", e));

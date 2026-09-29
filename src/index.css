@@ -1,76 +1,80 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap');
 @import "tailwindcss";
 
-/* Class-based dark mode (Tailwind v4 defaults to media-query). App.tsx toggles a
-   `.dark` class on <html> from the app theme, so every `dark:` utility responds. */
+/* Class-based dark mode (Tailwind v4 defaults to media-query). useTheme() (see
+   src/theme/theme.ts) toggles a `.dark` class on <html> from the app theme, so
+   every `dark:` utility responds. */
 @custom-variant dark (&:where(.dark, .dark *));
 
 /* Rendered read-only markdown (MarkdownView.tsx). Scoped to .md-body so it never
-   leaks into the rest of the app. Theme-aware via the `.dark` variant. */
-.md-body { color: #27272a; font-size: 13px; line-height: 1.65; word-wrap: break-word; }
-.dark .md-body { color: #d4d4d8; }
-.md-body h1, .md-body h2, .md-body h3, .md-body h4 { font-weight: 700; line-height: 1.25; margin: 1.4em 0 0.6em; color: #18181b; }
-.dark .md-body h1, .dark .md-body h2, .dark .md-body h3, .dark .md-body h4 { color: #fafafa; }
-.md-body h1 { font-size: 1.7em; border-bottom: 1px solid #e4e4e7; padding-bottom: .3em; }
-.md-body h2 { font-size: 1.35em; border-bottom: 1px solid #e4e4e7; padding-bottom: .25em; }
-.dark .md-body h1, .dark .md-body h2 { border-color: #3f3f46; }
+   leaks into the rest of the app. Colors come from the token system (src/styles/
+   tokens.css) via var(--…) — a single rule covers both themes since the token
+   itself changes value under :root[data-theme="dark"|"light"]. */
+.md-body { color: var(--text); font-size: 13px; line-height: 1.65; word-wrap: break-word; }
+.md-body h1, .md-body h2, .md-body h3, .md-body h4 { font-weight: 700; line-height: 1.25; margin: 1.4em 0 0.6em; color: var(--text-strong); }
+.md-body h1 { font-size: 1.7em; border-bottom: 1px solid var(--border); padding-bottom: .3em; }
+.md-body h2 { font-size: 1.35em; border-bottom: 1px solid var(--border); padding-bottom: .25em; }
 .md-body h3 { font-size: 1.15em; } .md-body h4 { font-size: 1em; }
 .md-body p { margin: 0.7em 0; }
-.md-body a { color: #6366f1; text-decoration: underline; }
+.md-body a { color: var(--accent); text-decoration: underline; }
 .md-body ul, .md-body ol { margin: 0.6em 0; padding-left: 1.5em; }
 .md-body li { margin: 0.25em 0; }
-.md-body code { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.88em; background: #f4f4f5; padding: 0.12em 0.35em; border-radius: 4px; }
-.dark .md-body code { background: #27272a; }
-.md-body pre { background: #f4f4f5; padding: 0.9em 1em; border-radius: 8px; overflow-x: auto; margin: 0.8em 0; }
-.dark .md-body pre { background: #18181b; }
+.md-body code { font-family: var(--font-mono), ui-monospace, monospace; font-size: 0.88em; background: var(--bg-table-head); padding: 0.12em 0.35em; border-radius: 4px; }
+.md-body pre { background: var(--bg-table-head); padding: 0.9em 1em; border-radius: 8px; overflow-x: auto; margin: 0.8em 0; }
 .md-body pre code { background: none; padding: 0; font-size: 0.85em; }
-.md-body blockquote { border-left: 3px solid #a5b4fc; padding-left: 1em; margin: 0.8em 0; color: #52525b; }
-.dark .md-body blockquote { color: #a1a1aa; border-color: #4f46e5; }
+.md-body blockquote { border-left: 3px solid var(--accent); padding-left: 1em; margin: 0.8em 0; color: var(--text-muted); }
 .md-body table { border-collapse: collapse; margin: 0.8em 0; display: block; overflow-x: auto; }
-.md-body th, .md-body td { border: 1px solid #e4e4e7; padding: 0.4em 0.7em; text-align: left; }
-.dark .md-body th, .dark .md-body td { border-color: #3f3f46; }
-.md-body th { background: #f4f4f5; font-weight: 600; }
-.dark .md-body th { background: #27272a; }
-.md-body hr { border: none; border-top: 1px solid #e4e4e7; margin: 1.2em 0; }
-.dark .md-body hr { border-color: #3f3f46; }
+.md-body th, .md-body td { border: 1px solid var(--border); padding: 0.4em 0.7em; text-align: left; }
+.md-body th { background: var(--bg-table-head); font-weight: 600; }
+.md-body hr { border: none; border-top: 1px solid var(--border); margin: 1.2em 0; }
 .md-body img { max-width: 100%; }
 
 /* Always-visible thin scrollbar for panels where content commonly overflows
    (Branch/Queue lists, etc.) — macOS's default overlay scrollbar auto-hides until
    actively scrolling, which reads as "no scrollbar at all" on a long list. */
-.custom-scrollbar { scrollbar-width: thin; scrollbar-color: #d4d4d8 transparent; }
-.dark .custom-scrollbar { scrollbar-color: #52525b transparent; }
+.custom-scrollbar { scrollbar-width: thin; scrollbar-color: var(--border-control) transparent; }
 .custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
 .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-.custom-scrollbar::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: 4px; }
-.dark .custom-scrollbar::-webkit-scrollbar-thumb { background: #52525b; }
-.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #a1a1aa; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: var(--border-control); border-radius: 4px; }
+.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: var(--text-faint); }
 
 @theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Space Grotesk", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 
   /* Accent palette — replaces Tailwind's default indigo with a higher-chroma
      electric violet-blue so active/selected elements pop instead of reading
-     as washed-out pastels. Dark surfaces (#25272b family) are untouched. */
-  --color-indigo-50:  #eef1ff;
-  --color-indigo-100: #e0e4ff;
-  --color-indigo-200: #c4cbff;
-  --color-indigo-300: #9fa6ff;
-  --color-indigo-400: #7c7bff;
-  --color-indigo-500: #655cff;
-  --color-indigo-600: #5340f5;
-  --color-indigo-700: #4530d6;
-  --color-indigo-800: #3827a8;
-  --color-indigo-900: #302685;
-  --color-indigo-950: #1d1650;
+     as washed-out pastels. Same value in both app themes, so the raw hex lives
+     in src/styles/tokens.css (the one place besides terminalThemes.ts allowed to
+     hold hex literals) and is threaded through here via var() — NOT re-declared
+     with the literal here, which would defeat the point. */
+  --color-indigo-50:  var(--raw-indigo-50);
+  --color-indigo-100: var(--raw-indigo-100);
+  --color-indigo-200: var(--raw-indigo-200);
+  --color-indigo-300: var(--raw-indigo-300);
+  --color-indigo-400: var(--raw-indigo-400);
+  --color-indigo-500: var(--raw-indigo-500);
+  --color-indigo-600: var(--raw-indigo-600);
+  --color-indigo-700: var(--raw-indigo-700);
+  --color-indigo-800: var(--raw-indigo-800);
+  --color-indigo-900: var(--raw-indigo-900);
+  --color-indigo-950: var(--raw-indigo-950);
 }
 
-/* Base canvas color per theme — prevents a white flash before React paints and
-   covers any area not explicitly themed. */
-html { background: #ffffff; }
-html.dark { background: #25272b; color-scheme: dark; }
+/* App-wide base: font + canvas color/text come from the token system so there's
+   no flash of the wrong color before per-page classes apply, and no un-themed
+   background peeking out from under any layout gaps. */
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-app);
+  color: var(--text);
+}
+
+/* Base canvas color per theme — prevents a flash before React paints and covers
+   any area not explicitly themed. A single rule: --bg-app itself already changes
+   value under :root[data-theme="dark"|"light"] (set pre-paint by
+   public/theme-boot.js), so no separate `html.dark` override is needed. */
+html { background: var(--bg-app); }
 
 /* Live sessions that need the operator's decision (waiting-for-input) pulse an
    amber glow so they stand out among idle/working rows. Respects reduced-motion. */

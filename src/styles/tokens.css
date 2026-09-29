@@ -1,0 +1,161 @@
+/*
+ * Design tokens for the v0.4 redesign (docs/design/redesign-v0.4/PROMPT.md §1.1).
+ * Every color used anywhere in the app resolves through one of the CSS custom
+ * properties below — components reference them via var(--token), never a raw hex.
+ * This file (and src/theme/terminalThemes.ts) are the ONLY places allowed to
+ * contain hex color literals; see `grep -rE '#[0-9a-fA-F]{3,8}' src/`.
+ *
+ * `data-theme` ("dark" | "light") is set on <html> before first paint by
+ * public/theme-boot.js so there is no flash of the wrong theme.
+ */
+
+/* Theme-independent accent scale used by Tailwind's `@theme` block in
+ * src/index.css (bg-indigo-500 etc.) — same values in both app themes, so it
+ * lives at plain :root rather than under a [data-theme] selector. Named
+ * `--raw-*` (not `--color-indigo-*`) so index.css's `@theme { --color-indigo-50:
+ * var(--raw-indigo-50); }` isn't a same-selector self-reference (Tailwind's
+ * @theme emits its own `--color-indigo-*` vars at :root too — reusing that exact
+ * name there would create an invalid CSS cycle). */
+:root {
+  --raw-indigo-50: #eef1ff;
+  --raw-indigo-100: #e0e4ff;
+  --raw-indigo-200: #c4cbff;
+  --raw-indigo-300: #9fa6ff;
+  --raw-indigo-400: #7c7bff;
+  --raw-indigo-500: #655cff;
+  --raw-indigo-600: #5340f5;
+  --raw-indigo-700: #4530d6;
+  --raw-indigo-800: #3827a8;
+  --raw-indigo-900: #302685;
+  --raw-indigo-950: #1d1650;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg-app: #0F1115;
+  --bg-chrome: #13161B;
+  --bg-panel: #14171C;
+  --bg-terminal: #0B0D11;
+  --bg-input: #171A20;
+  --bg-control: #1A1E25;
+  --bg-segment: #1B1F27;
+  --bg-segment-active: #2A303C;
+  --bg-rail-active: #232936;
+  --bg-table-head: #161920;
+  --bg-selected: #1C2436;
+  --bg-selected-head: #161B26;
+
+  --border: #262B35;
+  --border-control: #2A2F3A;
+  --border-strong: #333946;
+  --border-subtle: #1E232C;
+  --border-selected: #3B5B9A;
+
+  --text: #E6E8EC;
+  --text-strong: #FFFFFF;
+  --text-secondary: #C9D1DC;
+  --text-tertiary: #B4BCC8;
+  --text-muted: #9AA3B2;
+  --text-faint: #7C8595;
+  --text-terminal: #D4D9E1;
+
+  --accent: #8FB3FF;
+  --accent-hover: #B8CEFF;
+
+  --primary-bg: #E6E8EC;
+  --primary-fg: #0F1115;
+
+  --success: #4FD1A5;
+  --success-text: #7BE3BF;
+  --success-bg: #15322A;
+  --success-card-bg: #172420;
+  --success-card-border: #24463B;
+  --success-card-text: #CFF5E7;
+
+  --warning: #F2B34B;
+  --warning-label: #F2B34B;
+  --warning-btn-bg: #F2B34B;
+  --warning-btn-fg: #1A1206;
+  --warning-bg: #251F13;
+  --warning-card-bg: #211B10;
+  --warning-border: #5C4A22;
+  --warning-text: #E9D6AE;
+  --warning-code-bg: #17130B;
+
+  --danger-text: #FFA8A0;
+  --danger-pill-bg: #3A1D1D;
+  --danger-btn-bg: #2A1716;
+  --danger-border: #6B2E2A;
+  --danger-kbd: #D98B84;
+
+  --shadow-segment-active: none;
+
+  --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-app: #F4F5F7;
+  --bg-chrome: #FFFFFF;
+  --bg-panel: #F9FAFB;
+  --bg-terminal: #FFFFFF;
+  --bg-input: #FFFFFF;
+  --bg-control: #FFFFFF;
+  --bg-segment: #EEF0F3;
+  --bg-segment-active: #FFFFFF;
+  --bg-rail-active: #E8ECF4;
+  --bg-table-head: #F4F5F7;
+  --bg-selected: #EAF0FD;
+  --bg-selected-head: #F1F5FE;
+
+  --border: #E3E6EB;
+  --border-control: #D5DAE1;
+  --border-strong: #C5CBD4;
+  --border-subtle: #ECEEF1;
+  --border-selected: #9DB5EE;
+
+  --text: #1A1D23;
+  --text-strong: #0B0D11;
+  --text-secondary: #3D4452;
+  --text-tertiary: #4A5261;
+  --text-muted: #5E6675;
+  --text-faint: #8A93A3;
+  --text-terminal: #2A2F38;
+
+  --accent: #2F5BD3;
+  --accent-hover: #1E45B0;
+
+  --primary-bg: #1A1D23;
+  --primary-fg: #FFFFFF;
+
+  --success: #1E9E72;
+  --success-text: #127A56;
+  --success-bg: #E3F5EE;
+  --success-card-bg: #EEF8F3;
+  --success-card-border: #BDE3D1;
+  --success-card-text: #0E5E43;
+
+  --warning: #D9921A;
+  --warning-label: #9A6400;
+  --warning-btn-bg: #E9A23B;
+  --warning-btn-fg: #1A1206;
+  --warning-bg: #FFF6E6;
+  --warning-card-bg: #FFF8EA;
+  --warning-border: #EBCB8B;
+  --warning-text: #6E4A05;
+  --warning-code-bg: #FBEFD6;
+
+  --danger-text: #B42318;
+  --danger-pill-bg: #FDECEA;
+  --danger-btn-bg: #FEF3F2;
+  --danger-border: #F3B8B2;
+  --danger-kbd: #C4453B;
+
+  --shadow-segment-active: 0 1px 2px rgba(16, 24, 40, 0.08);
+
+  --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}

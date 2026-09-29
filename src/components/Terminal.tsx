@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Terminal as XTerm, type ITheme } from "@xterm/xterm";
+import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { acquireWebgl, type WebglLease } from "../lib/webglRenderer";
@@ -7,26 +7,13 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import { X, ChevronUp, ChevronDown } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import { altArrowSeq } from "../lib/keys";
+import { terminalTheme } from "../theme/terminalThemes";
 
 // Output bytes arrive as a raw ArrayBuffer (binary fetch path — no JSON byte
 // bloat); process-exit arrives as a small JSON object. See src-tauri/src/pty.rs.
 type PtyMsg = ArrayBuffer | { type: "exit" };
 
 export type TermTheme = "dark" | "light";
-
-// The integrated terminal stays the same soft-black (#25272b) in BOTH app themes —
-// an always-dark terminal (like VS Code's) the operator asked for. The `theme` prop is
-// still accepted for API symmetry but resolves to this one palette either way, so a
-// light-on-dark, readable terminal shows even when the rest of the app is light.
-const DARK_TERMINAL: ITheme = {
-  background: "#25272b",
-  foreground: "#e5e5e5",
-  cursor: "#818cf8",
-};
-const THEMES: Record<TermTheme, ITheme> = {
-  dark: DARK_TERMINAL,
-  light: DARK_TERMINAL,
-};
 
 /**
  * Real interactive terminal: an xterm.js view wired to a PTY-backed login shell in
@@ -158,10 +145,11 @@ export default function Terminal({
 
     const term = new XTerm({
       fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-      fontSize: 12,
+      fontSize: 13,
+      lineHeight: 1.6,
       cursorBlink: true,
       scrollback: 5000,
-      theme: THEMES[theme],
+      theme: terminalTheme(theme),
     });
     termRef.current = term;
     const fit = new FitAddon();
@@ -266,6 +254,20 @@ export default function Terminal({
 
     let ptyId: string | null = null;
     let disposed = false;
+
+    // xterm measures its cell size from the font at term.open() time. JetBrains Mono is
+    // bundled (fontsource) but may not have finished loading yet on a cold start, so the
+    // very first fit above can use a fallback-font cell size and mis-measure cols/rows.
+    // Refit once the font is actually ready — a no-op if it already was.
+    void document.fonts?.ready.then(() => {
+      if (disposed) return;
+      try {
+        fit.fit();
+        if (ptyId) void invoke("pty_resize", { id: ptyId, cols: term.cols, rows: term.rows });
+      } catch {
+        /* element unmounted or hidden by the time fonts resolved */
+      }
+    });
 
     // Reset keystroke buffer for this new PTY session.
     keystrokeBufferRef.current = "";
@@ -519,7 +521,7 @@ export default function Terminal({
 
   // Live theme switch — recolors the existing terminal without touching the PTY.
   useEffect(() => {
-    if (termRef.current) termRef.current.options.theme = THEMES[theme];
+    if (termRef.current) termRef.current.options.theme = terminalTheme(theme);
   }, [theme]);
 
   const handleSearchChange = (q: string) => {
@@ -540,11 +542,15 @@ export default function Terminal({
 
   return (
     <div className="relative h-full w-full overflow-hidden">
-      <div ref={ref} className="h-full w-full overflow-hidden" />
+      <div
+        ref={ref}
+        className="h-full w-full overflow-hidden bg-[var(--bg-terminal)]"
+        style={{ padding: "20px 28px" }}
+      />
 
       {/* In-terminal search overlay — toggled by Cmd+F */}
       {showSearch && (
-        <div className="absolute top-2 right-2 z-10 flex items-center gap-1 bg-[#1e1f23] border border-[#3d3f44] rounded shadow-lg px-2 py-1">
+        <div className="absolute top-2 right-2 z-10 flex items-center gap-1 bg-[var(--bg-control)] border border-[var(--border-strong)] rounded shadow-lg px-2 py-1">
           <input
             ref={searchInputRef}
             type="text"
@@ -552,7 +558,7 @@ export default function Terminal({
             onChange={(e) => handleSearchChange(e.target.value)}
             onKeyDown={handleSearchKeyDown}
             placeholder="Search…"
-            className="w-44 bg-transparent text-[#e5e5e5] text-xs font-mono outline-none placeholder-neutral-500"
+            className="w-44 bg-transparent text-[var(--text)] text-xs font-mono outline-none placeholder-neutral-500"
           />
           <button
             type="button"

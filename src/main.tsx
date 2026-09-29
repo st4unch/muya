@@ -1,6 +1,16 @@
 import React, { Profiler } from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+// Bundled fonts (offline app — no Google Fonts). Weights per
+// docs/design/redesign-v0.4/PROMPT.md §1: IBM Plex Sans 400/500/600,
+// JetBrains Mono 400/500/700.
+import "@fontsource/ibm-plex-sans/400.css";
+import "@fontsource/ibm-plex-sans/500.css";
+import "@fontsource/ibm-plex-sans/600.css";
+import "@fontsource/jetbrains-mono/400.css";
+import "@fontsource/jetbrains-mono/500.css";
+import "@fontsource/jetbrains-mono/700.css";
+import "./styles/tokens.css";
 import "./index.css";
 import { startPerfHarness, recordCommit } from "./perf/harness";
 import { invoke } from "@tauri-apps/api/core";
