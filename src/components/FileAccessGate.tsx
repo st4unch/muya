@@ -13,11 +13,14 @@ import { FolderLock, ExternalLink, AlertTriangle, Check } from "lucide-react";
 //    keeps asking. Now nothing touches those folders until the user presses a
 //    button that says what it is for.
 // 2. If the app was run straight out of the downloaded zip, macOS translocated
-//    it — see `path_is_translocated` in fs.rs. Every grant was recorded against
-//    a random path that never existed again, so the permission genuinely could
-//    not stick no matter how many times the user allowed it. That one is not
-//    recoverable from inside the app; it needs the app moved to /Applications,
-//    so we say exactly that instead of silently failing.
+//    it — see `app_location.rs`. Every grant was recorded against a random path
+//    that never existed again. Muya now clears the quarantine flag from the
+//    ORIGINAL bundle at startup, so one relaunch runs it in place wherever the
+//    user keeps it — /Applications is not required. This used to be a blocking
+//    "move it to Applications" wall; it is now a notice with a Restart button,
+//    because the session itself works (the MCP helper no longer lives inside the
+//    translocated copy). Only when the original can't be fixed (a read-only disk
+//    image) do we fall back to asking the user to copy the app somewhere.
 
 interface FolderAccess {
   name: string;
@@ -29,6 +32,10 @@ interface FileAccessStatus {
   translocated: boolean;
   exe_path: string;
   folders: FolderAccess[];
+  /** Translocated only: where the user actually has the app. */
+  original_path?: string | null;
+  /** Translocated only: relaunching the original runs it in place. */
+  relaunch_fixes_it?: boolean;
 }
 
 const DISMISS_KEY = "muya.fileAccessGate.dismissed";
@@ -84,30 +91,15 @@ export default function FileAccessGate() {
 
   if (!status) return null;
 
-  // Translocation is not a warning — nothing works properly until it is fixed,
-  // and no button in this app can fix it. Block and explain.
+  // Translocated: this session works, but permissions won't stick and the app
+  // can't update itself until it runs from the real bundle. Say so without
+  // blocking anything.
   if (status.translocated) {
     return (
-      <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm">
-        <div className="w-full max-w-lg mx-4 rounded-xl border border-amber-300 dark:border-amber-700 bg-white dark:bg-neutral-900 shadow-2xl p-6">
-          <div className="flex items-center gap-2 mb-3">
-            <AlertTriangle className="w-5 h-5 text-amber-500" />
-            <h2 className="text-lg font-semibold">Move Muya to your Applications folder</h2>
-          </div>
-          <p className="text-sm text-neutral-600 dark:text-neutral-300 mb-3">
-            macOS is running Muya from a temporary read-only copy, because it was
-            opened straight out of the downloaded zip. Every permission you grant
-            is attached to a copy that disappears on quit — which is why Muya
-            keeps asking for file access, and why it cannot update itself.
-          </p>
-          <p className="text-sm text-neutral-600 dark:text-neutral-300 mb-4">
-            Quit Muya, drag <span className="font-medium">Muya.app</span> into{" "}
-            <span className="font-medium">Applications</span>, and open it from
-            there. You will be asked for file access once, and only once.
-          </p>
-          <p className="text-xs text-neutral-400 break-all">{status.exe_path}</p>
-        </div>
-      </div>
+      <TranslocationNotice
+        status={status}
+        onRelaunch={() => invoke("relaunch_in_place")}
+      />
     );
   }
 
@@ -208,6 +200,68 @@ export default function FileAccessGate() {
           Not now
         </button>
       </div>
+    </div>
+  );
+}
+
+function TranslocationNotice({
+  status,
+  onRelaunch,
+}: {
+  status: FileAccessStatus;
+  onRelaunch: () => Promise<unknown>;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const relaunch = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await onRelaunch();
+    } catch (e) {
+      setError(String(e));
+      setBusy(false);
+    }
+  };
+  return (
+    <div
+      role="status"
+      className="fixed bottom-4 right-4 z-50 w-[28rem] rounded-xl border border-amber-300 dark:border-amber-700 bg-white dark:bg-neutral-900 shadow-2xl p-4"
+    >
+      <div className="flex items-center gap-2 mb-1">
+        <AlertTriangle className="w-4 h-4 text-amber-500" />
+        <h3 className="text-sm font-semibold">
+          {status.relaunch_fixes_it ? "Restart Muya once" : "Muya is running from a temporary copy"}
+        </h3>
+      </div>
+      {status.relaunch_fixes_it ? (
+        <p className="text-xs text-neutral-600 dark:text-neutral-300 mb-3">
+          macOS started this session from a temporary copy of the downloaded app,
+          so permissions you grant now won&apos;t be remembered and updates can&apos;t
+          install. Muya has already fixed that for next time — restart once and it
+          runs from where you keep it. You don&apos;t need to move it.
+        </p>
+      ) : (
+        <p className="text-xs text-neutral-600 dark:text-neutral-300 mb-3">
+          macOS started this session from a temporary copy, and Muya couldn&apos;t fix
+          the original (for example, it&apos;s inside a disk image). Copy{" "}
+          <span className="font-medium">Muya.app</span> to any folder on your Mac
+          — Applications is fine — and open it from there.
+        </p>
+      )}
+      {status.original_path && (
+        <p className="text-[11px] text-neutral-400 break-all mb-3">{status.original_path}</p>
+      )}
+      {error && <p className="text-[11px] text-rose-500 mb-2 break-all">{error}</p>}
+      {status.relaunch_fixes_it && (
+        <button
+          onClick={() => void relaunch()}
+          disabled={busy}
+          className="px-3 py-1.5 text-xs rounded-md bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 disabled:opacity-50"
+        >
+          {busy ? "Restarting…" : "Restart now"}
+        </button>
+      )}
     </div>
   );
 }

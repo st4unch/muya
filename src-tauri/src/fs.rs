@@ -6,6 +6,8 @@
 use std::path::Path;
 use std::process::Command;
 
+use crate::app_location::{bundle_root_from_exe, path_is_translocated};
+
 use serde::Serialize;
 
 /// A single directory entry for the file tree.
@@ -697,6 +699,11 @@ pub struct FileAccessStatus {
     pub translocated: bool,
     pub exe_path: String,
     pub folders: Vec<FolderAccess>,
+    /// Translocated only: the bundle the user actually has on disk.
+    pub original_path: Option<String>,
+    /// Translocated only: the original has lost its quarantine flag (the startup
+    /// sweep cleared it), so relaunching it runs in place — no move required.
+    pub relaunch_fixes_it: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -706,62 +713,39 @@ pub struct FolderAccess {
     pub granted: bool,
 }
 
-/// Is this executable running from an App Translocation mount?
-///
-/// macOS runs a QUARANTINED app (i.e. one that was downloaded, which is every
-/// zip we ship) from a randomized read-only copy under
-/// `/private/var/folders/.../AppTranslocation/<UUID>/d/Muya.app` whenever it is
-/// launched from outside a trusted install location. The UUID is different on
-/// every launch, so macOS sees a DIFFERENT APP each time: every privacy grant
-/// the user gives is recorded against a path that will never exist again, and
-/// the next launch asks for the same permission from scratch — forever. It also
-/// makes the self-updater fail, because the mount is read-only.
-///
-/// Moving the app to /Applications (Finder's move strips the quarantine flag)
-/// ends it permanently. Nothing the app can do at runtime fixes it from inside,
-/// so all we can do is detect it and say so — which beats looking broken.
-/// Reported by users on fresh installs, 2026-08-30; never reproducible on a
-/// developer machine, where the app was long since moved and de-quarantined.
-fn path_is_translocated(exe_path: &str) -> bool {
-    exe_path.contains("/AppTranslocation/")
-}
-
-/// The `.app` bundle root for a given executable path, if it is inside one.
-///
-/// `<bundle>/Contents/MacOS/<exe>` — three levels up. Returns None for a bare
-/// binary (`cargo run`, tests), which must never be touched.
-fn bundle_root_from_exe(exe_path: &str) -> Option<String> {
-    let p = Path::new(exe_path);
-    let root = p.parent()?.parent()?.parent()?;
-    root.extension()
-        .filter(|e| *e == "app")
-        .map(|_| root.to_string_lossy().into_owned())
-}
-
 /// Strip `com.apple.quarantine` from our own bundle, every launch.
 ///
 /// Not a one-time chore: the updater REPLACES the bundle in place, and a
 /// replaced bundle can come back carrying the quarantine flag. A quarantined app
 /// living anywhere outside /Applications gets App Translocation on its NEXT
-/// launch — so an update would silently reintroduce exactly the bug this release
-/// fixes, and the user's file permission would reset all over again.
+/// launch — its permissions reset and its MCP helper path dies on quit.
+///
+/// Translocated launches are the case that matters most, and the flag has to come
+/// off the ORIGINAL bundle, not the throwaway copy we are running from. macOS tells
+/// us where that is (`app_location::original_bundle`). Once the flag is gone the
+/// next launch runs in place, wherever the user keeps the app — no need for it to
+/// be in /Applications.
 ///
 /// Safe by construction: we are already running, so macOS has already assessed
-/// and admitted this exact bundle. Removing the flag from a binary the system
-/// just executed grants nothing new. Skipped when translocated, because there
-/// the path is the throwaway copy and the real bundle is out of reach — that
-/// case is handled by telling the user to move the app.
+/// and admitted this exact bundle (a translocated launch is a Gatekeeper-approved
+/// launch of the original). Removing the flag from it grants nothing new.
 ///
-/// Best-effort: a failure here is not worth blocking startup over.
+/// Best-effort: a failure here is not worth blocking startup over; the
+/// translocation notice in the UI covers what's left (e.g. a read-only disk image).
 pub fn strip_own_quarantine() {
     let Ok(exe) = std::env::current_exe() else { return };
     let exe = exe.to_string_lossy().into_owned();
-    if path_is_translocated(&exe) {
-        return;
-    }
     let Some(bundle) = bundle_root_from_exe(&exe) else { return };
+    let target = if path_is_translocated(&exe) {
+        match crate::app_location::original_bundle(Path::new(&bundle)) {
+            Some(orig) => orig.to_string_lossy().into_owned(),
+            None => return,
+        }
+    } else {
+        bundle
+    };
     let _ = Command::new("/usr/bin/xattr")
-        .args(["-d", "-r", "com.apple.quarantine", &bundle])
+        .args(["-d", "-r", "com.apple.quarantine", &target])
         .output();
 }
 
@@ -802,11 +786,63 @@ pub fn file_access_status(probe: bool) -> FileAccessStatus {
             })
             .collect()
     };
+    let translocated = path_is_translocated(&exe_path);
+    let original = translocated
+        .then(|| bundle_root_from_exe(&exe_path))
+        .flatten()
+        .and_then(|b| crate::app_location::original_bundle(Path::new(&b)));
+    let relaunch_fixes_it = original
+        .as_deref()
+        .is_some_and(|o| o.exists() && !crate::app_location::has_quarantine(o));
     FileAccessStatus {
-        translocated: path_is_translocated(&exe_path),
+        translocated,
         exe_path,
         folders,
+        original_path: original.map(|o| o.to_string_lossy().into_owned()),
+        relaunch_fixes_it,
     }
+}
+
+/// `$1` = pid to outlive, `$2` = app to open, `$3` = opener. Arguments only — a
+/// path with spaces or quotes can never become shell syntax.
+const RELAUNCH_SCRIPT: &str =
+    r#"while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; exec "$3" "$2""#;
+
+/// Quit, then reopen the ORIGINAL bundle behind a translocated launch.
+///
+/// Tauri's own restart re-executes `current_exe()` — the throwaway translocated
+/// copy — which would just translocate again. Instead a detached shell waits for
+/// this process to be gone (so the old broker can't unlink the new one's socket on
+/// its way out) and then opens the original, which the startup sweep has already
+/// de-quarantined, so it launches in place. The path is passed as an argument,
+/// never spliced into the script.
+#[tauri::command]
+pub fn relaunch_in_place(app: tauri::AppHandle) -> Result<(), String> {
+    let exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().into_owned())
+        .map_err(|e| format!("current_exe: {e}"))?;
+    let bundle = bundle_root_from_exe(&exe).ok_or("not running from an app bundle")?;
+    let original = crate::app_location::original_bundle(Path::new(&bundle))
+        .ok_or("macOS did not say where the original app is")?;
+    if crate::app_location::has_quarantine(&original) {
+        return Err("the original app is still quarantined — relaunching would translocate it again".into());
+    }
+    Command::new("/bin/sh")
+        .args([
+            "-c",
+            RELAUNCH_SCRIPT,
+            "muya-relaunch",
+            &std::process::id().to_string(),
+        ])
+        .arg(&original)
+        .arg("/usr/bin/open")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("spawn relauncher: {e}"))?;
+    app.exit(0);
+    Ok(())
 }
 
 /// Open macOS's privacy settings so the operator can grant folder access.
@@ -1543,6 +1579,34 @@ pub async fn install_muya_plugin() -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The relauncher must not open the new copy while the old one is still alive
+    // (its broker would unlink the new socket on the way out), and a hostile path
+    // must reach the opener as one argument, not as shell code.
+    #[test]
+    fn relauncher_waits_for_the_old_process_and_passes_the_path_verbatim() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("opened");
+        let opener = dir.path().join("opener.sh");
+        std::fs::write(&opener, format!("#!/bin/sh\nprintf '%s' \"$1\" > '{}'\n", out.display())).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&opener, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let mut old = std::process::Command::new("/bin/sleep").arg("1").spawn().unwrap();
+        let app = r#"/Users/x/My "Apps"; rm -rf ~/Muya.app"#;
+        let start = std::time::Instant::now();
+        let mut sh = std::process::Command::new("/bin/sh")
+            .args(["-c", RELAUNCH_SCRIPT, "t", &old.id().to_string(), app])
+            .arg(&opener)
+            .spawn()
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(!out.exists(), "opened while the old process was still alive");
+        old.wait().unwrap();
+        sh.wait().unwrap();
+        assert!(start.elapsed() >= std::time::Duration::from_millis(900));
+        assert_eq!(std::fs::read_to_string(&out).unwrap(), app);
+    }
 
     #[test]
     fn translocation_is_detected_from_the_executable_path() {

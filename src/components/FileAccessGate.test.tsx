@@ -21,19 +21,50 @@ beforeEach(() => {
 });
 
 describe("FileAccessGate", () => {
-  it("blocks with move-to-Applications instructions when translocated", async () => {
-    invokeMock.mockResolvedValue({
-      translocated: true,
-      exe_path: "/private/var/folders/x/AppTranslocation/UUID/d/Muya.app/Contents/MacOS/muya",
-      folders: [],
-    });
+  const translocated = {
+    translocated: true,
+    exe_path: "/private/var/folders/x/AppTranslocation/UUID/d/Muya.app/Contents/MacOS/muya",
+    folders: [],
+    original_path: "/Users/someone/Downloads/Muya.app",
+  };
+
+  // A translocated session works — it must never be walled off behind a modal
+  // again, and /Applications must not be a requirement.
+  it("does not block a translocated session and offers a restart when that fixes it", async () => {
+    invokeMock.mockResolvedValue({ ...translocated, relaunch_fixes_it: true });
 
     render(<FileAccessGate />);
 
-    // The one instruction that actually fixes it must be on screen — this is
-    // the state where no in-app button can help.
-    expect(await screen.findByText(/Move Muya to your Applications folder/i)).toBeTruthy();
-    expect(screen.getByText(/AppTranslocation/)).toBeTruthy();
+    expect(await screen.findByText(/Restart Muya once/i)).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.querySelector(".fixed.inset-0")).toBeNull();
+    expect(screen.queryByText(/Move Muya to your Applications folder/i)).toBeNull();
+    expect(screen.getByText("/Users/someone/Downloads/Muya.app")).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: /Restart now/i }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("relaunch_in_place"));
+  });
+
+  it("asks to copy the app elsewhere only when the original can't be fixed", async () => {
+    invokeMock.mockResolvedValue({ ...translocated, original_path: null, relaunch_fixes_it: false });
+
+    render(<FileAccessGate />);
+
+    expect(await screen.findByText(/running from a temporary copy/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Restart now/i })).toBeNull();
+    expect(document.querySelector(".fixed.inset-0")).toBeNull();
+  });
+
+  it("shows why a restart failed instead of looking dead", async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "relaunch_in_place") throw "the original app is still quarantined";
+      return { ...translocated, relaunch_fixes_it: true };
+    });
+
+    render(<FileAccessGate />);
+    await userEvent.click(await screen.findByRole("button", { name: /Restart now/i }));
+
+    expect(await screen.findByText(/still quarantined/)).toBeTruthy();
   });
 
   it("never touches a protected folder on startup", async () => {

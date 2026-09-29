@@ -47,7 +47,6 @@ const MCP_ENTRY_NAME: &str = "muya-mcp";
 /// Prior name of this MCP server; removed from `~/.claude.json` on register so the
 /// rename doesn't leave a stale duplicate pointing at the same binary.
 const MCP_LEGACY_ENTRY_NAME: &str = "muya-ssh";
-const MCP_BIN_NAME: &str = "muya-ssh-mcp";
 
 /// Session ids the agent has opened via `ssh_open` and may write to with `ssh_send`.
 /// An id is added when the open is signalled and removed when the tab closes, so a
@@ -1681,13 +1680,18 @@ async fn serve_connection(stream: tokio::net::UnixStream, app: AppHandle) {
 // MCP registration (AC6)
 // ---------------------------------------------------------------------------
 
-/// Absolute path to the `muya-ssh-mcp` proxy binary: next to the current
-/// executable (dev: `target/debug/muya-ssh-mcp`; bundle: alongside the app
-/// binary). Falls back to just the name if the parent can't be resolved.
+/// Absolute path to register for the `muya-ssh-mcp` proxy binary.
+///
+/// Never a path inside the app bundle when running from one: a translocated launch
+/// runs from a mount macOS deletes on quit, and the registered path died with it
+/// (`ENOENT .../AppTranslocation/.../muya-ssh-mcp`, no SSH tools). The helper is
+/// copied to a fixed per-user location instead — see `app_location`.
+/// Dev (`target/debug`) registers the freshly built binary beside the exe.
 pub(crate) fn mcp_binary_path() -> Result<String, String> {
     let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
-    let dir = exe.parent().ok_or("cannot resolve executable directory")?;
-    Ok(dir.join(MCP_BIN_NAME).to_string_lossy().into_owned())
+    Ok(crate::app_location::stable_mcp_binary(&exe)?
+        .to_string_lossy()
+        .into_owned())
 }
 
 /// Register (or refresh) the `muya-mcp` stdio entry in `~/.claude.json`.

@@ -37,6 +37,7 @@ fn release_agent_session(name: String) {
 }
 
 mod agent_ops;
+mod app_location;
 mod agent_ssh;
 mod agents;
 mod askpass;
@@ -318,6 +319,7 @@ pub fn run() {
             fs::reveal_in_finder,
             fs::open_privacy_settings,
             fs::file_access_status,
+            fs::relaunch_in_place,
             fs::allow_asset_path,
             fs::resolve_path_kind,
             fs::local_ip,

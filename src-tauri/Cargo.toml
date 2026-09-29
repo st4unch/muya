@@ -87,6 +87,10 @@ libc = "0.2"
 # + kSecAttrAccessControl) — the legacy file-based keychain APIs don't support the
 # biometry-gated access-control item this feature needs.
 security-framework = { version = "3.7.0", features = ["OSX_10_15"] }
+# App Translocation: resolve the ORIGINAL bundle behind a translocated launch
+# (SecTranslocateCreateOriginalPathForURL takes/returns CFURLs). Already in the tree
+# via security-framework — no new crate is downloaded.
+core-foundation = "0.10"
 
 [dev-dependencies]
 tempfile = "3.27.0"

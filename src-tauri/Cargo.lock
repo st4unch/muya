@@ -2900,10 +2900,11 @@ dependencies = [
 
 [[package]]
 name = "muya"
-version = "0.2.51"
+version = "0.3.0"
 dependencies = [
  "aes-gcm",
  "argon2",
+ "core-foundation",
  "dirs-next",
  "hkdf 0.13.0",
  "libc",
