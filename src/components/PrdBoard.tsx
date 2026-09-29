@@ -58,7 +58,7 @@ function PrdCard({ doc, project, onOpenFile }: { doc: PrdDoc; project?: string; 
   const progress = doc.totalPhases > 0 ? (doc.donePhases / doc.totalPhases) * 100 : 0;
 
   return (
-    <div className="bg-white dark:bg-[#2d2f34] rounded-lg border border-neutral-200 dark:border-neutral-700 shadow-sm hover:shadow-md transition-shadow">
+    <div className="bg-[var(--bg-segment-active)] rounded-lg border border-neutral-200 dark:border-neutral-700 shadow-sm hover:shadow-md transition-shadow">
       <div className="p-3">
         {project && (
           <div className="mb-1.5 flex items-center gap-1 text-[8px] font-mono uppercase tracking-wider text-indigo-500 dark:text-indigo-400">
@@ -221,9 +221,9 @@ export default function PrdBoard({
   }
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-neutral-100 dark:bg-[#1a1b1e]">
+    <div className="flex-1 flex flex-col overflow-hidden bg-[var(--bg-app)]">
       {/* Header */}
-      <div className="px-6 py-3 border-b border-neutral-200 dark:border-[#3d3f44] bg-white dark:bg-[#1e1f23] space-y-2.5">
+      <div className="px-6 py-3 border-b border-[var(--border)] bg-[var(--bg-panel)] space-y-2.5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Layers className="h-4 w-4 text-indigo-500" />
@@ -299,7 +299,7 @@ export default function PrdBoard({
           {COLUMNS.map((col) => (
             <div
               key={col.key}
-              className={`w-72 flex flex-col bg-white/60 dark:bg-[#232529]/60 rounded-xl border-t-2 ${col.color}`}
+              className={`w-72 flex flex-col bg-[var(--bg-panel)]/60 rounded-xl border-t-2 ${col.color}`}
             >
               {/* Column header */}
               <div className="px-3 py-2.5 flex items-center justify-between">

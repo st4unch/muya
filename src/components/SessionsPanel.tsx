@@ -273,7 +273,7 @@ export default function SessionsPanel({
             />
             <div
               style={{ position: "fixed", top: Math.min(menu.y, window.innerHeight - 96), left: Math.min(menu.x, window.innerWidth - 200), zIndex: 61 }}
-              className="w-48 rounded-md border border-neutral-200 dark:border-[#3d3f44] bg-white dark:bg-[#25272b] shadow-lg py-1 text-xs"
+              className="w-48 rounded-md border border-[var(--border)] bg-[var(--bg-control)] shadow-lg py-1 text-xs"
             >
               <div className="px-3 py-1 text-[9px] text-neutral-400 dark:text-neutral-500 truncate border-b border-neutral-100 dark:border-neutral-700 mb-1" title={t?.name}>
                 {t?.name ?? "Terminal"}
@@ -281,7 +281,7 @@ export default function SessionsPanel({
               {onDuplicate && (
                 <button
                   type="button"
-                  className="w-full text-left px-3 py-1.5 flex items-center gap-2 hover:bg-neutral-100 dark:hover:bg-[#2f3136] cursor-pointer text-neutral-700 dark:text-neutral-200"
+                  className="w-full text-left px-3 py-1.5 flex items-center gap-2 hover:bg-[var(--bg-control)] cursor-pointer text-neutral-700 dark:text-neutral-200"
                   onClick={() => { onDuplicate(menu.key); setMenu(null); }}
                 >
                   <Copy className="h-3.5 w-3.5 text-indigo-500" /> Duplicate
@@ -291,7 +291,7 @@ export default function SessionsPanel({
                 <button
                   type="button"
                   disabled={!hasCwd}
-                  className="w-full text-left px-3 py-1.5 flex items-center gap-2 hover:bg-neutral-100 dark:hover:bg-[#2f3136] cursor-pointer text-neutral-700 dark:text-neutral-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="w-full text-left px-3 py-1.5 flex items-center gap-2 hover:bg-[var(--bg-control)] cursor-pointer text-neutral-700 dark:text-neutral-200 disabled:opacity-40 disabled:cursor-not-allowed"
                   title={hasCwd ? undefined : "No working directory to reveal"}
                   onClick={() => { onRevealInFinder(menu.key); setMenu(null); }}
                 >

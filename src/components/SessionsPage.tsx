@@ -200,7 +200,7 @@ export default function SessionsPage({
     : history;
 
   return (
-    <div className="flex-1 overflow-y-auto bg-neutral-50/50 dark:bg-[#25272b] p-5">
+    <div className="flex-1 overflow-y-auto bg-[var(--bg-control)] p-5">
       <div className="flex items-center justify-between mb-3">
         <h1 className="text-sm font-display font-bold text-neutral-800 dark:text-neutral-200 flex items-center gap-2">
           <Plug className="h-4 w-4 text-indigo-500 dark:text-indigo-400" /> Agent Sessions
@@ -208,7 +208,7 @@ export default function SessionsPage({
         <button
           type="button"
           onClick={() => void refresh()}
-          className="flex items-center gap-1.5 text-[11px] font-mono px-2 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#25272b] hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-400 cursor-pointer transition-colors"
+          className="flex items-center gap-1.5 text-[11px] font-mono px-2 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-[var(--bg-control)] hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-400 cursor-pointer transition-colors"
         >
           <RefreshCw className={`h-3 w-3 ${loading ? "animate-spin" : ""}`} /> Refresh
         </button>
@@ -222,7 +222,7 @@ export default function SessionsPage({
           placeholder="Search name, path, branch, ID — and inside the conversation…"
           value={query}
           onChange={e => setQuery(e.target.value)}
-          className="w-full pl-8 pr-8 py-1.5 text-[11px] font-mono rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#25272b] text-neutral-800 dark:text-neutral-200 placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none focus:border-indigo-400 dark:focus:border-indigo-600"
+          className="w-full pl-8 pr-8 py-1.5 text-[11px] font-mono rounded border border-neutral-200 dark:border-neutral-700 bg-[var(--bg-control)] text-neutral-800 dark:text-neutral-200 placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none focus:border-indigo-400 dark:focus:border-indigo-600"
         />
         {query && (
           <button type="button" onClick={() => setQuery("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 cursor-pointer">
@@ -253,7 +253,7 @@ export default function SessionsPage({
               className={`rounded-lg p-3 flex items-center justify-between gap-3 shadow-sm border ${
                 needsDecision
                   ? "session-needs-decision border-amber-400 dark:border-amber-500 bg-amber-50 dark:bg-amber-950/30"
-                  : "bg-white dark:bg-[#25272b] border-neutral-200 dark:border-neutral-700"
+                  : "bg-[var(--bg-control)] border-neutral-200 dark:border-neutral-700"
               }`}
             >
               <div className="min-w-0">
@@ -306,7 +306,7 @@ export default function SessionsPage({
                 <button
                   type="button"
                   onClick={() => void exportMarkdown(s.id, s.worktree, s.name)}
-                  className="flex items-center gap-1 text-[11px] font-mono px-2 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#25272b] hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-400 cursor-pointer transition-colors"
+                  className="flex items-center gap-1 text-[11px] font-mono px-2 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-[var(--bg-control)] hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-400 cursor-pointer transition-colors"
                   title="Export conversation as Markdown"
                 >
                   <Download className="h-3 w-3" /> .md
@@ -360,7 +360,7 @@ export default function SessionsPage({
             return (
               <div
                 key={h.sessionId}
-                className="bg-white dark:bg-[#25272b] border border-neutral-200 dark:border-neutral-700 rounded-lg p-3 flex items-center justify-between gap-3 shadow-sm"
+                className="bg-[var(--bg-control)] border border-neutral-200 dark:border-neutral-700 rounded-lg p-3 flex items-center justify-between gap-3 shadow-sm"
               >
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
@@ -408,7 +408,7 @@ export default function SessionsPage({
                   <button
                     type="button"
                     onClick={() => void exportMarkdown(h.sessionId, h.cwd, name)}
-                    className="flex items-center gap-1 text-[11px] font-mono px-2 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#25272b] text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer transition-colors"
+                    className="flex items-center gap-1 text-[11px] font-mono px-2 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-[var(--bg-control)] text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer transition-colors"
                     title="Export conversation as Markdown"
                   >
                     <Download className="h-3 w-3" /> .md
@@ -416,7 +416,7 @@ export default function SessionsPage({
                   <button
                     type="button"
                     onClick={() => void openTranscript(h)}
-                    className="flex items-center gap-1.5 text-[11px] font-mono font-semibold px-2.5 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#25272b] text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer transition-colors"
+                    className="flex items-center gap-1.5 text-[11px] font-mono font-semibold px-2.5 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-[var(--bg-control)] text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer transition-colors"
                     title="View this session's conversation"
                   >
                     <MessageSquare className="h-3 w-3" /> View
@@ -431,7 +431,7 @@ export default function SessionsPage({
                         initialCommand: buildResumeCommand("claude", h.sessionId),
                       })
                     }
-                    className="flex items-center gap-1.5 text-[11px] font-mono font-semibold px-2.5 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#25272b] text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer transition-colors"
+                    className="flex items-center gap-1.5 text-[11px] font-mono font-semibold px-2.5 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-[var(--bg-control)] text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer transition-colors"
                     title="Resume this session in a new terminal"
                   >
                     <Play className="h-3 w-3" /> Resume
@@ -450,8 +450,8 @@ export default function SessionsPage({
             className="fixed inset-0 bg-black/40 z-40"
             onClick={() => setTranscript(null)}
           />
-          <div className="fixed top-0 right-0 bottom-0 w-[560px] max-w-[90vw] bg-white dark:bg-[#1e1f23] border-l border-neutral-200 dark:border-[#3d3f44] z-50 flex flex-col shadow-2xl">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200 dark:border-[#3d3f44] shrink-0">
+          <div className="fixed top-0 right-0 bottom-0 w-[560px] max-w-[90vw] bg-[var(--bg-panel)] border-l border-[var(--border)] z-50 flex flex-col shadow-2xl">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)] shrink-0">
               <div className="min-w-0">
                 <h3 className="text-sm font-bold text-neutral-800 dark:text-neutral-100 truncate flex items-center gap-2">
                   <MessageSquare className="h-4 w-4 text-indigo-500 shrink-0" />
@@ -488,7 +488,7 @@ export default function SessionsPage({
                   <div className={`min-w-0 flex-1 rounded-lg px-3 py-2 border ${
                     m.role === "user"
                       ? "bg-indigo-50 dark:bg-indigo-500/10 border-indigo-200 dark:border-indigo-500/30"
-                      : "bg-neutral-50 dark:bg-[#25272b] border-neutral-200 dark:border-neutral-700"
+                      : "bg-[var(--bg-control)] border-neutral-200 dark:border-neutral-700"
                   }`}>
                     <p className="text-[11px] leading-relaxed text-neutral-800 dark:text-neutral-200 whitespace-pre-wrap break-words">
                       {m.text}

@@ -65,8 +65,8 @@ export default function MarkdownView({
   const name = filePath.split("/").pop() ?? filePath;
 
   return (
-    <div className="h-full flex flex-col bg-white dark:bg-[#1e1f23]">
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-neutral-200 dark:border-[#3d3f44] shrink-0">
+    <div className="h-full flex flex-col bg-[var(--bg-panel)]">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[var(--border)] shrink-0">
         <span className="text-[11px] font-mono text-neutral-500 dark:text-neutral-400 flex items-center gap-1.5 truncate">
           <FileText className="h-3.5 w-3.5 text-indigo-500 shrink-0" /> {name}
           <span className="text-neutral-400 dark:text-neutral-600">· reading</span>

@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Muya Control</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500;700&amp;display=swap">
+<style>
+body{margin:0;font-family:'IBM Plex Sans',system-ui,sans-serif;color:#E6E8EC;background:#0F1115}
+a{color:#8FB3FF}a:hover{color:#B8CEFF}
+button{font-family:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid #8FB3FF;outline-offset:2px}
+</style>
+<style>
+*{white-space:nowrap}
+h1{overflow:hidden;text-overflow:ellipsis}
+[data-terminal-body],[data-terminal-body] *{white-space:normal}
+section>div:first-child{height:49px;box-sizing:border-box}
+section>div[style*="border-top"]{height:58px;box-sizing:border-box;display:flex;align-items:center;padding-top:0!important;padding-bottom:0!important}
+section>div[style*="border-top"]>div{flex-grow:1}
+section[style*="2px solid"]{border-width:1px!important;box-shadow:0 0 0 1px #F2B34B}
+</style>
+</helmet>
+<div style="width: 1440px; height: 900px; display: flex; flex-direction: column; background: #0F1115; overflow: hidden">
+
+<header style="height: 48px; flex-shrink: 0; display: flex; align-items: center; gap: 16px; padding: 0 16px 0 88px; border-bottom: 1px solid #262B35; background: #13161B">
+<div style="display: flex; align-items: center; gap: 10px">
+<div style="width: 26px; height: 26px; border-radius: 7px; background: #E6E8EC; color: #0F1115; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px">M</div>
+<span style="font-weight: 600; font-size: 15px">Muya</span>
+</div>
+<button type="button" style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid #2A2F3A; background: #1A1E25; color: #E6E8EC; font-size: 13px">
+<span style="color: #9AA3B2">Workspace</span><span style="font-weight: 500">claude-control-plane</span><span style="color: #9AA3B2">· 3</span>
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+</button>
+<div style="flex-grow: 1; display: flex; justify-content: center">
+<button type="button" style="width: 440px; height: 32px; display: flex; align-items: center; gap: 10px; padding: 0 12px; border-radius: 8px; border: 1px solid #2A2F3A; background: #171A20; color: #9AA3B2; font-size: 13px">
+<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+<span style="flex-grow: 1; text-align: left">Search agents, files or commands…</span>
+<span style="font-family: 'JetBrains Mono',monospace; font-size: 11px; padding: 2px 6px; border-radius: 4px; border: 1px solid #333946; color: #B4BCC8">⌘K</span>
+</button>
+</div>
+<div style="display: flex; align-items: center; gap: 14px; font-size: 12px; color: #9AA3B2; font-family: 'JetBrains Mono',monospace">
+<span>CPU <span style="color: #E6E8EC">2%</span></span>
+<span>RAM <span style="color: #E6E8EC">111 MB</span></span>
+<span style="color: #E6E8EC">23:21</span>
+</div>
+<button type="button" aria-label="Notifications" style="position: relative; width: 32px; height: 32px; border-radius: 8px; border: 1px solid #2A2F3A; background: #1A1E25; color: #E6E8EC; display: flex; align-items: center; justify-content: center">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"></path></svg>
+<span style="position: absolute; top: 5px; right: 6px; width: 8px; height: 8px; border-radius: 4px; background: #F2B34B"></span>
+</button>
+</header>
+
+<div style="flex-grow: 1; display: flex; min-height: 0">
+
+<nav aria-label="Main navigation" style="width: 64px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 0; border-right: 1px solid #262B35; background: #13161B">
+<button type="button" aria-label="Control" style="width: 48px; height: 48px; border-radius: 10px; border: none; background: #232936; color: #FFFFFF; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 10px">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="m7 9 3 3-3 3"></path><path d="M13 15h4"></path></svg>Control</button>
+<button type="button" aria-label="Queue" style="position: relative; width: 48px; height: 48px; border-radius: 10px; border: none; background: transparent; color: #9AA3B2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 10px">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"></path></svg>Queue</button>
+<button type="button" aria-label="Kanban" style="width: 48px; height: 48px; border-radius: 10px; border: none; background: transparent; color: #9AA3B2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 10px">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="5" height="18" rx="1"></rect><rect x="10" y="3" width="5" height="12" rx="1"></rect><rect x="17" y="3" width="4" height="8" rx="1"></rect></svg>Kanban</button>
+<button type="button" aria-label="Resources" style="width: 48px; height: 48px; border-radius: 10px; border: none; background: transparent; color: #9AA3B2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 10px">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>Resources</button>
+<button type="button" aria-label="SSH" style="width: 48px; height: 48px; border-radius: 10px; border: none; background: transparent; color: #9AA3B2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 10px">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="7" rx="2"></rect><rect x="2" y="13" width="20" height="7" rx="2"></rect><path d="M6 7.5h.01M6 16.5h.01"></path></svg>SSH</button>
+<button type="button" aria-label="Chat" style="width: 48px; height: 48px; border-radius: 10px; border: none; background: transparent; color: #9AA3B2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 10px">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>Chat</button>
+<div style="flex-grow: 1"></div>
+<button type="button" aria-label="Settings" style="width: 48px; height: 48px; border-radius: 10px; border: none; background: transparent; color: #9AA3B2; display: flex; align-items: center; justify-content: center">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+</button>
+</nav>
+
+<aside aria-label="Agents" style="width: 296px; flex-shrink: 0; display: flex; flex-direction: column; border-right: 1px solid #262B35; background: #14171C">
+<div style="display: flex; align-items: center; justify-content: space-between; padding: 16px 16px 10px">
+<h2 style="margin: 0; font-size: 14px; font-weight: 600">Agents <span style="color: #9AA3B2; font-weight: 400">7</span></h2>
+<button type="button" style="height: 30px; padding: 0 10px; border-radius: 7px; border: none; background: #E6E8EC; color: #0F1115; font-size: 12px; font-weight: 600">+ New agent</button>
+</div>
+<div role="tablist" style="display: flex; gap: 4px; margin: 0 16px 12px; padding: 3px; border-radius: 8px; background: #1B1F27">
+<button type="button" role="tab" style="flex-grow: 1; height: 28px; border-radius: 6px; border: none; background: #2A303C; color: #FFFFFF; font-size: 12px">All</button>
+<button type="button" role="tab" style="flex-grow: 1; height: 28px; border-radius: 6px; border: none; background: transparent; color: #B4BCC8; font-size: 12px">Waiting 1</button>
+<button type="button" role="tab" style="flex-grow: 1; height: 28px; border-radius: 6px; border: none; background: transparent; color: #B4BCC8; font-size: 12px">Working 2</button>
+</div>
+
+<div style="flex-grow: 1; overflow: hidden; padding: 0 10px; display: flex; flex-direction: column; gap: 4px">
+<div style="padding: 6px 6px 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; color: #F2B34B">WAITING FOR YOU</div>
+<button type="button" style="text-align: left; padding: 10px 12px; border-radius: 10px; border: 1px solid #5C4A22; background: #251F13; color: #E6E8EC; display: flex; flex-direction: column; gap: 4px">
+<span style="display: flex; align-items: center; gap: 8px"><span style="width: 8px; height: 8px; border-radius: 4px; background: #F2B34B"></span><span style="font-weight: 600; font-size: 13px; flex-grow: 1">documents-44</span><span style="font-size: 11px; color: #F2B34B">1m</span></span>
+<span style="font-size: 12px; color: #E9D6AE">Needs permission: fs_write_file</span>
+<span style="font-family: 'JetBrains Mono',monospace; font-size: 11px; color: #9AA3B2">~/Documents/claude-control-plane</span>
+</button>
+
+<div style="padding: 10px 6px 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; color: #4FD1A5">WORKING</div>
+<button type="button" aria-current="true" style="text-align: left; padding: 10px 12px; border-radius: 10px; border: 1px solid #3B5B9A; background: #1C2436; color: #E6E8EC; display: flex; flex-direction: column; gap: 4px">
+<span style="display: flex; align-items: center; gap: 8px"><span style="width: 8px; height: 8px; border-radius: 4px; background: #4FD1A5"></span><span style="font-weight: 600; font-size: 13px; flex-grow: 1">muya-all</span><span style="font-size: 11px; color: #9AA3B2">4m 15s</span></span>
+<span style="font-size: 12px; color: #C9D1DC">Unfurling… · 16.9k tokens</span>
+<span style="font-family: 'JetBrains Mono',monospace; font-size: 11px; color: #9AA3B2">~/Documents/claude-control-plane</span>
+</button>
+<button type="button" style="text-align: left; padding: 10px 12px; border-radius: 10px; border: 1px solid transparent; background: transparent; color: #E6E8EC; display: flex; flex-direction: column; gap: 4px">
+<span style="display: flex; align-items: center; gap: 8px"><span style="width: 8px; height: 8px; border-radius: 4px; background: #4FD1A5"></span><span style="font-weight: 600; font-size: 13px; flex-grow: 1">opencode-review</span><span style="font-size: 11px; color: #9AA3B2">[duration]</span></span>
+<span style="font-size: 12px; color: #C9D1DC">[last activity line]</span>
+<span style="font-family: 'JetBrains Mono',monospace; font-size: 11px; color: #9AA3B2">~/Documents/claude-control-plane</span>
+</button>
+
+<div style="padding: 10px 6px 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; color: #9AA3B2">IDLE</div>
+<button type="button" style="text-align: left; padding: 8px 12px; border-radius: 8px; border: none; background: transparent; color: #E6E8EC; display: flex; align-items: center; gap: 8px">
+<span style="width: 8px; height: 8px; border-radius: 4px; border: 1.5px solid #7C8595; box-sizing: border-box"></span><span style="font-size: 13px; flex-grow: 1">iptv-2a</span><span style="font-family: 'JetBrains Mono',monospace; font-size: 11px; color: #9AA3B2">~/Documents/iptv</span>
+</button>
+<button type="button" style="text-align: left; padding: 8px 12px; border-radius: 8px; border: none; background: transparent; color: #E6E8EC; display: flex; align-items: center; gap: 8px">
+<span style="width: 8px; height: 8px; border-radius: 4px; border: 1.5px solid #7C8595; box-sizing: border-box"></span><span style="font-size: 13px; flex-grow: 1">numbat-c3</span><span style="font-family: 'JetBrains Mono',monospace; font-size: 11px; color: #9AA3B2">~/Documents/numbat</span>
+</button>
+<button type="button" style="text-align: left; padding: 8px 12px; border-radius: 8px; border: none; background: transparent; color: #E6E8EC; display: flex; align-items: center; gap: 8px">
+<span style="width: 8px; height: 8px; border-radius: 4px; border: 1.5px solid #7C8595; box-sizing: border-box"></span><span style="font-size: 13px; flex-grow: 1">skills-envanter</span><span style="font-family: 'JetBrains Mono',monospace; font-size: 11px; color: #9AA3B2">control-plane</span>
+</button>
+<button type="button" style="text-align: left; padding: 8px 12px; border-radius: 8px; border: none; background: transparent; color: #E6E8EC; display: flex; align-items: center; gap: 8px">
+<span style="width: 8px; height: 8px; border-radius: 4px; border: 1.5px solid #7C8595; box-sizing: border-box"></span><span style="font-size: 13px; flex-grow: 1">serbest</span><span style="font-family: 'JetBrains Mono',monospace; font-size: 11px; color: #9AA3B2">~</span>
+</button>
+</div>
+<div style="padding: 12px 16px; border-top: 1px solid #262B35; font-size: 12px; color: #9AA3B2; display: flex; justify-content: space-between">
+<span>Drag to reorder</span><span style="font-family: 'JetBrains Mono',monospace">⌘1–7</span>
+</div>
+</aside>
+
+<main style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; background: #0F1115">
+<div style="display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-bottom: 1px solid #262B35">
+<div style="display: flex; flex-direction: column; gap: 3px; flex-grow: 1; min-width: 0">
+<div style="display: flex; align-items: center; gap: 10px">
+<h1 style="margin: 0; font-size: 17px; font-weight: 600">muya-all</h1>
+<span style="display: flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 11px; background: #15322A; color: #7BE3BF; font-size: 12px; font-weight: 500"><span style="width: 6px; height: 6px; border-radius: 3px; background: #4FD1A5"></span>Working · 4m 15s</span>
+<span style="display: flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 11px; background: #3A1D1D; color: #FFA8A0; font-size: 12px; font-weight: 500">
+<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v4M12 17h.01"></path><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path></svg>Bypass permissions on</span>
+</div>
+<div style="font-family: 'JetBrains Mono',monospace; font-size: 12px; color: #9AA3B2">~/Documents/claude-control-plane · main</div>
+</div>
+<button type="button" style="height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid #2A2F3A; background: #1A1E25; color: #E6E8EC; font-size: 13px">Compact</button>
+<button type="button" style="height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid #2A2F3A; background: #1A1E25; color: #E6E8EC; font-size: 13px">Split to grid</button>
+<button type="button" style="height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid #6B2E2A; background: #2A1716; color: #FFA8A0; font-size: 13px; display: flex; align-items: center; gap: 8px">Stop <span style="font-family: 'JetBrains Mono',monospace; font-size: 11px; color: #D98B84">esc</span></button>
+<button type="button" aria-label="More actions" style="width: 32px; height: 32px; border-radius: 8px; border: 1px solid #2A2F3A; background: #1A1E25; color: #E6E8EC; display: flex; align-items: center; justify-content: center">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01"></path></svg>
+</button>
+</div>
+
+<div data-terminal-body style="flex-grow: 1; min-height: 0; overflow: hidden; padding: 20px 28px; font-family: 'JetBrains Mono',monospace; font-size: 13px; line-height: 1.6; color: #D4D9E1; background: #0B0D11; display: flex; flex-direction: column; gap: 14px">
+<div>Testler: her iki <span style="color: #8FB3FF">pty.rs</span> regresyon testi de eski kodda assert'le değil panic'le düşüyor — yani boş test değil. <span style="color: #7BE3BF">301 test geçiyor.</span> Üçü de push'landı.</div>
+<div style="color: #FFFFFF; font-weight: 700">Sana kalan — tasks/todo.md'ye yazdım</div>
+<div style="border: 1px solid #262B35; border-radius: 8px; overflow: hidden; font-size: 12.5px">
+<div style="display: grid; grid-template-columns: 90px minmax(0, 1fr) minmax(0, 1fr); background: #161920; color: #9AA3B2; font-size: 11px; letter-spacing: 0.05em">
+<div style="padding: 7px 12px">CİDDİYET</div><div style="padding: 7px 12px">BULGU</div><div style="padding: 7px 12px">NOT</div>
+</div>
+<div style="display: grid; grid-template-columns: 90px minmax(0, 1fr) minmax(0, 1fr); border-top: 1px solid #262B35">
+<div style="padding: 7px 12px; color: #FFA8A0">Kritik</div><div style="padding: 7px 12px">fs_write_file/fs_delete_entry HOME altında her yere yazabiliyor</div><div style="padding: 7px 12px; color: #9AA3B2">Workspace köklerine kısıtla</div>
+</div>
+<div style="display: grid; grid-template-columns: 90px minmax(0, 1fr) minmax(0, 1fr); border-top: 1px solid #262B35">
+<div style="padding: 7px 12px; color: #FFA8A0">Kritik</div><div style="padding: 7px 12px">kill_session doğrulanmamış PID'e SIGTERM</div><div style="padding: 7px 12px; color: #9AA3B2">agents.rs:430-446</div>
+</div>
+<div style="display: grid; grid-template-columns: 90px minmax(0, 1fr) minmax(0, 1fr); border-top: 1px solid #262B35">
+<div style="padding: 7px 12px; color: #F2B34B">Yüksek</div><div style="padding: 7px 12px">SSH profil kaydında reject_injection çağrılmıyor</div><div style="padding: 7px 12px; color: #9AA3B2">Kural yalnız komut kurarken</div>
+</div>
+<div style="display: grid; grid-template-columns: 90px minmax(0, 1fr) minmax(0, 1fr); border-top: 1px solid #262B35">
+<div style="padding: 7px 12px; color: #F2B34B">Yüksek</div><div style="padding: 7px 12px">Sekme kapanınca PTY öldürülmüyor</div><div style="padding: 7px 12px; color: #9AA3B2">reap yalnız çıkan shell'leri kapsıyor</div>
+</div>
+</div>
+<div style="display: flex; gap: 10px; align-items: baseline"><span style="color: #9AA3B2">›</span><span style="color: #FFFFFF; background: #1A1E25; padding: 2px 8px; border-radius: 4px">yeni issue açılmış ona bakabilir misin. clone ile ilgili birşey olmalı…</span></div>
+<div style="color: #9AA3B2">⎿ 80 skill hazır</div>
+<div><span style="color: #7BE3BF">●</span> pty.rs'te 3 UTF-8 byte-offset hatası bulundu, düzeltildi + test edildi</div>
+</div>
+
+<div style="display: flex; align-items: center; gap: 12px; padding: 8px 28px; background: #0B0D11; border-top: 1px solid #1E232C; font-size: 12px; color: #9AA3B2">
+<span style="display: flex; align-items: center; gap: 8px; color: #7BE3BF"><span style="width: 6px; height: 6px; border-radius: 3px; background: #4FD1A5"></span>Unfurling…</span>
+<span style="font-family: 'JetBrains Mono',monospace">4m 15s · ↓ 16.9k tokens · thought for 3s</span>
+<div style="flex-grow: 1"></div>
+<span>Update ready</span><button type="button" style="height: 26px; padding: 0 10px; border-radius: 6px; border: 1px solid #2A2F3A; background: #1A1E25; color: #E6E8EC; font-size: 12px">Restart</button>
+</div>
+
+<div style="padding: 14px 20px 16px; border-top: 1px solid #262B35; background: #13161B">
+<div style="border: 1px solid #333946; border-radius: 12px; background: #171A20; padding: 10px 12px; display: flex; flex-direction: column; gap: 10px">
+<label for="composer" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">Message muya-all</label>
+<textarea id="composer" rows="2" placeholder="Message muya-all… ( / commands, @ files )" style="resize: none; border: none; background: transparent; color: #E6E8EC; font-family: 'IBM Plex Sans',sans-serif; font-size: 14px; outline: none"></textarea>
+<div style="display: flex; align-items: center; gap: 8px">
+<button type="button" style="height: 26px; padding: 0 10px; border-radius: 13px; border: 1px solid #6B2E2A; background: #2A1716; color: #FFA8A0; font-size: 12px">Mode: bypass ▾</button>
+<button type="button" style="height: 26px; padding: 0 10px; border-radius: 13px; border: 1px solid #2A2F3A; background: transparent; color: #B4BCC8; font-size: 12px">@ Add file</button>
+<button type="button" style="height: 26px; padding: 0 10px; border-radius: 13px; border: 1px solid #2A2F3A; background: transparent; color: #B4BCC8; font-size: 12px">/ Commands</button>
+<div style="flex-grow: 1"></div>
+<span style="font-size: 12px; color: #9AA3B2">⏎ send · ⇧⏎ newline</span>
+<button type="button" aria-label="Send" style="width: 32px; height: 32px; border-radius: 8px; border: none; background: #E6E8EC; color: #0F1115; display: flex; align-items: center; justify-content: center">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"></path></svg>
+</button>
+</div>
+</div>
+</div>
+</main>
+
+<aside aria-label="Inspector" style="width: 320px; flex-shrink: 0; display: flex; flex-direction: column; border-left: 1px solid #262B35; background: #14171C">
+<div style="padding: 16px; display: flex; flex-direction: column; gap: 10px; border-bottom: 1px solid #262B35">
+<div style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; color: #F2B34B">NEEDS APPROVAL</div>
+<div style="border: 1px solid #5C4A22; background: #211B10; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px">
+<div style="font-size: 13px"><span style="font-weight: 600">documents-44</span> wants to write a file</div>
+<div style="font-family: 'JetBrains Mono',monospace; font-size: 11.5px; color: #E9D6AE; background: #17130B; border-radius: 6px; padding: 6px 8px">fs_write_file → docs/[dosya yolu]</div>
+<div style="display: flex; gap: 8px">
+<button type="button" style="flex-grow: 1; height: 32px; border-radius: 7px; border: none; background: #F2B34B; color: #1A1206; font-size: 13px; font-weight: 600">Allow</button>
+<button type="button" style="flex-grow: 1; height: 32px; border-radius: 7px; border: 1px solid #5C4A22; background: transparent; color: #E9D6AE; font-size: 13px">Deny</button>
+<button type="button" style="height: 32px; padding: 0 10px; border-radius: 7px; border: 1px solid #5C4A22; background: transparent; color: #E9D6AE; font-size: 13px">Open</button>
+</div>
+</div>
+</div>
+
+<div role="tablist" style="display: flex; gap: 18px; padding: 0 16px; border-bottom: 1px solid #262B35">
+<button type="button" role="tab" style="height: 40px; border: none; border-bottom: 2px solid #E6E8EC; background: transparent; color: #FFFFFF; font-size: 13px; font-weight: 500; padding: 0">Changes <span style="color: #9AA3B2">14</span></button>
+<button type="button" role="tab" style="height: 40px; border: none; border-bottom: 2px solid transparent; background: transparent; color: #9AA3B2; font-size: 13px; padding: 0">Files</button>
+<button type="button" role="tab" style="height: 40px; border: none; border-bottom: 2px solid transparent; background: transparent; color: #9AA3B2; font-size: 13px; padding: 0">Activity</button>
+</div>
+<div style="padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; font-family: 'JetBrains Mono',monospace; font-size: 12px">
+<button type="button" style="display: flex; gap: 10px; align-items: center; padding: 7px 8px; border-radius: 6px; border: none; background: transparent; color: #E6E8EC; text-align: left; font-family: inherit; font-size: inherit"><span style="color: #F2B34B; width: 12px">M</span><span style="flex-grow: 1">src-tauri/src/pty.rs</span></button>
+<button type="button" style="display: flex; gap: 10px; align-items: center; padding: 7px 8px; border-radius: 6px; border: none; background: transparent; color: #E6E8EC; text-align: left; font-family: inherit; font-size: inherit"><span style="color: #F2B34B; width: 12px">M</span><span style="flex-grow: 1">src-tauri/src/agents.rs</span></button>
+<button type="button" style="display: flex; gap: 10px; align-items: center; padding: 7px 8px; border-radius: 6px; border: none; background: transparent; color: #E6E8EC; text-align: left; font-family: inherit; font-size: inherit"><span style="color: #F2B34B; width: 12px">M</span><span style="flex-grow: 1">tasks/todo.md</span></button>
+<button type="button" style="display: flex; gap: 10px; align-items: center; padding: 7px 8px; border-radius: 6px; border: none; background: transparent; color: #9AA3B2; text-align: left; font-family: 'IBM Plex Sans',sans-serif; font-size: 12px">+ 11 more files</button>
+</div>
+<div style="margin: 4px 16px 0; display: flex; gap: 8px">
+<button type="button" style="flex-grow: 1; height: 32px; border-radius: 7px; border: 1px solid #2A2F3A; background: #1A1E25; color: #E6E8EC; font-size: 13px">Review diff</button>
+<button type="button" style="flex-grow: 1; height: 32px; border-radius: 7px; border: 1px solid #2A2F3A; background: #1A1E25; color: #E6E8EC; font-size: 13px">Commit…</button>
+</div>
+
+<div style="flex-grow: 1"></div>
+<div style="margin: 16px; padding: 12px; border-radius: 10px; background: #172420; border: 1px solid #24463B; display: flex; gap: 10px; align-items: flex-start">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#4FD1A5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg>
+<div style="display: flex; flex-direction: column; gap: 2px">
+<span style="font-size: 13px; font-weight: 500; color: #CFF5E7">No file conflicts</span>
+<span style="font-size: 12px; color: #9AA3B2">3 worktrees watched · 14 changes</span>
+</div>
+</div>
+</aside>
+</div>
+
+<footer style="height: 28px; flex-shrink: 0; display: flex; align-items: center; gap: 18px; padding: 0 16px; border-top: 1px solid #262B35; background: #13161B; font-size: 12px; color: #9AA3B2">
+<span style="display: flex; align-items: center; gap: 6px"><span style="width: 6px; height: 6px; border-radius: 3px; background: #4FD1A5"></span>Ready</span>
+<span>3 workspaces</span>
+<span>7 agents · <span style="color: #7BE3BF">2 working</span> · <span style="color: #F2B34B">1 waiting</span></span>
+<span>0 conflicts</span>
+<div style="flex-grow: 1"></div>
+<span>UTF-8</span>
+<span>Muya v0.3.0</span>
+</footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

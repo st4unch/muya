@@ -312,10 +312,10 @@ export default function ChatView() {
   };
 
   return (
-    <div className="flex-1 flex overflow-hidden bg-white dark:bg-[#1e1f23]">
+    <div className="flex-1 flex overflow-hidden bg-[var(--bg-panel)]">
       {/* ── Connection rail ── */}
-      <aside className="w-60 shrink-0 border-r border-neutral-200 dark:border-[#3d3f44] flex flex-col bg-neutral-50 dark:bg-[#25272b]">
-        <div className="px-3 py-2.5 flex items-center justify-between border-b border-neutral-200 dark:border-[#3d3f44]">
+      <aside className="w-60 shrink-0 border-r border-[var(--border)] flex flex-col bg-[var(--bg-control)]">
+        <div className="px-3 py-2.5 flex items-center justify-between border-b border-[var(--border)]">
           <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400 flex items-center gap-1.5">
             <Bot className="h-3.5 w-3.5 text-indigo-500" /> Claude Chat
           </span>
@@ -370,7 +370,7 @@ export default function ChatView() {
         </div>
 
         {/* Listen config + toggle + PIN */}
-        <div className="p-2 border-t border-neutral-200 dark:border-[#3d3f44] space-y-1.5">
+        <div className="p-2 border-t border-[var(--border)] space-y-1.5">
           {/* Listen interface editor — shown while not yet listening so the
               operator picks the IP/port before binding. Hidden once bound. */}
           {!listening && (
@@ -468,7 +468,7 @@ export default function ChatView() {
 
       {/* ── Chat thread ── */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        <div className="px-4 py-2.5 border-b border-neutral-200 dark:border-[#3d3f44] flex items-center gap-2 bg-neutral-50 dark:bg-[#25272b]">
+        <div className="px-4 py-2.5 border-b border-[var(--border)] flex items-center gap-2 bg-[var(--bg-control)]">
           {active.kind === "local" ? <HardDrive className="h-4 w-4 text-emerald-500" /> : <Wifi className="h-4 w-4 text-violet-500" />}
           <span className="text-sm font-mono font-bold text-neutral-800 dark:text-neutral-100">{active.label}</span>
           {active.addr && <span className="text-[10px] font-mono text-neutral-400">{active.addr}</span>}
@@ -495,7 +495,7 @@ export default function ChatView() {
               <div className={`max-w-[70%] rounded-2xl px-3.5 py-2 text-[12px] leading-relaxed whitespace-pre-wrap break-words ${
                 m.from === "me"
                   ? "bg-indigo-600 text-white rounded-tr-sm"
-                  : "bg-neutral-100 dark:bg-[#2d2f34] text-neutral-800 dark:text-neutral-200 rounded-tl-sm"
+                  : "bg-[var(--bg-segment-active)] text-neutral-800 dark:text-neutral-200 rounded-tl-sm"
               }`}>
                 {m.text}
               </div>
@@ -503,7 +503,7 @@ export default function ChatView() {
           ))}
         </div>
 
-        <div className="p-3 border-t border-neutral-200 dark:border-[#3d3f44] flex gap-2">
+        <div className="p-3 border-t border-[var(--border)] flex gap-2">
           <input
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -544,7 +544,7 @@ export default function ChatView() {
 
       {sasPrompt && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-6">
-          <div role="dialog" aria-label="Security Verification" className="w-[400px] max-w-full bg-white dark:bg-[#25272b] rounded-xl shadow-2xl border border-neutral-200 dark:border-neutral-700 p-5 text-center space-y-3">
+          <div role="dialog" aria-label="Security Verification" className="w-[400px] max-w-full bg-[var(--bg-control)] rounded-xl shadow-2xl border border-neutral-200 dark:border-neutral-700 p-5 text-center space-y-3">
             <div className="flex items-center justify-center gap-2 text-sm font-display font-bold text-neutral-800 dark:text-neutral-200">
               <Shield className="h-4 w-4 text-violet-500" /> Security Verification (SAS)
             </div>
@@ -570,7 +570,7 @@ export default function ChatView() {
 
       {pendingRevoke && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-6" onClick={() => setPendingRevoke(null)}>
-          <div role="dialog" aria-label="End session" className="w-[400px] max-w-full bg-white dark:bg-[#25272b] rounded-xl shadow-2xl border border-neutral-200 dark:border-neutral-700 p-5 text-center space-y-3" onClick={(e) => e.stopPropagation()}>
+          <div role="dialog" aria-label="End session" className="w-[400px] max-w-full bg-[var(--bg-control)] rounded-xl shadow-2xl border border-neutral-200 dark:border-neutral-700 p-5 text-center space-y-3" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-center gap-2 text-sm font-display font-bold text-neutral-800 dark:text-neutral-200">
               <Wifi className="h-4 w-4 text-rose-500" /> End session
             </div>
@@ -631,7 +631,7 @@ function AddConnectionModal({
   const seg = "flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-[11px] font-mono font-bold rounded-lg cursor-pointer transition-colors";
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-6" onClick={onClose}>
-      <div role="dialog" aria-label="New Connection" className="w-[420px] max-w-full bg-white dark:bg-[#25272b] rounded-xl shadow-2xl border border-neutral-200 dark:border-neutral-700" onClick={(e) => e.stopPropagation()}>
+      <div role="dialog" aria-label="New Connection" className="w-[420px] max-w-full bg-[var(--bg-control)] rounded-xl shadow-2xl border border-neutral-200 dark:border-neutral-700" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200 dark:border-neutral-700">
           <span className="text-sm font-display font-bold text-neutral-800 dark:text-neutral-200 flex items-center gap-2">
             <Plus className="h-4 w-4 text-indigo-500" /> New Connection

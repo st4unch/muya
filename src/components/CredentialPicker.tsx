@@ -17,11 +17,11 @@ export type CredentialSource = {
 };
 
 const INPUT =
-  "w-full px-2.5 py-1.5 rounded border border-neutral-300 dark:border-[#3d3f44] bg-white dark:bg-[#1e1f23] text-sm outline-none focus:border-indigo-500";
+  "w-full px-2.5 py-1.5 rounded border border-[var(--border-control)] bg-[var(--bg-panel)] text-sm outline-none focus:border-indigo-500";
 const BTN =
   "px-3 py-1.5 rounded text-sm font-medium bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 cursor-pointer";
 const BTN_GHOST =
-  "px-2.5 py-1.5 rounded text-sm text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-[#2f3136] cursor-pointer";
+  "px-2.5 py-1.5 rounded text-sm text-neutral-600 dark:text-neutral-300 hover:bg-[var(--bg-control)] cursor-pointer";
 
 const PROMPT = "__prompt__";
 
@@ -113,7 +113,7 @@ export default function CredentialPicker({
       )}
 
       {adding && (
-        <div className="rounded border border-neutral-200 dark:border-[#3d3f44] p-2 space-y-2">
+        <div className="rounded border border-[var(--border)] p-2 space-y-2">
           <div className="text-xs font-medium">Save new credential to store</div>
           <div className="grid grid-cols-3 gap-2">
             <input className={INPUT} placeholder="Label" value={adding.label} onChange={(e) => setAdding({ ...adding, label: e.target.value })} />

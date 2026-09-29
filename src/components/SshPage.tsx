@@ -97,13 +97,13 @@ type CredStoreStatus = { initialized: boolean; unlocked: boolean };
 type Tab = "servers" | "cyberark" | "store";
 
 const CARD =
-  "rounded-lg border border-neutral-200 dark:border-[#3d3f44] bg-white dark:bg-[#25272b] p-4";
+  "rounded-lg border border-[var(--border)] bg-[var(--bg-control)] p-4";
 const INPUT =
-  "w-full px-2.5 py-1.5 rounded border border-neutral-300 dark:border-[#3d3f44] bg-white dark:bg-[#1e1f23] text-sm outline-none focus:border-indigo-500";
+  "w-full px-2.5 py-1.5 rounded border border-[var(--border-control)] bg-[var(--bg-panel)] text-sm outline-none focus:border-indigo-500";
 const BTN =
   "px-3 py-1.5 rounded text-sm font-medium bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 cursor-pointer";
 const BTN_GHOST =
-  "px-2.5 py-1.5 rounded text-sm text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-[#2f3136] cursor-pointer";
+  "px-2.5 py-1.5 rounded text-sm text-neutral-600 dark:text-neutral-300 hover:bg-[var(--bg-control)] cursor-pointer";
 
 const emptyServer = (): Server => ({
   id: "",
@@ -284,7 +284,7 @@ export default function SshPage({ onConnect }: { onConnect?: (serverId: string, 
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 border-b border-neutral-200 dark:border-[#3d3f44]">
+        <div className="flex gap-1 border-b border-[var(--border)]">
           {([
             ["servers", "Servers"],
             ["cyberark", "CyberArk"],
@@ -903,7 +903,7 @@ function CyberarkTester({
   };
 
   return (
-    <div className="rounded border border-neutral-200 dark:border-[#3d3f44] p-3 space-y-2">
+    <div className="rounded border border-[var(--border)] p-3 space-y-2">
       <div className="text-xs font-medium">Test connection & browse accounts</div>
       <div className="flex gap-2">
         <input
@@ -938,7 +938,7 @@ function CyberarkTester({
           {accounts.length > 0 && (
             <div className="max-h-48 overflow-auto space-y-1">
               {accounts.map((a) => (
-                <div key={a.id} className="text-xs font-mono text-neutral-600 dark:text-neutral-300 flex justify-between border-b border-neutral-100 dark:border-[#2f3136] py-0.5">
+                <div key={a.id} className="text-xs font-mono text-neutral-600 dark:text-neutral-300 flex justify-between border-b border-[var(--border)] py-0.5">
                   <span className="truncate">{a.name || a.address} · {a.username}@{a.address}</span>
                   <span className="text-neutral-400 shrink-0 ml-2">{a.safe}</span>
                 </div>

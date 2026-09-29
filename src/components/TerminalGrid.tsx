@@ -79,7 +79,7 @@ function GridCell({
 }) {
   return (
     <div
-      className={`flex flex-col h-full overflow-hidden bg-[#25272b] rounded border transition-colors ${
+      className={`flex flex-col h-full overflow-hidden bg-[var(--bg-terminal)] rounded border transition-colors ${
         isDragOver ? "border-indigo-500" : "border-neutral-700"
       }`}
       onDragOver={onDragOver}

@@ -34,7 +34,7 @@ export function acquireWebgl(
     : [];
 
   let state: "live" | "suspended" | "released" = "live";
-  // Neither dispose() nor dropping the canvas frees the GPU context (xterm.js#6068);
+  // Neither dispose() nor dropping the canvas frees the GPU context (xterm.js issue 6068);
   // losing it explicitly does, without waiting for GC.
   const loseContexts = () => {
     for (const c of canvases) {

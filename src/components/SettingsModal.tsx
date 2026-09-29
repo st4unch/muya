@@ -70,7 +70,7 @@ export default function SettingsModal({
   };
 
   const field =
-    "w-full text-xs font-mono px-2 py-1.5 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#25272b] text-neutral-800 dark:text-neutral-200 focus:outline-none focus:border-indigo-400 dark:focus:border-indigo-400";
+    "w-full text-xs font-mono px-2 py-1.5 rounded border border-neutral-200 dark:border-neutral-700 bg-[var(--bg-control)] text-neutral-800 dark:text-neutral-200 focus:outline-none focus:border-indigo-400 dark:focus:border-indigo-400";
   const lbl =
     "text-[10px] font-mono uppercase tracking-wider font-bold text-neutral-500 dark:text-neutral-400";
 
@@ -80,7 +80,7 @@ export default function SettingsModal({
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
-        className="w-[460px] max-h-[85vh] overflow-y-auto bg-white dark:bg-[#25272b] rounded-xl shadow-2xl border border-neutral-200 dark:border-neutral-700"
+        className="w-[460px] max-h-[85vh] overflow-y-auto bg-[var(--bg-control)] rounded-xl shadow-2xl border border-neutral-200 dark:border-neutral-700"
       >
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200 dark:border-neutral-700">

@@ -116,13 +116,13 @@ export default function NewAgentModal({
   };
 
   const field =
-    "w-full text-xs font-mono px-2 py-1.5 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#25272b] text-neutral-800 dark:text-neutral-200 focus:outline-none focus:border-indigo-400 dark:focus:border-indigo-400";
+    "w-full text-xs font-mono px-2 py-1.5 rounded border border-neutral-200 dark:border-neutral-700 bg-[var(--bg-control)] text-neutral-800 dark:text-neutral-200 focus:outline-none focus:border-indigo-400 dark:focus:border-indigo-400";
   const lbl =
     "text-[10px] font-mono uppercase tracking-wider font-bold text-neutral-500 dark:text-neutral-400";
 
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
-      <div className="w-[460px] max-h-[85vh] overflow-y-auto bg-white dark:bg-[#25272b] rounded-xl shadow-2xl border border-neutral-200 dark:border-neutral-700">
+      <div className="w-[460px] max-h-[85vh] overflow-y-auto bg-[var(--bg-control)] rounded-xl shadow-2xl border border-neutral-200 dark:border-neutral-700">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200 dark:border-neutral-700">
           <h2 className="text-sm font-display font-bold text-neutral-800 dark:text-neutral-200">
@@ -247,7 +247,7 @@ export default function NewAgentModal({
                     {files.map((f) => (
                       <div
                         key={f}
-                        className="flex items-center justify-between gap-2 text-[10px] font-mono bg-neutral-50 dark:bg-[#25272b] border border-neutral-200 dark:border-neutral-700 rounded px-2 py-1"
+                        className="flex items-center justify-between gap-2 text-[10px] font-mono bg-[var(--bg-control)] border border-neutral-200 dark:border-neutral-700 rounded px-2 py-1"
                       >
                         <span className="flex items-center gap-1 truncate text-neutral-700 dark:text-neutral-300">
                           <FileText className="h-3 w-3 shrink-0 text-neutral-400 dark:text-neutral-500" />

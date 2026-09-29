@@ -71,8 +71,8 @@ function SessionCard({
         isSelected
           ? "bg-indigo-50/70 dark:bg-indigo-950/30 border-indigo-200 dark:border-indigo-700"
           : isBg
-          ? "bg-white dark:bg-[#2d2f34] border-indigo-100 dark:border-indigo-900 hover:border-indigo-300 dark:hover:border-indigo-700"
-          : "bg-white dark:bg-[#2d2f34] border-neutral-200 dark:border-neutral-700 hover:border-neutral-300 dark:hover:border-neutral-600"
+          ? "bg-[var(--bg-segment-active)] border-indigo-100 dark:border-indigo-900 hover:border-indigo-300 dark:hover:border-indigo-700"
+          : "bg-[var(--bg-segment-active)] border-neutral-200 dark:border-neutral-700 hover:border-neutral-300 dark:hover:border-neutral-600"
       }`}
     >
       {depth > 0 && (

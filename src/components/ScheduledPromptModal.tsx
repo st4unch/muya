@@ -180,7 +180,7 @@ export default function ScheduledPromptModal({
                       onClick={() => toggleKey(t.key)}
                       style={{
                         transition: "background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease",
-                        boxShadow: flashing ? "0 0 0 2px #6366f1" : undefined,
+                        boxShadow: flashing ? "0 0 0 2px var(--accent)" : undefined,
                       }}
                       className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded border text-left cursor-pointer ${
                         sel

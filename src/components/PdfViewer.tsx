@@ -24,7 +24,7 @@ export default function PdfViewer({ path }: { path: string }) {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="px-3 py-1 border-b border-neutral-200 dark:border-[#3d3f44] bg-neutral-50 dark:bg-[#1e1f23] text-[10px] font-mono text-neutral-500 dark:text-neutral-400 shrink-0">
+      <div className="px-3 py-1 border-b border-[var(--border)] bg-[var(--bg-panel)] text-[10px] font-mono text-neutral-500 dark:text-neutral-400 shrink-0">
         {path}
       </div>
       <div className="flex-1 overflow-hidden bg-neutral-200 dark:bg-neutral-800">

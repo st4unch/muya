@@ -144,7 +144,7 @@ export default function FileEditor({
 
   return (
     <div className="flex flex-col h-full w-full">
-      <div className="px-3 py-1 border-b border-neutral-200 dark:border-[#3d3f44] bg-neutral-50 dark:bg-[#1e1f23] text-[10px] font-mono text-neutral-500 dark:text-neutral-400 shrink-0 flex items-center justify-between">
+      <div className="px-3 py-1 border-b border-[var(--border)] bg-[var(--bg-panel)] text-[10px] font-mono text-neutral-500 dark:text-neutral-400 shrink-0 flex items-center justify-between">
         <span className="truncate">{path}</span>
         <span className="flex items-center gap-2 shrink-0">
           {diskChanged && (

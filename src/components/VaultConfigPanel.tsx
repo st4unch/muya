@@ -82,7 +82,7 @@ export default function VaultConfigPanel({ onChanged }: { onChanged?: () => void
           onClick={() => setOpen(false)}
         >
           <div
-            className="w-[440px] max-w-full max-h-[85vh] overflow-y-auto bg-white dark:bg-[#25272b] border border-neutral-200 dark:border-neutral-700 rounded-xl shadow-2xl"
+            className="w-[440px] max-w-full max-h-[85vh] overflow-y-auto bg-[var(--bg-control)] border border-neutral-200 dark:border-neutral-700 rounded-xl shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200 dark:border-neutral-700">

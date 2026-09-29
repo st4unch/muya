@@ -239,12 +239,12 @@ export default function BranchDAG({
             <defs>
               {/* Radial gradient glow for hover or active nodes */}
               <radialGradient id="glow-indigo" cx="50%" cy="50%" r="50%">
-                <stop offset="0%" stopColor="#818cf8" stopOpacity="0.4" />
-                <stop offset="100%" stopColor="#818cf8" stopOpacity="0" />
+                <stop offset="0%" style={{ stopColor: "var(--accent)" }} stopOpacity="0.4" />
+                <stop offset="100%" style={{ stopColor: "var(--accent)" }} stopOpacity="0" />
               </radialGradient>
               <radialGradient id="glow-emerald" cx="50%" cy="50%" r="50%">
-                <stop offset="0%" stopColor="#34d399" stopOpacity="0.4" />
-                <stop offset="100%" stopColor="#34d399" stopOpacity="0" />
+                <stop offset="0%" style={{ stopColor: "var(--success)" }} stopOpacity="0.4" />
+                <stop offset="100%" style={{ stopColor: "var(--success)" }} stopOpacity="0" />
               </radialGradient>
             </defs>
 
