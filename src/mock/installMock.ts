@@ -120,13 +120,12 @@ function freezeClock() {
   const RealDate = Date;
 
   class FrozenDate extends RealDate {
-    constructor(...args: ConstructorParameters<typeof Date>) {
-      if (args.length === 0) {
-        super(FROZEN_MS);
-      } else {
-        // @ts-expect-error — spreading a variadic constructor tuple
-        super(...args);
-      }
+    // `ConstructorParameters<typeof Date>` picks Date's LAST overload (fixed arity), so
+    // TypeScript would call the no-argument branch impossible. Take the args untyped and
+    // hand them to the one overload that accepts a spread.
+    constructor(...args: unknown[]) {
+      if (args.length === 0) super(FROZEN_MS);
+      else super(...(args as [number, number, number?, number?, number?, number?, number?]));
     }
     static now() {
       return FROZEN_MS;

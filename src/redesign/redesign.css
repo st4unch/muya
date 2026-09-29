@@ -1,0 +1,122 @@
+/* Created by Claude — Classification: INTERNAL
+ *
+ * Shared class-based rules for the v0.4 redesign (PROMPT.md §5): focus rings,
+ * hover backgrounds and the single allowed transition. Imported once by
+ * ControlScreen/GridScreen/Preview. Everything else stays inline styles so
+ * metrics stay exact — this file only holds the *stateful* rules that inline
+ * styles can't express (:hover, :focus-visible, [aria-current]).
+ */
+
+.rd-root {
+  font-family: var(--font-sans);
+}
+
+/* Form controls don't inherit the page font by default (UA stylesheets give
+ * button/input/textarea/select a platform UI font — Arial on this machine),
+ * which silently swaps every button's line metrics and misaligns everything
+ * below it. The reference HTML resets this (`button{font-family:inherit}`);
+ * match it here for every control we build on. */
+.rd-root button,
+.rd-root input,
+.rd-root textarea,
+.rd-root select {
+  font-family: inherit;
+  color: inherit;
+}
+.rd-root button {
+  cursor: pointer;
+}
+/* Grid panel's single-line composer (GridPanel.tsx) mimics the reference's
+ * static placeholder-colored div, so it needs an explicit ::placeholder color.
+ * The Control composer textarea (Composer.tsx) is a real placeholder in the
+ * reference too — left on the browser default so the two stay pixel-identical. */
+.rd-grid-composer::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+/* PROMPT.md §5 + operator alignment note: nothing may wrap onto a second line.
+ * Every text node in the chrome is single-line by default; the terminal slot
+ * (real xterm content, or its data-diff-mask placeholder) is the one exception —
+ * it owns its own wrapping. Truncating elements additionally get .rd-ellipsis. */
+.rd-root * {
+  white-space: nowrap;
+}
+.rd-root [data-terminal-slot],
+.rd-root [data-terminal-slot] * {
+  white-space: normal;
+}
+
+.rd-ellipsis {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rd-root *:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Secondary/icon buttons, "…" menus, composer chips. */
+.rd-btn2,
+.rd-icon-btn,
+.rd-chip {
+  transition: background-color 120ms;
+}
+.rd-btn2:hover,
+.rd-icon-btn:hover,
+.rd-chip:hover {
+  background: var(--bg-segment);
+}
+
+/* Rail items. */
+.rd-rail-item {
+  transition: background-color 120ms;
+}
+.rd-rail-item:hover:not([aria-current="page"]) {
+  background: var(--bg-segment);
+}
+
+/* Idle agent-list rows. */
+.rd-idle-row {
+  transition: background-color 120ms;
+}
+.rd-idle-row:hover {
+  background: var(--bg-segment);
+}
+
+/* Waiting/working agent cards + grid panels being dragged over. */
+.rd-agent-card {
+  transition: background-color 120ms;
+}
+
+/* Inspector "Değişiklikler" file rows. */
+.rd-change-row {
+  transition: background-color 120ms;
+}
+.rd-change-row:hover {
+  background: var(--bg-segment);
+}
+
+.rd-tab {
+  transition: color 120ms;
+}
+
+/* Segmented controls (filter / layout). */
+.rd-segment-btn {
+  transition: background-color 120ms, color 120ms;
+}
+
+/* Responsive breakpoints (PROMPT.md §5). 1440×900 keeps the reference's exact
+ * 296/320 widths; at ≤1360 (min supported width 1280) the agent list and
+ * inspector narrow. Below 1280 the inspector is toggled off entirely via the
+ * `inspectorOpen` prop instead (ControlScreen), not by CSS. */
+@media (max-width: 1360px) {
+  .rd-agent-list {
+    width: 264px !important;
+  }
+  .rd-inspector {
+    width: 280px !important;
+  }
+}
