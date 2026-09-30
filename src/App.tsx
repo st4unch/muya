@@ -218,7 +218,7 @@ function FileTabView({
   onEditMarkdown: (path: string) => void;
 }) {
   return (
-    <div className="overflow-hidden" style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%", background: "var(--bg-panel)" }}>
+    <div className="rd-legacy overflow-hidden" style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%", background: "var(--bg-panel)" }}>
       <ViewerErrorBoundary label={tab.filePath ?? tab.key}>
         <Suspense fallback={<div className="flex-1 flex items-center justify-center text-xs text-neutral-400">Loading…</div>}>
           {tab.kind === "mdview" ? (
@@ -1765,7 +1765,10 @@ export default function App() {
     onOpenPalette: () => setPaletteOpen(true),
   };
 
+  // rd-legacy: the tree predates the redesign and is laid out for Tailwind's preflight
+  // (see redesign.css).
   const filesSlot = (
+    <div className="rd-legacy" style={{ height: "100%", minHeight: 0 }}>
     <FileTree
       roots={trackedPaths}
       removableRoots={new Set(trackedPaths)}
@@ -1800,6 +1803,7 @@ export default function App() {
       onSelectRoot={(r) => setSelectedRoot((prev) => (prev === r ? undefined : r))}
       refreshSignal={fsTick}
     />
+    </div>
   );
 
   const pageClass = (v: View) => `flex-1 flex overflow-hidden ${view !== v ? "hidden" : ""}`;

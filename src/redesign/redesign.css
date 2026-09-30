@@ -7,6 +7,18 @@
  * styles can't express (:hover, :focus-visible, [aria-current]).
  */
 
+/* .rd-legacy: pre-redesign components rendered INSIDE the redesign frame (the file
+ * tree in the Files tab, the file viewers/editor in the main area). They were built
+ * on Tailwind's preflight — border-box, zero control padding, normal wrapping,
+ * line-height 1.5 — and every reference-matching reset in this file skips them.
+ * Without this the tree's selected row ran past the inspector's edge and an open
+ * markdown file could not wrap a paragraph. (Rules here are unlayered, so they beat
+ * Tailwind's @layer utilities; they must be scoped, not just low-specificity.) */
+.rd-root .rd-legacy {
+  line-height: 1.5;
+  white-space: normal;
+}
+
 .rd-root {
   font-family: var(--font-sans);
   /* The reference is plain HTML: UA line-height and content-box sizing. Tailwind's
@@ -14,25 +26,25 @@
    * border-box on everything — every inline metric below was measured without it. */
   line-height: normal;
 }
-.rd-root *,
-.rd-root *::before,
-.rd-root *::after {
+.rd-root *:not(.rd-legacy, .rd-legacy *),
+.rd-root *:not(.rd-legacy, .rd-legacy *)::before,
+.rd-root *:not(.rd-legacy, .rd-legacy *)::after {
   box-sizing: content-box;
 }
 /* UA control padding, which preflight zeroes (the reference's buttons carry it). */
-.rd-root button {
+.rd-root button:not(.rd-legacy *) {
   padding: 1px 6px;
   box-sizing: border-box; /* the UA default for buttons (text inputs/textareas stay content-box) */
 }
-.rd-root input {
+.rd-root input:not(.rd-legacy *) {
   padding: 1px 2px;
 }
-.rd-root textarea {
+.rd-root textarea:not(.rd-legacy *) {
   padding: 2px;
 }
 /* preflight makes svg/img block-level; the reference's are inline (baseline-aligned). */
-.rd-root svg,
-.rd-root img {
+.rd-root svg:not(.rd-legacy *),
+.rd-root img:not(.rd-legacy *) {
   display: inline;
   vertical-align: baseline;
 }
@@ -42,10 +54,10 @@
  * which silently swaps every button's line metrics and misaligns everything
  * below it. The reference HTML resets this (`button{font-family:inherit}`);
  * match it here for every control we build on. */
-.rd-root button,
-.rd-root input,
-.rd-root textarea,
-.rd-root select {
+.rd-root button:not(.rd-legacy *),
+.rd-root input:not(.rd-legacy *),
+.rd-root textarea:not(.rd-legacy *),
+.rd-root select:not(.rd-legacy *) {
   font-family: inherit;
   color: inherit;
 }
@@ -65,7 +77,7 @@
  * Every text node in the chrome is single-line by default; the terminal slot
  * (real xterm content, or its data-diff-mask placeholder) is the one exception —
  * it owns its own wrapping. Truncating elements additionally get .rd-ellipsis. */
-.rd-root * {
+.rd-root *:not(.rd-legacy, .rd-legacy *) {
   white-space: nowrap;
 }
 .rd-root [data-terminal-slot],

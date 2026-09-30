@@ -149,7 +149,10 @@ describe("Terminal: WebGL lease follows visibility", () => {
     const host = container.querySelector("[data-xterm-host]") as HTMLElement;
     expect(host).toBeTruthy();
     expect(host.style.padding).toBe("");
-    expect((host.parentElement as HTMLElement).style.padding).toContain("--term-pad");
+    const wrapper = host.parentElement as HTMLElement;
+    expect(wrapper.style.padding).toContain("--term-pad");
+    // Without this the padding ADDS to the height and xterm is fitted too tall.
+    expect(wrapper.style.boxSizing).toBe("border-box");
   });
 
   it("releases the context on unmount", async () => {
