@@ -9,6 +9,32 @@
 
 .rd-root {
   font-family: var(--font-sans);
+  /* The reference is plain HTML: UA line-height and content-box sizing. Tailwind's
+   * preflight (loaded by the real app, not by the Preview page) sets 1.5 and
+   * border-box on everything — every inline metric below was measured without it. */
+  line-height: normal;
+}
+.rd-root *,
+.rd-root *::before,
+.rd-root *::after {
+  box-sizing: content-box;
+}
+/* UA control padding, which preflight zeroes (the reference's buttons carry it). */
+.rd-root button {
+  padding: 1px 6px;
+  box-sizing: border-box; /* the UA default for buttons (text inputs/textareas stay content-box) */
+}
+.rd-root input {
+  padding: 1px 2px;
+}
+.rd-root textarea {
+  padding: 2px;
+}
+/* preflight makes svg/img block-level; the reference's are inline (baseline-aligned). */
+.rd-root svg,
+.rd-root img {
+  display: inline;
+  vertical-align: baseline;
 }
 
 /* Form controls don't inherit the page font by default (UA stylesheets give
@@ -119,4 +145,10 @@
   .rd-inspector {
     width: 280px !important;
   }
+}
+
+/* Disabled actions (Allow/Deny while the permission dialog could not be parsed). */
+.rd-root button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }

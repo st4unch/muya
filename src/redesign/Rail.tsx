@@ -15,7 +15,8 @@ import {
 } from "./icons";
 
 export interface RailProps {
-  active: RailItem;
+  /** null on pages that have no rail item (Sessions, Branches). */
+  active: RailItem | null;
   onNavigate: (item: RailItem) => void;
 }
 

@@ -3,6 +3,7 @@
 // App header for both screens' shared chrome (PROMPT.md §2, §3, §6). The theme
 // button (32×32, left of the bell) is the one element not in either reference.
 
+import type { MouseEvent } from "react";
 import type { HeaderVM, ThemePreference } from "./types";
 import { BellIcon, ChevronDownIcon, SearchIcon, ThemeMonitorIcon, ThemeMoonIcon, ThemeSunIcon } from "./icons";
 
@@ -11,7 +12,8 @@ export interface ControlHeaderProps {
   themePreference: ThemePreference;
   onThemeCycle: () => void;
   onNotificationsClick: () => void;
-  onWorkspaceClick: () => void;
+  /** Receives the click so the caller can anchor a menu under the button. */
+  onWorkspaceClick: (e: MouseEvent<HTMLElement>) => void;
   onOpenPalette: () => void;
 }
 

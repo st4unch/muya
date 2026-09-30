@@ -31,6 +31,7 @@ export default function FileEditor({
   onDirtyChange,
   active = true,
   reloadTick = 0,
+  startInDiff = false,
 }: {
   path: string;
   theme?: "dark" | "light";
@@ -39,6 +40,8 @@ export default function FileEditor({
   active?: boolean;
   /** Bumps on any watched-workspace change (App's fsTick). */
   reloadTick?: number;
+  /** Open straight into the diff-against-HEAD view ("Review diff"). */
+  startInDiff?: boolean;
 }) {
   const monacoTheme = theme === "dark" ? "vs-dark" : "light";
   const [value, setValue] = useState<string>("");
@@ -73,6 +76,11 @@ export default function FileEditor({
     }
     setMode("diff");
   };
+
+  useEffect(() => {
+    if (startInDiff) void toggleDiff();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Load on open, and — ONLY while visible — reload when the file changes on disk
   // (agent / external edit). A hidden tab never re-reads (dep collapses to 0);
@@ -236,6 +244,10 @@ export default function FileEditor({
           )
         ) : mode === "diff" ? (
           <DiffEditor
+            // Closing the file while the diff is showing used to throw "TextModel got
+            // disposed before DiffEditorWidget model got reset" — keep the models.
+            keepCurrentOriginalModel
+            keepCurrentModifiedModel
             original={head ?? ""}
             modified={value}
             theme={monacoTheme}

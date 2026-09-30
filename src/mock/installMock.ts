@@ -30,6 +30,8 @@ import {
   MOCK_COLLISION_REPORT,
   MOCK_GIT_STATUS,
   MOCK_PROJECT_STATUS,
+  MOCK_SCREENS,
+  MOCK_TABS,
   MOCK_TERMINAL_LINES,
   MOCK_UPDATE_METADATA,
   MOCK_WORKSPACES,
@@ -88,25 +90,26 @@ function seedLocalStorage(screen: "control" | "grid", theme: string | null) {
   set("apex.worktrees", "[]"); // keeps tracked-path count == workspaces.length == 3
   set("apex.selectedRoot", PRIMARY_WORKSPACE);
 
-  // Terminal tabs for the 4 agents the grid view shows. Ordered [muya-all, ...]
-  // so `loadTabs()[0]` (the initial `activeTerminalKey`) is muya-all — the agent
-  // the Control reference shows open/highlighted.
-  const tabOrder = ["muya-all", "documents-44", "opencode-review", "iptv-2a"];
-  const cwdFor: Record<string, string> = {
-    "muya-all": PRIMARY_WORKSPACE,
-    "documents-44": PRIMARY_WORKSPACE,
-    "opencode-review": PRIMARY_WORKSPACE,
-    "iptv-2a": MOCK_WORKSPACES[1],
-  };
-  const tabs = tabOrder.map((key) => ({
-    key,
-    name: key,
+  // The 7 terminal tabs (list order = reference order). `muya-all` is the selected
+  // agent on Control; Grid shows the first 4 in list order (GRID_AGENT_IDS).
+  const tabs = MOCK_TABS.map((t) => ({
+    key: t.key,
+    name: t.key,
     kind: "terminal" as const,
-    cwd: cwdFor[key],
+    cwd: t.cwd,
+    ...(t.agent ? { agent: t.agent } : {}),
   }));
   set("apex.openTabs", JSON.stringify(tabs));
   set("apex.gridKeys", JSON.stringify(GRID_AGENT_IDS));
   set("apex.viewMode", screen === "grid" ? "grid" : "tabs");
+  set("muya.selectedAgent", "muya-all");
+  try {
+    // "Waiting for 1m" — the app stamps the wait on the transition; under the frozen
+    // clock that would read "<1m" forever, so the mock supplies the reference's stamp.
+    window.sessionStorage.setItem("muya.waitingSince", JSON.stringify({ "documents-44": FROZEN_MS - 60_000 }));
+  } catch {
+    /* storage disabled */
+  }
 
   if (theme === "light" || theme === "dark") set("apex.theme", theme);
 }
@@ -143,6 +146,10 @@ function freezeClock() {
 // so text chunks must be real ArrayBuffers, not plain strings.
 // ---------------------------------------------------------------------------
 
+/** Tauri's Channel delivers messages in `index` order and drops a repeated index, so a
+ *  second feed to the same channel must continue the numbering. */
+const channelNextIndex = new Map<number, number>();
+
 function feedPtyChannel(channel: unknown, lines: string[]) {
   const internals = (window as unknown as {
     __TAURI_INTERNALS__?: { runCallback?: (id: number, data: unknown) => void };
@@ -150,21 +157,37 @@ function feedPtyChannel(channel: unknown, lines: string[]) {
   const id = (channel as { id?: number } | undefined)?.id;
   if (!internals?.runCallback || typeof id !== "number") return;
   lines.forEach((line, i) => {
+    const index = channelNextIndex.get(id) ?? 0;
+    channelNextIndex.set(id, index + 1);
     setTimeout(() => {
       const bytes = new TextEncoder().encode(`${line}\r\n`);
-      internals.runCallback!(id, { index: i, message: bytes.buffer });
-    }, i * 40);
+      internals.runCallback!(id, { index, message: bytes.buffer });
+    }, i * 5);
   });
 }
 
 let ptyCounter = 0;
 const ptyCwdById = new Map<string, string>();
+const ptyTabById = new Map<string, (typeof MOCK_TABS)[number]>();
+const ptyChannelById = new Map<string, unknown>();
+
+/** Invocation counts per command — `window.__muyaMock.calls.pty_spawn` is how the
+ *  Playwright check proves switching screens never respawns a terminal. */
+const calls: Record<string, number> = {};
+/** Every pty_write payload, in order — lets the Playwright check assert what a click typed. */
+const writes: { id: string; tab?: string; data: string }[] = [];
+(window as unknown as { __muyaMock?: unknown }).__muyaMock = { calls, writes };
 
 function spawnMockPty(payload: Record<string, unknown> | undefined): string {
+  // Terminals mount in tab order, so the Nth spawn belongs to tab N (modulo, because
+  // React StrictMode mounts every effect twice in dev).
+  const tab = MOCK_TABS[ptyCounter % MOCK_TABS.length];
   const id = `mock-pty-${++ptyCounter}`;
   const cwd = typeof payload?.cwd === "string" ? (payload.cwd as string) : PRIMARY_WORKSPACE;
   ptyCwdById.set(id, cwd);
-  feedPtyChannel(payload?.onEvent, MOCK_TERMINAL_LINES);
+  ptyTabById.set(id, tab);
+  ptyChannelById.set(id, payload?.onEvent);
+  feedPtyChannel(payload?.onEvent, MOCK_SCREENS[tab.key] ?? MOCK_TERMINAL_LINES);
   return id;
 }
 
@@ -266,6 +289,17 @@ const EMPTY_STRING = new Set([
 
 function handleInvoke(cmd: string, rawPayload?: unknown): unknown {
   const payload = (rawPayload ?? {}) as Record<string, unknown>;
+  calls[cmd] = (calls[cmd] ?? 0) + 1;
+  if (cmd === "pty_write") {
+    const id = String(payload.id ?? "");
+    const tab = ptyTabById.get(id)?.key;
+    const data = String(payload.data ?? "");
+    writes.push({ id, tab, data });
+    // Answering the permission dialog repaints the screen, like the real thing.
+    if (tab === "documents-44" && /^[123]$/.test(data)) {
+      feedPtyChannel(ptyChannelById.get(id), ["\x1b[2J\x1b[H⏺ fs_write_file(docs/[file path])", "  ⎿  done", "", "❯ ", "  ⏸ manual mode on (shift+tab to cycle)"]);
+    }
+  }
 
   // --- plugin:* commands (app/window/updater/dialog/opener/process/clipboard) ---
   if (cmd.startsWith("plugin:")) return handlePlugin(cmd, payload);
@@ -289,8 +323,16 @@ function handleInvoke(cmd: string, rawPayload?: unknown): unknown {
       for (const id of ids) out[id] = ptyCwdById.get(id) ?? PRIMARY_WORKSPACE;
       return out;
     }
-    case "pty_session_ids":
-      return {};
+    case "pty_session_ids": {
+      // Only Claude sessions are reported (like the real command): a plain shell has none.
+      const ids = Array.isArray(payload.ids) ? (payload.ids as string[]) : [];
+      const out: Record<string, { id: string; name: string; status: string }> = {};
+      for (const id of ids) {
+        const tab = ptyTabById.get(id);
+        if (tab?.session) out[id] = { id: `session-${tab.key}`, name: tab.key, status: tab.session };
+      }
+      return out;
+    }
 
     // --- git / project manager ------------------------------------------------
     case "git_status":
@@ -326,7 +368,7 @@ function handleInvoke(cmd: string, rawPayload?: unknown): unknown {
         ahead: 0,
         behind: 0,
         commits: [],
-        changedFiles: MOCK_GIT_STATUS.map(([, path]) => path),
+        changedFiles: MOCK_GIT_STATUS.map(([path]) => path),
       };
     case "create_worktree":
       return `${PRIMARY_WORKSPACE}-wt-${String(payload.branch ?? "branch")}`;

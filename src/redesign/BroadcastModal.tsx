@@ -4,6 +4,8 @@
 // every open grid panel (PROMPT.md §4). Not in either reference — kept in the
 // same visual language as the rest of the redesign.
 
+import { useEffect } from "react";
+
 export interface BroadcastModalProps {
   open: boolean;
   panelCount: number;
@@ -14,6 +16,17 @@ export interface BroadcastModalProps {
 }
 
 export function BroadcastModal({ open, panelCount, value, onChange, onCancel, onConfirm }: BroadcastModalProps) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onCancel();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [open, onCancel]);
   if (!open) return null;
   return (
     <div
@@ -26,6 +39,7 @@ export function BroadcastModal({ open, panelCount, value, onChange, onCancel, on
         <h2 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>Broadcast to all panels</h2>
         <p style={{ margin: 0, fontSize: 13, color: "var(--text-muted)" }}>Send this message to every open panel ({panelCount}).</p>
         <textarea
+          autoFocus
           rows={3}
           value={value}
           onChange={(e) => onChange(e.target.value)}

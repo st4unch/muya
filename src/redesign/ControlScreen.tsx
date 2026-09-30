@@ -5,7 +5,7 @@
 // ProgressStrip + Composer + Inspector. Purely presentational: every user
 // action is one of the callback props, no Tauri calls, no global state.
 
-import type { ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import { AppFrame } from "./AppFrame";
 import { Rail } from "./Rail";
 import { Footer } from "./Footer";
@@ -24,7 +24,7 @@ export interface ControlScreenProps {
   themePreference: ThemePreference;
   onThemeCycle: () => void;
   onNotificationsClick: () => void;
-  onWorkspaceClick: () => void;
+  onWorkspaceClick: (e: MouseEvent<HTMLElement>) => void;
   onOpenPalette: () => void;
 
   railActive: RailItem;
@@ -41,16 +41,19 @@ export interface ControlScreenProps {
   /** null = the selected agent's terminal is shown; set = a file replaces it. */
   openFile: FileVM | null;
   onCloseFile: () => void;
+  /** The viewer/editor for `openFile`, rendered where the terminal slot would be. */
+  fileSlot?: ReactNode;
 
   onCompact: () => void;
   onSplitToGrid: () => void;
   onStop: () => void;
-  onMoreActions: () => void;
+  onMoreActions: (e: MouseEvent<HTMLElement>) => void;
 
   composerValue: string;
   onComposerChange: (value: string) => void;
   onSendMessage: (text: string) => void;
   onCycleMode: () => void;
+  onModeMenu?: (e: MouseEvent<HTMLElement>) => void;
   onAttachFile: () => void;
   onOpenCommands: () => void;
 
@@ -65,6 +68,7 @@ export interface ControlScreenProps {
   onOpenApproval: (key: string) => void;
   onReviewDiff: () => void;
   onCommit: () => void;
+  onOpenChange?: (path: string) => void;
   filesSlot?: ReactNode;
   activitySlot?: ReactNode;
 
@@ -111,11 +115,17 @@ export function ControlScreen(props: ControlScreenProps) {
         {/* The real xterm instance is adopted into this slot by the orchestrator — it
             owns no styling here beyond filling the region edge-to-edge with the
             terminal background; the xterm host itself carries the 20px/28px padding. */}
-        <div
-          data-terminal-slot={selected?.key ?? "none"}
-          data-diff-mask
-          style={{ flexGrow: 1, minHeight: 0, overflow: "hidden", background: "var(--bg-terminal)" }}
-        />
+        {props.openFile ? (
+          <div style={{ flexGrow: 1, minHeight: 0, minWidth: 0, overflow: "hidden", display: "flex", flexDirection: "column", background: "var(--bg-app)" }}>
+            {props.fileSlot}
+          </div>
+        ) : (
+          <div
+            data-terminal-slot={selected?.key ?? "none"}
+            data-diff-mask
+            style={{ flexGrow: 1, minHeight: 0, overflow: "hidden", background: "var(--bg-terminal)" }}
+          />
+        )}
 
         {selected && !props.openFile && (
           <ProgressStrip
@@ -136,6 +146,7 @@ export function ControlScreen(props: ControlScreenProps) {
             onSend={props.onSendMessage}
             mode={selected.mode as PermissionMode}
             onCycleMode={props.onCycleMode}
+            onModeMenu={props.onModeMenu}
             onAttachFile={props.onAttachFile}
             onCommands={props.onOpenCommands}
           />
@@ -153,6 +164,7 @@ export function ControlScreen(props: ControlScreenProps) {
           inspector={props.inspector}
           onReviewDiff={props.onReviewDiff}
           onCommit={props.onCommit}
+          onOpenChange={props.onOpenChange}
           filesSlot={props.filesSlot}
           activitySlot={props.activitySlot}
         />

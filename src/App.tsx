@@ -1,71 +1,18 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
-import { nextAcked, deriveBlinkKeys } from "./lib/blink";
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
+import { createPortal } from "react-dom";
 import { pickNextActiveKey, newSshTabKey, addSshSession, canResumeTab } from "./lib/tabs";
 import { terminalIsVisible } from "./lib/terminalVisibility";
 import { installNoAutocorrect } from "./lib/noAutocorrect";
-import appIconUrl from "./assets/app-icon.png";
-import {
-  Folder,
-  FileCode,
-  FileText,
-  Image as ImageIcon,
-  Terminal,
-  Layers,
-  Sparkles,
-  GitBranch,
-  Settings,
-  Cpu,
-  Search,
-  ChevronDown,
-  ChevronRight,
-  ChevronLeft,
-  Play,
-  Pause,
-  RefreshCw,
-  X,
-  Plus,
-  GitCommit,
-  GitPullRequest,
-  CheckCircle2,
-  AlertTriangle,
-  TerminalSquare,
-  Network,
-  Users,
-  HardDrive,
-  Clock,
-  ArrowRight,
-  Info,
-  ShieldCheck,
-  Zap,
-  Tag,
-  Bookmark,
-  Share2,
-  Trash2,
-  ExternalLink,
-  Code2,
-  PanelLeft,
-  PanelRight,
-  Sun,
-  Moon,
-  LayoutGrid,
-  GripHorizontal,
-  CalendarClock,
-  Lock,
-  Unlock,
-  Pencil,
-} from "lucide-react";
-import BranchDAG from "./components/BranchDAG";
 import AgentTerminal from "./components/Terminal";
 import FileTree from "./components/FileTree";
 import ChatView from "./components/ChatView";
 import SessionsPage from "./components/SessionsPage";
-import SessionsPanel from "./components/SessionsPanel";
+import BranchesPage from "./components/BranchesPage";
 import ViewerErrorBoundary from "./components/ViewerErrorBoundary";
 const FileEditor = lazy(() => import("./components/FileEditor"));
 const MarkdownView = lazy(() => import("./components/MarkdownView"));
 const ImageViewer = lazy(() => import("./components/ImageViewer"));
 const PdfViewer = lazy(() => import("./components/PdfViewer"));
-import SessionMonitor from "./components/SessionMonitor";
 import FileAccessGate from "./components/FileAccessGate";
 import NewAgentModal, { type NewAgentSpec } from "./components/NewAgentModal";
 import QueuePage from "./components/QueuePage";
@@ -86,6 +33,23 @@ import { open as openDialog, save as saveDialog, confirm as confirmDialog } from
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { useTheme } from "./theme/theme";
+import "./redesign/redesign.css";
+import { ControlScreen } from "./redesign/ControlScreen";
+import { GridScreen } from "./redesign/GridScreen";
+import { ControlHeader } from "./redesign/ControlHeader";
+import { AppFrameBody } from "./redesign/AppFrameBody";
+import { Rail } from "./redesign/Rail";
+import { Footer } from "./redesign/Footer";
+import { BroadcastModal } from "./redesign/BroadcastModal";
+import { CommandPalette } from "./redesign/CommandPalette";
+import { ActivityPanel } from "./redesign/ActivityPanel";
+import { AgentPickerDialog, MenuHeading, MenuItem, MenuPopover, MenuSeparator, RenameDialog, anchorFromRect, type Anchor } from "./redesign/Menus";
+import { useAgentModel } from "./redesign/useAgentModel";
+import { abbreviateHome, pickGridPanels, type SessionStatus } from "./redesign/agentModel";
+import { adoptHosts, createHost, POOL_STYLE } from "./redesign/terminalHosts";
+import type { AgentVM, ChangeVM, FileVM, GridLayout, InspectorVM, PermissionMode, RailItem } from "./redesign/types";
+import type { AgentFilter } from "./redesign/AgentList";
+import type { InspectorTab } from "./redesign/Inspector";
 
 // Types matching the user's workflow model
 interface AgentSession {
@@ -106,7 +70,7 @@ interface AgentSession {
   pid?: number; // OS pid (for killing interactive sessions)
 }
 
-// One open, persistent tab — a terminal or a file editor. Kept alive across switches.
+// One open, persistent tab — a terminal or a file viewer. Kept alive across switches.
 interface OpenTerminal {
   key: string; // unique tab id (session id, "resume:<id>", or "edit:<path>")
   name: string;
@@ -139,6 +103,8 @@ interface OpenTerminal {
    *  otherwise a freshly opened session can sit stuck waiting for a keypress before
    *  it's even discoverable via `claude agents --json` for an agent to answer it. */
   autoAcceptTrust?: boolean;
+  /** Editor tab opened from "Review diff": start in the diff-against-HEAD view. */
+  startInDiff?: boolean;
 }
 
 interface GitBranchState {
@@ -151,15 +117,10 @@ interface GitBranchState {
   parent?: string; // real lineage: branch this forked from
 }
 
-interface FileItem {
-  name: string;
-  path: string;
-  isDirectory: boolean;
-  isModified?: boolean;
-  hasConflict?: boolean;
-  content?: string;
-  lockedByAgentId?: string; // Tracks which agent is active on this file
-}
+type View = "control" | "sessions" | "queue" | "tools" | "prd" | "ssh" | "chat" | "branches";
+type Screen = "control" | "grid";
+
+const isFileTab = (t: { kind: OpenTerminal["kind"] }) => t.kind !== "terminal";
 
 /** Load a persisted string[] from localStorage (last-session memory). */
 function loadList(key: string): string[] {
@@ -171,14 +132,17 @@ function loadList(key: string): string[] {
   }
 }
 
-/** Restore open tabs. Editors re-open their file; terminals re-open as a fresh shell
- *  in their folder (initialCommand dropped so we never auto re-launch/attach). */
+/** Restore open tabs. Terminals re-open as a fresh shell in their folder
+ *  (initialCommand dropped so we never auto re-launch/attach). File viewers are not
+ *  restored: a file is a transient view in Control's main area now, and a hidden
+ *  restored viewer would have no way back on screen. */
 function loadTabs(): OpenTerminal[] {
   try {
     const v = JSON.parse(localStorage.getItem("apex.openTabs") || "[]");
     if (!Array.isArray(v)) return [];
-    return (v as OpenTerminal[]).map((t) =>
-      t.kind === "terminal"
+    return (v as OpenTerminal[])
+      .filter((t) => t.kind === "terminal")
+      .map((t) =>
         // Never auto-run on startup; but remember this was a Claude tab and which
         // session it held, so clicking it resumes exactly that conversation.
         // sshServerId dropped too: a restored SSH tab is an inert shell, never an
@@ -193,87 +157,96 @@ function loadTabs(): OpenTerminal[] {
         // did nothing. `sessionId` is the durable fact — it is only ever written
         // from real session discovery, so its presence alone means "this tab held
         // conversation X and can rejoin it".
-        ? { ...t, initialCommand: undefined, sshServerId: undefined, needsResume: canResumeTab(t) }
-        : t
-    );
+        ({ ...t, initialCommand: undefined, sshServerId: undefined, needsResume: canResumeTab(t) }),
+      );
   } catch {
     return [];
   }
 }
 
-export default function App() {
-  // Navigation & UI Panels
-  const [activeTab, setActiveTab] = useState<"terminal" | "supervisor" | "history">("terminal");
-  const [selectedFile, setSelectedFile] = useState<string>("src/api/stripe.ts");
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+const GRID_CAPACITY: Record<GridLayout, number> = { "1": 1, "1x2": 2, "2x2": 4, "3x2": 6 };
 
-  // Simulated metrics
+function readGridLayout(): GridLayout {
+  const v = localStorage.getItem("muya.gridLayout");
+  return v === "1" || v === "1x2" || v === "2x2" || v === "3x2" ? v : "2x2";
+}
+
+/** Modes Shift+Tab can reach, in Claude's cycle order. Bypass is a launch flag: it is
+ *  not in the cycle, so it is never offered here. */
+const MODE_ITEMS: { mode: PermissionMode; label: string }[] = [
+  { mode: "default", label: "Manual" },
+  { mode: "acceptEdits", label: "Accept edits" },
+  { mode: "plan", label: "Plan" },
+  { mode: "auto", label: "Auto" },
+];
+
+const PALETTE_COMMANDS = [
+  { id: "new-agent", label: "New agent" },
+  { id: "new-terminal", label: "New terminal" },
+  { id: "control", label: "Control" },
+  { id: "grid", label: "Grid" },
+  { id: "sessions", label: "Sessions" },
+  { id: "branches", label: "Branches" },
+  { id: "queue", label: "Queue" },
+  { id: "kanban", label: "Kanban" },
+  { id: "resources", label: "Resources" },
+  { id: "ssh", label: "SSH" },
+  { id: "chat", label: "Chat" },
+  { id: "settings", label: "Settings" },
+  { id: "theme", label: "Cycle theme (system, light, dark)" },
+  { id: "schedule", label: "Schedule prompt" },
+  { id: "add-workspace", label: "Add workspace" },
+];
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** A file open in Control's main area. Module-level on purpose: declared inside App it
+ *  would be a new component type every render and remount the editor under the user. */
+function FileTabView({
+  tab,
+  theme,
+  active,
+  reloadTick,
+  onDirtyChange,
+  onEditMarkdown,
+}: {
+  tab: OpenTerminal;
+  theme: "dark" | "light";
+  active: boolean;
+  reloadTick: number;
+  onDirtyChange: (dirty: boolean) => void;
+  onEditMarkdown: (path: string) => void;
+}) {
+  return (
+    <div className="overflow-hidden" style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%", background: "var(--bg-panel)" }}>
+      <ViewerErrorBoundary label={tab.filePath ?? tab.key}>
+        <Suspense fallback={<div className="flex-1 flex items-center justify-center text-xs text-neutral-400">Loading…</div>}>
+          {tab.kind === "mdview" ? (
+            <MarkdownView filePath={tab.filePath!} active={active} reloadTick={reloadTick} onEdit={onEditMarkdown} />
+          ) : tab.kind === "imgview" ? (
+            <ImageViewer path={tab.filePath!} />
+          ) : tab.kind === "pdfview" ? (
+            <PdfViewer path={tab.filePath!} />
+          ) : (
+            <FileEditor path={tab.filePath!} theme={theme} active={active} reloadTick={reloadTick} onDirtyChange={onDirtyChange} startInDiff={tab.startInDiff} />
+          )}
+        </Suspense>
+      </ViewerErrorBoundary>
+    </div>
+  );
+}
+
+export default function App() {
+  // Claude Agent Sessions (`claude agents --json`): feeds the file tree's agent badges,
+  // the New-agent workspace list, the Kanban roots, the branch view and — where a tab's
+  // cwd matches — the branch pill in the session header.
+  const [agents, setAgents] = useState<AgentSession[]>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState<string>("");
+
+  // Live metrics of the app process
   const [cpuUsage, setCpuUsage] = useState(0); // app process CPU %
   const [ramUsage, setRamUsage] = useState(0); // app process RAM, MB
-  const [localTime, setLocalTime] = useState("");
-
-  // Claude Agent Sessions (kapanmamış background session list)
-  const [agents, setAgents] = useState<AgentSession[]>([
-    {
-      id: "agent-jwt",
-      name: "apex-auth-jwt",
-      branch: "feature/auth-jwt",
-      worktree: "~/apex-wt/auth-jwt",
-      status: "waiting-for-input",
-      activeTask: "Add RS256 token rollover in login handlers",
-      activeFile: "src/api/auth.ts",
-      tokensUsed: 142050,
-      modelsUsed: "Claude 3.7 Sonnet",
-      quotaBurn: 4.26,
-      duration: "14m 20s",
-      createdAt: "10:14:02 UTC"
-    },
-    {
-      id: "agent-stripe",
-      name: "apex-stripe-hooks",
-      branch: "feature/stripe-webhooks",
-      worktree: "~/apex-wt/stripe-webhooks",
-      status: "working",
-      activeTask: "Set up Stripe tax calculation router hooks",
-      activeFile: "src/api/stripe.ts",
-      tokensUsed: 89300,
-      modelsUsed: "Claude 3.7 Sonnet",
-      quotaBurn: 2.68,
-      duration: "08m 12s",
-      createdAt: "10:20:15 UTC"
-    },
-    {
-      id: "agent-checkout",
-      name: "apex-checkout-v2",
-      branch: "feature/checkout-flow",
-      worktree: "~/apex-wt/checkout-flow",
-      status: "working",
-      activeTask: "Review shopping cart calculation total layout",
-      activeFile: "src/api/stripe.ts",
-      tokensUsed: 65120,
-      modelsUsed: "Claude 3.5 Sonnet",
-      quotaBurn: 1.95,
-      duration: "05m 40s",
-      createdAt: "10:22:50 UTC"
-    },
-    {
-      id: "agent-eslint",
-      name: "apex-eslint-fix",
-      branch: "fix/eslint-warnings",
-      worktree: "~/apex-wt/eslint-warnings",
-      status: "idle",
-      activeTask: "Clean unused react dependencies & imports",
-      activeFile: "src/main.tsx",
-      tokensUsed: 231400,
-      modelsUsed: "Claude 3.5 Haiku",
-      quotaBurn: 1.15,
-      duration: "21m 15s",
-      createdAt: "09:55:00 UTC"
-    }
-  ]);
-
-  // Selected Active Agent context
-  const [selectedAgentId, setSelectedAgentId] = useState<string>("agent-stripe");
+  const [clock, setClock] = useState("");
 
   // macOS WKWebView autocorrect/autocapitalize silently rewrites what the
   // operator types into any <input>/<textarea> (hostnames, paths, branch
@@ -312,174 +285,58 @@ export default function App() {
     };
   }, []);
 
-  // Open, persistent terminal tabs — one PTY per session, stays alive when you
-  // switch tabs (hidden, not torn down).
+  // Open, persistent tabs — one PTY per terminal, alive while you look elsewhere.
   const [openTerminals, setOpenTerminals] = useState<OpenTerminal[]>(loadTabs);
-  const [activeTerminalKey, setActiveTerminalKey] = useState<string | null>(
-    () => loadTabs()[0]?.key ?? null
-  );
-  // Bumped every time the operator deliberately picks a tab (tab strip, sessions
-  // list). In grid mode `active` never flips — every grid terminal stays visible —
-  // so picking one there would otherwise leave the keyboard wherever it was.
+  const openTerminalsRef = useRef(openTerminals);
+  openTerminalsRef.current = openTerminals;
+  // The selected AGENT (a terminal tab). Files are tracked separately in viewFileKey.
+  const [activeTerminalKey, setActiveTerminalKey] = useState<string | null>(() => {
+    const tabs = loadTabs();
+    const stored = localStorage.getItem("muya.selectedAgent");
+    return tabs.find((t) => t.key === stored)?.key ?? tabs[0]?.key ?? null;
+  });
+  const activeKeyRef = useRef(activeTerminalKey);
+  activeKeyRef.current = activeTerminalKey;
+  useEffect(() => {
+    if (activeTerminalKey) localStorage.setItem("muya.selectedAgent", activeTerminalKey);
+  }, [activeTerminalKey]);
+  // The file currently shown in Control's main area instead of the terminal.
+  const [viewFileKey, setViewFileKey] = useState<string | null>(null);
+  // Bumped every time the operator deliberately picks an agent (list, ⌘1–7, palette).
+  // Grid terminals are all `active` at once, so a pick there would otherwise leave the
+  // keyboard wherever it was.
   const [tabPickCount, setTabPickCount] = useState(0);
   const pickTab = useCallback((key: string) => {
     setActiveTerminalKey(key);
     setTabPickCount((n) => n + 1);
   }, []);
-  // Grid view mode — shows up to 4 terminals simultaneously
-  const [viewMode, setViewMode] = useState<"tabs" | "grid">(
-    () => (localStorage.getItem("apex.viewMode") as "tabs" | "grid") ?? "tabs"
-  );
+
+  // Screens: Control (one agent + inspector) or Grid (several agents side by side).
+  // Persisted under the pre-redesign key so a saved "grid" survives the upgrade.
+  const [screen, setScreen] = useState<Screen>(() => (localStorage.getItem("apex.viewMode") === "grid" ? "grid" : "control"));
+  useEffect(() => {
+    localStorage.setItem("apex.viewMode", screen === "grid" ? "grid" : "tabs");
+  }, [screen]);
+  const [gridLayout, setGridLayout] = useState<GridLayout>(readGridLayout);
+  useEffect(() => {
+    localStorage.setItem("muya.gridLayout", gridLayout);
+  }, [gridLayout]);
+  // Agents the operator chose for the grid panels, in panel order (topped up in list order).
   const [gridKeys, setGridKeys] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem("apex.gridKeys") ?? "[]"); } catch { return []; }
   });
-
-  // Open (or focus) a persistent terminal tab. Used by session cards and the
-  // Sessions page (attach / resume).
-  const openTerminal = (spec: OpenTerminal) => {
-    // Derive the agent from the command whenever the caller didn't state one.
-    // `detectAgent` replaces the old inline regex: it also matches an absolute
-    // path (which is what the backend resolver hands us on machines where the bare
-    // name isn't on PATH) and refuses substrings like "opencoded".
-    const withKind: OpenTerminal =
-      spec.agent === undefined && spec.isClaude === undefined && spec.kind === "terminal"
-        ? (() => {
-            const agent = detectAgent(spec.initialCommand);
-            return { ...spec, agent: agent ?? undefined, isClaude: agent === "claude" };
-          })()
-        : spec;
-    setOpenTerminals((prev) =>
-      prev.some((tm) => tm.key === withKind.key) ? prev : [...prev, withKind]
-    );
-    setActiveTerminalKey(withKind.key);
-  };
-
-  /** Activate a tab; if it was restored from a previous run, resume ITS OWN
-   *  Claude session (with --dangerously-skip-permissions) instead of leaving an
-   *  empty shell. Runs once per tab — the flag clears after the command is sent. */
-  const activateTerminal = (key: string) => {
-    pickTab(key);
-    const tab = openTerminalsRef.current.find((t) => t.key === key);
-    if (!tab?.needsResume || !tab.sessionId) return;
-    const ptyId = terminalPtyIdsRef.current[key];
-    if (!ptyId) return; // shell not ready yet — try again on the next click
-    setOpenTerminals((prev) =>
-      prev.map((t) => (t.key === key ? { ...t, needsResume: false } : t))
-    );
-    void invoke("pty_write", {
-      id: ptyId,
-      data: `claude --resume ${tab.sessionId} --dangerously-skip-permissions\r`,
-    }).catch(() => {});
-  };
-
-  /** Duplicate a terminal tab into a fresh tab, re-running its command so an SSH
-   *  tab reconnects and a Claude tab re-resumes (operator chose "re-run command").
-   *  Opens at the shell's CURRENT cwd (liveCwds) when known. */
-  const duplicateTerminal = (key: string) => {
-    const t = openTerminalsRef.current.find((x) => x.key === key);
-    if (!t) return;
-    const ts = Date.now();
-    // A restored Claude tab has its initialCommand stripped (needsResume); rebuild
-    // the resume command from its session id so "re-run" actually reconnects.
-    let initialCommand = t.initialCommand;
-    // Same rule as the restore gate above: `sessionId` alone decides, not the
-    // volatile `isClaude` (which is false for exactly the tabs that need resuming).
-    if (!initialCommand && t.sessionId)
-      initialCommand = `claude --resume ${t.sessionId} --dangerously-skip-permissions`;
-    const newKey = t.sshServerId ? `ssh:${t.sshServerId}:${ts}` : `term-copy-${ts}`;
-    openTerminal({
-      key: newKey,
-      name: `${t.name} (copy)`,
-      kind: "terminal",
-      cwd: liveCwds[key] ?? t.cwd,
-      initialCommand,
-      sshServerId: t.sshServerId,
-      isClaude: t.isClaude,
-    });
-  };
-
-  /** Reveal a terminal's current working directory in Finder. */
-  const revealTerminalInFinder = (key: string) => {
-    const t = openTerminalsRef.current.find((x) => x.key === key);
-    const cwd = liveCwds[key] ?? t?.cwd;
-    if (cwd) void invoke("reveal_in_finder", { path: cwd }).catch(() => {});
-  };
-
-  const openTerminalForAgent = (a: AgentSession) => {
-    const cwd = a.worktree && a.worktree.startsWith("/") ? a.worktree : undefined;
-    if (cwd) ensureWorktreeTracked(cwd);
-    const initialCommand =
-      a.attachable && a.attachId ? `claude attach ${a.attachId} --dangerously-skip-permissions` : undefined;
-    openTerminal({ key: a.id, name: a.name, kind: "terminal", cwd, initialCommand });
-  };
-
-  // Open a file from the tree in a Monaco editor tab.
-  const openEditor = (filePath: string) => {
-    openTerminal({
-      key: `edit:${filePath}`,
-      name: filePath.split("/").pop() || filePath,
-      kind: "editor",
-      filePath,
-    });
-  };
-
-  /** Default open (single-click / dispatch): markdown opens as a RENDERED read view,
-   *  images/PDFs open in their own viewer (Monaco can't render them — `read_file`
-   *  requires UTF-8 text), everything else opens editable in Monaco. "Open in Muya"
-   *  (right-click) always routes to openEditor, so any of these can still be forced
-   *  open as text on demand (unchanged pre-existing semantic for .md). */
-  const openFile = (filePath: string) => {
-    const kind = viewerKindFor(filePath);
-    if (kind === "editor") {
-      openEditor(filePath);
-      return;
-    }
-    const prefix = kind === "mdview" ? "mdview" : kind === "imgview" ? "img" : "pdf";
-    openTerminal({
-      key: `${prefix}:${filePath}`,
-      name: filePath.split("/").pop() || filePath,
-      kind,
-      filePath,
-    });
-  };
+  useEffect(() => {
+    localStorage.setItem("apex.gridKeys", JSON.stringify(gridKeys));
+  }, [gridKeys]);
+  const [gridFocusedKey, setGridFocusedKey] = useState<string | null>(null);
+  const layoutBeforeMaximizeRef = useRef<GridLayout | null>(null);
 
   const [dirtyTabs, setDirtyTabs] = useState<Record<string, boolean>>({});
+  const dirtyTabsRef = useRef(dirtyTabs);
+  dirtyTabsRef.current = dirtyTabs;
 
-  const closeTerminal = async (key: string) => {
-    if (dirtyTabs[key]) {
-      const tab = openTerminals.find(t => t.key === key);
-      const name = tab?.name ?? key;
-      const ok = await confirmDialog(
-        `"${name}" dosyasında kaydedilmemiş değişiklikler var. Yine de kapat?`,
-        { title: "Kaydedilmemiş Değişiklikler", kind: "warning", okLabel: "Kapat", cancelLabel: "İptal" }
-      );
-      if (!ok) return;
-    }
-    // If this was an agent-opened ssh_open session, tell the broker it's gone so a
-    // later ssh_send to this id is refused (not written to a recycled/dead PTY).
-    if (key.startsWith("ssh:")) void invoke("ssh_release_session", { sessionId: key }).catch(() => {});
-    // Same idea for open_session tabs (PRD close-session) — release the ownership
-    // entry on ANY close (agent-initiated via close_session, or the operator closing
-    // it by hand), so a stale name never stays falsely "closable".
-    if (key.startsWith("aopen:")) {
-      // Ref, not the `openTerminals` state closure — this can run from a mount-once
-      // listener (muya://close-agent-session) whose captured `openTerminals` would
-      // otherwise be stale from before this tab ever existed.
-      const openedTab = openTerminalsRef.current.find((t) => t.key === key);
-      if (openedTab?.name) void invoke("release_agent_session", { name: openedTab.name }).catch(() => {});
-    }
-    setOpenTerminals((prev) => {
-      // Focus a neighbouring tab of the SAME kind — closing a file must not jump
-      // focus onto a terminal (where the next ⌘W would kill a Claude session). L19.
-      setActiveTerminalKey((cur) => (cur === key ? pickNextActiveKey(prev, key) : cur));
-      return prev.filter((tm) => tm.key !== key);
-    });
-    setGridKeys((prev) => prev.filter((k) => k !== key));
-    setDirtyTabs((prev) => { const n = { ...prev }; delete n[key]; return n; });
-  };
-
-  // Top-level view switch: the IDE control plane vs the full Sessions page.
-  const [view, setView] = useState<"control" | "sessions" | "queue" | "tools" | "prd" | "ssh" | "chat">("control");
+  // Top-level page. Control/Grid are one page ("control") with two screens.
+  const [view, setView] = useState<View>("control");
   // Mount-on-first-visit + keep-alive (L32): a panel is rendered only once its view
   // has been visited, then stays mounted (hidden) so its state survives navigation.
   // "control" is mounted from the start (the terminals must live immediately); the
@@ -490,14 +347,13 @@ export default function App() {
   useEffect(() => {
     setMountedViews((prev) => (prev.has(view) ? prev : new Set(prev).add(view)));
   }, [view]);
+  const showControl = useCallback(() => {
+    setView("control");
+    setScreen("control");
+  }, []);
+
   // Action menu for a path clicked in a terminal's output.
   const [pathMenu, setPathMenu] = useState<{ resolved: string; kind: "file" | "dir"; x: number; y: number } | null>(null);
-  // Right panel tab: branch matrix vs markdown viewer.
-  const [rightTab, setRightTab] = useState<"branch" | "sessions">("branch");
-  // Markdown file currently shown in the right panel viewer.
-  // Resizable sidebar widths — persisted to localStorage.
-  const [leftWidth, setLeftWidth] = useState(() => Number(localStorage.getItem("muya.leftWidth")) || 288);
-  const [rightWidth, setRightWidth] = useState(() => Number(localStorage.getItem("muya.rightWidth")) || 320);
   // Branch picked for inspection — shown as a detail card on the Queue page.
   const [branchInspect, setBranchInspect] = useState<{ repo: string; name: string } | null>(null);
   // App-wide color theme. "system" follows the OS until the user explicitly picks
@@ -506,7 +362,7 @@ export default function App() {
   // legacy "apex.theme" key, and keeps <html data-theme> + the legacy `.dark`
   // class in sync — the resolved theme drives the terminal and the Monaco
   // editor too, so one toggle themes the whole app together.
-  const { preference: themeMode, resolved: effectiveTheme, setPreference: setThemeMode } = useTheme();
+  const { preference: themeMode, resolved: effectiveTheme, setPreference: setThemeMode, cycle: cycleTheme } = useTheme();
 
   // Track fullscreen state in a ref so the ESC handler can check it synchronously.
   const isFullscreenRef = useRef(false);
@@ -558,40 +414,15 @@ export default function App() {
       .setTheme(effectiveTheme === "dark" ? "dark" : "light")
       .catch((e) => console.warn("[apex] window setTheme failed (native title bar/menu bar may stay light):", e));
   }, [effectiveTheme]);
-  // Collapsible side panels.
-  const [leftOpen, setLeftOpen] = useState(true);
-  const [rightOpen, setRightOpen] = useState(true);
-  // Hover-reveal: while the right panel is collapsed, nudging the mouse to
-  // the far right edge shows a floating Sessions flyout so terminals can be
-  // switched without permanently reopening the panel.
-  const [rightPeek, setRightPeek] = useState(false);
 
-  // Drag-to-resize panels. Saves widths to localStorage when drag ends.
-  const startDragPanel = (
-    side: "left" | "right",
-    startX: number,
-    startWidth: number
-  ) => {
-    const onMove = (e: MouseEvent) => {
-      const delta = e.clientX - startX;
-      if (side === "left") {
-        const w = Math.min(480, Math.max(180, startWidth + delta));
-        setLeftWidth(w);
-      } else {
-        const w = Math.min(520, Math.max(220, startWidth - delta));
-        setRightWidth(w);
-      }
-    };
-    const onUp = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-      // Persist after drag ends
-      setLeftWidth((w) => { localStorage.setItem("muya.leftWidth", String(w)); return w; });
-      setRightWidth((w) => { localStorage.setItem("muya.rightWidth", String(w)); return w; });
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  };
+  // The inspector is dropped below 1280px (PROMPT.md §5).
+  const [innerWidth, setInnerWidth] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const onResize = () => setInnerWidth(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
   // Worktrees created via New agent — tracked in the Queue alongside workspaces.
   const [worktrees, setWorktrees] = useState<string[]>(() => loadList("apex.worktrees"));
   // Bumped on a real filesystem change (notify) so views refresh immediately.
@@ -618,7 +449,7 @@ export default function App() {
   }, []);
 
   // ── Sequential 60-min auto-refresh coordinator ────────────────────────────
-  // The 4 secondary pages are always mounted (hidden off-view) so they load
+  // The secondary pages are always mounted (hidden off-view) so they load
   // ONCE and no longer poll on short intervals. Instead each page registers its
   // own refresh fn here, and a single hourly timer runs them ONE AT A TIME
   // (awaited in order) so the backend is never hit by all four at once.
@@ -638,18 +469,6 @@ export default function App() {
     }, 60 * 60 * 1000); // 60 minutes
     return () => clearInterval(t);
   }, []);
-
-
-  const killAgent = async (a: AgentSession) => {
-    try {
-      await invoke("kill_session", {
-        id: a.attachable && a.attachId ? a.attachId : null,
-        pid: a.pid ?? null,
-      });
-    } catch (e) {
-      console.warn("[apex] kill_session failed:", e);
-    }
-  };
 
   // Workspace roots — user-picked project folders shown in the file tree.
   // Persisted to localStorage so they reload on app restart (last-session memory).
@@ -690,11 +509,10 @@ export default function App() {
   // `fs-changed`, so Monaco silently keeps showing the stale content. Rather than
   // remembering to call a tracker at every openEditor()/openFile() call site (the
   // actual bug — some forgot to), derive the extra watch paths straight from the
-  // open tabs: it self-heals for every current and future call site, including
-  // tabs restored from a previous session. Deliberately NOT folded into
-  // `trackedPaths` — that also drives the ssh_scp local-path guardrail and the
-  // sidebar's workspace list, and an incidentally-opened file shouldn't widen
-  // either of those.
+  // open tabs: it self-heals for every current and future call site. Deliberately
+  // NOT folded into `trackedPaths` — that also drives the ssh_scp local-path
+  // guardrail and the workspace list, and an incidentally-opened file shouldn't
+  // widen either of those.
   const openedFilePaths = useMemo(
     () => [
       ...new Set(
@@ -727,6 +545,165 @@ export default function App() {
     localStorage.setItem("apex.workspaces", JSON.stringify(workspaces));
   }, [workspaces]);
 
+  // ── Opening / closing tabs ────────────────────────────────────────────────
+
+  // A clean file is a throw-away view; a file with unsaved edits stays open (hidden)
+  // until the operator closes it, so nothing is ever lost by looking at something else.
+  const dropCleanFiles = useCallback((keepKey: string | null) => {
+    setOpenTerminals((prev) => {
+      const next = prev.filter((t) => !isFileTab(t) || t.key === keepKey || dirtyTabsRef.current[t.key]);
+      return next.length === prev.length ? prev : next;
+    });
+  }, []);
+
+  // Open (or focus) a persistent tab. A terminal becomes the selected agent; a file
+  // replaces the terminal in Control's main area.
+  const openTerminal = (spec: OpenTerminal) => {
+    // Derive the agent from the command whenever the caller didn't state one.
+    // `detectAgent` replaces the old inline regex: it also matches an absolute
+    // path (which is what the backend resolver hands us on machines where the bare
+    // name isn't on PATH) and refuses substrings like "opencoded".
+    const withKind: OpenTerminal =
+      spec.agent === undefined && spec.isClaude === undefined && spec.kind === "terminal"
+        ? (() => {
+            const agent = detectAgent(spec.initialCommand);
+            return { ...spec, agent: agent ?? undefined, isClaude: agent === "claude" };
+          })()
+        : spec;
+    if (withKind.kind === "terminal") {
+      setOpenTerminals((prev) => (prev.some((tm) => tm.key === withKind.key) ? prev : [...prev, withKind]));
+      setActiveTerminalKey(withKind.key);
+      setViewFileKey(null);
+      dropCleanFiles(null);
+    } else {
+      setOpenTerminals((prev) => {
+        const kept = prev.filter((t) => !isFileTab(t) || t.key === withKind.key || dirtyTabsRef.current[t.key]);
+        return kept.some((tm) => tm.key === withKind.key) ? kept : [...kept, withKind];
+      });
+      setViewFileKey(withKind.key);
+      showControl();
+    }
+  };
+
+  /** Select an agent and show it. If the tab was restored from a previous run, resume
+   *  ITS OWN Claude session (with --dangerously-skip-permissions) instead of leaving an
+   *  empty shell. Runs once per tab — the flag clears after the command is sent. */
+  const activateTerminal = (key: string) => {
+    pickTab(key);
+    setViewFileKey(null);
+    dropCleanFiles(null);
+    const tab = openTerminalsRef.current.find((t) => t.key === key);
+    if (!tab?.needsResume || !tab.sessionId) return;
+    const ptyId = terminalPtyIdsRef.current[key];
+    if (!ptyId) return; // shell not ready yet — try again on the next click
+    setOpenTerminals((prev) =>
+      prev.map((t) => (t.key === key ? { ...t, needsResume: false } : t))
+    );
+    void invoke("pty_write", {
+      id: ptyId,
+      data: `claude --resume ${tab.sessionId} --dangerously-skip-permissions\r`,
+    }).catch(() => {});
+  };
+
+  /** Duplicate a terminal tab into a fresh tab, re-running its command so an SSH
+   *  tab reconnects and a Claude tab re-resumes (operator chose "re-run command").
+   *  Opens at the shell's CURRENT cwd (liveCwds) when known. */
+  const duplicateTerminal = (key: string) => {
+    const t = openTerminalsRef.current.find((x) => x.key === key);
+    if (!t) return;
+    const ts = Date.now();
+    // A restored Claude tab has its initialCommand stripped (needsResume); rebuild
+    // the resume command from its session id so "re-run" actually reconnects.
+    let initialCommand = t.initialCommand;
+    // Same rule as the restore gate above: `sessionId` alone decides, not the
+    // volatile `isClaude` (which is false for exactly the tabs that need resuming).
+    if (!initialCommand && t.sessionId)
+      initialCommand = `claude --resume ${t.sessionId} --dangerously-skip-permissions`;
+    const newKey = t.sshServerId ? `ssh:${t.sshServerId}:${ts}` : `term-copy-${ts}`;
+    openTerminal({
+      key: newKey,
+      name: `${t.name} (copy)`,
+      kind: "terminal",
+      cwd: liveCwds[key] ?? t.cwd,
+      initialCommand,
+      sshServerId: t.sshServerId,
+      isClaude: t.isClaude,
+    });
+  };
+
+  /** Reveal a terminal's current working directory in Finder. */
+  const revealTerminalInFinder = (key: string) => {
+    const t = openTerminalsRef.current.find((x) => x.key === key);
+    const cwd = liveCwds[key] ?? t?.cwd;
+    if (cwd) void invoke("reveal_in_finder", { path: cwd }).catch(() => {});
+  };
+
+  // Open a file from the tree in a Monaco editor tab.
+  const openEditor = (filePath: string, opts?: { diff?: boolean }) => {
+    openTerminal({
+      key: `edit:${filePath}`,
+      name: filePath.split("/").pop() || filePath,
+      kind: "editor",
+      filePath,
+      startInDiff: opts?.diff,
+    });
+  };
+
+  /** Default open (single-click / dispatch): markdown opens as a RENDERED read view,
+   *  images/PDFs open in their own viewer (Monaco can't render them — `read_file`
+   *  requires UTF-8 text), everything else opens editable in Monaco. "Open in Muya"
+   *  (right-click) always routes to openEditor, so any of these can still be forced
+   *  open as text on demand (unchanged pre-existing semantic for .md). */
+  const openFile = (filePath: string) => {
+    const kind = viewerKindFor(filePath);
+    if (kind === "editor") {
+      openEditor(filePath);
+      return;
+    }
+    const prefix = kind === "mdview" ? "mdview" : kind === "imgview" ? "img" : "pdf";
+    openTerminal({
+      key: `${prefix}:${filePath}`,
+      name: filePath.split("/").pop() || filePath,
+      kind,
+      filePath,
+    });
+  };
+
+  const closeTerminal = async (key: string) => {
+    const list = openTerminalsRef.current;
+    const tab = list.find((t) => t.key === key);
+    if (dirtyTabsRef.current[key]) {
+      const ok = await confirmDialog(
+        `"${tab?.name ?? key}" has unsaved changes. Close anyway?`,
+        { title: "Unsaved changes", kind: "warning", okLabel: "Close", cancelLabel: "Cancel" }
+      );
+      if (!ok) return;
+    }
+    // If this was an agent-opened ssh_open session, tell the broker it's gone so a
+    // later ssh_send to this id is refused (not written to a recycled/dead PTY).
+    if (key.startsWith("ssh:")) void invoke("ssh_release_session", { sessionId: key }).catch(() => {});
+    // Same idea for open_session tabs (PRD close-session) — release the ownership
+    // entry on ANY close (agent-initiated via close_session, or the operator closing
+    // it by hand), so a stale name never stays falsely "closable".
+    if (key.startsWith("aopen:")) {
+      // Ref, not a state closure — this can run from a mount-once listener
+      // (muya://close-agent-session) whose captured state would be stale.
+      if (tab?.name) void invoke("release_agent_session", { name: tab.name }).catch(() => {});
+    }
+    if (tab && isFileTab(tab)) {
+      setViewFileKey((cur) => (cur === key ? null : cur));
+    } else {
+      // Focus a neighbouring AGENT — never a file (L19: a file close must not land the
+      // next ⌘W on a running Claude session, and a terminal close must not select a file).
+      const next = pickNextActiveKey(list, key);
+      const nextAgent = list.find((t) => t.key === next && t.kind === "terminal") ? next : null;
+      setActiveTerminalKey((cur) => (cur === key ? nextAgent : cur));
+    }
+    setOpenTerminals((prev) => prev.filter((tm) => tm.key !== key));
+    setGridKeys((prev) => prev.filter((k) => k !== key));
+    setDirtyTabs((prev) => { const n = { ...prev }; delete n[key]; return n; });
+  };
+
   // Native File > New File (⌘N): the backend menu emits "menu:new-file". Pick a path
   // via the save dialog, create the (empty) file, and open it in an editor tab.
   // Subscribe ONCE (empty deps) and read the latest workspaces via a ref, so adding a
@@ -756,74 +733,15 @@ export default function App() {
   }, []);
   // Native File > Close Tab (⌘W/Ctrl+W via CmdOrCtrl accelerator): the backend owns
   // this shortcut (so it never closes the window) and emits "menu:close-tab". Closes
-  // the active tab — terminal or editor — same as clicking that tab's own X button
-  // (no confirmation for terminals, matching existing per-tab close behavior; editor
-  // tabs still get the unsaved-changes prompt via closeTerminal's dirtyTabs check).
-  // No-op when none is open (the app then only quits via ⌘Q / the red close button).
-  // Subscribe once, read latest active key via a ref — same pattern as ⌘N above.
-  const activeKeyRef = useRef(activeTerminalKey);
-  const openTerminalsRef = useRef(openTerminals);
-  openTerminalsRef.current = openTerminals;
-  const tabScrollRef = useRef<HTMLDivElement>(null);
-  const tabDragFromRef = useRef<string | null>(null);
-  const [tabDragOver, setTabDragOver] = useState<string | null>(null);
-  const [renamingKey, setRenamingKey] = useState<string | null>(null);
-  // Layout lock: true = locked (rename enabled, drag disabled), false = unlocked (drag enabled, rename disabled)
-  const [layoutLocked, setLayoutLocked] = useState(true);
-  const layoutLockedRef = useRef(true);
-  useEffect(() => { layoutLockedRef.current = layoutLocked; }, [layoutLocked]);
-
-  // Pointer-based tab drag (works in WKWebView unlike HTML5 DnD)
-  const tabDragOverRef = useRef<string | null>(null);
-  const tabDragHappenedRef = useRef(false);
-  useEffect(() => {
-    const onMove = (e: MouseEvent) => {
-      if (!tabDragFromRef.current) return;
-      tabDragHappenedRef.current = true;
-      const el = document.elementFromPoint(e.clientX, e.clientY);
-      const tabEl = el?.closest("[data-tabkey]") as HTMLElement | null;
-      const overKey = tabEl?.dataset.tabkey ?? null;
-      const next = overKey !== tabDragFromRef.current ? overKey : null;
-      if (next !== tabDragOverRef.current) {
-        tabDragOverRef.current = next;
-        setTabDragOver(next);
-      }
-    };
-    const onUp = () => {
-      const from = tabDragFromRef.current;
-      const to = tabDragOverRef.current;
-      tabDragFromRef.current = null;
-      tabDragOverRef.current = null;
-      setTabDragOver(null);
-      if (from && to && from !== to) {
-        setOpenTerminals(prev => {
-          const next = [...prev];
-          const fi = next.findIndex(t => t.key === from);
-          const ti = next.findIndex(t => t.key === to);
-          if (fi !== -1 && ti !== -1) { const [m] = next.splice(fi, 1); next.splice(ti, 0, m); }
-          return next;
-        });
-      }
-      // Reset after click fires (click comes right after mouseup)
-      setTimeout(() => { tabDragHappenedRef.current = false; }, 0);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
-  }, []);
-  const [renameValue, setRenameValue] = useState("");
-  // Grid resize splits (percentage)
-  const [gridColSplit, setGridColSplit] = useState(50);
-  const [gridRowSplit, setGridRowSplit] = useState(50);
-  const gridContainerRef = useRef<HTMLDivElement>(null);
-  const gridDragFromRef = useRef<string | null>(null);
-  const [gridDragOver, setGridDragOver] = useState<string | null>(null);
-  activeKeyRef.current = activeTerminalKey;
+  // what is on screen in Control — the open file if there is one, else the selected
+  // agent (no confirmation for terminals; files still get the unsaved-changes prompt
+  // via closeTerminal's dirty check). No-op when none is open.
+  const viewFileKeyRef = useRef(viewFileKey);
+  viewFileKeyRef.current = viewFileKey;
   useEffect(() => {
     const un = listen("menu:close-tab", () => {
-      const key = activeKeyRef.current;
-      const tab = openTerminalsRef.current.find(t => t.key === key);
-      if (key && tab) void closeTerminal(key);
+      const key = viewFileKeyRef.current ?? activeKeyRef.current;
+      if (key && openTerminalsRef.current.some((t) => t.key === key)) void closeTerminal(key);
     });
     return () => {
       void un.then((f) => f());
@@ -867,6 +785,32 @@ export default function App() {
     return () => { void un.then((f) => f()); };
   }, []);
 
+  // The existing updater flow: download, install, relaunch. Reached from the progress
+  // strip's "Restart" button.
+  const runUpdate = async () => {
+    try {
+      setUpdateProgress("Downloading...");
+      const update = await check();
+      if (update?.available) {
+        await update.downloadAndInstall((e) => {
+          if (e.event === "Started") setUpdateProgress(`Downloading (${((e.data as { contentLength?: number }).contentLength ?? 0) / 1024 / 1024 | 0} MB)...`);
+          else if (e.event === "Finished") setUpdateProgress("Installing...");
+        });
+        setUpdateProgress("Restarting...");
+        await relaunch();
+      }
+    } catch (err) {
+      // Keep the failure on screen (no auto-dismiss) and log it —
+      // a 5s toast hid the only clue about why updates fail.
+      console.error("[muya] update failed:", err);
+      const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      setUpdateProgress(`Update failed — ${detail}`);
+    }
+  };
+
+  // New-agent modal (app-managed: optional git worktree + command in a PTY).
+  const [newAgentOpen, setNewAgentOpen] = useState(false);
+
   // Open a blank terminal. cwd priority: user-selected workspace root → active
   // tab's cwd → first workspace. This is why the request "open in the selected
   // workspace, not Documents" is honored.
@@ -878,7 +822,7 @@ export default function App() {
       undefined;
     const key = `terminal-${Date.now()}`;
     openTerminal({ key, name: cwd ? cwd.split("/").pop() ?? "Terminal" : "Terminal", kind: "terminal", cwd });
-    setView("control");
+    showControl();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openTerminals, workspaces, selectedRoot]);
 
@@ -898,12 +842,11 @@ export default function App() {
   useEffect(() => {
     // Files opened before webview was ready (startup).
     void invoke<string[]>("get_startup_files").then((files) => {
-      files.forEach((p) => { openFile(p); setView("control"); });
+      files.forEach((p) => { openFile(p); });
     });
     // Files opened while app is already running.
     const un = listen<string>("apex://open-file", (e) => {
       openFile(e.payload);
-      setView("control");
     });
     return () => { void un.then((f) => f()); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -922,7 +865,6 @@ export default function App() {
       if (p.type === "leave") { setDropActive(false); return; }
       if (p.type === "drop") {
         setDropActive(false);
-        let openedAny = false;
         for (const path of p.paths) {
           try {
             const kind = await invoke<string>("path_kind", { path });
@@ -930,11 +872,9 @@ export default function App() {
               setWorkspaces((prev) => (prev.includes(path) ? prev : [...prev, path]));
             } else if (kind === "file") {
               openFile(path);
-              openedAny = true;
             }
           } catch { /* ignore unreadable drops */ }
         }
-        if (openedAny) setView("control");
       }
     });
     return () => { void un.then((f) => f()); };
@@ -954,7 +894,9 @@ export default function App() {
       addSshSession(prev, { key, name: label, kind: "terminal", sshServerId: serverId }),
     );
     setActiveTerminalKey(key);
+    setViewFileKey(null);
     setView("control");
+    setScreen("control");
   }, []);
 
   // muya-mcp → app: agent asked to open a server by alias. Rust validated
@@ -997,7 +939,7 @@ export default function App() {
         // registry entry (PRD close-session) when this tab closes, by any means.
         const key = `aopen:${Date.now()}:${Math.random().toString(36).slice(2, 7)}`;
         openTerminal({ key, name, kind: "terminal", cwd: ws, initialCommand, autoAcceptTrust: true });
-        setView("control");
+        showControl();
       },
     );
     return () => { void un.then((f) => f()); };
@@ -1079,14 +1021,8 @@ export default function App() {
     localStorage.setItem("apex.worktrees", JSON.stringify(worktrees));
   }, [worktrees]);
   useEffect(() => {
-    localStorage.setItem("apex.openTabs", JSON.stringify(openTerminals));
+    localStorage.setItem("apex.openTabs", JSON.stringify(openTerminals.filter((t) => t.kind === "terminal")));
   }, [openTerminals]);
-  useEffect(() => {
-    localStorage.setItem("apex.viewMode", viewMode);
-  }, [viewMode]);
-  useEffect(() => {
-    localStorage.setItem("apex.gridKeys", JSON.stringify(gridKeys));
-  }, [gridKeys]);
 
   // Sync terminal tab CWDs → worktrees so the file panel stays up-to-date.
   // Also covers restored tabs from localStorage on startup.
@@ -1135,53 +1071,23 @@ export default function App() {
   // (~180ms), so it only runs on every SESSION_EVERY-th tick.
   const SESSION_EVERY = 5; // 5 × 3s = ~15s
   const sessionTickRef = useRef(0);
-  // Tab keys whose Claude session is waiting-for-input (needs an operator decision).
-  const [waitingKeys, setWaitingKeys] = useState<Set<string>>(new Set());
-  // Tab keys whose Claude session just STOPPED working (working → idle/stopped) —
-  // a job finished. These pulse GREEN (vs orange for "needs a decision") until the
-  // operator opens the tab. Detected by a status transition in the session poll.
-  const [doneKeys, setDoneKeys] = useState<Set<string>>(new Set());
-  // Tab keys whose Claude session is ACTIVELY working right now — their tab icon
-  // pulses so "this agent is running" reads at a glance. Cleared the moment it goes
-  // idle/waiting, so the animation isn't constant (only while actually working).
-  const [workingKeys, setWorkingKeys] = useState<Set<string>>(new Set());
-  // Previous polled session status per tab, to detect the working → done edge.
-  const prevSessionStatusRef = useRef<Record<string, string>>({});
-  // Waiting tabs the operator has already opened this episode — acknowledged, so
-  // they stop blinking even before the ~15s poll notices the answer. Cleared for a
-  // tab once it leaves the waiting set, so the NEXT prompt blinks again.
-  const [ackedWaiting, setAckedWaiting] = useState<Set<string>>(new Set());
-  useEffect(() => {
-    setAckedWaiting((prev) => {
-      const next = nextAcked(prev, activeTerminalKey, waitingKeys);
-      const same = next.size === prev.size && [...next].every((k) => prev.has(k));
-      return same ? prev : next;
-    });
-  }, [activeTerminalKey, waitingKeys]);
-  // A tab blinks only while it needs a decision AND hasn't been opened yet: the
-  // active tab and any acknowledged tab are excluded. Blink persists until the
-  // operator makes that terminal active (i.e. goes to answer it).
-  const blinkKeys = useMemo(
-    () => deriveBlinkKeys(waitingKeys, activeTerminalKey, ackedWaiting),
-    [waitingKeys, activeTerminalKey, ackedWaiting],
-  );
-  // Opening a done (green) tab clears it — you've seen that the job finished.
-  useEffect(() => {
-    if (!activeTerminalKey) return;
-    setDoneKeys((prev) => {
-      if (!prev.has(activeTerminalKey)) return prev;
-      const next = new Set(prev);
-      next.delete(activeTerminalKey);
-      return next;
-    });
-  }, [activeTerminalKey]);
-  // The green set the panel shows never includes the active tab.
-  const doneBlinkKeys = useMemo(() => {
-    if (!activeTerminalKey || !doneKeys.has(activeTerminalKey)) return doneKeys;
-    const next = new Set(doneKeys);
-    next.delete(activeTerminalKey);
-    return next;
-  }, [doneKeys, activeTerminalKey]);
+  const probeSoonRef = useRef(false);
+  const tickNowRef = useRef<() => void>(() => {});
+
+  // ── The agent model: the ONE source the list, header bell, inspector, grid, footer
+  // and palette all read (see src/redesign/useAgentModel.ts).
+  const branchByCwd = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const a of agents) if (a.worktree && a.branch) out[a.worktree] = a.branch;
+    return out;
+  }, [agents]);
+  const model = useAgentModel({ tabs: openTerminals, liveCwds, branchByCwd });
+  const modelRef = useRef(model);
+  modelRef.current = model;
+  const agentVMs = model.agents;
+  const agentVMsRef = useRef(agentVMs);
+  agentVMsRef.current = agentVMs;
+
   useEffect(() => {
     let cancelled = false;
     const tick = async () => {
@@ -1208,49 +1114,24 @@ export default function App() {
         });
 
         // The session probe shells out to the Claude CLI (~180ms), so it must NOT
-        // ride the fast cwd tick — run it every SESSION_EVERY ticks instead.
+        // ride the fast cwd tick — run it every SESSION_EVERY ticks instead (or once
+        // right after new terminals came up, so their status isn't blank for ~15s).
+        if (probeSoonRef.current) {
+          probeSoonRef.current = false;
+          sessionTickRef.current = SESSION_EVERY - 1;
+        }
         sessionTickRef.current = (sessionTickRef.current + 1) % SESSION_EVERY;
         if (sessionTickRef.current !== 0) return;
         const byPtySession = await invoke<Record<string, { id: string; name: string; status: string }>>(
           "pty_session_ids", { ids: entries.map(([, ptyId]) => ptyId) });
         if (cancelled) return;
-        // Tabs whose Claude session is paused waiting for the operator — the
-        // TERMINALS panel blinks these so a decision isn't missed.
-        const waiting = new Set<string>();
-        const working = new Set<string>();
+        // Feed the agent model: working / waiting-for-input / idle per tab.
+        const statusByKey: Record<string, SessionStatus | undefined> = {};
         for (const [key, ptyId] of entries) {
           const st = byPtySession[ptyId]?.status;
-          if (st === "waiting-for-input") waiting.add(key);
-          else if (st === "working") working.add(key);
+          if (st) statusByKey[key] = st as SessionStatus;
         }
-        setWaitingKeys((prev) => {
-          const same = prev.size === waiting.size && [...waiting].every((k) => prev.has(k));
-          return same ? prev : waiting;
-        });
-        setWorkingKeys((prev) => {
-          const same = prev.size === working.size && [...working].every((k) => prev.has(k));
-          return same ? prev : working;
-        });
-        // Green "job finished" edge: a tab that WAS "working" and is now "idle" or
-        // "stopped" just completed → mark it done (pulses green). Starting work
-        // again clears it. The active tab is never marked (you're watching it).
-        setDoneKeys((prev) => {
-          const next = new Set(prev);
-          for (const [key, ptyId] of entries) {
-            const cur = byPtySession[ptyId]?.status;
-            const was = prevSessionStatusRef.current[key];
-            if (cur === "working") next.delete(key);
-            else if ((cur === "idle" || cur === "stopped") && was === "working" && key !== activeKeyRef.current) {
-              next.add(key);
-            }
-          }
-          const same = prev.size === next.size && [...next].every((k) => prev.has(k));
-          return same ? prev : next;
-        });
-        for (const [key, ptyId] of entries) {
-          const cur = byPtySession[ptyId]?.status;
-          if (cur) prevSessionStatusRef.current[key] = cur;
-        }
+        modelRef.current.reportSessionStatus(statusByKey);
         const sessionByKey: Record<string, { id: string; name: string; status: string }> = {};
         for (const [key, ptyId] of entries) {
           const info = byPtySession[ptyId];
@@ -1296,10 +1177,23 @@ export default function App() {
         /* probe unavailable — list falls back to the spawn cwd, resume stays as-is */
       }
     };
+    tickNowRef.current = () => void tick();
     void tick();
     const t = setInterval(() => { if (!document.hidden) void tick(); }, 3000);
     return () => { cancelled = true; clearInterval(t); };
   }, []);
+
+  // New terminals came up: probe their session status shortly after, instead of waiting
+  // for the next ~15s session tick (the agent list would show them idle until then).
+  const ptyCount = Object.keys(terminalPtyIds).length;
+  useEffect(() => {
+    if (ptyCount === 0) return;
+    const t = setTimeout(() => {
+      probeSoonRef.current = true;
+      tickNowRef.current();
+    }, 300);
+    return () => clearTimeout(t);
+  }, [ptyCount]);
 
   // Timer: check every 2s for due scheduled prompts.
   // Side-effects (pty_write) run BEFORE state update — never inside a state updater.
@@ -1328,9 +1222,6 @@ export default function App() {
     return () => clearInterval(tick);
   }, []); // stable — reads only via refs
 
-  // New-agent modal (app-managed: optional git worktree + command in a PTY).
-  const [newAgentOpen, setNewAgentOpen] = useState(false);
-
   const launchAgent = async (spec: NewAgentSpec) => {
     const ws = spec.workspace || selectedRoot || workspaces[0];
     if (!ws) throw new Error("Pick a workspace first (+ Workspace).");
@@ -1352,7 +1243,7 @@ export default function App() {
       cwd,
       initialCommand,
     });
-    setView("control");
+    showControl();
   };
 
   // LIVE: branch topology for ALL workspace repos.
@@ -1396,7 +1287,7 @@ export default function App() {
     };
   }, [repoList.join(",")]);
 
-  // branchList for the currently viewed repo (backwards compat with BranchDAG + cards).
+  // branchList for the currently viewed repo.
   const branchList = branchMap[branchRepo] ?? [];
 
   // LIVE: real, hook-free file collisions — same repo-relative file edited in 2+
@@ -1445,195 +1336,11 @@ export default function App() {
     }
   };
 
-  // Open Branches / WIP / PRD listing
-  // branchList is now derived from branchMap[branchRepo] above (multi-repo support).
-
-  // File explorer definitions
-  const files: FileItem[] = [
-    {
-      name: "src/api/stripe.ts",
-      path: "src/api/stripe.ts",
-      isDirectory: false,
-      isModified: true,
-      hasConflict: true,
-      lockedByAgentId: "agent-stripe", // Locked by Stripe Agent!
-      content: `// Stripe Integration Controller - CONCURRENT FILE ACCESS ALERT!
-import Stripe from 'stripe';
-
-export async function processCharge(amount: number) {
-  if (amount <= 0) throw new Error('Invalid price');
-  return { success: true };
-}`
-    },
-    {
-      name: "src/api/auth.ts",
-      path: "src/api/auth.ts",
-      isDirectory: false,
-      isModified: true,
-      hasConflict: false,
-      lockedByAgentId: "agent-jwt", // Locked by JWT rollover Agent!
-      content: `// Auth Gateway Middleware
-import jwt from 'jsonwebtoken';
-export const loginHandler = async (req, res) => {
-  // Locked by apex-auth-jwt session
-};`
-    },
-    {
-      name: "src/main.tsx",
-      path: "src/main.tsx",
-      isDirectory: false,
-      isModified: false,
-      lockedByAgentId: "agent-eslint",
-      content: `import React from 'react';\nimport ReactDOM from 'react-dom/client';\nimport App from './App';`
-    },
-    {
-      name: "src/types.ts",
-      path: "src/types.ts",
-      isDirectory: false,
-      isModified: false,
-      content: `export interface User { id: string; name: string; email: string; }`
-    },
-    {
-      name: "vite.config.ts",
-      path: "vite.config.ts",
-      isDirectory: false,
-      isModified: false,
-      content: `export default defineConfig({ server: { port: 3000 } });`
-    },
-    {
-      name: "package.json",
-      path: "package.json",
-      isDirectory: false,
-      isModified: false,
-      content: `{\n  "dependencies": {\n    "stripe": "^14.0.0"\n  }\n}`
-    }
-  ];
-
-  // Shell Console state
-  const [terminalInput, setTerminalInput] = useState("");
-  const [terminalHistory, setTerminalHistory] = useState<string[]>([
-    "=== Claude Code Daemon Multiplexer Console v2.1.1 ===",
-    "[Supervisor] Scanning ~/.claude/projects/ list of running daemons...",
-    "[Supervisor] Loaded worktree database. Connected on port 3000.",
-    "[Warp-Bridge] Warp detected: Tab auto-configs synced. 4 active worktree routes available.",
-    "Type 'help' list commands or click command templates below to dispatch.",
-    ""
-  ]);
-
-  // Handle local simulation commands
-  const handleTerminalSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!terminalInput.trim()) return;
-
-    const command = terminalInput.trim();
-    let responseLines: string[] = [`$ ${command}`];
-
-    if (command === "claude agents" || command === "claude agents --json") {
-      responseLines = [
-        ...responseLines,
-        `ID              SESSION-NAME        BRANCH                       STATE            LOCK-FILE`,
-        `-------------------------------------------------------------------------------------------------------`,
-        `agent-jwt       apex-auth-jwt       feature/auth-jwt             Blocked (黃)     src/api/auth.ts`,
-        `agent-stripe    apex-stripe-hooks   feature/stripe-webhooks      Working (綠)     src/api/stripe.ts`,
-        `agent-checkout  apex-checkout-v2    feature/checkout-flow        Working (綠)     src/api/stripe.ts <CONFLICT>`,
-        `agent-eslint    apex-eslint-fix     fix/eslint-warnings          Idle (藍)        src/main.tsx`,
-        ``,
-        `💡 Running background supervisor monitor via standard "~/.claude/jobs/state.json" file stream.`
-      ];
-    } else if (command === "help") {
-      responseLines = [
-        ...responseLines,
-        "Simulated Control Commands:",
-        "  claude agents      Fetch running backgrounds unclosed server-side container states",
-        "  git worktree list  Show current isolated workspaces directory structures mapped",
-        "  clear              Clear terminal logs text panels",
-        "  resolve            Clear worktree lock/overlap file collision simulation flags"
-      ];
-    } else if (command === "git worktree list") {
-      responseLines = [
-        ...responseLines,
-        "Git Worktree Isolation Folders:",
-        "  ~/apex-parent-dir (main repo path)         -> main [PRD synced]",
-        "  ~/apex-wt/auth-jwt                         -> feature/auth-jwt [WIP divergent]",
-        "  ~/apex-wt/stripe-webhooks                  -> feature/stripe-webhooks [WIP ahead]",
-        "  ~/apex-wt/checkout-flow                    -> feature/checkout-flow [WIP ahead]",
-        "  ~/apex-wt/eslint-warnings                  -> fix/eslint-warnings [WIP synced]"
-      ];
-    } else if (command === "resolve") {
-      // Clear conflicts
-      responseLines = [
-        ...responseLines,
-        "[Supervisor] Recalculating workspace collisions locks...",
-        "[Status] Collision on src/api/stripe.ts resolved automatically!"
-      ];
-    } else if (command === "clear") {
-      setTerminalHistory([]);
-      setTerminalInput("");
-      return;
-    } else {
-      responseLines = [
-        ...responseLines,
-        `Executing generic PTY command: "${command}"...`,
-        "Success."
-      ];
-    }
-
-    setTerminalHistory((prev) => [...prev, ...responseLines, ""]);
-    setTerminalInput("");
-  };
-
-  const handleCreateBranchAndAgent = () => {
-    // Spawn custom demo branch
-    const demoBranchName = `feature/redis-${Math.floor(Math.random() * 900) + 100}`;
-    const agentId = `agent-redis-${Date.now().toString().slice(-4)}`;
-    
-    // Add to WIP list
-    const newWip: GitBranchState = {
-      name: demoBranchName,
-      type: "WIP",
-      lastCommit: "Supervisor initial workspace checkout setup",
-      author: "System Auto-Dispatch",
-      associatedAgent: agentId,
-      status: "synced"
-    };
-    
-    // Add to Active Agents
-    const newAgent: AgentSession = {
-      id: agentId,
-      name: `apex-${demoBranchName.split("/")[1]}`,
-      branch: demoBranchName,
-      worktree: `~/apex-wt/${demoBranchName.split("/")[1]}`,
-      status: "working",
-      activeTask: "Configure high speed key invalidation strategies",
-      activeFile: "src/main.tsx",
-      tokensUsed: 0,
-      modelsUsed: "Claude 3.7 Sonnet",
-      quotaBurn: 0.0,
-      duration: "00m 01s",
-      createdAt: new Date().toTimeString().split(" ")[0]
-    };
-
-    setBranchMap((prev) => ({ ...prev, [branchRepo]: [newWip, ...(prev[branchRepo] ?? [])] }));
-    setAgents((prev) => [newAgent, ...prev]);
-    setSelectedAgentId(agentId);
-
-    setTerminalHistory((prev) => [
-      ...prev,
-      `$ git worktree add ${newAgent.worktree} -b ${newAgent.branch}`,
-      `[Supervisor] Spawned fresh Claude Code session inside isolating worktree.`,
-      `[Daemon] Session ID: ${agentId} registered. Tracking ~/.claude/tasks board list.`,
-      ""
-    ]);
-  };
-
-  // Clock Update
+  // Clock + live resource usage of the app's own process (not the machine).
   useEffect(() => {
-    const timer = setInterval(() => {
-      const now = new Date();
-      setLocalTime(now.toTimeString().split(" ")[0] + " UTC");
-    }, 1000);
-
-    // Live resource usage of the app's own process (not the machine).
+    const tickClock = () => setClock(new Date().toTimeString().slice(0, 5));
+    tickClock();
+    const timer = setInterval(tickClock, 10_000);
     const pollMetrics = () => {
       if (document.hidden) return;
       invoke<{ cpu: number; memMb: number }>("app_metrics")
@@ -1645,7 +1352,6 @@ export const loginHandler = async (req, res) => {
     };
     pollMetrics();
     const cpuTimer = setInterval(pollMetrics, 2500);
-
     return () => {
       clearInterval(timer);
       clearInterval(cpuTimer);
@@ -1694,1191 +1400,730 @@ export const loginHandler = async (req, res) => {
     };
   }, []);
 
-  // Find info about active agent working on selected file
-  const activeFileObject = files.find((f) => f.path === selectedFile);
-  const lockAgent = activeFileObject?.lockedByAgentId 
-    ? agents.find((a) => a.id === activeFileObject.lockedByAgentId)
-    : null;
+  // ── Talking to the terminals (everything goes through pty_write) ──────────
 
-  const renderSyncStatusBadge = (status: "synced" | "ahead" | "diverged" | "conflict" | string) => {
-    switch (status) {
-      case "synced":
-        return (
-          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-mono font-bold bg-emerald-50 dark:bg-green-900/30 text-emerald-700 dark:text-green-400 border border-emerald-250 dark:border-green-700 shrink-0">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-            <span>SYNCED</span>
-          </span>
-        );
-      case "ahead":
-        return (
-          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-mono font-bold bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-600 shrink-0">
-            <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0" />
-            <span>AHEAD</span>
-          </span>
-        );
-      case "diverged":
-        return (
-          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-mono font-bold bg-amber-50 dark:bg-amber-900/25 text-amber-700 dark:text-amber-400 border border-amber-250 dark:border-amber-600 shrink-0 animate-pulse">
-            <AlertTriangle className="h-2.5 w-2.5 text-amber-500 dark:text-amber-400 shrink-0" />
-            <span>DIVERGED</span>
-          </span>
-        );
-      case "conflict":
-        return (
-          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-mono font-bold bg-rose-50 dark:bg-red-900/30 text-rose-750 dark:text-red-400 border border-rose-250 dark:border-red-700 shrink-0 animate-bounce">
-            <AlertTriangle className="h-2.5 w-2.5 text-rose-500 dark:text-red-400 shrink-0" />
-            <span>CONFLICT</span>
-          </span>
-        );
-      default:
-        return (
-          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-mono font-bold bg-neutral-55 dark:bg-neutral-900 bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 border border-neutral-250 dark:border-neutral-700 shrink-0">
-            <span className="w-1.5 h-1.5 rounded-full bg-neutral-300 dark:bg-neutral-600 shrink-0" />
-            <span>{status.toUpperCase()}</span>
-          </span>
-        );
+  const writePty = useCallback((key: string, data: string): boolean => {
+    const id = terminalPtyIdsRef.current[key];
+    if (!id) return false;
+    void invoke("pty_write", { id, data }).catch(() => {});
+    return true;
+  }, []);
+
+  /** Type a line and submit it. Text and Enter go as SEPARATE writes: one chunk
+   *  "text\r" reads as a paste to Claude's TUI, where \r is a newline, not submit
+   *  (same fix the scheduled-prompt timer above carries). */
+  const sendLine = useCallback((key: string, text: string) => {
+    if (!writePty(key, text)) return;
+    setTimeout(() => writePty(key, "\r"), 150);
+  }, [writePty]);
+
+  /** Answer a parsed permission dialog with the key IT advertises for that kind —
+   *  never a hard-coded number. */
+  const respond = useCallback((key: string, kind: "approve" | "approveAlways" | "deny") => {
+    const option = modelRef.current.screenOf(key)?.permission?.options.find((o) => o.kind === kind);
+    if (!option) return;
+    if (writePty(key, option.key)) modelRef.current.markAnswered(key);
+  }, [writePty]);
+
+  const modeOf = (key: string): PermissionMode | undefined => agentVMsRef.current.find((a) => a.key === key)?.mode;
+
+  /** Shift+Tab until Claude reports `target` (max 4 tries; stop as soon as a press
+   *  changes nothing — the mode is not reachable, e.g. bypass without its flag). */
+  const setModeTo = async (key: string, target: PermissionMode) => {
+    for (let i = 0; i < 4; i++) {
+      const before = modeOf(key);
+      if (before === target) return;
+      if (!writePty(key, "\x1b[Z")) return;
+      await sleep(700); // 300ms screen-parse throttle + Claude's repaint
+      if (modeOf(key) === before) return;
     }
   };
 
-  return (
-    <div id="vs-ctrl-plane" className="min-h-screen bg-neutral-50 dark:bg-[#25272b] text-neutral-800 dark:text-neutral-200 flex flex-col font-sans select-none overflow-hidden h-screen text-xs">
+  // Composer drafts, per agent (shared by Control's box and each grid panel's box).
+  const [composerValues, setComposerValues] = useState<Record<string, string>>({});
+  const setDraft = (key: string, value: string) => setComposerValues((prev) => ({ ...prev, [key]: value }));
+  const sendMessage = (key: string, text: string) => {
+    sendLine(key, text);
+    setDraft(key, "");
+  };
 
+  const attachFile = async (key: string) => {
+    const sel = await openDialog({ multiple: false, directory: false, title: "Add file" });
+    if (typeof sel !== "string") return;
+    setComposerValues((prev) => {
+      const cur = prev[key] ?? "";
+      return { ...prev, [key]: `${cur}${cur && !cur.endsWith(" ") ? " " : ""}@${sel} ` };
+    });
+    document.getElementById("rd-composer")?.focus();
+  };
+
+  // ── Inspector data ────────────────────────────────────────────────────────
+  const selectedTab = openTerminals.find((t) => t.key === activeTerminalKey && t.kind === "terminal");
+  const selectedCwd = selectedTab ? liveCwds[selectedTab.key] ?? selectedTab.cwd : undefined;
+  const [changes, setChanges] = useState<ChangeVM[]>([]);
+  const gitRunRef = useRef<{ cwd?: string; at: number }>({ at: 0 });
+  // git_status of the selected agent's repo. Refreshes on the existing fs-changed tick
+  // (fsTick), throttled to one run per 5s per repo so an fs storm can't become a git storm (L31).
+  useEffect(() => {
+    if (!selectedCwd || view !== "control" || screen !== "control") return;
+    const sameRepo = gitRunRef.current.cwd === selectedCwd;
+    const wait = sameRepo ? Math.max(0, 5000 - (Date.now() - gitRunRef.current.at)) : 0;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      gitRunRef.current = { cwd: selectedCwd, at: Date.now() };
+      invoke<[string, string][]>("git_status", { root: selectedCwd })
+        .then((pairs) => { if (!cancelled) setChanges(pairs.map(([path, code]) => ({ code, path }))); })
+        .catch(() => { if (!cancelled) setChanges([]); });
+    }, wait);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [selectedCwd, fsTick, view, screen]);
+
+  const absoluteInRepo = (rel: string) => `${(selectedCwd ?? "").replace(/\/+$/, "")}/${rel}`;
+  const openChange = (rel: string) => {
+    if (!selectedCwd || rel.endsWith("/")) return;
+    openFile(absoluteInRepo(rel));
+  };
+  const reviewDiff = () => {
+    const first = changes.find((c) => !c.path.endsWith("/"));
+    if (!first || !selectedCwd) return;
+    const abs = absoluteInRepo(first.path);
+    const existing = openTerminalsRef.current.find((t) => t.key === `edit:${abs}`);
+    if (existing) setViewFileKey(existing.key);
+    else openEditor(abs, { diff: true });
+    showControl();
+  };
+  // Commit…: put `git commit` in the terminal, unsent, and focus it.
+  const startCommit = () => {
+    if (!activeTerminalKey) return;
+    if (writePty(activeTerminalKey, "git commit ")) {
+      setViewFileKey(null);
+      setTabPickCount((n) => n + 1);
+    }
+  };
+
+  const inspectorVM: InspectorVM = {
+    changes,
+    worktreesWatched: trackedPaths.length,
+    collisions: collisionReport.collisions,
+  };
+
+  // ── Screens / navigation state ────────────────────────────────────────────
+  const [agentFilter, setAgentFilter] = useState<AgentFilter>("all");
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>("changes");
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [broadcastOpen, setBroadcastOpen] = useState(false);
+  const [broadcastText, setBroadcastText] = useState("");
+  const [menu, setMenu] = useState<null | { kind: "actions" | "workspaces" | "mode"; anchor: Anchor }>(null);
+  const [renameKey, setRenameKey] = useState<string | null>(null);
+  const [swapKey, setSwapKey] = useState<string | null>(null);
+
+  const selectedAgentKey = selectedTab ? selectedTab.key : null;
+  const selectedVM = agentVMs.find((a) => a.key === selectedAgentKey) ?? null;
+  const viewedFile = viewFileKey ? openTerminals.find((t) => t.key === viewFileKey && isFileTab(t)) : undefined;
+  const fileVM: FileVM | null = viewedFile ? { name: viewedFile.name, path: abbreviateHome(viewedFile.filePath ?? "") } : null;
+
+  const gridPanels = useMemo(
+    () => pickGridPanels(agentVMs, gridKeys, GRID_CAPACITY[gridLayout]),
+    [agentVMs, gridKeys, gridLayout],
+  );
+  const focusedPanelKey = gridPanels.some((p) => p.key === gridFocusedKey) ? gridFocusedKey : gridPanels[0]?.key ?? null;
+
+  const railActive: RailItem | null =
+    view === "control" ? "control" : view === "queue" ? "queue" : view === "prd" ? "kanban" : view === "tools" ? "resources" : view === "ssh" ? "ssh" : view === "chat" ? "chat" : null;
+
+  const navigateRail = (item: RailItem) => {
+    if (item === "settings") return setSettingsOpen(true);
+    if (item === "control") return showControl();
+    setView(item === "kanban" ? "prd" : item === "resources" ? "tools" : item);
+  };
+
+  const selectAgent = (key: string) => {
+    showControl();
+    activateTerminal(key);
+  };
+
+  const jumpToWaiting = () => {
+    const first = agentVMs.find((a) => a.status === "waiting");
+    if (first) selectAgent(first.key);
+  };
+
+  const reorderAgents = (fromKey: string, toKey: string) => {
+    setOpenTerminals((prev) => {
+      const next = [...prev];
+      const fi = next.findIndex((t) => t.key === fromKey);
+      if (fi === -1) return prev;
+      const [item] = next.splice(fi, 1);
+      const ti = next.findIndex((t) => t.key === toKey); // re-find after splice
+      if (ti === -1) return prev;
+      next.splice(ti, 0, item);
+      return next;
+    });
+  };
+
+  const splitToGrid = () => {
+    if (selectedAgentKey) setGridKeys((prev) => [selectedAgentKey, ...prev.filter((k) => k !== selectedAgentKey)]);
+    if (selectedAgentKey) setGridFocusedKey(selectedAgentKey);
+    setScreen("grid");
+  };
+
+  const maximizePanel = (key: string) => {
+    if (gridLayout === "1" && layoutBeforeMaximizeRef.current) {
+      setGridLayout(layoutBeforeMaximizeRef.current);
+      layoutBeforeMaximizeRef.current = null;
+      return;
+    }
+    layoutBeforeMaximizeRef.current = gridLayout;
+    setGridKeys(() => [key, ...gridPanels.map((p) => p.key).filter((k) => k !== key)]);
+    setGridFocusedKey(key);
+    setGridLayout("1");
+  };
+
+  const waitingFirst = () => {
+    const waiting = agentVMs.filter((a) => a.status === "waiting").map((a) => a.key);
+    const rest = gridPanels.map((p) => p.key).filter((k) => !waiting.includes(k));
+    setGridKeys([...waiting, ...rest]);
+  };
+
+  const broadcast = () => {
+    const text = broadcastText.trim();
+    if (text) for (const p of gridPanels) sendLine(p.key, text);
+    setBroadcastOpen(false);
+    setBroadcastText("");
+  };
+
+  const swapPanel = (targetKey: string, newKey: string) => {
+    const keys = gridPanels.map((p) => p.key);
+    const i = keys.indexOf(targetKey);
+    if (i === -1) return;
+    keys[i] = newKey;
+    setGridKeys(keys);
+    setSwapKey(null);
+  };
+
+  const runCommand = (id: string) => {
+    setPaletteOpen(false);
+    switch (id) {
+      case "new-agent": return setNewAgentOpen(true);
+      case "new-terminal": return openBlankTerminal();
+      case "control": return showControl();
+      case "grid": setView("control"); return setScreen("grid");
+      case "sessions": return setView("sessions");
+      case "branches": return setView("branches");
+      case "queue": return setView("queue");
+      case "kanban": return setView("prd");
+      case "resources": return setView("tools");
+      case "ssh": return setView("ssh");
+      case "chat": return setView("chat");
+      case "settings": return setSettingsOpen(true);
+      case "theme": return cycleTheme();
+      case "schedule": return setScheduleOpen(true);
+      case "add-workspace": return void addWorkspace();
+    }
+  };
+
+  // Palette "Files": the files already open, then the selected agent's changed files.
+  const paletteFileMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const t of openTerminals) if (isFileTab(t) && t.filePath) map.set(abbreviateHome(t.filePath), t.filePath);
+    if (selectedCwd) {
+      for (const c of changes) {
+        if (c.path.endsWith("/")) continue;
+        map.set(c.path, `${selectedCwd.replace(/\/+$/, "")}/${c.path}`);
+      }
+    }
+    return map;
+  }, [openTerminals, changes, selectedCwd]);
+  const paletteFiles = useMemo(() => [...paletteFileMap.keys()].map((path) => ({ path })), [paletteFileMap]);
+
+  // ⌘K / ⌘1–9 / grid shortcuts. Capture phase: xterm owns ⌘K (kill-to-EOL) and swallows
+  // keys typed into a focused terminal, so a bubbling listener would never see them.
+  const shortcutRef = useRef({ screen, view, selectAgent, respond, maximize: maximizePanel, focused: focusedPanelKey });
+  shortcutRef.current = { screen, view, selectAgent, respond, maximize: maximizePanel, focused: focusedPanelKey };
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const s = shortcutRef.current;
+      if (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        if (e.key.toLowerCase() === "k") {
+          e.preventDefault();
+          e.stopPropagation();
+          setPaletteOpen((o) => !o);
+          return;
+        }
+        const n = Number(e.key);
+        if (Number.isInteger(n) && n >= 1 && n <= 9) {
+          const target = agentVMsRef.current[n - 1];
+          if (target) {
+            e.preventDefault();
+            e.stopPropagation();
+            s.selectAgent(target.key);
+          }
+          return;
+        }
+        if (e.key === "Enter" && s.view === "control" && s.screen === "grid" && s.focused) {
+          e.preventDefault();
+          e.stopPropagation();
+          s.maximize(s.focused);
+          return;
+        }
+      }
+      // Y / N inside a focused grid terminal answer a waiting panel's prompt instead of
+      // being typed into the PTY (GridPanel handles the same keys when the panel itself
+      // has focus).
+      if (s.view === "control" && s.screen === "grid" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        const slotKey = (e.target as HTMLElement | null)?.closest?.("[data-terminal-slot]")?.getAttribute("data-terminal-slot");
+        const lower = e.key.toLowerCase();
+        if (slotKey && (lower === "y" || lower === "n")) {
+          const agent = agentVMsRef.current.find((a) => a.key === slotKey);
+          if (agent?.status === "waiting" && agent.approval?.actionable !== false) {
+            e.preventDefault();
+            e.stopPropagation();
+            s.respond(slotKey, lower === "y" ? "approve" : "deny");
+          }
+        }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, []);
+
+  // Tab moves DOM focus to the focused grid panel: entering the grid (or Tab-cycling)
+  // must not leave the keyboard inside whichever xterm happened to mount last.
+  useEffect(() => {
+    if (view !== "control" || screen !== "grid" || !focusedPanelKey) return;
+    const name = agentVMsRef.current.find((a) => a.key === focusedPanelKey)?.name;
+    if (!name) return;
+    const t = setTimeout(() => {
+      const section = document.querySelector<HTMLElement>(`section[aria-label="${CSS.escape(name)}"]`);
+      if (section && !section.contains(document.activeElement)) section.focus();
+    }, 80);
+    return () => clearTimeout(t);
+  }, [view, screen, focusedPanelKey]);
+
+  // ── Terminal pool ─────────────────────────────────────────────────────────
+  // Every terminal and file viewer renders ONCE into its own host element (a portal);
+  // screens render empty [data-terminal-slot=<tabKey>] boxes and adoptHosts() moves
+  // each host into its slot (or back to the hidden pool). No second xterm, no second PTY.
+  const poolRef = useRef<HTMLDivElement>(null);
+  const hostsRef = useRef<Map<string, HTMLDivElement>>(new Map());
+  const hostFor = (key: string): HTMLDivElement => {
+    let host = hostsRef.current.get(key);
+    if (!host) {
+      host = createHost(key);
+      hostsRef.current.set(key, host);
+    }
+    return host;
+  };
+  useLayoutEffect(() => {
+    if (poolRef.current) adoptHosts(hostsRef.current, poolRef.current);
+  });
+  useEffect(() => {
+    const open = new Set(openTerminals.map((t) => t.key));
+    for (const [key, host] of hostsRef.current) {
+      if (!open.has(key)) {
+        host.remove();
+        hostsRef.current.delete(key);
+      }
+    }
+  }, [openTerminals]);
+
+  const controlVisible = view === "control" && screen === "control";
+  const gridVisibleKeys = new Set(view === "control" && screen === "grid" ? gridPanels.filter((p) => p.status !== "idle").map((p) => p.key) : []);
+
+  // ── Render ────────────────────────────────────────────────────────────────
+  const headerVM = {
+    workspaceName: (selectedRoot ?? workspaces[0] ?? "").split("/").filter(Boolean).pop() ?? "No workspace",
+    workspaceCount: workspaces.length,
+    cpu: `${cpuUsage}%`,
+    ram: ramUsage < 1024 ? `${Math.round(ramUsage)} MB` : `${(ramUsage / 1024).toFixed(1)} GB`,
+    clock,
+    hasNotifications: model.counts.waiting > 0,
+  };
+  const footerVM = {
+    workspaceCount: workspaces.length,
+    agents: model.counts.agents,
+    working: model.counts.working,
+    waiting: model.counts.waiting,
+    collisions: collisionReport.collisions.length,
+    version: appVersion || "…",
+    variant: "control" as const,
+  };
+  const updateReady = Boolean(updateAvailable && updateAvailable.version);
+
+  const openWorkspaceMenu = (e: React.MouseEvent<HTMLElement>) =>
+    setMenu({ kind: "workspaces", anchor: anchorFromRect(e.currentTarget.getBoundingClientRect(), "left") });
+  const openActionsMenu = (e: React.MouseEvent<HTMLElement>) =>
+    setMenu({ kind: "actions", anchor: anchorFromRect(e.currentTarget.getBoundingClientRect(), "right") });
+  const openModeMenu = (e: React.MouseEvent<HTMLElement>) =>
+    setMenu({ kind: "mode", anchor: anchorFromRect(e.currentTarget.getBoundingClientRect(), "left", "above") });
+
+  const headerProps = {
+    header: headerVM,
+    themePreference: themeMode,
+    onThemeCycle: cycleTheme,
+    onNotificationsClick: jumpToWaiting,
+    onWorkspaceClick: openWorkspaceMenu,
+    onOpenPalette: () => setPaletteOpen(true),
+  };
+
+  const filesSlot = (
+    <FileTree
+      roots={trackedPaths}
+      removableRoots={new Set(trackedPaths)}
+      onOpenFile={openFile}
+      onOpenFileEditable={openEditor}
+      onRemoveRoot={(path) => {
+        setWorkspaces((prev) => prev.filter((w) => w !== path));
+        setWorktrees((prev) => prev.filter((w) => w !== path));
+      }}
+      onOpenTerminalHere={(cwd) => {
+        openTerminal({ key: `term-${Date.now()}`, name: cwd.split("/").pop() ?? "Terminal", kind: "terminal", cwd });
+        showControl();
+      }}
+      onOpenClaudeHere={(cwd) => {
+        // Open a terminal in the folder and launch Claude straight away.
+        // isClaude is derived from the command by openTerminal.
+        openTerminal({
+          key: `claude-${Date.now()}`,
+          name: cwd.split("/").pop() ?? "Claude",
+          kind: "terminal",
+          cwd,
+          initialCommand: "claude --dangerously-skip-permissions",
+        });
+        showControl();
+      }}
+      onAddAtRef={() => {
+        // clipboard already written inside FileTree
+      }}
+      agents={agents}
+      activeCwd={selectedTab?.cwd}
+      selectedRoot={selectedRoot}
+      onSelectRoot={(r) => setSelectedRoot((prev) => (prev === r ? undefined : r))}
+      refreshSignal={fsTick}
+    />
+  );
+
+  const pageClass = (v: View) => `flex-1 flex overflow-hidden ${view !== v ? "hidden" : ""}`;
+
+  return (
+    <div id="vs-ctrl-plane" style={{ width: "100vw", height: "100vh", overflow: "hidden", background: "var(--bg-app)", color: "var(--text)" }}>
       {/* macOS file-access gate: blocks on App Translocation, otherwise offers a
           one-time, explained permission request. Renders nothing once granted. */}
       <FileAccessGate />
 
       {/* OS drag-drop hint: shown while a file/folder is dragged over the window. */}
       {dropActive && (
-        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-indigo-500/10 backdrop-blur-[1px] pointer-events-none">
-          <div className="px-6 py-4 rounded-xl border-2 border-dashed border-indigo-400 dark:border-indigo-300 bg-white/90 dark:bg-neutral-900/90 text-indigo-700 dark:text-indigo-300 font-mono text-sm shadow-xl">
+        <div className="rd-root" style={{ position: "fixed", inset: 0, zIndex: 10000, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg-selected)", pointerEvents: "none" }}>
+          <div style={{ padding: "16px 24px", borderRadius: 12, border: "2px dashed var(--accent)", background: "var(--bg-panel)", color: "var(--text-strong)", fontFamily: "var(--font-mono)", fontSize: 14 }}>
             Drop to open — file → editor · folder → workspace
           </div>
         </div>
       )}
 
-      {/* ================= TOP CUSTOM VS CODE STATUS BRANDING BAR ================= */}
-      <header className="h-10 border-b border-neutral-200 dark:border-[#3d3f44] bg-white dark:bg-[#1e1f23] px-3 flex items-center justify-between shrink-0 select-none shadow-sm">
-        <div className="flex items-center space-x-3">
-          <button
-            type="button"
-            onClick={() => setLeftOpen((o) => !o)}
-            title="Toggle left panel"
-            className={`p-1 rounded cursor-pointer transition-colors ${
-              leftOpen ? "text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/40" : "text-neutral-400 dark:text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
-            }`}
-          >
-            <PanelLeft className="h-4 w-4" />
-          </button>
-          <img src={appIconUrl} className="h-8 w-8 rounded select-none" alt="" />
-          <div className="flex items-center space-x-1">
-            <span className="font-semibold text-neutral-900 dark:text-neutral-100 font-display">Muya</span>
-          </div>
-        </div>
-
-        {/* Primary navigation */}
-        <div className="hidden md:flex items-center space-x-1 text-[11px] font-mono">
-          <button
-            type="button"
-            onClick={() => setView("control")}
-            className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
-              view === "control"
-                ? "bg-indigo-600 dark:bg-indigo-500 text-white font-bold border border-indigo-700 dark:border-indigo-400 shadow-sm"
-                : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
-            }`}
-          >
-            Control
-          </button>
-          <button
-            type="button"
-            onClick={() => setView("sessions")}
-            className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
-              view === "sessions"
-                ? "bg-indigo-600 dark:bg-indigo-500 text-white font-bold border border-indigo-700 dark:border-indigo-400 shadow-sm"
-                : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
-            }`}
-          >
-            Sessions
-          </button>
-          <button
-            type="button"
-            onClick={() => setView("queue")}
-            className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
-              view === "queue"
-                ? "bg-indigo-600 dark:bg-indigo-500 text-white font-bold border border-indigo-700 dark:border-indigo-400 shadow-sm"
-                : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
-            }`}
-          >
-            Queue
-          </button>
-          <button
-            type="button"
-            onClick={() => setView("tools")}
-            className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
-              view === "tools"
-                ? "bg-indigo-600 dark:bg-indigo-500 text-white font-bold border border-indigo-700 dark:border-indigo-400 shadow-sm"
-                : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
-            }`}
-          >
-            Resources
-          </button>
-          <button
-            type="button"
-            onClick={() => setView("prd")}
-            className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
-              view === "prd"
-                ? "bg-indigo-600 dark:bg-indigo-500 text-white font-bold border border-indigo-700 dark:border-indigo-400 shadow-sm"
-                : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
-            }`}
-          >
-            Kanban
-          </button>
-          <button
-            type="button"
-            onClick={() => setView("ssh")}
-            className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
-              view === "ssh"
-                ? "bg-indigo-600 dark:bg-indigo-500 text-white font-bold border border-indigo-700 dark:border-indigo-400 shadow-sm"
-                : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
-            }`}
-          >
-            SSH
-          </button>
-          <button
-            type="button"
-            onClick={() => setView("chat")}
-            className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
-              view === "chat"
-                ? "bg-indigo-600 dark:bg-indigo-500 text-white font-bold border border-indigo-700 dark:border-indigo-400 shadow-sm"
-                : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
-            }`}
-          >
-            Chat
-          </button>
-        </div>
-
-        {/* System telemetry ticks right side */}
-        <div className="flex items-center space-x-4 font-mono text-[10px] text-neutral-600 dark:text-neutral-400">
-          <div className="flex items-center space-x-1.5">
-            <Cpu className="h-3 w-3 text-emerald-600 dark:text-green-400" />
-            <span>CPU:</span>
-            <span className={cpuUsage > 75 ? "text-rose-600 dark:text-red-400" : "text-emerald-600 dark:text-green-400 font-bold"}>
-              {cpuUsage}%
-            </span>
-          </div>
-          <div className="flex items-center space-x-1.5">
-            <HardDrive className="h-3 w-3 text-indigo-500 dark:text-indigo-400" />
-            <span title="App memory (RSS)">RAM:</span>
-            <span className="text-neutral-800 dark:text-neutral-200 font-medium">
-              {ramUsage < 1024 ? `${Math.round(ramUsage)} MB` : `${(ramUsage / 1024).toFixed(1)} GB`}
-            </span>
-          </div>
-          <span className="border-l border-neutral-200 dark:border-neutral-700 pl-3 text-neutral-700 dark:text-neutral-300 font-bold bg-neutral-100 dark:bg-neutral-800 px-1.5 py-0.5 rounded border border-neutral-200 dark:border-neutral-700">
-            {localTime}
-          </span>
-          <button
-            type="button"
-            onClick={() => setThemeMode(effectiveTheme === "dark" ? "light" : "dark")}
-            title={`Theme: ${themeMode}${themeMode === "system" ? ` (${effectiveTheme})` : ""} — click to switch`}
-            className="p-1 rounded cursor-pointer transition-colors text-neutral-400 hover:bg-neutral-100 hover:text-indigo-600 dark:text-neutral-500 dark:hover:bg-neutral-800 dark:hover:text-indigo-400"
-          >
-            {effectiveTheme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-          </button>
-          <button
-            type="button"
-            onClick={() => setRightOpen((o) => !o)}
-            title="Toggle right panel"
-            className={`p-1 rounded cursor-pointer transition-colors ${
-              rightOpen ? "text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/40" : "text-neutral-400 dark:text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
-            }`}
-          >
-            <PanelRight className="h-4 w-4" />
-          </button>
-        </div>
-      </header>
-
-      {/* Update banner */}
-      {updateAvailable && (
-        <div className="px-4 py-2 bg-indigo-50 dark:bg-indigo-900/30 border-b border-indigo-200 dark:border-indigo-800 flex items-center justify-between text-[11px] font-mono">
-          <span className="text-indigo-700 dark:text-indigo-300">
-            {updateProgress ?? `New version available: v${updateAvailable.version}`}
-          </span>
-          {!updateProgress && (
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    setUpdateProgress("Downloading...");
-                    const update = await check();
-                    if (update?.available) {
-                      await update.downloadAndInstall((e) => {
-                        if (e.event === "Started") setUpdateProgress(`Downloading (${((e.data as { contentLength?: number }).contentLength ?? 0) / 1024 / 1024 | 0} MB)...`);
-                        else if (e.event === "Finished") setUpdateProgress("Installing...");
-                      });
-                      setUpdateProgress("Restarting...");
-                      await relaunch();
-                    }
-                  } catch (err) {
-                    // Keep the failure on screen (no auto-dismiss) and log it —
-                    // a 5s toast hid the only clue about why updates fail.
-                    console.error("[muya] update failed:", err);
-                    const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
-                    setUpdateProgress(`Update failed — ${detail}`);
-                  }
-                }}
-                className="px-2 py-0.5 bg-indigo-600 text-white rounded cursor-pointer hover:bg-indigo-700 transition-colors"
-              >
-                Update now
-              </button>
-              <button
-                type="button"
-                onClick={() => setUpdateAvailable(null)}
-                className="text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-200 cursor-pointer"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ================= MAIN AREA: secondary pages (ALWAYS mounted, hidden off-view) =================
-          These 4 pages used to be conditionally rendered, so navigating away unmounted them and
-          navigating back remounted them → a fresh fetch on every click. They are now always mounted
-          and hidden (same pattern as SSH / Chat / Control below), so they load ONCE and refresh only
-          via their manual Refresh button or the hourly sequential coordinator above. */}
-      <div className={`flex-1 flex overflow-hidden ${view !== "sessions" ? "hidden" : ""}`}>
-        {mountedViews.has("sessions") && (
-          <SessionsPage
-            onRegisterRefresh={registerSessionsRefresh}
-            onOpen={(spec) => {
-              if (spec.cwd) ensureWorktreeTracked(spec.cwd);
-              openTerminal({ ...spec, kind: "terminal" });
-              setView("control");
-            }}
-          />
-        )}
-      </div>
-      <div className={`flex-1 flex overflow-hidden ${view !== "tools" ? "hidden" : ""}`}>
-        {mountedViews.has("tools") && (
-          <ResourcesPage
-            onRegisterRefresh={registerToolsRefresh}
-            onOpenTerminal={(spec) => {
-              openTerminal({ ...spec, kind: "terminal" });
-              setView("control");
-            }}
-          />
-        )}
-      </div>
-      <div className={`flex-1 flex overflow-hidden ${view !== "queue" ? "hidden" : ""}`}>
-        {mountedViews.has("queue") && (
-          <QueuePage
-            paths={trackedPaths}
-            worktrees={worktrees}
-            refreshSignal={fsTick}
-            onRegisterRefresh={registerQueueRefresh}
-            onWorktreeRemoved={(p) => setWorktrees((prev) => prev.filter((x) => x !== p))}
-            inspect={branchInspect}
-            onClearInspect={() => setBranchInspect(null)}
-          />
-        )}
-      </div>
-      <div className={`flex-1 flex overflow-hidden ${view !== "prd" ? "hidden" : ""}`}>
-        {mountedViews.has("prd") && (
-          <PrdBoard
-            // Scan every known project root, not just user-added `workspaces`: agents
-            // run in git WORKTREES and drop their PRDs in the worktree's docs/, so a
-            // PRD created by an agent was invisible in the Kanban unless that worktree
-            // happened to be a workspace. Union in worktrees + live agent cwds.
-            workspaces={[...new Set([
-              ...workspaces,
-              ...worktrees,
-              ...agents.map((a) => a.worktree).filter(Boolean),
-            ])].filter((w) => w.startsWith("/")).sort()}
-            onRegisterRefresh={registerPrdRefresh}
-            onOpenFile={(path) => {
-              openEditor(path);
-              setView("control");
-            }}
-          />
-        )}
-      </div>
-      {/* SSH config page — mounted on first visit, then kept alive (hidden off-view)
-          so an in-progress add/edit-server form (or CyberArk session) survives
-          navigation. Deferred off startup so its load doesn't contend (L32). */}
-      <div className={`flex-1 flex overflow-hidden ${view !== "ssh" ? "hidden" : ""}`}>
-        {mountedViews.has("ssh") && <SshPage onConnect={openSshServer} />}
-      </div>
-      {/* Claude-to-Claude chat bridge — mounted on first visit, then kept alive so an
-          active pairing / conversation survives navigation. Its bridge data-fetches
-          (peers/inbound/local_ip) no longer run at app startup (L32). */}
-      <div className={`flex-1 flex overflow-hidden ${view !== "chat" ? "hidden" : ""}`}>
-        {mountedViews.has("chat") && <ChatView />}
-      </div>
-      {/* Control plane — ALWAYS mounted; hidden (not unmounted) on other views so the
-          terminal PTYs and any running sessions survive page navigation. xterm guards
-          0×0 resize (Terminal.tsx), so display:none is safe. */}
-      <div className={`flex-1 flex overflow-hidden ${view !== "control" ? "hidden" : ""}`}>
-
-        {/* ----------------- Panel 1: LEFT SIDEBAR (File Tree Explorer & Workspace Locker) ----------------- */}
-        {leftOpen && (
-        <aside id="tree-explorer-sidebar" style={{ width: leftWidth }} className="border-r border-neutral-200 dark:border-[#3d3f44] bg-white dark:bg-[#25272b] flex flex-col shrink-0 overflow-hidden relative">
-          
-          {/* Header Title bar */}
-          <div className="p-3 border-b border-neutral-200 dark:border-[#3d3f44] flex items-center justify-between bg-neutral-50/50 dark:bg-[#1e1f23]">
-            <h2 className="text-[10px] font-mono tracking-widest uppercase font-bold text-neutral-500 dark:text-neutral-400 flex items-center gap-1.5">
-              <Folder className="h-3.5 w-3.5 text-indigo-500 dark:text-indigo-400" /> Workspace Files ({trackedPaths.length})
-            </h2>
-            <button
-              type="button"
-              onClick={addWorkspace}
-              title="Add project / workspace folder"
-              className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border border-indigo-700 dark:border-indigo-400 bg-indigo-600 dark:bg-indigo-500 text-white hover:bg-indigo-700 dark:hover:bg-indigo-400 cursor-pointer transition-colors shadow-sm"
-            >
-              + Workspace
-            </button>
-          </div>
-
-          {/* Real, lazy file tree over the user's workspace roots (backend list_dir) */}
-          <div className="flex-1 overflow-y-auto">
-            <FileTree
-              roots={trackedPaths}
-              removableRoots={new Set(trackedPaths)}
-              onOpenFile={(path) => {
-                // Single-click: markdown opens as a RENDERED read view; other files
-                // open editable in Monaco. (openFile branches on the extension.)
-                openFile(path);
-                setView("control");
-              }}
-              onOpenFileEditable={(path) => {
-                // Right-click "Open in Muya" always opens editable in Monaco, even
-                // for markdown.
-                openEditor(path);
-                setView("control");
-              }}
-              onRemoveRoot={(path) => {
-                setWorkspaces((prev) => prev.filter((w) => w !== path));
-                setWorktrees((prev) => prev.filter((w) => w !== path));
-              }}
-              onOpenTerminalHere={(cwd) => {
-                const key = `term-${Date.now()}`;
-                openTerminal({ key, name: cwd.split("/").pop() ?? "Terminal", kind: "terminal", cwd });
-                setView("control");
-              }}
-              onOpenClaudeHere={(cwd) => {
-                // Open a terminal in the folder and launch Claude straight away.
-                // isClaude is derived from the command by openTerminal.
-                const key = `claude-${Date.now()}`;
-                openTerminal({
-                  key,
-                  name: cwd.split("/").pop() ?? "Claude",
-                  kind: "terminal",
-                  cwd,
-                  initialCommand: "claude --dangerously-skip-permissions",
-                });
-                setView("control");
-              }}
-              onAddAtRef={(_path) => {
-                // clipboard already written inside FileTree
-              }}
-              agents={agents}
-              activeCwd={openTerminals.find((t) => t.key === activeTerminalKey)?.cwd}
-              selectedRoot={selectedRoot}
-              onSelectRoot={(r) => setSelectedRoot((prev) => (prev === r ? undefined : r))}
-              refreshSignal={fsTick}
-            />
-          </div>
-
-
-          {/* BOTTOM ATTACHMENT: ACTIVE CLAUDE AGENT FILE-WATCHER */}
-          <div className="border-t border-neutral-200 dark:border-[#3d3f44] bg-neutral-50/50 dark:bg-[#1e1f23] p-3 select-none">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-[10px] uppercase font-mono text-neutral-500 dark:text-neutral-400 tracking-wider font-bold">
-                Lock/Edit File Telemetry
-              </h3>
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-            </div>
-
-            {collisionReport.collisions.length > 0 ? (
-              <div className="space-y-1.5">
-                {collisionReport.collisions.map((c) => (
-                  <div
-                    key={c.file}
-                    className="bg-rose-50 dark:bg-red-900/25 border border-rose-200 dark:border-red-800 rounded p-2 text-[10px] font-mono shadow-sm"
-                  >
-                    <div className="flex items-center gap-1.5 text-rose-700 dark:text-red-400 font-bold">
-                      <AlertTriangle className="h-3 w-3 shrink-0" />
-                      <span className="truncate">{c.file}</span>
-                    </div>
-                    <div className="text-[9px] text-rose-600 dark:text-red-400 mt-0.5 truncate">
-                      edited in: {c.worktrees.join(" · ")}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="p-3 bg-white dark:bg-[#2d2f34] rounded border border-neutral-200 dark:border-neutral-700 text-center shadow-sm">
-                <CheckCircle2 className="h-4 w-4 mx-auto mb-1 text-emerald-500 dark:text-emerald-400" />
-                <p className="text-[10px] font-mono leading-tight text-neutral-500 dark:text-neutral-400">
-                  No file collisions across worktrees.
-                </p>
-                <p className="text-[9px] font-mono text-neutral-400 dark:text-neutral-500 mt-0.5">
-                  {collisionReport.editedFiles} uncommitted change
-                  {collisionReport.editedFiles === 1 ? "" : "s"} tracked
-                </p>
-              </div>
-            )}
-          </div>
-        </aside>
-        )}
-        {/* Left resize handle */}
-        {leftOpen && (
-          <div
-            onMouseDown={(e) => startDragPanel("left", e.clientX, leftWidth)}
-            className="w-1 shrink-0 cursor-col-resize hover:bg-indigo-400/40 active:bg-indigo-400/60 transition-colors z-10"
-          />
-        )}
-
-        {/* ----------------- Panel 2: CENTER WORKSPACE (Sessions Agent Board + Multi-Console PTY) ----------------- */}
-        <section className="flex-1 flex flex-col overflow-hidden bg-neutral-50/50 dark:bg-[#25272b]">
-
-          {/* CENTER: Persistent per-session terminals + editors (session monitor moved
-              to the right panel's Sessions tab) */}
-          <div className="flex-1 flex flex-col overflow-hidden bg-white dark:bg-[#25272b]">
-
-            {/* Dynamic terminal tabs — one per open session, kept alive across switches */}
-            <header className="h-9 px-2 bg-neutral-50 dark:bg-[#1e1f23] border-b border-neutral-200 dark:border-[#3d3f44] flex items-center justify-between shrink-0">
-              {/* Left scroll arrow */}
-              <button
-                type="button"
-                onClick={() => { tabScrollRef.current?.scrollBy({ left: -120, behavior: "smooth" }); }}
-                className="shrink-0 h-full px-0.5 text-neutral-400 dark:text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-200 cursor-pointer"
-              >
-                <ChevronLeft className="h-3.5 w-3.5" />
-              </button>
-              <div ref={tabScrollRef} className="flex items-center space-x-0.5 h-full overflow-x-auto flex-1 min-w-0 scroll-smooth" style={{ scrollbarWidth: "none" }}>
-                {viewMode === "tabs" && openTerminals.filter(t => t.kind !== "terminal").length === 0 && (
-                  <span className="px-2 text-[11px] font-mono text-neutral-400 dark:text-neutral-500 flex items-center gap-1.5">
-                    <FileCode className="h-3.5 w-3.5" /> Open a file to add an editor tab
-                  </span>
-                )}
-                {viewMode === "tabs" && openTerminals.filter(t => t.kind !== "terminal").map((tm) => {
-                  const isActive = tm.key === activeTerminalKey;
-                  const isDragging = tabDragFromRef.current === tm.key;
-                  const isDragOver = tabDragOver === tm.key && tabDragFromRef.current !== tm.key;
-                  return (
-                    <div
-                      key={tm.key}
-                      data-tabkey={tm.key}
-                      onMouseDown={!layoutLocked ? (e) => {
-                        if ((e.target as HTMLElement).closest("button")) return;
-                        e.preventDefault();
-                        tabDragFromRef.current = tm.key;
-                        setTabDragOver(null);
-                      } : undefined}
-                      onClick={() => { if (renamingKey !== tm.key && !tabDragHappenedRef.current) pickTab(tm.key); }}
-                      className={`group flex items-center gap-1 px-2 h-full border-b-2 transition-colors shrink-0 select-none ${
-                        !layoutLocked ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
-                      } ${
-                        isDragOver ? "border-indigo-400 bg-indigo-50 dark:bg-indigo-900/20" :
-                        isDragging ? "opacity-50 border-dashed border-indigo-300" :
-                        isActive
-                          ? "border-indigo-600 bg-white dark:bg-[#25272b] text-indigo-950 dark:text-white font-semibold"
-                          : "border-transparent text-neutral-500 dark:text-neutral-400 hover:text-neutral-800 dark:hover:text-neutral-200"
-                      }`}
-                    >
-                      {tm.kind === "mdview" ? (
-                        <FileText className="h-3.5 w-3.5 text-indigo-500 dark:text-indigo-400 shrink-0" />
-                      ) : tm.kind === "imgview" || tm.kind === "pdfview" ? (
-                        <ImageIcon className="h-3.5 w-3.5 text-emerald-500 dark:text-emerald-400 shrink-0" />
-                      ) : (
-                        <FileCode className="h-3.5 w-3.5 text-amber-500 dark:text-amber-400 shrink-0" />
-                      )}
-
-                      {renamingKey === tm.key ? (
-                        <input
-                          autoFocus
-                          value={renameValue}
-                          onChange={(e) => setRenameValue(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" || e.key === "Escape") {
-                              if (e.key === "Enter" && renameValue.trim())
-                                setOpenTerminals(prev => prev.map(t => t.key === tm.key ? { ...t, name: renameValue.trim() } : t));
-                              setRenamingKey(null);
-                            }
-                            e.stopPropagation();
-                          }}
-                          onBlur={() => {
-                            if (renameValue.trim())
-                              setOpenTerminals(prev => prev.map(t => t.key === tm.key ? { ...t, name: renameValue.trim() } : t));
-                            setRenamingKey(null);
-                          }}
-                          onClick={(e) => e.stopPropagation()}
-                          className="text-xs font-display bg-transparent border-b border-indigo-400 outline-none w-28"
-                        />
-                      ) : (
-                        <span className="text-xs font-display truncate max-w-[140px]">{tm.name}</span>
-                      )}
-
-                      {layoutLocked && renamingKey !== tm.key && (
-                        <button
-                          type="button"
-                          onClick={(e) => { e.stopPropagation(); setRenamingKey(tm.key); setRenameValue(tm.name); }}
-                          className="opacity-0 group-hover:opacity-100 transition-opacity text-neutral-400 hover:text-indigo-500 cursor-pointer shrink-0"
-                          title="Rename"
-                        >
-                          <Pencil className="h-2.5 w-2.5" />
-                        </button>
-                      )}
-
-                      {tm.initialCommand && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" />}
-                      {dirtyTabs[tm.key] && <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" title="Kaydedilmemiş değişiklikler" />}
-
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); void closeTerminal(tm.key); }}
-                        className="ml-0.5 text-neutral-400 dark:text-neutral-500 hover:text-rose-600 dark:hover:text-rose-300 opacity-60 group-hover:opacity-100 transition-opacity cursor-pointer"
-                        title="Close tab"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </div>
-                  );
-                })}
-                {viewMode === "grid" && (
-                  <span className="px-2 text-[11px] font-mono text-indigo-500 dark:text-indigo-400 flex items-center gap-1.5">
-                    <LayoutGrid className="h-3.5 w-3.5" />
-                    Grid — {gridKeys.filter(k => openTerminals.some(t => t.key === k)).length} terminals
-                  </span>
-                )}
-              </div>
-
-              {/* Right scroll arrow */}
-              <button
-                type="button"
-                onClick={() => { tabScrollRef.current?.scrollBy({ left: 120, behavior: "smooth" }); }}
-                className="shrink-0 h-full px-0.5 text-neutral-400 dark:text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-200 cursor-pointer"
-              >
-                <ChevronRight className="h-3.5 w-3.5" />
-              </button>
-
-              <div className="flex items-center gap-2 shrink-0 pr-1">
-                {/* Grid toggle button */}
-                <button
-                  type="button"
-                  title={viewMode === "grid" ? "Switch to tab view" : "Switch to grid view (show up to 4 terminals)"}
-                  onClick={() => {
-                    if (viewMode === "tabs") {
-                      // Enter grid mode: populate gridKeys with up to 4 terminal tabs
-                      const termKeys = openTerminals.filter(t => t.kind === "terminal").map(t => t.key).slice(0, 4);
-                      setGridKeys(termKeys);
-                      setViewMode("grid");
-                      setLeftOpen(false);
-                      setRightOpen(false);
-                    } else {
-                      setViewMode("tabs");
-                      setLeftOpen(true);
-                      setRightOpen(true);
-                    }
-                  }}
-                  className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono font-bold transition-colors cursor-pointer ${
-                    viewMode === "grid"
-                      ? "bg-indigo-600 text-white hover:bg-indigo-700"
-                      : "text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-800 dark:hover:text-neutral-200"
-                  }`}
-                >
-                  <LayoutGrid className="h-3 w-3" />
-                  <span>Grid</span>
-                </button>
-
-                {/* New Terminal button — opens the same preset picker (NewAgentModal)
-                    as the "+" button in the Sessions panel, not a blank terminal.
-                    (⌘T still opens a quick blank terminal for the fast path.) */}
-                <button
-                  type="button"
-                  title="New Terminal / Agent…"
-                  onClick={() => setNewAgentOpen(true)}
-                  className="flex items-center gap-0.5 px-2 py-1 rounded text-[10px] font-mono font-bold text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-800 dark:hover:text-neutral-200 transition-colors cursor-pointer"
-                >
-                  <TerminalSquare className="h-3 w-3" />
-                  <Plus className="h-2.5 w-2.5" />
-                </button>
-
-                {/* Scheduled Prompt button */}
-                <button
-                  type="button"
-                  title="Scheduled Prompt"
-                  onClick={() => setScheduleOpen(true)}
-                  className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono font-bold transition-colors cursor-pointer relative ${
-                    scheduledPrompts.some(p => !p.fired)
-                      ? "text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30"
-                      : "text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-800 dark:hover:text-neutral-200"
-                  }`}
-                >
-                  <CalendarClock className="h-3 w-3" />
-                  {scheduledPrompts.some(p => !p.fired) && (
-                    <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-amber-500" />
-                  )}
-                </button>
-
-                {/* Layout lock button */}
-                <button
-                  type="button"
-                  title={layoutLocked ? "Layout kilitli — sürükle-bırak için kilidi aç" : "Layout kilitsiz — tab sırasını ayarla, sonra kilitle"}
-                  onClick={() => { setLayoutLocked(l => !l); setRenamingKey(null); setTabDragOver(null); tabDragFromRef.current = null; }}
-                  className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono font-bold transition-colors cursor-pointer ${
-                    layoutLocked
-                      ? "text-neutral-400 dark:text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-700 dark:hover:text-neutral-300"
-                      : "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border border-amber-300 dark:border-amber-700 hover:bg-amber-200 dark:hover:bg-amber-900/50"
-                  }`}
-                >
-                  {layoutLocked ? <Lock className="h-3 w-3" /> : <Unlock className="h-3 w-3" />}
-                  <span>Layout</span>
-                </button>
-              </div>
-            </header>
-
-            {/* Terminal surfaces — PTY instances NEVER unmount (display:none keeps them alive).
-                Grid mode: CSS grid layout on the same container, no new instances. */}
-            {(() => {
-              const validGridKeys = gridKeys.filter(k => openTerminals.some(t => t.key === k && t.kind === "terminal")).slice(0, 4);
-              const gridCount = viewMode === "grid" ? validGridKeys.length : 0;
-              const colTemplate = gridCount >= 2 ? `${gridColSplit}fr ${100 - gridColSplit}fr` : "1fr";
-              const rowTemplate = gridCount >= 3 ? `${gridRowSplit}fr ${100 - gridRowSplit}fr` : "1fr";
-              return (
-                <div
-                  ref={gridContainerRef}
-                  className="flex-1 overflow-hidden"
-                  style={viewMode === "grid" ? {
-                    position: "relative",
-                    display: "grid",
-                    gridTemplateColumns: colTemplate,
-                    gridTemplateRows: rowTemplate,
-                    gap: "6px",
-                    padding: "8px",
-                    background: "#09090b",
-                  } : { position: "relative" }}
-                  onMouseDown={viewMode === "grid" && gridCount >= 2 ? (e) => {
-                    const rect = gridContainerRef.current!.getBoundingClientRect();
-                    const rx = e.clientX - rect.left;
-                    const ry = e.clientY - rect.top;
-                    const THRESH = 10;
-                    const colPx = rect.width * gridColSplit / 100;
-                    const rowPx = rect.height * gridRowSplit / 100;
-                    const isCol = Math.abs(rx - colPx) < THRESH;
-                    const isRow = gridCount >= 3 && Math.abs(ry - rowPx) < THRESH;
-                    if (!isCol && !isRow) return;
-                    e.preventDefault();
-                    const onMove = (ev: MouseEvent) => {
-                      if (isCol) setGridColSplit(pct => Math.max(20, Math.min(80, ((ev.clientX - rect.left) / rect.width) * 100)));
-                      if (isRow) setGridRowSplit(pct => Math.max(20, Math.min(80, ((ev.clientY - rect.top) / rect.height) * 100)));
-                    };
-                    const onUp = () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
-                    window.addEventListener("mousemove", onMove);
-                    window.addEventListener("mouseup", onUp);
-                  } : undefined}
-                >
-                  {/* Empty state (tabs mode only) */}
-                  {viewMode === "tabs" && openTerminals.length === 0 && (
-                    <div className="absolute inset-0 flex items-center justify-center text-neutral-400 dark:text-neutral-500 text-xs font-mono">
-                      No active tab — click a session (terminal) or open a file from the left (editor).
-                    </div>
-                  )}
-
-                  {/* Grid empty slots — show "+" placeholder for unfilled positions */}
-                  {viewMode === "grid" && (() => {
-                    const filled = validGridKeys.length;
-                    const slots = filled === 0 ? 1 : filled < 4 ? filled + 1 : 0;
-                    if (slots === 0) return null;
-                    return Array.from({ length: slots > 4 - filled ? 4 - filled : 1 }).map((_, i) => {
-                      const slotIdx = filled + i;
-                      const col = (slotIdx % 2) + 1;
-                      const row = Math.floor(slotIdx / 2) + 1;
-                      return (
-                        <button
-                          key={`empty-slot-${i}`}
-                          type="button"
-                          onClick={() => setNewAgentOpen(true)}
-                          style={{ gridColumn: col, gridRow: row }}
-                          className="flex flex-col items-center justify-center gap-2 rounded border-2 border-dashed border-neutral-700 hover:border-indigo-500 bg-neutral-900/50 hover:bg-indigo-950/20 text-neutral-600 hover:text-indigo-400 transition-colors cursor-pointer group"
-                        >
-                          <Plus className="h-6 w-6 group-hover:scale-110 transition-transform" />
-                          <span className="text-[10px] font-mono">New Agent</span>
-                        </button>
-                      );
-                    });
-                  })()}
-
-                  {openTerminals.map((tm) => {
-                    const gridIdx = viewMode === "grid" ? validGridKeys.indexOf(tm.key) : -1;
-                    const inGrid = gridIdx !== -1;
-                    const isActiveTab = viewMode === "tabs" && tm.key === activeTerminalKey;
-                    // The page counts as much as the tab: while another page is on
-                    // top the whole Control pane is display:none, and a terminal that
-                    // still called itself visible never re-ran its show-effect on the
-                    // way back — visible, but deaf until clicked. See L54.
-                    const show = terminalIsVisible({
-                      controlPageVisible: view === "control",
-                      inGrid,
-                      isActiveTab,
-                    });
-
-                    const gridCol = (gridIdx % 2) + 1;
-                    const gridRow = Math.floor(gridIdx / 2) + 1;
-
-                    if (tm.kind === "editor" || tm.kind === "mdview" || tm.kind === "imgview" || tm.kind === "pdfview") {
-                      return (
-                        <div
-                          key={tm.key}
-                          style={viewMode === "tabs"
-                            ? { position: "absolute", inset: "12px", display: isActiveTab ? "flex" : "none", flexDirection: "column" }
-                            : { display: "none" }}
-                          className="overflow-hidden bg-white dark:bg-[#25272b] rounded-lg border border-neutral-200 dark:border-neutral-700 shadow-inner"
-                        >
-                          <ViewerErrorBoundary label={tm.filePath ?? tm.key}>
-                          <Suspense fallback={<div className="flex-1 flex items-center justify-center text-xs text-neutral-400">Loading…</div>}>
-                            {tm.kind === "mdview" ? (
-                              <MarkdownView
-                                filePath={tm.filePath!}
-                                active={isActiveTab}
-                                reloadTick={fsTick}
-                                onEdit={(p) => { closeTerminal(tm.key); openEditor(p); }}
-                              />
-                            ) : tm.kind === "imgview" ? (
-                              <ImageViewer path={tm.filePath!} />
-                            ) : tm.kind === "pdfview" ? (
-                              <PdfViewer path={tm.filePath!} />
-                            ) : (
-                              <FileEditor
-                                path={tm.filePath!}
-                                theme={effectiveTheme}
-                                active={isActiveTab}
-                                reloadTick={fsTick}
-                                onDirtyChange={(d) => setDirtyTabs(prev => ({ ...prev, [tm.key]: d }))}
-                              />
-                            )}
-                          </Suspense>
-                          </ViewerErrorBoundary>
-                        </div>
-                      );
-                    }
-
-                    return (
-                      <div
-                        key={tm.key}
-                        style={viewMode === "tabs"
-                          ? { position: "absolute", inset: "12px", display: isActiveTab ? "flex" : "none", flexDirection: "column" }
-                          : inGrid
-                            ? { display: "flex", flexDirection: "column", gridColumn: gridCol, gridRow: gridRow, minWidth: 0, minHeight: 0 }
-                            : { display: "none" }}
-                        className={viewMode === "grid"
-                          ? `overflow-hidden rounded border ${gridDragOver === tm.key ? "border-indigo-500" : "border-neutral-700"} bg-[#25272b]`
-                          : "overflow-hidden bg-[#25272b] rounded-lg border border-neutral-800 shadow-inner"}
-                        onDragOver={viewMode === "grid" ? (e) => { e.preventDefault(); setGridDragOver(tm.key); } : undefined}
-                        onDragLeave={viewMode === "grid" ? (e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setGridDragOver(null); } : undefined}
-                        onDrop={viewMode === "grid" ? (e) => {
-                          e.preventDefault();
-                          const from = gridDragFromRef.current;
-                          if (from && from !== tm.key) {
-                            setGridKeys(prev => {
-                              const next = [...prev];
-                              const fi = next.indexOf(from), ti = next.indexOf(tm.key);
-                              if (fi !== -1 && ti !== -1) [next[fi], next[ti]] = [next[ti], next[fi]];
-                              return next;
-                            });
-                          }
-                          gridDragFromRef.current = null; setGridDragOver(null);
-                        } : undefined}
-                      >
-                        {/* Grid title bar with drag handle */}
-                        {viewMode === "grid" && inGrid ? (
-                          <div
-                            draggable
-                            onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; gridDragFromRef.current = tm.key; }}
-                            onDragEnd={() => { gridDragFromRef.current = null; setGridDragOver(null); }}
-                            className="flex items-center gap-1.5 px-2 py-1 border-b border-neutral-700 bg-neutral-900 shrink-0 select-none cursor-grab active:cursor-grabbing"
-                          >
-                            <GripHorizontal className="h-3 w-3 text-neutral-500 shrink-0" />
-                            <Terminal className="h-3 w-3 text-indigo-400 shrink-0" />
-                            <span className="text-[10px] font-mono text-neutral-300 truncate flex-1">{tm.name}</span>
-                            <button type="button" onClick={() => setGridKeys(prev => prev.filter(k => k !== tm.key))} className="text-neutral-500 hover:text-rose-400 transition-colors cursor-pointer shrink-0">
-                              <X className="h-3 w-3" />
-                            </button>
-                          </div>
-                        ) : viewMode === "tabs" ? (
-                          <div className="px-3 py-1 border-b border-neutral-800 text-[10px] font-mono text-neutral-400 shrink-0 truncate flex items-center justify-between">
-                            <span>{tm.cwd ?? "~ (home)"}</span>
-                            {tm.initialCommand && <span className="text-emerald-400">● {tm.initialCommand}</span>}
-                          </div>
-                        ) : null}
-                        <div className="flex-1 overflow-hidden p-2">
-                          <AgentTerminal
-                            cwd={tm.cwd}
-                            initialCommand={tm.initialCommand}
-                            sshServerId={tm.sshServerId}
-                            autoAcceptTrust={tm.autoAcceptTrust}
-                            theme={effectiveTheme}
-                            active={show}
-                            focusToken={tm.key === activeTerminalKey ? tabPickCount : undefined}
-                            onPtyReady={(ptyId) => setTerminalPtyIds(prev => ({ ...prev, [tm.key]: ptyId }))}
-                            onPathMenu={(resolved, kind, x, y) => setPathMenu({ resolved, kind, x, y })}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })()}
-
-          </div>
-        </section>
-
-        {/* ----------------- Panel 3: RIGHT SIDEBAR (Open Branch / WIP / PRD Release Tracker) ----------------- */}
-        {/* Right resize handle */}
-        {rightOpen && (
-          <div
-            onMouseDown={(e) => startDragPanel("right", e.clientX, rightWidth)}
-            className="w-1 shrink-0 cursor-col-resize hover:bg-indigo-400/40 active:bg-indigo-400/60 transition-colors z-10"
-          />
-        )}
-
-        {/* Hover-reveal Sessions flyout — right panel is collapsed, but nudging
-            the mouse to the far right edge lets you pick a session without
-            permanently reopening the panel. */}
-        {!rightOpen && (
-          <div
-            className="fixed top-10 right-0 bottom-7 z-40 flex"
-            onMouseEnter={() => setRightPeek(true)}
-            onMouseLeave={() => setRightPeek(false)}
-          >
-            {rightPeek && (
-              <aside className="w-[280px] bg-white dark:bg-[#25272b] border-l border-neutral-200 dark:border-[#3d3f44] shadow-2xl flex flex-col overflow-hidden">
-                <div className="px-3 py-2 border-b border-neutral-200 dark:border-[#3d3f44] bg-neutral-50 dark:bg-[#1e1f23] flex items-center justify-between shrink-0">
-                  <span className="text-[9px] font-mono tracking-wider uppercase font-bold text-neutral-500 dark:text-neutral-400 flex items-center gap-1">
-                    <TerminalSquare className="h-3 w-3" /> Sessions
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => { setRightOpen(true); setRightTab("sessions"); setRightPeek(false); }}
-                    title="Pin panel open"
-                    className="text-neutral-400 hover:text-indigo-500 dark:hover:text-indigo-400 cursor-pointer"
-                  >
-                    <PanelRight className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-                <div className="flex-1 overflow-y-auto">
-                  <SessionsPanel
-                    terminals={openTerminals.filter(t => t.kind === "terminal")}
-                    activeKey={activeTerminalKey}
-                    terminalPtyIds={terminalPtyIds}
-                    liveCwds={liveCwds}
-                    waitingKeys={blinkKeys}
-                    doneKeys={doneBlinkKeys}
-                    workingKeys={workingKeys}
-                    renamingKey={renamingKey}
-                    renameValue={renameValue}
-                    setRenamingKey={setRenamingKey}
-                    setRenameValue={setRenameValue}
-                    onActivate={(key) => { activateTerminal(key); setRightPeek(false); }}
-                    onClose={(key) => { void closeTerminal(key); }}
-                    onReorder={(from, to) => {
-                      setOpenTerminals(prev => {
-                        const next = [...prev];
-                        const fi = next.findIndex(t => t.key === from);
-                        if (fi === -1) return prev;
-                        const [item] = next.splice(fi, 1);
-                        const ti = next.findIndex(t => t.key === to);
-                        if (ti === -1) { next.push(item); return next; }
-                        next.splice(ti, 0, item);
-                        return next;
-                      });
-                    }}
-                    onRename={(key, name) => setOpenTerminals(prev => prev.map(t => t.key === key ? { ...t, name, userRenamed: true } : t))}
-                    onNewTerminal={() => setNewAgentOpen(true)}
-                    onDuplicate={duplicateTerminal}
-                    onRevealInFinder={revealTerminalInFinder}
-                  />
-                </div>
-              </aside>
-            )}
-            {/* Thin always-present edge sliver — hovering here triggers the reveal above. */}
-            <div className="w-2 h-full" />
-          </div>
-        )}
-
-        {rightOpen && (
-        <aside id="branch-wip-prd-tracker" style={{ width: rightWidth }} className="border-l border-neutral-200 dark:border-[#3d3f44] bg-white dark:bg-[#25272b] flex flex-col shrink-0 overflow-hidden">
-
-          {/* Tabbed header: sessions | markdown | branch */}
-          <div className="flex border-b border-neutral-200 dark:border-[#3d3f44] bg-neutral-50 dark:bg-[#1e1f23] shrink-0">
-            {(["sessions", "branch"] as const).map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => setRightTab(tab)}
-                className={`flex-1 px-2 py-2 text-[9px] font-mono tracking-wider uppercase font-bold flex items-center justify-center gap-1 border-b-2 transition-colors cursor-pointer ${
-                  rightTab === tab
-                    ? "border-indigo-500 text-indigo-700 dark:text-white bg-white dark:bg-[#25272b]"
-                    : "border-transparent text-neutral-500 dark:text-neutral-400 hover:text-neutral-800 dark:hover:text-neutral-200"
-                }`}
-              >
-                {tab === "sessions" && <><TerminalSquare className="h-3 w-3" /> Sessions</>}
-                {tab === "branch"   && <><GitBranch className="h-3 w-3" /> Branch</>}
-              </button>
-            ))}
-          </div>
-
-          {rightTab === "sessions" ? (
-            <SessionsPanel
-              terminals={openTerminals.filter(t => t.kind === "terminal")}
-              activeKey={activeTerminalKey}
-              terminalPtyIds={terminalPtyIds}
-                    liveCwds={liveCwds}
-                    waitingKeys={blinkKeys}
-                    doneKeys={doneBlinkKeys}
-                    workingKeys={workingKeys}
-              renamingKey={renamingKey}
-              renameValue={renameValue}
-              setRenamingKey={setRenamingKey}
-              setRenameValue={setRenameValue}
-              onActivate={(key) => { activateTerminal(key); }}
-              onClose={(key) => { void closeTerminal(key); }}
-              onReorder={(from, to) => {
-                setOpenTerminals(prev => {
-                  const next = [...prev];
-                  const fi = next.findIndex(t => t.key === from);
-                  if (fi === -1) return prev;
-                  const [item] = next.splice(fi, 1);
-                  const ti = next.findIndex(t => t.key === to); // re-find after splice
-                  if (ti === -1) { next.push(item); return next; }
-                  next.splice(ti, 0, item);
-                  return next;
-                });
-              }}
-              onRename={(key, name) => setOpenTerminals(prev => prev.map(t => t.key === key ? { ...t, name, userRenamed: true } : t))}
-              onNewTerminal={() => setNewAgentOpen(true)}
-              onDuplicate={duplicateTerminal}
-              onRevealInFinder={revealTerminalInFinder}
+      {/* The terminal pool: hosts parked here while no screen shows them. */}
+      <div ref={poolRef} aria-hidden style={POOL_STYLE} />
+      {openTerminals.map((tm) =>
+        createPortal(
+          tm.kind === "terminal" ? (
+            <AgentTerminal
+              cwd={tm.cwd}
+              initialCommand={tm.initialCommand}
+              sshServerId={tm.sshServerId}
+              autoAcceptTrust={tm.autoAcceptTrust}
+              theme={effectiveTheme}
+              // Every layer that can hide a terminal counts: the page, the screen, the
+              // file replacing it, and (grid) whether its panel shows a terminal at all.
+              active={terminalIsVisible({
+                controlPageVisible: view === "control",
+                inGrid: gridVisibleKeys.has(tm.key),
+                isActiveTab: controlVisible && !viewedFile && tm.key === activeTerminalKey,
+              })}
+              focusToken={controlVisible && tm.key === activeTerminalKey ? tabPickCount : undefined}
+              onPtyReady={(ptyId) => setTerminalPtyIds((prev) => ({ ...prev, [tm.key]: ptyId }))}
+              onPathMenu={(resolved, kind, x, y) => setPathMenu({ resolved, kind, x, y })}
+              onScreen={(state) => model.reportScreen(tm.key, state)}
             />
           ) : (
-          <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-4">
-
-            {/* Multi-repo selector */}
-            {repoList.length > 1 && (
-              <div className="flex items-center gap-2">
-                <GitBranch className="h-3.5 w-3.5 text-indigo-500 dark:text-indigo-400 shrink-0" />
-                <select
-                  value={branchRepo}
-                  onChange={(e) => setSelectedBranchRepo(e.target.value)}
-                  className="flex-1 text-[10px] font-mono bg-white dark:bg-[#2d2f34] border border-neutral-200 dark:border-neutral-700 rounded px-2 py-1 text-neutral-700 dark:text-neutral-300 cursor-pointer"
-                >
-                  {repoList.map((r) => (
-                    <option key={r} value={r}>
-                      {r.split("/").filter(Boolean).slice(-2).join("/")}
-                      {" "}({(branchMap[r] ?? []).length})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {/* Visual DAG Representation showing commit lineage / status mapping */}
-            <BranchDAG
-              branchList={branchList}
-              agents={agents}
-              selectedAgentId={selectedAgentId}
-              setSelectedAgentId={setSelectedAgentId}
-              setTerminalHistory={setTerminalHistory}
+            <FileTabView
+              tab={tm}
+              theme={effectiveTheme}
+              active={controlVisible && viewFileKey === tm.key}
+              reloadTick={fsTick}
+              onDirtyChange={(d) => setDirtyTabs((prev) => (prev[tm.key] === d ? prev : { ...prev, [tm.key]: d }))}
+              onEditMarkdown={(p) => { void closeTerminal(tm.key); openEditor(p); }}
             />
-            
-            {/* CATEGORY 1: PRODUCTION / RELEASE ENVS (PRD) */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-mono uppercase tracking-widest font-bold text-emerald-600 dark:text-green-400 flex items-center gap-1">
-                  <ShieldCheck className="h-3 w-3" /> Production Branches (PRD)
-                </span>
-                <span className="text-[9px] font-mono bg-neutral-100 dark:bg-neutral-800 text-emerald-700 dark:text-green-400 px-1 border border-neutral-250 dark:border-neutral-700 rounded font-semibold">
-                  {branchList.filter(b => b.type === "PRD").length}
-                </span>
-              </div>
+          ),
+          hostFor(tm.key),
+          tm.key,
+        ),
+      )}
 
-              <div className="space-y-1.5">
-                {branchList
-                  .filter((b) => b.type === "PRD")
-                  .map((branch) => (
-                    <div
-                      key={branch.name}
-                      onClick={() => {
-                        setTerminalHistory((prev) => [
-                          ...prev,
-                          `$ git checkout ${branch.name}`,
-                          `[System] Warning: Branch '${branch.name}' is registered as active PRD core. Skipping automatic agent overrides.`,
-                          ""
-                        ]);
-                        setBranchInspect({ repo: branchRepo, name: branch.name });
-                        setView("queue");
-                      }}
-                      className="p-2 border border-emerald-100 dark:border-green-900 bg-emerald-50/10 dark:bg-green-900/20 hover:border-emerald-200 dark:hover:border-green-800 rounded cursor-pointer transition-colors shadow-sm"
-                    >
-                      <div className="flex items-start justify-between gap-1.5">
-                        <span className="font-mono text-xs font-bold text-emerald-800 dark:text-green-400 truncate max-w-[140px]">
-                          {branch.name}
-                        </span>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          {renderSyncStatusBadge(branch.status || "synced")}
-                        </div>
-                      </div>
-                      <p className="mt-1 text-[10px] text-neutral-600 dark:text-neutral-400 truncate">
-                        {branch.lastCommit}
-                      </p>
-                      <div className="mt-1.5 flex items-center justify-between text-[9px] font-mono text-neutral-500 dark:text-neutral-400">
-                        <span className="truncate">{branch.author}</span>
-                      </div>
-                    </div>
-                  ))}
-              </div>
-            </div>
-
-            {/* CATEGORY 2: WORK-IN-PROGRESS (WIP) */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-mono uppercase tracking-widest font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                  <Zap className="h-3 w-3 animate-pulse" /> Active Workspace WIP
-                </span>
-                <span className="text-[9px] font-mono bg-neutral-100 dark:bg-neutral-800 text-amber-700 dark:text-amber-400 px-1 border border-neutral-250 dark:border-neutral-700 rounded font-semibold">
-                  {branchList.filter(b => b.type === "WIP").length}
-                </span>
-              </div>
-
-              <div className="space-y-1.5">
-                {branchList
-                  .filter((b) => b.type === "WIP")
-                  .map((branch) => {
-                    const agentObj = agents.find((a) => a.id === branch.associatedAgent);
-                    return (
-                      <div
-                        id={`branch-row-${branch.name.replace(/\//g, "-")}`}
-                        key={branch.name}
-                        onClick={() => {
-                          if (agentObj) {
-                            setSelectedAgentId(agentObj.id);
-                          }
-                          setBranchInspect({ repo: branchRepo, name: branch.name });
-                          setView("queue");
-                        }}
-                        className={`p-2 border rounded cursor-pointer transition-colors shadow-sm ${
-                          agentObj?.id === selectedAgentId
-                            ? "bg-amber-50/40 dark:bg-amber-900/25 border-amber-500"
-                            : "border-neutral-200 dark:border-neutral-700 hover:border-neutral-300 dark:hover:border-neutral-700 bg-white dark:bg-[#25272b]"
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-1.5">
-                          <span className="font-mono text-xs font-bold text-neutral-800 dark:text-neutral-200 truncate max-w-[150px]">
-                            {branch.name}
-                          </span>
-                          {renderSyncStatusBadge(branch.status)}
-                        </div>
-                        
-                        <p className="mt-1 text-[10px] text-neutral-650 dark:text-neutral-400 truncate">
-                          {branch.lastCommit}
-                        </p>
-
-                        {agentObj && (
-                          <div className="mt-2 p-1 bg-neutral-50 dark:bg-[#2d2f34] rounded border border-neutral-200 dark:border-neutral-700 flex items-center justify-between text-[9px] font-mono text-neutral-600 dark:text-neutral-400">
-                            <span className="text-indigo-650 dark:text-indigo-400 font-bold">
-                              🤖 {agentObj.name}
-                            </span>
-                            <span className="text-[8px] uppercase font-bold text-neutral-550 dark:text-neutral-400">{agentObj.status}</span>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-              </div>
-            </div>
-
-            {/* CATEGORY 3: OPEN PENDING / STALE BRANCHES */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-mono uppercase tracking-widest font-bold text-indigo-550 dark:text-indigo-400 flex items-center gap-1">
-                  <GitPullRequest className="h-3 w-3" /> Open Pending (PR/stale)
-                </span>
-                <span className="text-[9px] font-mono bg-neutral-100 dark:bg-neutral-800 text-indigo-700 dark:text-indigo-400 px-1 border border-neutral-250 dark:border-neutral-700 rounded font-semibold">
-                  {branchList.filter(b => b.type === "OPEN").length}
-                </span>
-              </div>
-
-              <div className="space-y-1.5">
-                {branchList
-                  .filter((b) => b.type === "OPEN")
-                  .map((branch) => (
-                    <div
-                      key={branch.name}
-                      onClick={() => {
-                        setTerminalHistory((prev) => [
-                          ...prev,
-                          `$ git checkout ${branch.name}`,
-                          `[System] Switch checkout worktree root index to ${branch.name}.`,
-                          ""
-                        ]);
-                        setBranchInspect({ repo: branchRepo, name: branch.name });
-                        setView("queue");
-                      }}
-                      className="p-2 border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#25272b] hover:border-neutral-300 dark:hover:border-neutral-600 rounded cursor-pointer transition-colors shadow-sm"
-                    >
-                      <div className="flex items-start justify-between gap-1.5">
-                        <span className="font-mono text-xs text-neutral-700 dark:text-neutral-300 truncate max-w-[140px]">
-                          {branch.name}
-                        </span>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          {renderSyncStatusBadge(branch.status || "synced")}
-                        </div>
-                      </div>
-                      <p className="mt-1 text-[10px] text-neutral-500 dark:text-neutral-400 truncate">
-                        {branch.lastCommit}
-                      </p>
-                      <div className="mt-1.5 flex items-center justify-between text-[9px] font-mono text-neutral-500 dark:text-neutral-400">
-                        <span className="truncate">{branch.author}</span>
-                      </div>
-                    </div>
-                  ))}
-              </div>
-            </div>
-
+      {/* ================= Secondary pages (ALWAYS mounted, hidden off-view) =================
+          They used to be conditionally rendered, so navigating away unmounted them and
+          navigating back remounted them → a fresh fetch on every click. They are mounted on
+          first visit and then only hidden, so they load ONCE and refresh via their manual
+          Refresh button or the hourly sequential coordinator above. */}
+      <div style={{ display: view === "control" ? "none" : "flex", flexDirection: "column", width: "100%", height: "100%", background: "var(--bg-app)" }}>
+        <div className="rd-root" style={{ display: "contents" }}>
+          <ControlHeader {...headerProps} />
+        </div>
+        <div style={{ flexGrow: 1, minHeight: 0, display: "flex" }}>
+          <div className="rd-root" style={{ display: "contents" }}>
+            <Rail active={railActive} onNavigate={navigateRail} />
           </div>
-          )}
-        </aside>
-        )}
-
+          <AppFrameBody>
+            <div className={pageClass("sessions")}>
+              {mountedViews.has("sessions") && (
+                <SessionsPage
+                  onRegisterRefresh={registerSessionsRefresh}
+                  onOpen={(spec) => {
+                    if (spec.cwd) ensureWorktreeTracked(spec.cwd);
+                    openTerminal({ ...spec, kind: "terminal" });
+                    showControl();
+                  }}
+                />
+              )}
+            </div>
+            <div className={pageClass("tools")}>
+              {mountedViews.has("tools") && (
+                <ResourcesPage
+                  onRegisterRefresh={registerToolsRefresh}
+                  onOpenTerminal={(spec) => {
+                    openTerminal({ ...spec, kind: "terminal" });
+                    showControl();
+                  }}
+                />
+              )}
+            </div>
+            <div className={pageClass("queue")}>
+              {mountedViews.has("queue") && (
+                <QueuePage
+                  paths={trackedPaths}
+                  worktrees={worktrees}
+                  refreshSignal={fsTick}
+                  onRegisterRefresh={registerQueueRefresh}
+                  onWorktreeRemoved={(p) => setWorktrees((prev) => prev.filter((x) => x !== p))}
+                  inspect={branchInspect}
+                  onClearInspect={() => setBranchInspect(null)}
+                />
+              )}
+            </div>
+            <div className={pageClass("prd")}>
+              {mountedViews.has("prd") && (
+                <PrdBoard
+                  // Scan every known project root, not just user-added `workspaces`: agents
+                  // run in git WORKTREES and drop their PRDs in the worktree's docs/, so a
+                  // PRD created by an agent was invisible in the Kanban unless that worktree
+                  // happened to be a workspace. Union in worktrees + live agent cwds.
+                  workspaces={[...new Set([
+                    ...workspaces,
+                    ...worktrees,
+                    ...agents.map((a) => a.worktree).filter(Boolean),
+                  ])].filter((w) => w.startsWith("/")).sort()}
+                  onRegisterRefresh={registerPrdRefresh}
+                  onOpenFile={(path) => openEditor(path)}
+                />
+              )}
+            </div>
+            {/* SSH config page — mounted on first visit, then kept alive (hidden off-view)
+                so an in-progress add/edit-server form (or CyberArk session) survives
+                navigation. Deferred off startup so its load doesn't contend (L32). */}
+            <div className={pageClass("ssh")}>
+              {mountedViews.has("ssh") && <SshPage onConnect={openSshServer} />}
+            </div>
+            {/* Claude-to-Claude chat bridge — mounted on first visit, then kept alive so an
+                active pairing / conversation survives navigation. Its bridge data-fetches
+                (peers/inbound/local_ip) no longer run at app startup (L32). */}
+            <div className={pageClass("chat")}>
+              {mountedViews.has("chat") && <ChatView />}
+            </div>
+            <div className={pageClass("branches")}>
+              {mountedViews.has("branches") && (
+                <BranchesPage
+                  repoList={repoList}
+                  branchRepo={branchRepo}
+                  onSelectRepo={setSelectedBranchRepo}
+                  branchMap={branchMap}
+                  branchList={branchList}
+                  agents={agents}
+                  selectedAgentId={selectedAgentId}
+                  onSelectAgent={setSelectedAgentId}
+                  onInspect={(name) => {
+                    setBranchInspect({ repo: branchRepo, name });
+                    setView("queue");
+                  }}
+                />
+              )}
+            </div>
+          </AppFrameBody>
+        </div>
+        <div className="rd-root" style={{ display: "contents" }}>
+          <Footer {...footerVM} />
+        </div>
       </div>
 
-      {/* ================= FOOTER / STATUS TRAY BAR ================= */}
-      <footer className="h-7 border-t border-neutral-200 dark:border-[#3d3f44] bg-white dark:bg-[#1e1f23] px-3 flex items-center justify-between z-10 shrink-0 text-[10px] font-mono text-neutral-500 dark:text-neutral-400 select-none shadow-sm">
-        <div className="flex items-center space-x-4">
-          <div className="flex items-center space-x-1.5 text-neutral-600 dark:text-neutral-400">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span>Ready</span>
-          </div>
-          <span>|</span>
-          <span>Workspaces: <strong className="text-neutral-700 dark:text-neutral-300">{workspaces.length}</strong></span>
-          <span>|</span>
-          <span>Sessions: <strong className="text-neutral-700 dark:text-neutral-300">{agents.length}</strong></span>
-          <span>|</span>
-          <span>
-            Collisions:{" "}
-            <strong className={collisionReport.collisions.length > 0 ? "text-rose-600 dark:text-red-400" : "text-neutral-700 dark:text-neutral-300"}>
-              {collisionReport.collisions.length}
-            </strong>
-          </span>
+      {/* ================= Control / Grid ================= */}
+      {controlVisible && (
+        <div style={{ width: "100%", height: "100%" }}>
+          <ControlScreen
+            {...headerProps}
+            footer={footerVM}
+            railActive="control"
+            onRailNavigate={navigateRail}
+            agents={agentVMs}
+            selectedAgentKey={selectedAgentKey}
+            agentFilter={agentFilter}
+            onAgentFilterChange={setAgentFilter}
+            onSelectAgent={selectAgent}
+            onNewAgent={() => setNewAgentOpen(true)}
+            onReorderAgents={reorderAgents}
+            openFile={fileVM}
+            onCloseFile={() => { if (viewFileKey) void closeTerminal(viewFileKey); }}
+            fileSlot={viewedFile ? <div data-terminal-slot={viewedFile.key} data-terminal-pad="0" style={{ flexGrow: 1, minHeight: 0 }} /> : undefined}
+            onCompact={() => selectedAgentKey && sendLine(selectedAgentKey, "/compact")}
+            onSplitToGrid={splitToGrid}
+            onStop={() => selectedAgentKey && writePty(selectedAgentKey, "\x1b")}
+            onMoreActions={openActionsMenu}
+            composerValue={selectedAgentKey ? composerValues[selectedAgentKey] ?? "" : ""}
+            onComposerChange={(v) => selectedAgentKey && setDraft(selectedAgentKey, v)}
+            onSendMessage={(text) => selectedAgentKey && sendMessage(selectedAgentKey, text)}
+            onCycleMode={() => selectedAgentKey && writePty(selectedAgentKey, "\x1b[Z")}
+            onModeMenu={openModeMenu}
+            onAttachFile={() => selectedAgentKey && void attachFile(selectedAgentKey)}
+            onOpenCommands={() => {
+              if (!selectedAgentKey) return;
+              setDraft(selectedAgentKey, (composerValues[selectedAgentKey] ?? "") + "/");
+              document.getElementById("rd-composer")?.focus();
+            }}
+            updateReady={updateReady}
+            onRestartForUpdate={() => void runUpdate()}
+            inspector={inspectorVM}
+            inspectorTab={inspectorTab}
+            onInspectorTabChange={setInspectorTab}
+            onApprove={(key) => respond(key, "approve")}
+            onDeny={(key) => respond(key, "deny")}
+            onOpenApproval={selectAgent}
+            onReviewDiff={reviewDiff}
+            onCommit={startCommit}
+            onOpenChange={openChange}
+            filesSlot={filesSlot}
+            activitySlot={
+              <ActivityPanel collisions={collisionReport.collisions} editedFiles={collisionReport.editedFiles} worktreesWatched={trackedPaths.length} />
+            }
+            inspectorOpen={innerWidth >= 1280}
+          />
         </div>
+      )}
+      {view === "control" && screen === "grid" && (
+        <GridScreen
+          railActive="control"
+          onRailNavigate={navigateRail}
+          footer={footerVM}
+          panels={gridPanels}
+          layout={gridLayout}
+          onLayoutChange={setGridLayout}
+          onWaitingFirst={waitingFirst}
+          onBroadcastOpen={() => setBroadcastOpen(true)}
+          focusedKey={focusedPanelKey}
+          onFocusPanel={setGridFocusedKey}
+          onMaximizePanel={maximizePanel}
+          onApprove={(key) => respond(key, "approve")}
+          onDeny={(key) => respond(key, "deny")}
+          onAlwaysAllow={(key) => respond(key, "approveAlways")}
+          composerValues={composerValues}
+          onComposerChange={setDraft}
+          onSendMessage={sendMessage}
+          onAssignFromQueue={() => setView("queue")}
+          onReplacePanel={setSwapKey}
+        />
+      )}
 
-        <div className="flex items-center space-x-4 text-neutral-600 dark:text-neutral-400">
-          <span>Muya <strong className="text-indigo-600 dark:text-indigo-400 font-semibold">v{appVersion || "…"}</strong></span>
-          <span className="text-neutral-300 dark:text-neutral-600">|</span>
-          <span>UTF-8</span>
-        </div>
-      </footer>
+      {/* ================= Overlays ================= */}
+      <div className="rd-root" style={{ display: "contents" }}>
+        <CommandPalette
+          open={paletteOpen}
+          onOpenChange={setPaletteOpen}
+          agents={agentVMs}
+          files={paletteFiles}
+          commands={PALETTE_COMMANDS}
+          onSelectAgent={(key) => { setPaletteOpen(false); selectAgent(key); }}
+          onOpenFile={(p) => { setPaletteOpen(false); openFile(paletteFileMap.get(p) ?? p); }}
+          onRunCommand={runCommand}
+        />
+        <BroadcastModal
+          open={broadcastOpen}
+          panelCount={gridPanels.length}
+          value={broadcastText}
+          onChange={setBroadcastText}
+          onCancel={() => { setBroadcastOpen(false); setBroadcastText(""); }}
+          onConfirm={broadcast}
+        />
+        {menu?.kind === "actions" && selectedAgentKey && (
+          <MenuPopover anchor={menu.anchor} label="Agent actions" onClose={() => setMenu(null)}>
+            <MenuItem label="Rename…" onSelect={() => { setRenameKey(selectedAgentKey); setMenu(null); }} />
+            <MenuItem label="Duplicate" onSelect={() => { duplicateTerminal(selectedAgentKey); setMenu(null); }} />
+            <MenuItem label="Reveal in Finder" onSelect={() => { revealTerminalInFinder(selectedAgentKey); setMenu(null); }} />
+            <MenuItem
+              label="Schedule prompt…"
+              hint={scheduledPrompts.some((p) => !p.fired) ? `${scheduledPrompts.filter((p) => !p.fired).length} pending` : undefined}
+              onSelect={() => { setScheduleOpen(true); setMenu(null); }}
+            />
+            <MenuSeparator />
+            <MenuItem label="Close agent" danger onSelect={() => { void closeTerminal(selectedAgentKey); setMenu(null); }} />
+          </MenuPopover>
+        )}
+        {menu?.kind === "workspaces" && (
+          <MenuPopover anchor={menu.anchor} width={420} label="Workspaces" onClose={() => setMenu(null)}>
+            <MenuHeading>WORKSPACES</MenuHeading>
+            {workspaces.length === 0 && <div style={{ padding: "6px 10px", color: "var(--text-muted)" }}>No workspace yet.</div>}
+            {workspaces.map((w) => (
+              <MenuItem key={w} label={w.split("/").filter(Boolean).pop() ?? w} hint={abbreviateHome(w)} checked={w === (selectedRoot ?? workspaces[0])} onSelect={() => { setSelectedRoot(w); setMenu(null); }} />
+            ))}
+            <MenuSeparator />
+            <MenuItem label="Add workspace…" onSelect={() => { setMenu(null); void addWorkspace(); }} />
+            {selectedRoot && workspaces.includes(selectedRoot) && (
+              <MenuItem
+                label="Remove selected workspace"
+                danger
+                onSelect={() => {
+                  setWorkspaces((prev) => prev.filter((w) => w !== selectedRoot));
+                  setWorktrees((prev) => prev.filter((w) => w !== selectedRoot));
+                  setMenu(null);
+                }}
+              />
+            )}
+          </MenuPopover>
+        )}
+        {menu?.kind === "mode" && selectedAgentKey && (
+          <MenuPopover anchor={menu.anchor} width={300} label="Permission mode" onClose={() => setMenu(null)}>
+            <MenuHeading>PERMISSION MODE</MenuHeading>
+            {selectedVM?.mode === "bypass" ? (
+              <div style={{ padding: "4px 10px 8px", display: "flex", flexDirection: "column", gap: 3, fontSize: 12 }}>
+                <span style={{ color: "var(--danger-text)" }}>Bypass permissions is on</span>
+                <span style={{ color: "var(--text-muted)" }}>Fixed at launch, outside the Shift+Tab cycle</span>
+              </div>
+            ) : (
+              MODE_ITEMS.map(({ mode, label }) => (
+                <MenuItem key={mode} label={label} checked={selectedVM?.mode === mode} onSelect={() => { setMenu(null); void setModeTo(selectedAgentKey, mode); }} />
+              ))
+            )}
+          </MenuPopover>
+        )}
+        {renameKey && (
+          <RenameDialog
+            initial={openTerminals.find((t) => t.key === renameKey)?.name ?? ""}
+            onClose={() => setRenameKey(null)}
+            onSubmit={(name) => setOpenTerminals((prev) => prev.map((t) => (t.key === renameKey ? { ...t, name, userRenamed: true } : t)))}
+          />
+        )}
+        {swapKey && (
+          <AgentPickerDialog
+            title="Swap panel"
+            agents={agentVMs.filter((a) => !gridPanels.some((p) => p.key === a.key))}
+            onClose={() => setSwapKey(null)}
+            onPick={(key) => swapPanel(swapKey, key)}
+          />
+        )}
+      </div>
 
       <NewAgentModal
         open={newAgentOpen}
@@ -2888,7 +2133,7 @@ export const loginHandler = async (req, res) => {
         onLaunch={launchAgent}
       />
 
-      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} themePreference={themeMode} onThemePreferenceChange={setThemeMode} />
 
       <ScheduledPromptModal
         open={scheduleOpen}
@@ -2900,10 +2145,22 @@ export const loginHandler = async (req, res) => {
         onCancel={(id) => setScheduledPrompts(prev => prev.filter(p => p.id !== id))}
       />
 
+      {/* Updater progress (the strip's Restart button starts the flow; this shows where it is). */}
+      {updateProgress && (
+        <div className="rd-root" style={{ position: "fixed", right: 16, bottom: 44, zIndex: 80, padding: "8px 12px", borderRadius: 8, border: "1px solid var(--border-strong)", background: "var(--bg-panel)", color: "var(--text)", fontSize: 12, display: "flex", alignItems: "center", gap: 10 }}>
+          <span>{updateProgress}</span>
+          {updateProgress.startsWith("Update failed") && (
+            <button type="button" onClick={() => setUpdateProgress(null)} className="rd-btn2" style={{ height: 24, padding: "0 8px", borderRadius: 6, border: "1px solid var(--border-control)", background: "transparent", color: "var(--text)", fontSize: 12 }}>
+              Dismiss
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Transient "press ⌘Q again to quit" hint. NOT a full-screen overlay (no
           `fixed inset-0 z-50`) so it never blocks terminal input. */}
       {quitHint && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[80] px-3 py-1.5 rounded-lg bg-neutral-900/90 dark:bg-neutral-100/90 text-neutral-100 dark:text-neutral-900 text-[11px] font-mono font-semibold shadow-2xl pointer-events-none">
+        <div className="rd-root" style={{ position: "fixed", bottom: 44, left: "50%", transform: "translateX(-50%)", zIndex: 80, padding: "6px 12px", borderRadius: 8, background: "var(--bg-panel)", border: "1px solid var(--border-strong)", color: "var(--text-strong)", fontFamily: "var(--font-mono)", fontSize: 12, fontWeight: 600, pointerEvents: "none" }}>
           Press ⌘Q again to quit
         </div>
       )}
@@ -2921,7 +2178,7 @@ export const loginHandler = async (req, res) => {
             </div>
             {pathMenu.kind === "file" && (
               <button type="button" className="w-full text-left px-3 py-1.5 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 cursor-pointer text-neutral-700 dark:text-neutral-200"
-                onClick={() => { openEditor(pathMenu.resolved); setView("control"); setPathMenu(null); }}>
+                onClick={() => { openEditor(pathMenu.resolved); setPathMenu(null); }}>
                 Open in Muya
               </button>
             )}
@@ -2930,7 +2187,7 @@ export const loginHandler = async (req, res) => {
                 onClick={() => {
                   ensureWorktreeTracked(pathMenu.resolved);
                   openTerminal({ key: `term-${Date.now()}`, name: pathMenu.resolved.split("/").pop() ?? "Terminal", kind: "terminal", cwd: pathMenu.resolved });
-                  setView("control"); setPathMenu(null);
+                  showControl(); setPathMenu(null);
                 }}>
                 Open Terminal Here
               </button>

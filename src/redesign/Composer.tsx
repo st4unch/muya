@@ -5,7 +5,7 @@
 // danger palette only in bypass mode (Shift+Tab cycles modes — exposed as a
 // callback, the actual cycle order is the caller's call).
 
-import type { KeyboardEvent } from "react";
+import type { KeyboardEvent, MouseEvent } from "react";
 import type { PermissionMode } from "./types";
 import { messageHint } from "./text";
 
@@ -16,18 +16,22 @@ export interface ComposerProps {
   onSend: (text: string) => void;
   mode: PermissionMode;
   onCycleMode: () => void;
+  /** When given, clicking the mode chip opens a picker instead of cycling once
+   *  (Shift+Tab in the box still cycles). */
+  onModeMenu?: (e: MouseEvent<HTMLElement>) => void;
   onAttachFile: () => void;
   onCommands: () => void;
 }
 
 const MODE_LABEL: Record<PermissionMode, string> = {
-  default: "default",
+  default: "manual",
   acceptEdits: "accept edits",
   plan: "plan",
+  auto: "auto",
   bypass: "bypass",
 };
 
-export function Composer({ agentName, value, onChange, onSend, mode, onCycleMode, onAttachFile, onCommands }: ComposerProps) {
+export function Composer({ agentName, value, onChange, onSend, mode, onCycleMode, onModeMenu, onAttachFile, onCommands }: ComposerProps) {
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -80,7 +84,7 @@ export function Composer({ agentName, value, onChange, onSend, mode, onCycleMode
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <button
             type="button"
-            onClick={onCycleMode}
+            onClick={(e) => (onModeMenu ? onModeMenu(e) : onCycleMode())}
             className="rd-chip"
             style={{
               height: 26,

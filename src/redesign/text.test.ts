@@ -1,6 +1,6 @@
 // Created by Claude — Classification: INTERNAL
 import { describe, it, expect } from "vitest";
-import { messageHint, shortName } from "./text";
+import { messageHint, shortName, withDetail } from "./text";
 
 describe("shortName", () => {
   it("leaves names that fit alone", () => {
@@ -24,5 +24,13 @@ describe("messageHint", () => {
     const long = messageHint("a-very-long-agent-name-that-should-truncate");
     expect(long.endsWith("…")).toBe(true);
     expect(long).not.toContain("……");
+  });
+});
+
+describe("withDetail", () => {
+  it("joins with a separator only when there is a detail", () => {
+    expect(withDetail("Working", "4m 15s")).toBe("Working · 4m 15s");
+    expect(withDetail("Working", undefined)).toBe("Working");
+    expect(withDetail("Working", "  ")).toBe("Working");
   });
 });

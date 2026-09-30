@@ -18,13 +18,15 @@ export interface InspectorProps {
   inspector: InspectorVM;
   onReviewDiff: () => void;
   onCommit: () => void;
+  /** A row in Changes was clicked. Omitted = rows are inert. */
+  onOpenChange?: (path: string) => void;
   filesSlot?: ReactNode;
   activitySlot?: ReactNode;
 }
 
 const CODE_COLOR: Record<string, string> = { M: "var(--warning)", A: "var(--success)", D: "var(--danger-text)" };
 
-export function Inspector({ waitingAgents, onApprove, onDeny, onOpen, activeTab, onTabChange, inspector, onReviewDiff, onCommit, filesSlot, activitySlot }: InspectorProps) {
+export function Inspector({ waitingAgents, onApprove, onDeny, onOpen, activeTab, onTabChange, inspector, onReviewDiff, onCommit, onOpenChange, filesSlot, activitySlot }: InspectorProps) {
   const visibleChanges = inspector.changes.slice(0, 3);
   const moreCount = inspector.changes.length - visibleChanges.length;
   const hasCollisions = inspector.collisions.length > 0;
@@ -47,10 +49,10 @@ export function Inspector({ waitingAgents, onApprove, onDeny, onOpen, activeTab,
                 </div>
               )}
               <div style={{ display: "flex", gap: 8 }}>
-                <button type="button" onClick={() => onApprove(agent.key)} style={{ flexGrow: 1, height: 32, borderRadius: 7, border: "none", background: "var(--warning-btn-bg)", color: "var(--warning-btn-fg)", fontSize: 13, fontWeight: 600 }}>
+                <button type="button" disabled={agent.approval?.actionable === false} onClick={() => onApprove(agent.key)} style={{ flexGrow: 1, height: 32, borderRadius: 7, border: "none", background: "var(--warning-btn-bg)", color: "var(--warning-btn-fg)", fontSize: 13, fontWeight: 600 }}>
                   Allow
                 </button>
-                <button type="button" onClick={() => onDeny(agent.key)} className="rd-btn2" style={{ flexGrow: 1, height: 32, borderRadius: 7, border: "1px solid var(--warning-border)", background: "transparent", color: "var(--warning-text)", fontSize: 13 }}>
+                <button type="button" disabled={agent.approval?.actionable === false} onClick={() => onDeny(agent.key)} className="rd-btn2" style={{ flexGrow: 1, height: 32, borderRadius: 7, border: "1px solid var(--warning-border)", background: "transparent", color: "var(--warning-text)", fontSize: 13 }}>
                   Deny
                 </button>
                 <button type="button" onClick={() => onOpen(agent.key)} className="rd-btn2" style={{ height: 32, padding: "0 10px", borderRadius: 7, border: "1px solid var(--warning-border)", background: "transparent", color: "var(--warning-text)", fontSize: 13, flexShrink: 0 }}>
@@ -98,7 +100,7 @@ export function Inspector({ waitingAgents, onApprove, onDeny, onOpen, activeTab,
         <>
           <div style={{ padding: "10px 8px", display: "flex", flexDirection: "column", gap: 2, fontFamily: "var(--font-mono)", fontSize: 12, overflow: "auto", minHeight: 0 }}>
             {visibleChanges.map((change) => (
-              <button key={change.path} type="button" className="rd-change-row" style={{ display: "flex", gap: 10, alignItems: "center", padding: "7px 8px", borderRadius: 6, border: "none", background: "transparent", color: "var(--text)", textAlign: "left", fontFamily: "inherit", fontSize: "inherit" }}>
+              <button key={change.path} type="button" onClick={() => onOpenChange?.(change.path)} className="rd-change-row" style={{ display: "flex", gap: 10, alignItems: "center", padding: "7px 8px", borderRadius: 6, border: "none", background: "transparent", color: "var(--text)", textAlign: "left", fontFamily: "inherit", fontSize: "inherit" }}>
                 <span style={{ color: CODE_COLOR[change.code] ?? "var(--text-muted)", width: 12, flexShrink: 0 }}>{change.code}</span>
                 <span className="rd-ellipsis" style={{ flexGrow: 1 }}>{change.path}</span>
               </button>

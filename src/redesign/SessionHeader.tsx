@@ -4,25 +4,27 @@
 // itself wraps at 1440px (a defect — PROMPT update), so every piece here is
 // nowrap + flex-shrink:0, with only the h1 allowed to ellipsis.
 
-import type { CSSProperties } from "react";
+import type { CSSProperties, MouseEvent } from "react";
 import type { AgentVM } from "./types";
 import { useLayoutEffect, useRef, useState } from "react";
 import { BypassWarningIcon } from "./icons";
+import { withDetail } from "./text";
 
 export interface SessionHeaderProps {
   agent: AgentVM;
   onCompact: () => void;
   onSplitToGrid: () => void;
   onStop: () => void;
-  onMore: () => void;
+  /** Receives the click so the caller can anchor the actions menu under the button. */
+  onMore: (e: MouseEvent<HTMLElement>) => void;
 }
 
 function statusPill(agent: AgentVM) {
   if (agent.status === "working") {
-    return { text: `Working · ${agent.since ?? ""}`, bg: "var(--success-bg)", fg: "var(--success-text)", dot: "var(--success)" };
+    return { text: withDetail("Working", agent.since), bg: "var(--success-bg)", fg: "var(--success-text)", dot: "var(--success)" };
   }
   if (agent.status === "waiting") {
-    return { text: `Waiting · ${agent.since ?? ""}`, bg: "var(--warning-card-bg)", fg: "var(--warning-label)", dot: "var(--warning)" };
+    return { text: withDetail("Waiting", agent.since), bg: "var(--warning-card-bg)", fg: "var(--warning-label)", dot: "var(--warning)" };
   }
   return { text: "Idle", bg: "var(--bg-segment)", fg: "var(--text-muted)", dot: "var(--text-faint)" };
 }
@@ -57,6 +59,10 @@ function useCompactBypass(active: boolean, deps: unknown[]) {
       setCompact(false);
       return;
     }
+    // The remembered "full width" belongs to the previous name/pill text; drop it and
+    // re-measure (same layout pass, so nothing flashes).
+    fullWidth.current = 0;
+    setCompact(false);
     const check = () => {
       setCompact((was) => {
         if (!was) {

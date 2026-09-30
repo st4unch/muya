@@ -202,23 +202,24 @@ export const MOCK_AGENTS: MockAgentSession[] = [
 export const MOCK_WORKSPACES = [CCP, IPTV, NUMBAT];
 
 /** git_status(root) — Vec<(String,String)> tuples serialize as 2-element arrays:
- *  [status, repo-relative path]. First 3 are pinned by the reference design; the
- *  rest just need to exist so "+ 11 more files" (14 - 3) has something to count. */
+ *  [repo-relative path, status char] (src-tauri/src/fs.rs). First 3 are pinned by the
+ *  reference design; the rest just need to exist so "+ 11 more files" (14 - 3) has
+ *  something to count. */
 export const MOCK_GIT_STATUS: [string, string][] = [
-  ["M", "src-tauri/src/pty.rs"],
-  ["M", "src-tauri/src/agents.rs"],
-  ["M", "tasks/todo.md"],
-  ["M", "src/App.tsx"],
-  ["M", "src/components/Terminal.tsx"],
-  ["M", "src/components/FileTree.tsx"],
-  ["A", "docs/prd-redesign-v0.4.md"],
-  ["M", "src-tauri/src/fs.rs"],
-  ["M", "src-tauri/src/ssh.rs"],
-  ["?", "docs/handoff-2026-09-30.md"],
-  ["M", "package.json"],
-  ["M", "src/lib/tabs.ts"],
-  ["M", "src-tauri/Cargo.lock"],
-  ["M", "README.md"],
+  ["src-tauri/src/pty.rs", "M"],
+  ["src-tauri/src/agents.rs", "M"],
+  ["tasks/todo.md", "M"],
+  ["src/App.tsx", "M"],
+  ["src/components/Terminal.tsx", "M"],
+  ["src/components/FileTree.tsx", "M"],
+  ["docs/prd-redesign-v0.4.md", "A"],
+  ["src-tauri/src/fs.rs", "M"],
+  ["src-tauri/src/ssh.rs", "M"],
+  ["docs/handoff-2026-09-30.md", "?"],
+  ["package.json", "M"],
+  ["src/lib/tabs.ts", "M"],
+  ["src-tauri/Cargo.lock", "M"],
+  ["README.md", "M"],
 ];
 
 /** pm_status(paths) — one ProjectStatus per tracked workspace root. */
@@ -316,3 +317,51 @@ export const MOCK_TERMINAL_LINES = [
   "> 3 files changed since last run.",
   "Ready.",
 ];
+
+/** The 7 terminal tabs the mock app restores, in the reference's list order. `cwd`
+ *  values are the reference's display paths (mock mode never touches the filesystem). */
+export const MOCK_TABS: { key: string; cwd: string; agent?: "claude" | "opencode"; session?: "working" | "waiting-for-input" }[] = [
+  { key: "documents-44", cwd: CCP, session: "waiting-for-input" },
+  { key: "muya-all", cwd: CCP, session: "working" },
+  { key: "opencode-review", cwd: CCP, agent: "opencode", session: "working" },
+  { key: "iptv-2a", cwd: IPTV },
+  { key: "numbat-c3", cwd: NUMBAT },
+  { key: "skills-envanter", cwd: CONTROL_PLANE_SHORT },
+  { key: "serbest", cwd: HOME },
+];
+
+const RULE = "─".repeat(60);
+const DASH = "╌".repeat(60);
+
+/** What each mock terminal prints. These are the REAL Claude Code 2.1.285 screen
+ *  shapes (see src/lib/__fixtures__/claude-screens) so the screen parser has something
+ *  to read: a permission dialog, a spinner line with metrics, a mode footer. */
+export const MOCK_SCREENS: Record<string, string[]> = {
+  "documents-44": [
+    "❯ write the design notes",
+    "⏺ fs_write_file(docs/[file path])",
+    RULE,
+    " fs_write_file",
+    " docs/[file path]",
+    DASH,
+    "  1 # Design notes",
+    DASH,
+    " Do you want to write docs/[file path]?",
+    " ❯ 1. Yes",
+    "   2. Yes, and don't ask again for this session",
+    "   3. No",
+    " Esc to cancel · Tab to amend",
+  ],
+  "muya-all": [
+    "❯ refactor the agent list",
+    "⏺ Reading src/App.tsx",
+    "",
+    "✻ Unfurling… (4m 15s · ↓ 16.9k tokens · thought for 3s)",
+    "",
+    RULE,
+    "❯ ",
+    RULE,
+    "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents",
+  ],
+  "opencode-review": ["opencode", "reviewing the diff…"],
+};

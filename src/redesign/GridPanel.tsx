@@ -10,7 +10,7 @@
 import type { KeyboardEvent } from "react";
 import type { AgentVM } from "./types";
 import { MaximizeIcon } from "./icons";
-import { messageHint } from "./text";
+import { messageHint, withDetail } from "./text";
 
 export interface GridPanelProps {
   agent: AgentVM;
@@ -53,7 +53,7 @@ export function GridPanel({
   const headBg = waiting ? "var(--warning-card-bg)" : focused ? "var(--bg-selected-head)" : "var(--bg-panel)";
   const headBorder = waiting ? "1px solid var(--warning-border)" : "1px solid var(--border)";
 
-  const statusText = waiting ? `Needs permission · ${agent.since ?? ""}` : working ? `Working · ${agent.since ?? ""}` : "Idle";
+  const statusText = waiting ? withDetail("Needs permission", agent.since) : working ? withDetail("Working", agent.since) : "Idle";
   const statusColor = waiting ? "var(--warning)" : working ? "var(--success-text)" : "var(--text-muted)";
   const dot = waiting || working ? (
     <span style={{ width: 8, height: 8, borderRadius: 4, background: waiting ? "var(--warning)" : "var(--success)", flexShrink: 0 }} />
@@ -150,18 +150,18 @@ export function GridPanel({
       ) : (
         // Real xterm is adopted into this slot; it fills the region with NO padding
         // of its own — the xterm host itself carries the 14px/16px reference padding.
-        <div data-terminal-slot={agent.key} data-diff-mask style={{ flexGrow: 1, minHeight: 0, overflow: "hidden", background: "var(--bg-terminal)" }} />
+        <div data-terminal-slot={agent.key} data-terminal-pad="14px 16px" data-diff-mask style={{ flexGrow: 1, minHeight: 0, overflow: "hidden", background: "var(--bg-terminal)" }} />
       )}
 
       {!idle && waiting && (
         <div style={{ height: BAR_HEIGHT, boxSizing: "border-box", display: "flex", alignItems: "center", gap: 8, padding: "0 14px", borderTop: "1px solid var(--border)", background: "var(--bg-chrome)" }}>
-          <button type="button" onClick={onApprove} style={{ height: 34, padding: "0 16px", borderRadius: 7, border: "none", background: "var(--warning-btn-bg)", color: "var(--warning-btn-fg)", fontSize: 13, fontWeight: 600 }}>
+          <button type="button" disabled={agent.approval?.actionable === false} onClick={onApprove} style={{ height: 34, padding: "0 16px", borderRadius: 7, border: "none", background: "var(--warning-btn-bg)", color: "var(--warning-btn-fg)", fontSize: 13, fontWeight: 600 }}>
             Allow <span style={{ fontFamily: "var(--font-mono)", fontWeight: 400, fontSize: 11 }}>Y</span>
           </button>
-          <button type="button" onClick={onDeny} className="rd-btn2" style={{ height: 34, padding: "0 16px", borderRadius: 7, border: "1px solid var(--warning-border)", background: "transparent", color: "var(--warning-text)", fontSize: 13 }}>
+          <button type="button" disabled={agent.approval?.actionable === false} onClick={onDeny} className="rd-btn2" style={{ height: 34, padding: "0 16px", borderRadius: 7, border: "1px solid var(--warning-border)", background: "transparent", color: "var(--warning-text)", fontSize: 13 }}>
             Deny <span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>N</span>
           </button>
-          <button type="button" onClick={onAlwaysAllow} className="rd-btn2" style={{ height: 34, padding: "0 16px", borderRadius: 7, border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-tertiary)", fontSize: 13 }}>
+          <button type="button" disabled={agent.approval?.actionable === false} onClick={onAlwaysAllow} className="rd-btn2" style={{ height: 34, padding: "0 16px", borderRadius: 7, border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-tertiary)", fontSize: 13 }}>
             Always allow this session
           </button>
         </div>

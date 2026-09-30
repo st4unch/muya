@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { X } from "lucide-react";
+import type { ThemePreference } from "../theme/theme";
 
 const DEFAULT_LOG_PATH = "~/.claude/muya-debug.log";
 
@@ -17,9 +18,14 @@ const DEFAULT_LOG_PATH = "~/.claude/muya-debug.log";
 export default function SettingsModal({
   open,
   onClose,
+  themePreference,
+  onThemePreferenceChange,
 }: {
   open: boolean;
   onClose: () => void;
+  /** App theme preference; the appearance group renders only when both are given. */
+  themePreference?: ThemePreference;
+  onThemePreferenceChange?: (pref: ThemePreference) => void;
 }) {
   const [enabled, setEnabled] = useState(false);
   const [path, setPath] = useState(DEFAULT_LOG_PATH);
@@ -97,6 +103,33 @@ export default function SettingsModal({
         </div>
 
         <div className="p-4 space-y-4">
+          {themePreference && onThemePreferenceChange && (
+            <div className="space-y-1">
+              <span className={lbl}>Appearance</span>
+              <div role="radiogroup" aria-label="Theme" className="flex items-center gap-4">
+                {(
+                  [
+                    ["system", "System"],
+                    ["light", "Light"],
+                    ["dark", "Dark"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <label key={value} className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="radio"
+                      name="muya-theme"
+                      value={value}
+                      checked={themePreference === value}
+                      onChange={() => onThemePreferenceChange(value)}
+                      className="h-4 w-4 accent-indigo-600 cursor-pointer"
+                    />
+                    <span className="text-xs font-mono text-neutral-700 dark:text-neutral-300">{label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="space-y-1">
             <span className={lbl}>Debug logging</span>
             <label className="flex items-center gap-2 cursor-pointer select-none">

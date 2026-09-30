@@ -17,3 +17,10 @@ export function messageHint(name: string): string {
   const n = shortName(name);
   return `Message ${n.endsWith("…") ? n : `${n}…`}`;
 }
+
+/** "Working · 4m 15s", or just "Working" when the duration is unknown — never a
+ *  dangling separator ("Working ·"), which is what an empty `since` used to leave. */
+export function withDetail(label: string, detail?: string | null): string {
+  const d = detail?.trim();
+  return d ? `${label} · ${d}` : label;
+}

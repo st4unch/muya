@@ -8,6 +8,7 @@ import { X, ChevronUp, ChevronDown } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import { altArrowSeq } from "../lib/keys";
 import { terminalTheme } from "../theme/terminalThemes";
+import { parseClaudeScreen, readScreenLines, type ScreenState } from "../lib/screenState";
 
 // Output bytes arrive as a raw ArrayBuffer (binary fetch path — no JSON byte
 // bloat); process-exit arrives as a small JSON object. See src-tauri/src/pty.rs.
@@ -32,6 +33,7 @@ export default function Terminal({
   onPtyReady,
   onPromptSubmit,
   onPathMenu,
+  onScreen,
 }: {
   cwd?: string;
   initialCommand?: string;
@@ -63,6 +65,10 @@ export default function Terminal({
   onPromptSubmit?: (prompt: string) => void;
   /** A path in the terminal output was clicked/right-clicked — parent shows an action menu. */
   onPathMenu?: (resolved: string, kind: "file" | "dir", x: number, y: number) => void;
+  /** What the visible screen shows (Claude's spinner line, permission dialog, mode
+   *  footer), parsed from the xterm buffer. Throttled to ~300ms after the last output
+   *  and reported ONLY when it changed — the backend exposes none of this. */
+  onScreen?: (state: ScreenState) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
@@ -103,6 +109,8 @@ export default function Terminal({
   const onPathMenuRef = useRef<typeof onPathMenu>(undefined);
   const cwdRef = useRef<string | undefined>(cwd);
   useEffect(() => { onPathMenuRef.current = onPathMenu; }, [onPathMenu]);
+  const onScreenRef = useRef<typeof onScreen>(undefined);
+  onScreenRef.current = onScreen;
   useEffect(() => { cwdRef.current = cwd; }, [cwd]);
   // Cache of resolved path candidates (key: `${cwd}\0${token}`) → {resolved, kind}.
   const pathKindCacheRef = useRef<Map<string, { resolved: string; kind: string }>>(new Map());
@@ -254,6 +262,26 @@ export default function Terminal({
 
     let ptyId: string | null = null;
     let disposed = false;
+
+    // Screen parse: trailing-edge throttle, so a burst of output costs one parse.
+    let screenTimer: number | undefined;
+    let lastScreen = "";
+    const scheduleScreenParse = () => {
+      if (!onScreenRef.current || screenTimer !== undefined) return;
+      screenTimer = window.setTimeout(() => {
+        screenTimer = undefined;
+        if (disposed) return;
+        try {
+          const state = parseClaudeScreen(readScreenLines(term));
+          const sig = JSON.stringify(state);
+          if (sig === lastScreen) return;
+          lastScreen = sig;
+          onScreenRef.current?.(state);
+        } catch {
+          /* buffer read raced a dispose */
+        }
+      }, 300);
+    };
 
     // xterm measures its cell size from the font at term.open() time. JetBrains Mono is
     // bundled (fontsource) but may not have finished loading yet on a cold start, so the
@@ -409,6 +437,7 @@ export default function Terminal({
           if (/\x1b\[\?(?:1000|1002|1003)h/.test(text)) mouseTrackingActive = true;
           if (/\x1b\[\?(?:1000|1002|1003)l/.test(text)) mouseTrackingActive = false;
           term.write(new Uint8Array(msg));
+          scheduleScreenParse();
         } else if (msg && msg.type === "exit") {
           mouseTrackingActive = false;
           term.write("\r\n\x1b[2m[process exited — close or reselect a session]\x1b[0m\r\n");
@@ -480,6 +509,7 @@ export default function Terminal({
 
     return () => {
       disposed = true;
+      if (screenTimer !== undefined) window.clearTimeout(screenTimer);
       cancelAnimationFrame(rendererRaf);
       syncRef.current = () => {};
       webglRef.current?.release();
@@ -545,7 +575,8 @@ export default function Terminal({
       <div
         ref={ref}
         className="h-full w-full overflow-hidden bg-[var(--bg-terminal)]"
-        style={{ padding: "20px 28px" }}
+        // The slot that adopts this terminal sets --term-pad (Control 20/28, Grid 14/16).
+        style={{ padding: "var(--term-pad, 20px 28px)" }}
       />
 
       {/* In-terminal search overlay — toggled by Cmd+F */}
