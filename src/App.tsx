@@ -1875,6 +1875,7 @@ export default function App() {
       selectedRoot={selectedRoot}
       onSelectRoot={(r) => setSelectedRoot((prev) => (prev === r ? undefined : r))}
       refreshSignal={fsTick}
+      onAddWorkspace={() => void addWorkspace()}
     />
     </div>
   );

@@ -213,6 +213,7 @@ export default function FileTree({
   selectedRoot,
   onSelectRoot,
   refreshSignal,
+  onAddWorkspace,
 }: {
   roots: string[];
   removableRoots?: Set<string>;
@@ -229,6 +230,8 @@ export default function FileTree({
   selectedRoot?: string;
   onSelectRoot?: (root: string) => void;
   refreshSignal?: number;
+  /** Shown as a button in the empty state (no workspace yet). */
+  onAddWorkspace?: () => void;
 }) {
   const [menu, setMenu] = useState<CtxMenu | null>(null);
   const [gitStatus, setGitStatus] = useState<GitStatusMap>(new Map());
@@ -408,7 +411,18 @@ export default function FileTree({
   if (!roots.length)
     return (
       <div className="p-3 text-[11px] text-neutral-400 dark:text-neutral-500 font-mono leading-relaxed">
-        No workspace yet. Add a project folder with <span className="font-bold">+ Workspace</span> above.
+        <div>No workspace yet.</div>
+        {onAddWorkspace ? (
+          <button
+            type="button"
+            onClick={onAddWorkspace}
+            className="mt-2 px-2 py-1 rounded border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer font-sans text-xs"
+          >
+            Add workspace…
+          </button>
+        ) : (
+          <div>Add a project folder from the Workspace menu.</div>
+        )}
       </div>
     );
 
