@@ -250,6 +250,11 @@ fn validate(server: &Server) -> Result<(), String> {
     if server.username.trim().is_empty() {
         return Err("username is required".into());
     }
+    // Never a valid host or user name, and it would turn the ssh destination into an
+    // option (see `reject_injection`). Applies to human-entered servers too.
+    if server.host.starts_with('-') || server.username.starts_with('-') {
+        return Err("host and username must not start with '-'".into());
+    }
     if server.port == 0 {
         return Err("port must be 1–65535".into());
     }
@@ -331,6 +336,11 @@ fn reject_injection(field: &str, value: &str) -> Result<(), String> {
     }
     if value.contains('@') {
         return Err(format!("{field} must not contain '@'"));
+    }
+    // A leading '-' would make `-oProxyCommand=…@host` an ssh/scp OPTION (local RCE on
+    // the Muya host); `${IFS}` gets around the whitespace rule, so this check is needed.
+    if value.starts_with('-') {
+        return Err(format!("{field} must not start with '-'"));
     }
     Ok(())
 }
@@ -619,6 +629,7 @@ fn build_connect_command(
         // commands into one connection (ssh_run `commands: []`), not multiplexing. L41.
         let mut args = extra_ssh_opts(server);
         args.extend(control_master_disabled_opts());
+        args.push("--".to_string());
         args.push(dest);
         return Ok(ConnectCommand {
             program: "ssh".into(),
@@ -634,6 +645,9 @@ fn build_connect_command(
     }
     args.extend(extra_ssh_opts(server));
     args.extend(control_master_opts(&control_master_dir()));
+    // `--`: whatever follows is the destination, never an option — even for a server
+    // saved before names starting with '-' were rejected.
+    args.push("--".to_string());
     args.push(format!("{}@{}", server.username, server.host));
     Ok(ConnectCommand {
         program: "ssh".into(),
@@ -848,6 +862,8 @@ pub(crate) fn build_scp_command(
         ScpDirection::Upload => (local_path.to_string(), format!("{dest_spec}:{remote_path}")),
         ScpDirection::Download => (format!("{dest_spec}:{remote_path}"), local_path.to_string()),
     };
+    // `--`: operands only from here (a local path or destination can't become a flag).
+    args.push("--".to_string());
     args.push(src);
     args.push(dst);
 
@@ -1128,6 +1144,19 @@ mod tests {
         );
     }
 
+    /// Human-entered servers can't start with '-' either, and a record saved before the
+    /// rule still can't turn into an ssh/scp option: the destination follows `--`.
+    #[test]
+    fn dash_names_rejected_and_destination_is_always_an_operand() {
+        assert!(validate(&srv("-oProxyCommand=id", 22, "u")).is_err());
+        assert!(validate(&srv("h", 22, "-oProxyCommand=id")).is_err());
+        let legacy = srv("h", 22, "-oProxyCommand=id");
+        let cmd = build_connect_command(&legacy, None).unwrap();
+        let dd = cmd.args.iter().position(|a| a == "--").expect("-- present");
+        assert_eq!(cmd.args[dd + 1], "-oProxyCommand=id@h");
+        assert!(cmd.args[..dd].iter().all(|a| !a.contains("ProxyCommand")));
+    }
+
     fn srv(host: &str, port: u16, user: &str) -> Server {
         Server {
             id: String::new(),
@@ -1322,7 +1351,7 @@ mod tests {
         assert_eq!(cmd.program, "ssh");
         assert_eq!(
             without_cm(&cmd.args),
-            vec!["ferhat@oracle@10.0.0.5@bastion.corp"]
+            vec!["--", "ferhat@oracle@10.0.0.5@bastion.corp"]
         );
         assert!(!cmd.needs_password_injection);
     }
@@ -1336,7 +1365,7 @@ mod tests {
         let cmd = build_connect_command(&s, Some(&psmp())).unwrap();
         assert_eq!(
             without_cm(&cmd.args),
-            vec!["ferhat@oracle@10.0.0.5#2222@bastion.corp"]
+            vec!["--", "ferhat@oracle@10.0.0.5#2222@bastion.corp"]
         );
     }
 
@@ -1344,9 +1373,9 @@ mod tests {
     #[test]
     fn direct_port_handling() {
         let cmd = build_connect_command(&srv("h", 22, "u"), None).unwrap();
-        assert_eq!(without_cm(&cmd.args), vec!["u@h"]);
+        assert_eq!(without_cm(&cmd.args), vec!["--", "u@h"]);
         let cmd2 = build_connect_command(&srv("h", 2222, "u"), None).unwrap();
-        assert_eq!(without_cm(&cmd2.args), vec!["-p", "2222", "u@h"]);
+        assert_eq!(without_cm(&cmd2.args), vec!["-p", "2222", "--", "u@h"]);
     }
 
     // Direct + stored credential → PTY password injection flagged (prompt does not).
@@ -1378,13 +1407,13 @@ mod tests {
         let cmd = build_connect_command(&s, None).unwrap();
         assert_eq!(
             without_cm(&cmd.args),
-            vec!["-X", "-L", "8080:localhost:80", "-J", "jump@host", "u@h"]
+            vec!["-X", "-L", "8080:localhost:80", "-J", "jump@host", "--", "u@h"]
         );
         // With a non-standard port, `-p N` comes first, then the extra opts, then dest.
         let mut s2 = srv("h", 2222, "u");
         s2.ssh_options = Some("-v".into());
         let cmd2 = build_connect_command(&s2, None).unwrap();
-        assert_eq!(without_cm(&cmd2.args), vec!["-p", "2222", "-v", "u@h"]);
+        assert_eq!(without_cm(&cmd2.args), vec!["-p", "2222", "-v", "--", "u@h"]);
     }
 
     // A PSMP server with no profile is a clear error, not a broken string.
@@ -1525,6 +1554,9 @@ mod tests {
             None
         )
         .is_err());
+        // leading '-' → ssh/scp option; ${IFS} dodges the whitespace rule (audit 2026-09-30)
+        assert!(agent_add_server_in(&mut cfg, "x", "host", "-oProxyCommand=sh${IFS}-c${IFS}id", None, None).is_err());
+        assert!(agent_add_server_in(&mut cfg, "x", "-oProxyCommand=id", "u", None, None).is_err());
         // newline
         assert!(agent_add_server_in(&mut cfg, "x", "h\nevil", "u", None, None).is_err());
         // `@` rewrites the destination
@@ -1635,6 +1667,7 @@ mod tests {
                 "ProxyCommand=none",
                 "-o",
                 "ServerAliveInterval=30",
+                "--",
                 "/local/file.txt",
                 "ferhat@oracle@10.0.0.5@bastion.corp:/remote/file.txt",
             ]
@@ -1689,7 +1722,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             up.args,
-            vec!["-o", "LogLevel=ERROR", "/local/a.txt", "u@h:/remote/a.txt"]
+            vec!["-o", "LogLevel=ERROR", "--", "/local/a.txt", "u@h:/remote/a.txt"]
         );
         let down = build_scp_command(
             &s,
@@ -1703,7 +1736,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             down.args,
-            vec!["-o", "LogLevel=ERROR", "u@h:/remote/b.txt", "/local/b.txt"]
+            vec!["-o", "LogLevel=ERROR", "--", "u@h:/remote/b.txt", "/local/b.txt"]
         );
     }
 
@@ -1779,6 +1812,7 @@ mod tests {
                 "-r",
                 "-p",
                 "-C",
+                "--",
                 "/local/dir",
                 "u@h:/remote/dir",
             ]

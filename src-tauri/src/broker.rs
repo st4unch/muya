@@ -303,8 +303,14 @@ pub(crate) fn assemble_run_args(
     command: &str,
 ) -> Result<Vec<String>, String> {
     let dest = base.pop().ok_or("empty ssh args (no destination)")?;
+    // The base ends `-- <dest>`: options must go BEFORE the `--`, or ssh would read
+    // them as the destination/remote command.
+    if base.last().map(String::as_str) == Some("--") {
+        base.pop();
+    }
     base.push("-o".to_string());
     base.push("LogLevel=ERROR".to_string());
+    base.push("--".to_string());
     base.push(dest);
     base.push(command.to_string()); // the whole remote command, as ONE argv element
     Ok(base)
@@ -1715,7 +1721,7 @@ pub(crate) fn mcp_binary_path() -> Result<String, String> {
 /// Also drops the legacy `muya-ssh` entry so the rename doesn't leave a stale twin.
 pub(crate) fn register_mcp() -> Result<(), String> {
     let command = mcp_binary_path()?;
-    let _ = crate::fs::remove_mcp(MCP_LEGACY_ENTRY_NAME.to_string());
+    let _ = crate::fs::remove_legacy_muya_mcp(MCP_LEGACY_ENTRY_NAME);
     // opencode reads a different file in a different shape. Best-effort: a machine
     // without opencode should not fail Claude's registration, which is the one that
     // must always work. Logged so a genuine failure is still findable.
@@ -2049,9 +2055,17 @@ mod tests {
                 "2222",
                 "-o",
                 "LogLevel=ERROR",
+                "--",
                 "u@h",
                 "echo hi; whoami && id",
             ]
+        );
+        // The real base from build_connect_command ends `-- u@h`: options still go
+        // before the `--`, never after it (they'd become the destination/command).
+        let real = vec!["-p".into(), "2222".into(), "--".into(), "u@h".into()];
+        assert_eq!(
+            assemble_run_args(real, "id").unwrap(),
+            vec!["-p", "2222", "-o", "LogLevel=ERROR", "--", "u@h", "id"]
         );
         // The metacharacters live in ONE element — never split into extra argv.
         assert_eq!(args.last().unwrap(), "echo hi; whoami && id");
