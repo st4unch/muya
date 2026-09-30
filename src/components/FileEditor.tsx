@@ -31,6 +31,7 @@ export default function FileEditor({
   onDirtyChange,
   active = true,
   reloadTick = 0,
+  fileTick = 0,
   startInDiff = false,
 }: {
   path: string;
@@ -40,6 +41,8 @@ export default function FileEditor({
   active?: boolean;
   /** Bumps on any watched-workspace change (App's fsTick). */
   reloadTick?: number;
+  /** Bumps when THIS file changed on disk — reload right away, even while hidden. */
+  fileTick?: number;
   /** Open straight into the diff-against-HEAD view ("Review diff"). */
   startInDiff?: boolean;
 }) {
@@ -120,7 +123,7 @@ export default function FileEditor({
       clearTimeout(t);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path, active ? reloadTick : 0]);
+  }, [path, active ? reloadTick : 0, fileTick]);
 
   /** Manual reload from the "disk changed" badge — discards unsaved edits. */
   const reloadFromDisk = () => {

@@ -210,6 +210,7 @@ function FileTabView({
   theme,
   active,
   reloadTick,
+  fileTick,
   onDirtyChange,
   onEditMarkdown,
 }: {
@@ -217,6 +218,8 @@ function FileTabView({
   theme: "dark" | "light";
   active: boolean;
   reloadTick: number;
+  /** Bumps when THIS file changed on disk (watcher's fast `fs-files-changed` lane). */
+  fileTick: number;
   onDirtyChange: (dirty: boolean) => void;
   onEditMarkdown: (path: string) => void;
 }) {
@@ -225,13 +228,13 @@ function FileTabView({
       <ViewerErrorBoundary label={tab.filePath ?? tab.key}>
         <Suspense fallback={<div className="flex-1 flex items-center justify-center text-xs text-neutral-400">Loading…</div>}>
           {tab.kind === "mdview" ? (
-            <MarkdownView filePath={tab.filePath!} active={active} reloadTick={reloadTick} onEdit={onEditMarkdown} />
+            <MarkdownView filePath={tab.filePath!} active={active} reloadTick={reloadTick} fileTick={fileTick} onEdit={onEditMarkdown} />
           ) : tab.kind === "imgview" ? (
             <ImageViewer path={tab.filePath!} />
           ) : tab.kind === "pdfview" ? (
             <PdfViewer path={tab.filePath!} />
           ) : (
-            <FileEditor path={tab.filePath!} theme={theme} active={active} reloadTick={reloadTick} onDirtyChange={onDirtyChange} startInDiff={tab.startInDiff} />
+            <FileEditor path={tab.filePath!} theme={theme} active={active} reloadTick={reloadTick} fileTick={fileTick} onDirtyChange={onDirtyChange} startInDiff={tab.startInDiff} />
           )}
         </Suspense>
       </ViewerErrorBoundary>
@@ -444,6 +447,23 @@ export default function App() {
     }).catch(() => {});
   }, []);
 
+  // Fast lane: the watcher names the OPEN files that changed (fs-files-changed), so
+  // an editor reflects an agent's write in ~150 ms instead of waiting out the tree
+  // channel's 1.5 s debounce — which never ends when a busy root (e.g. the home
+  // folder) keeps it open. fs-changed below stays as the safety net.
+  const [fileTicks, setFileTicks] = useState<Record<string, number>>({});
+  useEffect(() => {
+    const un = listen<string[]>("fs-files-changed", (e) =>
+      setFileTicks((prev) => {
+        const next = { ...prev };
+        for (const p of e.payload) next[p] = (next[p] ?? 0) + 1;
+        return next;
+      }),
+    );
+    return () => {
+      void un.then((f) => f());
+    };
+  }, []);
   useEffect(() => {
     const un = listen("fs-changed", () => setFsTick((t) => t + 1));
     return () => {
@@ -530,6 +550,15 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [openTerminals, trackedPaths.join("|")],
   );
+
+  // Tell the watcher which files are open (fast lane, see fileTicks).
+  const openFilePathsKey = openTerminals
+    .filter((t) => (t.kind === "editor" || t.kind === "mdview") && t.filePath)
+    .map((t) => t.filePath)
+    .join("\n");
+  useEffect(() => {
+    void invoke("set_watched_files", { paths: openFilePathsKey ? openFilePathsKey.split("\n") : [] }).catch(() => {});
+  }, [openFilePathsKey]);
 
   // Watch tracked projects in real time (notify); refresh views on change.
   useEffect(() => {
@@ -1879,6 +1908,7 @@ export default function App() {
               theme={effectiveTheme}
               active={controlVisible && viewFileKey === tm.key}
               reloadTick={fsTick}
+              fileTick={fileTicks[tm.filePath ?? ""] ?? 0}
               onDirtyChange={(d) => setDirtyTabs((prev) => (prev[tm.key] === d ? prev : { ...prev, [tm.key]: d }))}
               onEditMarkdown={(p) => { void closeTerminal(tm.key); openEditor(p); }}
             />

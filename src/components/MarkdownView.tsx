@@ -17,6 +17,7 @@ export default function MarkdownView({
   onEdit,
   active = true,
   reloadTick = 0,
+  fileTick = 0,
 }: {
   filePath: string;
   /** "Edit" button → open the same file in the Monaco editor (editable). */
@@ -27,6 +28,8 @@ export default function MarkdownView({
   active?: boolean;
   /** Bumps on any watched-workspace change (App's fsTick). */
   reloadTick?: number;
+  /** Bumps when THIS file changed on disk — reload right away, even while hidden. */
+  fileTick?: number;
 }) {
   const [html, setHtml] = useState<string>("");
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -60,7 +63,7 @@ export default function MarkdownView({
       clearTimeout(t);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filePath, active ? reloadTick : 0]);
+  }, [filePath, active ? reloadTick : 0, fileTick]);
 
   const name = filePath.split("/").pop() ?? filePath;
 

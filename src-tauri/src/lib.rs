@@ -313,6 +313,7 @@ pub fn run() {
             pm::pm_collisions,
             metrics::app_metrics,
             watcher::start_watching,
+            watcher::set_watched_files,
             pty::pty_spawn,
             pty::pty_write,
             pty::pty_resize,
