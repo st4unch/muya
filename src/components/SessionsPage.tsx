@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { copyToClipboard } from "../lib/clipboard";
 import { relTime, shortCwd } from "../lib/format";
 import { RefreshCw, Play, Plug, FolderGit2, Clock, Square, Search, X, MessageSquare, User, Bot, Copy, Check, Download } from "lucide-react";
-import { buildResumeCommand, type AgentKind } from "../lib/agent";
+import { buildResumeCommand, isSafeSessionId, singleQuote, type AgentKind } from "../lib/agent";
 
 /// The command that opens a session row in a terminal.
 ///
@@ -12,9 +12,9 @@ import { buildResumeCommand, type AgentKind } from "../lib/agent";
 /// with `--session <id>`. A Claude interactive session has nothing to attach to,
 /// so it opens a plain shell in its directory — unchanged from before.
 function openCommandFor(s: AgentSession): string | undefined {
-  if (s.agent === "opencode") return buildResumeCommand("opencode", s.id);
-  if (s.attachable && s.attachId) {
-    return `claude attach ${s.attachId} --dangerously-skip-permissions`;
+  if (s.agent === "opencode") return buildResumeCommand("opencode", s.id) ?? undefined;
+  if (s.attachable && s.attachId && isSafeSessionId(s.attachId)) {
+    return `claude attach ${singleQuote(s.attachId)} --dangerously-skip-permissions`;
   }
   return undefined;
 }
@@ -428,7 +428,7 @@ export default function SessionsPage({
                         key: `resume:${h.sessionId}`,
                         name: `↻ ${name}`,
                         cwd: h.cwd.startsWith("/") ? h.cwd : undefined,
-                        initialCommand: buildResumeCommand("claude", h.sessionId),
+                        initialCommand: buildResumeCommand("claude", h.sessionId) ?? undefined,
                       })
                     }
                     className="flex items-center gap-1.5 text-[11px] font-mono font-semibold px-2.5 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-[var(--bg-control)] text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer transition-colors"

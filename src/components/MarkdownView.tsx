@@ -2,7 +2,51 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { FileText, Pencil } from "lucide-react";
+
+let hooked = false;
+function ensureSanitizeHook() {
+  if (hooked) return;
+  hooked = true;
+  DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+    if (node.tagName === "A") node.setAttribute("rel", "noopener noreferrer");
+  });
+}
+
+function sanitizeMarkdownHtml(dirty: string): string {
+  ensureSanitizeHook();
+  return DOMPurify.sanitize(dirty, {
+    FORBID_TAGS: ["style", "form", "input", "button", "iframe", "object", "embed"],
+  });
+}
+
+/** Links in rendered markdown never navigate the app webview: http(s)/mailto open
+ *  in the system handler, `#anchor` scrolls in place, everything else is ignored. */
+function handleLinkClick(e: React.MouseEvent<HTMLElement>) {
+  const a = (e.target as HTMLElement).closest?.("a");
+  if (!a) return;
+  e.preventDefault();
+  const href = a.getAttribute("href") ?? "";
+  if (href.startsWith("#")) {
+    let id = href.slice(1);
+    try {
+      id = decodeURIComponent(id);
+    } catch {
+      /* malformed escape — use it as written */
+    }
+    if (id) document.getElementById(id)?.scrollIntoView();
+    return;
+  }
+  try {
+    const u = new URL(href);
+    if (u.protocol === "http:" || u.protocol === "https:" || u.protocol === "mailto:") {
+      void openUrl(href);
+    }
+  } catch {
+    /* relative or malformed — ignore */
+  }
+}
 
 /**
  * Read-only RENDERED markdown view. A single-click on a .md file in the tree opens
@@ -47,7 +91,7 @@ export default function MarkdownView({
           if (cancelled) return;
           // marked → raw HTML, then DOMPurify strips scripts/handlers/js: URLs.
           const dirty = marked.parse(raw, { async: false }) as string;
-          setHtml(DOMPurify.sanitize(dirty));
+          setHtml(sanitizeMarkdownHtml(dirty));
           setStatus("ready");
         })
         .catch((e) => {
@@ -93,7 +137,7 @@ export default function MarkdownView({
           <p className="text-[11px] font-mono text-rose-500">Could not read file: {error}</p>
         )}
         {status === "ready" && (
-          <div className="md-body max-w-3xl" dangerouslySetInnerHTML={{ __html: html }} />
+          <div className="md-body max-w-3xl" onClick={handleLinkClick} dangerouslySetInnerHTML={{ __html: html }} />
         )}
       </div>
     </div>

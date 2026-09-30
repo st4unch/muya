@@ -69,15 +69,21 @@ describe("buildResumeCommand", () => {
   it("uses each CLI's own resume flag", () => {
     // The flags are not interchangeable — each CLI rejects the other's.
     expect(buildResumeCommand("claude", "abc")).toBe(
-      "claude --resume abc --dangerously-skip-permissions"
+      "claude --resume 'abc' --dangerously-skip-permissions"
     );
-    expect(buildResumeCommand("opencode", "ses_1")).toBe("opencode --session ses_1 --auto");
+    expect(buildResumeCommand("opencode", "ses_1")).toBe("opencode --session 'ses_1' --auto");
+  });
+
+  it("rejects ids that could inject shell syntax", () => {
+    for (const bad of ["", "a b", "a;rm -rf ~", "$(x)", "a'b", "a`b`", "a\nb", "../x/y"])
+      expect(buildResumeCommand("claude", bad)).toBeNull();
+    expect(buildResumeCommand("opencode", "x;y")).toBeNull();
   });
 
   it("never puts one CLI's auto-approve flag on the other", () => {
     expect(AGENT_BASE_COMMAND.opencode).not.toContain("dangerously");
     expect(AGENT_BASE_COMMAND.claude).not.toContain("--auto");
-    expect(buildResumeCommand("opencode", "x")).not.toContain("dangerously");
+    expect(buildResumeCommand("opencode", "x")!).not.toContain("dangerously");
   });
 });
 

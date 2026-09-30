@@ -77,12 +77,20 @@ export function buildAgentCommand(spec: AgentCommandSpec): string {
  * Build the command that resumes an existing session of the given agent.
  *
  * The two CLIs spell this differently — `claude --resume <id>` vs
- * `opencode --session <id>` — and each rejects the other's flag.
+ * `opencode --session <id>` — and each rejects the other's flag. Returns null for
+ * an id with unexpected characters (never built into a shell command).
  */
-export function buildResumeCommand(agent: AgentKind, sessionId: string): string {
+export function buildResumeCommand(agent: AgentKind, sessionId: string): string | null {
+  if (!isSafeSessionId(sessionId)) return null;
+  const id = singleQuote(sessionId);
   return agent === "opencode"
-    ? `opencode --session ${sessionId} --auto`
-    : `claude --resume ${sessionId} --dangerously-skip-permissions`;
+    ? `opencode --session ${id} --auto`
+    : `claude --resume ${id} --dangerously-skip-permissions`;
+}
+
+/** Session ids land in a shell command, so only plain id characters are accepted. */
+export function isSafeSessionId(id: string): boolean {
+  return /^[A-Za-z0-9._-]+$/.test(id);
 }
 
 /**

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { isHttpsUrl } from "../lib/safeUrl";
 import {
   Puzzle,
   Bot,
@@ -812,7 +813,7 @@ function MarketSkillDetail({
         <div className="rounded border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 p-3">
           <p className="text-[10px] text-neutral-500 uppercase tracking-wider mb-1">GitHub</p>
           <button
-            onClick={() => openUrl(skill.githubUrl)}
+            onClick={() => { if (isHttpsUrl(skill.githubUrl)) void openUrl(skill.githubUrl); }}
             className="flex items-center gap-1.5 text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
           >
             <ExternalLink className="w-3 h-3" />
@@ -882,7 +883,7 @@ function MarketMcpDetail({
         </button>
       ) : mcp.source ? (
         <button
-          onClick={() => openUrl(mcp.source)}
+          onClick={() => { if (isHttpsUrl(mcp.source)) void openUrl(mcp.source); }}
           className="flex items-center justify-center gap-2 w-full py-2.5 rounded-lg border border-indigo-300 dark:border-indigo-700 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 text-xs font-medium transition-colors cursor-pointer"
         >
           <ExternalLink className="w-3.5 h-3.5" />
