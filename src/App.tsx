@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
 import { createPortal } from "react-dom";
-import { pickNextActiveKey, newSshTabKey, addSshSession, canResumeTab } from "./lib/tabs";
+import { pickNextActiveKey, newSshTabKey, addSshSession, canResumeTab, resumeCommand } from "./lib/tabs";
 import { terminalIsVisible } from "./lib/terminalVisibility";
 import { installNoAutocorrect } from "./lib/noAutocorrect";
 import AgentTerminal from "./components/Terminal";
@@ -88,6 +88,9 @@ interface OpenTerminal {
   /** The Claude session THIS tab was running, captured live and persisted so a
    *  restored tab resumes its own conversation (not merely the newest one). */
   sessionId?: string;
+  /** The shell's live folder when this tab's Claude session was first seen — where
+   *  `claude --resume` must run (the tab's own `cwd` is only where it was opened). */
+  sessionCwd?: string;
   /** Restored tab whose Claude session hasn't been resumed yet — resume on click. */
   needsResume?: boolean;
   /** The operator renamed this tab by hand — never overwrite it with the
@@ -601,7 +604,7 @@ export default function App() {
     );
     void invoke("pty_write", {
       id: ptyId,
-      data: `claude --resume ${tab.sessionId} --dangerously-skip-permissions\r`,
+      data: `${resumeCommand({ sessionId: tab.sessionId, sessionCwd: tab.sessionCwd }, singleQuote)}\r`,
     }).catch(() => {});
   };
 
@@ -618,7 +621,7 @@ export default function App() {
     // Same rule as the restore gate above: `sessionId` alone decides, not the
     // volatile `isClaude` (which is false for exactly the tabs that need resuming).
     if (!initialCommand && t.sessionId)
-      initialCommand = `claude --resume ${t.sessionId} --dangerously-skip-permissions`;
+      initialCommand = resumeCommand({ sessionId: t.sessionId, sessionCwd: t.sessionCwd }, singleQuote);
     const newKey = t.sshServerId ? `ssh:${t.sshServerId}:${ts}` : `term-copy-${ts}`;
     openTerminal({
       key: newKey,
@@ -1167,9 +1170,15 @@ export default function App() {
             const name =
               running && info!.name && !t.userRenamed && !looksAutoName ? info!.name : t.name;
             const sessionId = running ? info!.id : t.sessionId;
-            if (t.isClaude === running && t.name === name && t.sessionId === sessionId) return t;
+            // Where this session runs: the shell's live folder while Claude is up.
+            // A NEW session id takes the current folder; the same session keeps the
+            // first one it was seen in (its project never changes mid-session).
+            const sessionCwd = running
+              ? (sessionId !== t.sessionId ? byKey[t.key] : t.sessionCwd ?? byKey[t.key])
+              : t.sessionCwd;
+            if (t.isClaude === running && t.name === name && t.sessionId === sessionId && t.sessionCwd === sessionCwd) return t;
             changed = true;
-            return { ...t, isClaude: running, name, sessionId };
+            return { ...t, isClaude: running, name, sessionId, sessionCwd };
           });
           return changed ? next : prev;
         });

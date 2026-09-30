@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { pickNextActiveKey, newSshTabKey, addSshSession, canResumeTab, type TabLike } from "./tabs";
+import { pickNextActiveKey, newSshTabKey, addSshSession, canResumeTab, resumeCommand, type TabLike } from "./tabs";
+import { singleQuote } from "./agent";
 
 const T = (key: string, kind: TabLike["kind"]): TabLike => ({ key, kind });
 
@@ -84,5 +85,18 @@ describe("canResumeTab: restore must not depend on the volatile isClaude flag", 
 
   it("never resumes a non-terminal tab (editor/viewer)", () => {
     expect(canResumeTab({ kind: "editor", sessionId: "abc-123" })).toBe(false);
+  });
+});
+
+describe("resumeCommand: resume where the session actually ran", () => {
+  it("cds into the recorded session folder first", () => {
+    expect(resumeCommand({ sessionId: "abc-123", sessionCwd: "/tmp/muya live's demo" }, singleQuote)).toBe(
+      `cd '/tmp/muya live'\\''s demo' && claude --resume 'abc-123' --dangerously-skip-permissions`,
+    );
+  });
+  it("falls back to the tab's own folder when none was recorded (older saved tabs)", () => {
+    expect(resumeCommand({ sessionId: "abc-123" }, singleQuote)).toBe(
+      "claude --resume 'abc-123' --dangerously-skip-permissions",
+    );
   });
 });

@@ -68,3 +68,16 @@ export function canResumeTab(t: {
 }): boolean {
   return t.kind === "terminal" && Boolean(t.sessionId);
 }
+
+/** The line typed into a restored tab's shell to resume ITS Claude session.
+ *
+ *  `claude --resume <id>` looks the session up in the project of the CURRENT folder.
+ *  A tab keeps the folder it was OPENED in; if the operator then `cd`-ed and started
+ *  Claude elsewhere, resuming from the tab's folder started a fresh session in the
+ *  wrong project (live, 2026-09-30: a restored tab resumed in ~ and asked to trust the
+ *  home folder). `sessionCwd` — the shell's live folder recorded when the session was
+ *  first seen — is where it must resume. Quoted: paths may contain spaces or quotes. */
+export function resumeCommand(t: { sessionId: string; sessionCwd?: string }, quote: (s: string) => string): string {
+  const resume = `claude --resume ${quote(t.sessionId)} --dangerously-skip-permissions`;
+  return t.sessionCwd ? `cd ${quote(t.sessionCwd)} && ${resume}` : resume;
+}
