@@ -14,6 +14,9 @@ export interface ProgressStripProps {
 
 export function ProgressStrip({ verb, elapsed, tokens, thought, updateReady, onRestart }: ProgressStripProps) {
   const monoParts = [elapsed, tokens ? `↓ ${tokens}` : undefined, thought ? `thought for ${thought}` : undefined].filter(Boolean);
+  // Nothing to say (idle session, no update): no empty band above the message box or,
+  // with the message box hidden, above the footer.
+  if (!verb && monoParts.length === 0 && !updateReady) return null;
   return (
     <div
       style={{
