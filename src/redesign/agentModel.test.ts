@@ -8,6 +8,7 @@ import {
   formatSince,
   normalizeTokens,
   pickGridPanels,
+  realBranch,
   recordTransitions,
   type AgentModelInput,
   type AgentTab,
@@ -150,5 +151,15 @@ describe("counts and grid panels", () => {
   it("panels: chosen first, topped up in list order, capped", () => {
     expect(pickGridPanels(list, ["c", "gone"], 3).map((a) => a.key)).toEqual(["c", "a", "b"]);
     expect(pickGridPanels(list, [], 2).map((a) => a.key)).toEqual(["a", "b"]);
+  });
+});
+
+
+describe("realBranch", () => {
+  it("drops the backend's not-a-repo placeholder", () => {
+    expect(realBranch("—")).toBeUndefined();
+    expect(realBranch("")).toBeUndefined();
+    expect(realBranch(undefined)).toBeUndefined();
+    expect(realBranch("main")).toBe("main");
   });
 });

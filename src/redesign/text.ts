@@ -24,3 +24,9 @@ export function withDetail(label: string, detail?: string | null): string {
   const d = detail?.trim();
   return d ? `${label} · ${d}` : label;
 }
+
+/** "1 agent" / "3 agents". Every count the UI prints goes through this — the footer
+ *  said "1 agents" the first time the app ran with a single terminal. */
+export function plural(n: number, one: string, many = `${one}s`): string {
+  return `${n} ${n === 1 ? one : many}`;
+}

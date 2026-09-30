@@ -259,13 +259,14 @@ function IdleRow({ agent, onSelect, dragOver, dragProps }: { agent: AgentVM; onS
       }}
     >
       <span style={{ width: 8, height: 8, borderRadius: 4, border: "1.5px solid var(--text-faint)", boxSizing: "border-box", flexShrink: 0 }} />
-      {/* Nothing truncates while both fit. When they don't, the path gives up space
-          four times faster than the name — the name is what identifies the row. A
-          fixed max-width here used to cut "~/Documents/numbat" even with room to spare. */}
-      <span className="rd-ellipsis" style={{ fontSize: 13, flex: "1 1 auto", minWidth: 0, textAlign: "left" }}>
+      {/* The name is what identifies the row: it keeps its full width up to 70% of the
+          row and only then truncates. The path takes whatever is left, right-aligned,
+          and truncates first. Proportional flex-shrink wasn't enough — a long path
+          still cut "Terminal" to "Termi…" in the live app (2026-09-30). */}
+      <span className="rd-ellipsis" title={agent.name} style={{ fontSize: 13, flex: "0 1 auto", maxWidth: "70%", minWidth: 0, textAlign: "left" }}>
         {agent.name}
       </span>
-      <span className="rd-ellipsis" style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-muted)", flex: "0 4 auto", minWidth: 0 }}>
+      <span className="rd-ellipsis" title={agent.path} style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-muted)", flex: "1 1 0", minWidth: 0, textAlign: "right" }}>
         {agent.path}
       </span>
     </button>

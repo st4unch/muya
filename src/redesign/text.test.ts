@@ -1,6 +1,6 @@
 // Created by Claude — Classification: INTERNAL
 import { describe, it, expect } from "vitest";
-import { messageHint, shortName, withDetail } from "./text";
+import { messageHint, plural, shortName, withDetail } from "./text";
 
 describe("shortName", () => {
   it("leaves names that fit alone", () => {
@@ -32,5 +32,15 @@ describe("withDetail", () => {
     expect(withDetail("Working", "4m 15s")).toBe("Working · 4m 15s");
     expect(withDetail("Working", undefined)).toBe("Working");
     expect(withDetail("Working", "  ")).toBe("Working");
+  });
+});
+
+describe("plural", () => {
+  it("uses the singular only for exactly one", () => {
+    expect(plural(1, "agent")).toBe("1 agent");
+    expect(plural(0, "agent")).toBe("0 agents");
+    expect(plural(7, "agent")).toBe("7 agents");
+    expect(plural(1, "worktree watched", "worktrees watched")).toBe("1 worktree watched");
+    expect(plural(2, "change")).toBe("2 changes");
   });
 });

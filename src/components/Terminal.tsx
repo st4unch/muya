@@ -572,12 +572,19 @@ export default function Terminal({
 
   return (
     <div className="relative h-full w-full overflow-hidden">
+      {/* Padding lives on this WRAPPER, never on the element xterm opens into.
+          FitAddon sizes the terminal from its parent's computed height/width and only
+          subtracts padding found on xterm's own element — with Tailwind's border-box,
+          a padded parent reports height INCLUDING the padding, so the grid came out a
+          row and several columns too big and the last line was clipped under the
+          progress strip (seen live, 2026-09-30). The slot that adopts this terminal
+          sets --term-pad (Control 20/28, Grid 14/16). */}
       <div
-        ref={ref}
         className="h-full w-full overflow-hidden bg-[var(--bg-terminal)]"
-        // The slot that adopts this terminal sets --term-pad (Control 20/28, Grid 14/16).
         style={{ padding: "var(--term-pad, 20px 28px)" }}
-      />
+      >
+        <div ref={ref} data-xterm-host className="h-full w-full overflow-hidden" />
+      </div>
 
       {/* In-terminal search overlay — toggled by Cmd+F */}
       {showSearch && (

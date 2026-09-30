@@ -142,6 +142,16 @@ describe("Terminal: WebGL lease follows visibility", () => {
     expect(leases).toHaveLength(4); // the original + 3 retries
   });
 
+  // Live bug: FitAddon measures the element xterm opens into and ignores padding on
+  // it (border-box), so a padded host clipped the last row and the right columns.
+  it("opens xterm into an unpadded host whose wrapper carries the padding", () => {
+    const { container } = render(<Terminal active />);
+    const host = container.querySelector("[data-xterm-host]") as HTMLElement;
+    expect(host).toBeTruthy();
+    expect(host.style.padding).toBe("");
+    expect((host.parentElement as HTMLElement).style.padding).toContain("--term-pad");
+  });
+
   it("releases the context on unmount", async () => {
     const { unmount } = render(<Terminal active />);
     await waitFor(() => expect(leases).toHaveLength(1));

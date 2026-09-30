@@ -145,7 +145,7 @@ export function buildAgents(input: AgentModelInput): AgentVM[] {
         since,
         activity: activityLine,
         path: abbreviateHome(cwd),
-        branch: cwd ? input.branchByCwd[cwd] : undefined,
+        branch: cwd ? realBranch(input.branchByCwd[cwd]) : undefined,
         mode: deriveMode(tab, screen, input.lastModes[tab.key]),
         approval,
         progress:
@@ -205,4 +205,11 @@ export function pickGridPanels(agents: AgentVM[], chosen: string[], capacity: nu
   }
   for (const a of agents) if (picked.length < capacity && !picked.includes(a)) picked.push(a);
   return picked.slice(0, capacity);
+}
+
+/** agents.rs reports "—" for a folder that isn't a git repo. That is a placeholder,
+ *  not a branch: rendered as one it left "path · —" in the session header. */
+export function realBranch(b: string | undefined): string | undefined {
+  const t = b?.trim();
+  return t && t !== "—" && t !== "-" ? t : undefined;
 }

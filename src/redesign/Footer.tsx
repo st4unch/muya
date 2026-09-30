@@ -5,6 +5,7 @@
 
 import type { CSSProperties } from "react";
 import type { FooterVM } from "./types";
+import { plural } from "./text";
 
 const NOWRAP: CSSProperties = { whiteSpace: "nowrap" };
 
@@ -28,12 +29,12 @@ export function Footer({ workspaceCount, agents, working, waiting, collisions, v
         <span style={{ width: 6, height: 6, borderRadius: 3, background: "var(--success)", flexShrink: 0 }} />
         Ready
       </span>
-      <span style={NOWRAP}>{workspaceCount} workspaces</span>
+      <span style={NOWRAP}>{plural(workspaceCount, "workspace")}</span>
       <span style={NOWRAP}>
-        {agents} agents · <span style={{ color: "var(--success-text)" }}>{working} working</span> ·{" "}
+        {plural(agents, "agent")} · <span style={{ color: "var(--success-text)" }}>{working} working</span> ·{" "}
         <span style={{ color: "var(--warning)" }}>{waiting} waiting</span>
       </span>
-      <span style={NOWRAP}>{collisions} conflicts</span>
+      <span style={NOWRAP}>{plural(collisions, "conflict")}</span>
       <div style={{ flexGrow: 1 }} />
       <span style={NOWRAP}>{variant === "grid" ? "Tab to switch panels · ⌘⏎ maximize" : "UTF-8"}</span>
       <span style={NOWRAP}>Muya v{version}</span>

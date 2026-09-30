@@ -5,6 +5,7 @@
 
 import type { ReactNode } from "react";
 import type { AgentVM, InspectorVM } from "./types";
+import { plural } from "./text";
 
 export type InspectorTab = "changes" | "files" | "activity";
 
@@ -107,7 +108,7 @@ export function Inspector({ waitingAgents, onApprove, onDeny, onOpen, activeTab,
             ))}
             {moreCount > 0 && (
               <button type="button" className="rd-change-row" style={{ display: "flex", gap: 10, alignItems: "center", padding: "7px 8px", borderRadius: 6, border: "none", background: "transparent", color: "var(--text-muted)", textAlign: "left", fontFamily: "var(--font-sans)", fontSize: 12 }}>
-                + {moreCount} more files
+                + {plural(moreCount, "more file", "more files")}
               </button>
             )}
           </div>
@@ -143,7 +144,7 @@ export function Inspector({ waitingAgents, onApprove, onDeny, onOpen, activeTab,
           <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
             <span style={{ fontSize: 13, fontWeight: 500, color: "var(--success-card-text)" }}>No file conflicts</span>
             <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
-              {inspector.worktreesWatched} worktrees watched · {inspector.changes.length} changes
+              {plural(inspector.worktreesWatched, "worktree watched", "worktrees watched")} · {plural(inspector.changes.length, "change")}
             </span>
           </div>
         </div>

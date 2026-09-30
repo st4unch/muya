@@ -4,6 +4,7 @@
 // ControlHeader's (no workspace/search/CPU/bell in the grid.reference.html).
 
 import type { GridLayout } from "./types";
+import { plural } from "./text";
 
 export interface GridHeaderProps {
   panelCount: number;
@@ -43,7 +44,7 @@ export function GridHeader({ panelCount, layout, onLayoutChange, onWaitingFirst,
       </div>
       <span style={{ color: "var(--text-faint)", flexShrink: 0 }}>/</span>
       <span style={{ fontSize: 14, fontWeight: 500, flexShrink: 0 }}>Grid</span>
-      <span style={{ fontSize: 13, color: "var(--text-muted)", flexShrink: 0 }}>{panelCount} panels</span>
+      <span style={{ fontSize: 13, color: "var(--text-muted)", flexShrink: 0 }}>{plural(panelCount, "panel")}</span>
 
       <div style={{ flexGrow: 1 }} />
 
