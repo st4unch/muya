@@ -48,6 +48,7 @@ import { ActivityPanel } from "./redesign/ActivityPanel";
 import { AgentPickerDialog, MenuHeading, MenuItem, MenuPopover, MenuSeparator, RenameDialog, anchorFromRect, type Anchor } from "./redesign/Menus";
 import { useAgentModel } from "./redesign/useAgentModel";
 import { abbreviateHome, pickGridPanels, relativeTo, type SessionStatus } from "./redesign/agentModel";
+import { asBool, usePersistentState } from "./redesign/usePersistentState";
 import { adoptHosts, createHost, POOL_STYLE } from "./redesign/terminalHosts";
 import type { AgentVM, ChangeVM, FileVM, GridLayout, InspectorVM, PermissionMode, RailItem } from "./redesign/types";
 import type { AgentFilter } from "./redesign/AgentList";
@@ -1818,6 +1819,8 @@ export default function App() {
   const selectedPtyId = selectedTab ? terminalPtyIds[selectedTab.key] : undefined;
   const [statusPickerOpen, setStatusPickerOpen] = useState(false);
   const statusData = useStatusData(selectedPtyId, statusFields.fields.length > 0 || statusPickerOpen);
+  // Footer chat icon: show/hide the message box under the terminal (persisted).
+  const [composerOpen, setComposerOpen] = usePersistentState<boolean>("muya.composerOpen", true, asBool);
   const footerVM = {
     workspaceCount: workspaces.length,
     agents: model.counts.agents,
@@ -1827,6 +1830,7 @@ export default function App() {
     version: appVersion || "…",
     variant: "control" as const,
     status: { fields: statusFields.fields, data: statusData, onToggle: statusFields.toggle, onRemove: statusFields.remove, onPickerOpenChange: setStatusPickerOpen },
+    composer: { open: composerOpen, onToggle: () => setComposerOpen(!composerOpen) },
   };
   const updateReady = Boolean(updateAvailable && updateAvailable.version);
 
@@ -2061,6 +2065,7 @@ export default function App() {
       {controlVisible && (
         <div style={{ width: "100%", height: "100%" }}>
           <ControlScreen
+            composerOpen={composerOpen}
             onRenameAgent={renameTerminal}
             onAgentContextMenu={openAgentContextMenu}
             {...headerProps}

@@ -198,6 +198,20 @@ describe("rename", () => {
   });
 });
 
+describe("message box toggle", () => {
+  it("the footer chat icon toggles the composer", () => {
+    const onToggle = vi.fn();
+    const props = controlProps();
+    const { rerender } = render(<ControlScreen {...props} footer={{ ...props.footer, composer: { open: true, onToggle } }} composerOpen />);
+    expect(screen.getByRole("textbox", { name: /message/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Hide message box" }));
+    expect(onToggle).toHaveBeenCalled();
+    rerender(<ControlScreen {...props} footer={{ ...props.footer, composer: { open: false, onToggle } }} composerOpen={false} />);
+    expect(screen.queryByRole("textbox", { name: /message/i })).toBeNull();
+    expect(screen.getByRole("button", { name: "Show message box" })).toHaveAttribute("aria-pressed", "false");
+  });
+});
+
 describe("files search", () => {
   it("the filter button lives in the Files header, only while expanded", () => {
     render(<ControlScreen {...controlProps()} />);

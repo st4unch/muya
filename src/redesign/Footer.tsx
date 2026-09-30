@@ -9,7 +9,7 @@ import { useState } from "react";
 import type { CSSProperties } from "react";
 import type { FooterVM } from "./types";
 import { plural } from "./text";
-import { PlusIcon } from "./icons";
+import { ChatRailIcon, PlusIcon } from "./icons";
 import { anchorFromRect, type Anchor } from "./Menus";
 import { StatusPicker } from "./StatusPicker";
 import { statusField, statusValue, type StatusData } from "../lib/statusline";
@@ -37,7 +37,21 @@ function StatusItem({ id, data, onRemove }: { id: string; data: StatusData | nul
   );
 }
 
-export function Footer({ workspaceCount, agents, working, waiting, collisions, version, variant, status }: FooterVM) {
+const FOOTER_ICON_BTN: CSSProperties = {
+  width: 20,
+  height: 20,
+  flexShrink: 0,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 0,
+  border: "none",
+  borderRadius: 5,
+  background: "transparent",
+  color: "var(--text-muted)",
+};
+
+export function Footer({ workspaceCount, agents, working, waiting, collisions, version, variant, status, composer }: FooterVM) {
   const [anchor, setAnchor] = useState<Anchor | null>(null);
   return (
     <footer
@@ -73,21 +87,36 @@ export function Footer({ workspaceCount, agents, working, waiting, collisions, v
         </div>
       )}
       <span style={NOWRAP}>{variant === "grid" ? "Tab to switch panels · ⌘⏎ maximize" : "UTF-8"}</span>
-      {status && (
-        <button
-          type="button"
-          aria-label="Add status field"
-          title="Add status field"
-          onClick={(e) => {
-            setAnchor(anchorFromRect(e.currentTarget.getBoundingClientRect(), "right", "above"));
-            status?.onPickerOpenChange?.(true);
-          }}
-          className="rd-icon-btn"
-          style={{ width: 20, height: 20, marginRight: -8, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 0, border: "none", borderRadius: 5, background: "transparent", color: "var(--text-muted)" }}
-        >
-          <PlusIcon size={12} />
-        </button>
-      )}
+      <span style={{ display: "flex", alignItems: "center", gap: 2, marginRight: -8, flexShrink: 0 }}>
+        {composer && variant !== "grid" && (
+          <button
+            type="button"
+            aria-label={composer.open ? "Hide message box" : "Show message box"}
+            title={composer.open ? "Hide message box" : "Show message box"}
+            aria-pressed={composer.open}
+            onClick={composer.onToggle}
+            className="rd-icon-btn"
+            style={{ ...FOOTER_ICON_BTN, color: composer.open ? "var(--text)" : "var(--text-muted)" }}
+          >
+            <ChatRailIcon size={13} />
+          </button>
+        )}
+        {status && (
+          <button
+            type="button"
+            aria-label="Add status field"
+            title="Add status field"
+            onClick={(e) => {
+              setAnchor(anchorFromRect(e.currentTarget.getBoundingClientRect(), "right", "above"));
+              status?.onPickerOpenChange?.(true);
+            }}
+            className="rd-icon-btn"
+            style={FOOTER_ICON_BTN}
+          >
+            <PlusIcon size={12} />
+          </button>
+        )}
+      </span>
       <span style={NOWRAP}>Muya v{version}</span>
       {status && anchor && (
         <StatusPicker anchor={anchor} fields={status.fields} data={status.data} onToggle={status.onToggle} onClose={() => {

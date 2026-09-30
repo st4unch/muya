@@ -84,6 +84,8 @@ export interface ControlScreenProps {
   onRenameAgent?: (key: string, name: string) => void;
   /** Right-click on a session in the list. */
   onAgentContextMenu?: (key: string, e: MouseEvent) => void;
+  /** The message box under the terminal; hidden from the footer's chat toggle. */
+  composerOpen?: boolean;
   /** window.innerWidth-driven: PROMPT.md §5 responsive breakpoints. */
   inspectorOpen: boolean;
 }
@@ -200,7 +202,7 @@ export function ControlScreen(props: ControlScreenProps) {
           />
         )}
 
-        {selected && !props.openFile && (
+        {selected && !props.openFile && props.composerOpen !== false && (
           <Composer
             agentName={selected.name}
             target={selected.agentRunning ? "agent" : "shell"}

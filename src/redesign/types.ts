@@ -83,6 +83,8 @@ export interface FooterVM {
   variant: "control" | "grid";
   /** Claude status fields the user pinned to the footer (absent = feature off, e.g. previews). */
   status?: FooterStatusVM;
+  /** Show/hide the Control screen's message box (composer). Control variant only. */
+  composer?: { open: boolean; onToggle: () => void };
 }
 
 export interface FooterStatusVM {
