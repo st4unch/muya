@@ -181,6 +181,8 @@ export const STATUS_FIELDS: StatusField[] = [
       return typeof a === "number" && typeof r === "number" ? fmtLines(a, r) : null;
     },
   },
+  f("cost.total_lines_added", "Cost & time", "Lines added", (v) => (typeof v === "number" ? `+${v}` : null)),
+  f("cost.total_lines_removed", "Cost & time", "Lines removed", (v) => (typeof v === "number" ? `−${v}` : null)),
   // Rate limits
   f("rate_limits.five_hour.used_percentage", "Rate limits", "5-hour used", pct),
   f("rate_limits.five_hour.resets_at", "Rate limits", "5-hour window", resets(false)),
