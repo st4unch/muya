@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { FileTreeSearchContext } from "./fileTreeSearch";
 import { invoke } from "@tauri-apps/api/core";
 import { copyToClipboard } from "../lib/clipboard";
 import {
@@ -231,7 +232,10 @@ export default function FileTree({
 }) {
   const [menu, setMenu] = useState<CtxMenu | null>(null);
   const [gitStatus, setGitStatus] = useState<GitStatusMap>(new Map());
-  const [searchOpen, setSearchOpen] = useState(false);
+  const searchHost = useContext(FileTreeSearchContext);
+  const [localSearchOpen, setLocalSearchOpen] = useState(false);
+  const searchOpen = searchHost ? searchHost.open : localSearchOpen;
+  const setSearchOpen = searchHost ? searchHost.setOpen : setLocalSearchOpen;
   const [searchQuery, setSearchQuery] = useState("");
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [createName, setCreateName] = useState("");
@@ -282,6 +286,7 @@ export default function FileTree({
   // Focus search input when opened
   useEffect(() => {
     if (searchOpen) requestAnimationFrame(() => searchInputRef.current?.focus());
+    else setSearchQuery(""); // closed from the host's header button too
   }, [searchOpen]);
 
   // Focus the New File/Folder name input the moment the menu switches into create mode.
@@ -413,7 +418,8 @@ export default function FileTree({
 
   return (
     <div className="font-mono text-xs relative flex flex-col">
-      {/* Search bar toggle */}
+      {/* Search bar toggle (a host that owns the toggle gets only the open input row) */}
+      {(searchOpen || !searchHost) && (
       <div className="flex items-center gap-1 px-2 py-1 border-b border-neutral-100 dark:border-neutral-800">
         {searchOpen ? (
           <>
@@ -444,6 +450,7 @@ export default function FileTree({
           </button>
         )}
       </div>
+      )}
 
       {/* Flat search results */}
       {searchOpen && searchQuery && (

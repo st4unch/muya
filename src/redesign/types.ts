@@ -36,6 +36,8 @@ export interface AgentVM {
   activity?: string;
   /** Display path (home abbreviated to ~). */
   path: string;
+  /** Absolute working directory, when known (project slash commands are read from it). */
+  cwd?: string;
   branch?: string;
   mode: PermissionMode;
   approval?: PendingApproval;

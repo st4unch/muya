@@ -50,6 +50,7 @@ import { adoptHosts, createHost, POOL_STYLE } from "./redesign/terminalHosts";
 import type { AgentVM, ChangeVM, FileVM, GridLayout, InspectorVM, PermissionMode, RailItem } from "./redesign/types";
 import type { AgentFilter } from "./redesign/AgentList";
 import type { InspectorTab } from "./redesign/Inspector";
+import { shouldExitGridOnEscape } from "./redesign/gridKeys";
 
 // Types matching the user's workflow model
 interface AgentSession {
@@ -1581,7 +1582,11 @@ export default function App() {
 
   const navigateRail = (item: RailItem) => {
     if (item === "settings") return setSettingsOpen(true);
-    if (item === "control") return showControl();
+    if (item === "control") {
+      // From the grid, "Control" lands on the agent the operator was looking at.
+      if (view === "control" && screen === "grid" && focusedPanelKey) activateTerminal(focusedPanelKey);
+      return showControl();
+    }
     setView(item === "kanban" ? "prd" : item === "resources" ? "tools" : item);
   };
 
@@ -1606,6 +1611,11 @@ export default function App() {
       next.splice(ti, 0, item);
       return next;
     });
+  };
+
+  const exitGrid = () => {
+    if (focusedPanelKey) activateTerminal(focusedPanelKey);
+    setScreen("control");
   };
 
   const splitToGrid = () => {
@@ -1689,8 +1699,9 @@ export default function App() {
 
   // ⌘K / ⌘1–9 / grid shortcuts. Capture phase: xterm owns ⌘K (kill-to-EOL) and swallows
   // keys typed into a focused terminal, so a bubbling listener would never see them.
-  const shortcutRef = useRef({ screen, view, selectAgent, respond, maximize: maximizePanel, focused: focusedPanelKey });
-  shortcutRef.current = { screen, view, selectAgent, respond, maximize: maximizePanel, focused: focusedPanelKey };
+  const overlayOpen = paletteOpen || broadcastOpen || swapKey !== null || menu !== null || renameKey !== null || settingsOpen || newAgentOpen;
+  const shortcutRef = useRef({ screen, view, selectAgent, respond, maximize: maximizePanel, focused: focusedPanelKey, exitGrid, overlayOpen });
+  shortcutRef.current = { screen, view, selectAgent, respond, maximize: maximizePanel, focused: focusedPanelKey, exitGrid, overlayOpen };
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const s = shortcutRef.current;
@@ -1717,6 +1728,12 @@ export default function App() {
           s.maximize(s.focused);
           return;
         }
+      }
+      // Esc leaves the grid (unless it belongs to a terminal / field / dialog).
+      if (s.view === "control" && s.screen === "grid" && shouldExitGridOnEscape(e, s.overlayOpen)) {
+        e.preventDefault();
+        s.exitGrid();
+        return;
       }
       // Y / N inside a focused grid terminal answer a waiting panel's prompt instead of
       // being typed into the PTY (GridPanel handles the same keys when the panel itself
@@ -2072,6 +2089,7 @@ export default function App() {
               <ActivityPanel collisions={collisionReport.collisions} editedFiles={collisionReport.editedFiles} worktreesWatched={trackedPaths.length} />
             }
             inspectorOpen={innerWidth >= 1280}
+            filesCount={trackedPaths.length}
           />
         </div>
       )}
@@ -2085,6 +2103,7 @@ export default function App() {
           onLayoutChange={setGridLayout}
           onWaitingFirst={waitingFirst}
           onBroadcastOpen={() => setBroadcastOpen(true)}
+          onExitGrid={exitGrid}
           focusedKey={focusedPanelKey}
           onFocusPanel={setGridFocusedKey}
           onMaximizePanel={maximizePanel}

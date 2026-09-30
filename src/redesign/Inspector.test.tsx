@@ -79,11 +79,13 @@ describe("Inspector", () => {
         inspector={previewInspector}
         onReviewDiff={vi.fn()}
         onCommit={vi.fn()}
-        filesSlot={<div>files here</div>}
       />,
     );
-    fireEvent.click(screen.getByRole("tab", { name: "Files" }));
-    expect(onTabChange).toHaveBeenCalledWith("files");
+    fireEvent.click(screen.getByRole("tab", { name: "Activity" }));
+    expect(onTabChange).toHaveBeenCalledWith("activity");
+    // The file tree lives under the agents list now: Changes / Activity only.
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([expect.stringMatching(/^Changes/), "Activity"]);
+    expect(screen.queryByRole("tab", { name: "Files" })).toBeNull();
   });
 
   it("renders the no-conflicts success card when collisions is empty", () => {

@@ -4,7 +4,7 @@
 // WAITING FOR YOU / WORKING / IDLE (empty groups hidden), filters via the
 // segmented control, and supports HTML5 drag-and-drop reordering + ⌘1–7.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { AgentStatus, AgentVM } from "./types";
 
 export type AgentFilter = "all" | "waiting" | "working";
@@ -17,6 +17,12 @@ export interface AgentListProps {
   onSelectAgent: (key: string) => void;
   onNewAgent: () => void;
   onReorder: (fromKey: string, toKey: string) => void;
+  /** Operator-set width in px; undefined = the responsive default (296, 264 at ≤1360). */
+  width?: number;
+  /** Resize handle for the panel's inner edge (rendered over the border). */
+  resizeHandle?: ReactNode;
+  /** The Files section, pinned between the agents list and the footer. */
+  filesSection?: ReactNode;
 }
 
 const GROUPS: { status: AgentStatus; label: string; color: string }[] = [
@@ -25,7 +31,7 @@ const GROUPS: { status: AgentStatus; label: string; color: string }[] = [
   { status: "idle", label: "IDLE", color: "var(--text-muted)" },
 ];
 
-export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelectAgent, onNewAgent, onReorder }: AgentListProps) {
+export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelectAgent, onNewAgent, onReorder, width, resizeHandle, filesSection }: AgentListProps) {
   const dragKeyRef = useRef<string | null>(null);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
 
@@ -82,8 +88,10 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
     <aside
       aria-label="Agents"
       className="rd-agent-list"
+      data-custom={width !== undefined ? "" : undefined}
       style={{
-        width: 296,
+        position: "relative",
+        width: width ?? 296,
         flexShrink: 0,
         display: "flex",
         flexDirection: "column",
@@ -92,6 +100,7 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
         minHeight: 0,
       }}
     >
+      {resizeHandle}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 16px 10px" }}>
         <h2 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>
           Agents <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>{agents.length}</span>
@@ -146,7 +155,7 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
         })}
       </div>
 
-      <div style={{ flexGrow: 1, overflow: "auto", padding: "0 10px", display: "flex", flexDirection: "column", gap: 4, minHeight: 0 }}>
+      <div style={{ flex: "1 1 0", overflow: "auto", padding: "0 10px", display: "flex", flexDirection: "column", gap: 4, minHeight: filesSection ? 120 : 0 }}>
         {(() => {
           let visibleGroupIndex = -1;
           return GROUPS.map(({ status, label, color }) => {
@@ -176,6 +185,8 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
           });
         })()}
       </div>
+
+      {filesSection}
 
       <div style={{ padding: "12px 16px", borderTop: "1px solid var(--border)", fontSize: 12, color: "var(--text-muted)", display: "flex", justifyContent: "space-between" }}>
         <span>Drag to reorder</span>

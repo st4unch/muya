@@ -188,3 +188,54 @@ export function ThemeMoonIcon({ size = 16, ...p }: IconProps) {
     </svg>
   );
 }
+
+/** Lucide "panel-left" / "panel-right": a window with the left / right rail marked. */
+export function PanelLeftIcon({ size = 16, ...p }: IconProps) {
+  return (
+    <svg {...base(size, 1.8, p)}>
+      <rect width="18" height="18" x="3" y="3" rx="2" />
+      <path d="M9 3v18" />
+    </svg>
+  );
+}
+
+export function PanelRightIcon({ size = 16, ...p }: IconProps) {
+  return (
+    <svg {...base(size, 1.8, p)}>
+      <rect width="18" height="18" x="3" y="3" rx="2" />
+      <path d="M15 3v18" />
+    </svg>
+  );
+}
+
+export function ChevronRightIcon({ size = 14, ...p }: IconProps) {
+  return (
+    <svg {...base(size, 2, p)}>
+      <path d="m9 6 6 6-6 6" />
+    </svg>
+  );
+}
+
+/* Not in the reference: icon-only forms of "Compact" / "Split to grid" for a narrow
+ * main area (SessionHeader). Same 24-viewBox, round-cap family as the rest. */
+export function CompactIcon({ size = 15, ...p }: IconProps) {
+  return (
+    <svg {...base(size, 1.8, p)}>
+      <path d="m4 14 6 0 0 6" />
+      <path d="m20 10-6 0 0-6" />
+      <path d="m14 10 7-7" />
+      <path d="m3 21 7-7" />
+    </svg>
+  );
+}
+
+export function GridSplitIcon({ size = 15, ...p }: IconProps) {
+  return (
+    <svg {...base(size, 1.8, p)}>
+      <rect width="7" height="7" x="3" y="3" rx="1.5" />
+      <rect width="7" height="7" x="14" y="3" rx="1.5" />
+      <rect width="7" height="7" x="3" y="14" rx="1.5" />
+      <rect width="7" height="7" x="14" y="14" rx="1.5" />
+    </svg>
+  );
+}

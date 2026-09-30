@@ -156,6 +156,7 @@ export function buildAgents(input: AgentModelInput): AgentVM[] {
         since,
         activity: activityLine,
         path: abbreviateHome(cwd),
+        cwd: cwd || undefined,
         branch: cwd ? realBranch(input.branchByCwd[cwd]) : undefined,
         mode: deriveMode(tab, screen, input.lastModes[tab.key]),
         approval,

@@ -7,7 +7,7 @@ import type { ReactNode } from "react";
 import type { AgentVM, InspectorVM } from "./types";
 import { plural } from "./text";
 
-export type InspectorTab = "changes" | "files" | "activity";
+export type InspectorTab = "changes" | "activity";
 
 export interface InspectorProps {
   waitingAgents: AgentVM[];
@@ -21,19 +21,23 @@ export interface InspectorProps {
   onCommit: () => void;
   /** A row in Changes was clicked. Omitted = rows are inert. */
   onOpenChange?: (path: string) => void;
-  filesSlot?: ReactNode;
+  /** Operator-set width in px; undefined = the responsive default (320, 280 at ≤1360). */
+  width?: number;
+  /** Resize handle for the panel's inner edge (rendered over the border). */
+  resizeHandle?: ReactNode;
   activitySlot?: ReactNode;
 }
 
 const CODE_COLOR: Record<string, string> = { M: "var(--warning)", A: "var(--success)", D: "var(--danger-text)" };
 
-export function Inspector({ waitingAgents, onApprove, onDeny, onOpen, activeTab, onTabChange, inspector, onReviewDiff, onCommit, onOpenChange, filesSlot, activitySlot }: InspectorProps) {
+export function Inspector({ waitingAgents, onApprove, onDeny, onOpen, activeTab, onTabChange, inspector, onReviewDiff, onCommit, onOpenChange, width, resizeHandle, activitySlot }: InspectorProps) {
   const visibleChanges = inspector.changes.slice(0, 3);
   const moreCount = inspector.changes.length - visibleChanges.length;
   const hasCollisions = inspector.collisions.length > 0;
 
   return (
-    <aside aria-label="Inspector" className="rd-inspector" style={{ width: 320, flexShrink: 0, display: "flex", flexDirection: "column", borderLeft: "1px solid var(--border)", background: "var(--bg-panel)", minHeight: 0 }}>
+    <aside aria-label="Inspector" className="rd-inspector" data-custom={width !== undefined ? "" : undefined} style={{ position: "relative", width: width ?? 320, flexShrink: 0, display: "flex", flexDirection: "column", borderLeft: "1px solid var(--border)", background: "var(--bg-panel)", minHeight: 0 }}>
+      {resizeHandle}
       {waitingAgents.length > 0 && (
         <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10, borderBottom: "1px solid var(--border)" }}>
           <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.06em", color: "var(--warning-label)" }}>NEEDS APPROVAL</div>
@@ -68,7 +72,6 @@ export function Inspector({ waitingAgents, onApprove, onDeny, onOpen, activeTab,
       <div role="tablist" style={{ display: "flex", gap: 18, padding: "0 16px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
         {([
           ["changes", `Changes ${inspector.changes.length}`],
-          ["files", "Files"],
           ["activity", "Activity"],
         ] as const).map(([tab, label]) => {
           const active = activeTab === tab;
@@ -122,7 +125,6 @@ export function Inspector({ waitingAgents, onApprove, onDeny, onOpen, activeTab,
           </div>
         </>
       )}
-      {activeTab === "files" && <div style={{ flexGrow: 1, overflow: "auto", minHeight: 0 }}>{filesSlot}</div>}
       {activeTab === "activity" && <div style={{ flexGrow: 1, overflow: "auto", minHeight: 0 }}>{activitySlot}</div>}
 
       <div style={{ flexGrow: 1 }} />

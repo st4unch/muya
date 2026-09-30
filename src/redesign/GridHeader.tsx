@@ -12,6 +12,8 @@ export interface GridHeaderProps {
   onLayoutChange: (layout: GridLayout) => void;
   onWaitingFirst: () => void;
   onBroadcast: () => void;
+  /** Back to the Control screen with the focused panel's agent selected (Esc does the same). */
+  onExitGrid?: () => void;
 }
 
 const LAYOUTS: { value: GridLayout; label: string }[] = [
@@ -21,7 +23,7 @@ const LAYOUTS: { value: GridLayout; label: string }[] = [
   { value: "3x2", label: "3×2" },
 ];
 
-export function GridHeader({ panelCount, layout, onLayoutChange, onWaitingFirst, onBroadcast }: GridHeaderProps) {
+export function GridHeader({ panelCount, layout, onLayoutChange, onWaitingFirst, onBroadcast, onExitGrid }: GridHeaderProps) {
   return (
     <header
       data-tauri-drag-region
@@ -47,6 +49,18 @@ export function GridHeader({ panelCount, layout, onLayoutChange, onWaitingFirst,
       <span style={{ fontSize: 13, color: "var(--text-muted)", flexShrink: 0 }}>{plural(panelCount, "panel")}</span>
 
       <div style={{ flexGrow: 1 }} />
+
+      {onExitGrid && (
+        <button
+          type="button"
+          onClick={onExitGrid}
+          title="Back to Control (Esc)"
+          className="rd-btn2"
+          style={{ height: 32, padding: "0 12px", borderRadius: 8, border: "1px solid var(--border-control)", background: "var(--bg-control)", color: "var(--text)", fontSize: 13, flexShrink: 0 }}
+        >
+          Exit grid
+        </button>
+      )}
 
       <div role="tablist" aria-label="Layout" style={{ display: "flex", gap: 4, padding: 3, borderRadius: 8, background: "var(--bg-segment)", flexShrink: 0 }}>
         {LAYOUTS.map(({ value, label }) => {

@@ -7,7 +7,7 @@
 import type { CSSProperties, MouseEvent } from "react";
 import type { AgentVM } from "./types";
 import { useLayoutEffect, useRef, useState } from "react";
-import { BypassWarningIcon } from "./icons";
+import { BypassWarningIcon, CompactIcon, GridSplitIcon } from "./icons";
 import { withDetail } from "./text";
 
 export interface SessionHeaderProps {
@@ -89,7 +89,7 @@ export function SessionHeader({ agent, onCompact, onSplitToGrid, onStop, onMore 
   const bypass = agent.mode === "bypass";
   const { rowRef, nameRef, compact } = useCompactBypass(bypass, [agent.name, pill.text]);
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 20px", borderBottom: "1px solid var(--border)", minWidth: 0 }}>
+    <div className="rd-session-head" style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 20px", borderBottom: "1px solid var(--border)", minWidth: 0 }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 3, flexGrow: 1, minWidth: 0 }}>
         <div ref={rowRef} style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
           <h1 ref={nameRef} className="rd-ellipsis" title={agent.name} style={{ margin: 0, fontSize: 17, fontWeight: 600, flexShrink: 1, minWidth: 0 }}>
@@ -147,14 +147,17 @@ export function SessionHeader({ agent, onCompact, onSplitToGrid, onStop, onMore 
         type="button"
         onClick={onCompact}
         disabled={!agent.agentRunning}
-        title={agent.agentRunning ? undefined : "No agent is running in this terminal"}
-        className="rd-btn2"
+        title={agent.agentRunning ? "Compact" : "No agent is running in this terminal"}
+        aria-label="Compact"
+        className="rd-btn2 rd-sess-btn"
         style={secondaryBtn}
       >
-        Compact
+        <CompactIcon className="rd-sess-icon" />
+        <span className="rd-sess-label">Compact</span>
       </button>
-      <button type="button" onClick={onSplitToGrid} className="rd-btn2" style={secondaryBtn}>
-        Split to grid
+      <button type="button" onClick={onSplitToGrid} title="Split to grid" aria-label="Split to grid" className="rd-btn2 rd-sess-btn" style={secondaryBtn}>
+        <GridSplitIcon className="rd-sess-icon" />
+        <span className="rd-sess-label">Split to grid</span>
       </button>
       <button
         type="button"

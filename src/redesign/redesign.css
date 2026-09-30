@@ -152,12 +152,81 @@
  * inspector narrow. Below 1280 the inspector is toggled off entirely via the
  * `inspectorOpen` prop instead (ControlScreen), not by CSS. */
 @media (max-width: 1360px) {
-  .rd-agent-list {
+  /* Only until the operator drags a panel: a stored width is theirs (data-custom). */
+  .rd-agent-list:not([data-custom]) {
     width: 264px !important;
   }
-  .rd-inspector {
+  .rd-inspector:not([data-custom]) {
     width: 280px !important;
   }
+}
+
+/* Panel toggles in the header: pressed = the panel is open. */
+.rd-icon-btn[aria-pressed="true"] {
+  background: var(--bg-segment);
+}
+
+/* Resize handles: a 5px hit area over the panel's 1px border, accent line on hover/drag. */
+.rd-resize {
+  position: absolute;
+  z-index: 6;
+  touch-action: none;
+}
+.rd-resize::after {
+  content: "";
+  position: absolute;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity 120ms;
+}
+.rd-resize:hover::after,
+.rd-resize[data-dragging="true"]::after,
+.rd-resize:focus-visible::after {
+  opacity: 1;
+}
+.rd-root .rd-resize:focus-visible {
+  outline: none;
+}
+.rd-resize-right,
+.rd-resize-left {
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  cursor: col-resize;
+}
+.rd-resize-right {
+  right: -3px;
+}
+.rd-resize-left {
+  left: -3px;
+}
+.rd-resize-right::after,
+.rd-resize-left::after {
+  top: 0;
+  bottom: 0;
+  left: 1px;
+  width: 2px;
+}
+.rd-resize-top {
+  left: 0;
+  right: 0;
+  top: -3px;
+  height: 5px;
+  cursor: row-resize;
+}
+.rd-resize-top::after {
+  left: 0;
+  right: 0;
+  top: 1px;
+  height: 2px;
+}
+
+/* Files section header inside the agents panel. */
+.rd-files-head {
+  transition: background-color 120ms;
+}
+.rd-files-head:hover {
+  background: var(--bg-segment);
 }
 
 /* Disabled actions (Allow/Deny while the permission dialog could not be parsed). */
@@ -189,4 +258,37 @@
  * also triggers :focus-visible and drew a second 2px ring around the border. */
 .rd-root section[tabindex]:focus-visible {
   outline: none;
+}
+
+/* The Files filter is a borderless inline row (its own bottom rule marks it); the global
+ * 2px ring boxed it in like a stray form field. The caret shows focus. */
+.rd-root section[aria-label="Files"] input:focus-visible {
+  outline: none;
+}
+
+/* Session header in a narrow main area (both side panels open on a small window):
+ * Compact / Split to grid become 32×32 icon buttons (label in the tooltip) so the
+ * session name keeps its characters. At the reference's 760px it is unchanged. */
+.rd-session-head {
+  container: sess / inline-size;
+}
+.rd-sess-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.rd-sess-icon {
+  display: none;
+}
+@container sess (max-width: 720px) {
+  .rd-sess-btn {
+    width: 32px;
+    padding: 0 !important;
+  }
+  .rd-sess-icon {
+    display: block;
+  }
+  .rd-sess-label {
+    display: none;
+  }
 }

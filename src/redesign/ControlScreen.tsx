@@ -16,6 +16,9 @@ import { FileHeader } from "./FileHeader";
 import { ProgressStrip } from "./ProgressStrip";
 import { Composer } from "./Composer";
 import { Inspector, type InspectorTab } from "./Inspector";
+import { FILES_DEFAULT, FilesSection } from "./FilesSection";
+import { ResizeHandle } from "./ResizeHandle";
+import { AGENTS_W, INSPECTOR_W, usePanelLayout } from "./usePanelLayout";
 import type { AgentVM, FileVM, FooterVM, HeaderVM, InspectorVM, PermissionMode, RailItem, ThemePreference } from "./types";
 
 export interface ControlScreenProps {
@@ -71,7 +74,10 @@ export interface ControlScreenProps {
   onOpenChange?: (path: string) => void;
   /** Empty-state "New terminal" (⌘T). */
   onNewTerminal?: () => void;
+  /** The file tree, shown in the Files section under the agents list. */
   filesSlot?: ReactNode;
+  /** How many roots the tree shows (the count next to FILES). */
+  filesCount?: number;
   activitySlot?: ReactNode;
 
   /** window.innerWidth-driven: PROMPT.md §5 responsive breakpoints. */
@@ -79,6 +85,7 @@ export interface ControlScreenProps {
 }
 
 export function ControlScreen(props: ControlScreenProps) {
+  const layout = usePanelLayout(!props.inspectorOpen);
   const selected = props.agents.find((a) => a.key === props.selectedAgentKey) ?? null;
   const waitingAgents = props.agents.filter((a) => a.status === "waiting" && a.approval);
 
@@ -92,12 +99,40 @@ export function ControlScreen(props: ControlScreenProps) {
           onNotificationsClick={props.onNotificationsClick}
           onWorkspaceClick={props.onWorkspaceClick}
           onOpenPalette={props.onOpenPalette}
+          agentsOpen={layout.agentsOpen}
+          onToggleAgents={layout.toggleAgents}
+          inspectorOpen={layout.inspectorOpen}
+          onToggleInspector={layout.toggleInspector}
         />
       }
       rail={<Rail active={props.railActive} onNavigate={props.onRailNavigate} />}
       footer={<Footer {...props.footer} />}
     >
+      {layout.agentsOpen && (
       <AgentList
+        width={layout.agentsW ?? undefined}
+        resizeHandle={
+          <ResizeHandle
+            side="right"
+            label="Resize agents panel"
+            min={AGENTS_W.min}
+            max={AGENTS_W.max}
+            onResize={layout.setAgentsW}
+            onReset={() => layout.setAgentsW(null)}
+          />
+        }
+        filesSection={
+          <FilesSection
+            open={layout.filesOpen}
+            onToggle={layout.toggleFiles}
+            count={props.filesCount ?? 0}
+            height={layout.filesH}
+            onHeightChange={layout.setFilesH}
+            onHeightReset={() => layout.setFilesH(FILES_DEFAULT)}
+          >
+            {props.filesSlot}
+          </FilesSection>
+        }
         agents={props.agents}
         selectedKey={props.selectedAgentKey}
         filter={props.agentFilter}
@@ -106,6 +141,7 @@ export function ControlScreen(props: ControlScreenProps) {
         onNewAgent={props.onNewAgent}
         onReorder={props.onReorderAgents}
       />
+      )}
 
       <main style={{ flexGrow: 1, minWidth: 0, display: "flex", flexDirection: "column", background: "var(--bg-app)", minHeight: 0 }}>
         {props.openFile ? (
@@ -169,12 +205,25 @@ export function ControlScreen(props: ControlScreenProps) {
             onModeMenu={props.onModeMenu}
             onAttachFile={props.onAttachFile}
             onCommands={props.onOpenCommands}
+            slashAgent={selected.kind === "opencode" ? "opencode" : "claude"}
+            slashCwd={selected.cwd}
           />
         )}
       </main>
 
-      {props.inspectorOpen && (
+      {layout.inspectorOpen && (
         <Inspector
+          width={layout.inspectorW ?? undefined}
+          resizeHandle={
+            <ResizeHandle
+              side="left"
+              label="Resize inspector"
+              min={INSPECTOR_W.min}
+              max={INSPECTOR_W.max}
+              onResize={layout.setInspectorW}
+              onReset={() => layout.setInspectorW(null)}
+            />
+          }
           waitingAgents={waitingAgents}
           onApprove={props.onApprove}
           onDeny={props.onDeny}
@@ -185,7 +234,6 @@ export function ControlScreen(props: ControlScreenProps) {
           onReviewDiff={props.onReviewDiff}
           onCommit={props.onCommit}
           onOpenChange={props.onOpenChange}
-          filesSlot={props.filesSlot}
           activitySlot={props.activitySlot}
         />
       )}

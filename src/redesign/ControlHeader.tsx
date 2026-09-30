@@ -5,7 +5,7 @@
 
 import type { MouseEvent } from "react";
 import type { HeaderVM, ThemePreference } from "./types";
-import { BellIcon, ChevronDownIcon, SearchIcon, ThemeMonitorIcon, ThemeMoonIcon, ThemeSunIcon } from "./icons";
+import { BellIcon, ChevronDownIcon, PanelLeftIcon, PanelRightIcon, SearchIcon, ThemeMonitorIcon, ThemeMoonIcon, ThemeSunIcon } from "./icons";
 
 export interface ControlHeaderProps {
   header: HeaderVM;
@@ -15,7 +15,25 @@ export interface ControlHeaderProps {
   /** Receives the click so the caller can anchor a menu under the button. */
   onWorkspaceClick: (e: MouseEvent<HTMLElement>) => void;
   onOpenPalette: () => void;
+  /** Panel toggles (docs/prd-v04-followups.md §1). Omitted = the button isn't drawn. */
+  agentsOpen?: boolean;
+  onToggleAgents?: () => void;
+  inspectorOpen?: boolean;
+  onToggleInspector?: () => void;
 }
+
+const TOGGLE_STYLE = {
+  width: 32,
+  height: 32,
+  borderRadius: 8,
+  border: "1px solid var(--border-control)",
+  background: "var(--bg-control)",
+  color: "var(--text)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  flexShrink: 0,
+} as const;
 
 const THEME_LABEL: Record<ThemePreference, string> = {
   system: "Theme: system",
@@ -36,6 +54,10 @@ export function ControlHeader({
   onNotificationsClick,
   onWorkspaceClick,
   onOpenPalette,
+  agentsOpen = true,
+  onToggleAgents,
+  inspectorOpen = true,
+  onToggleInspector,
 }: ControlHeaderProps) {
   return (
     <header
@@ -70,6 +92,20 @@ export function ControlHeader({
         </div>
         <span style={{ fontWeight: 600, fontSize: 15 }}>Muya</span>
       </div>
+
+      {onToggleAgents && (
+        <button
+          type="button"
+          aria-label={agentsOpen ? "Hide agents panel" : "Show agents panel"}
+          title={`${agentsOpen ? "Hide" : "Show"} agents panel (⌘B)`}
+          aria-pressed={agentsOpen}
+          onClick={onToggleAgents}
+          className="rd-icon-btn"
+          style={TOGGLE_STYLE}
+        >
+          <PanelLeftIcon size={16} />
+        </button>
+      )}
 
       <button
         type="button"
@@ -210,6 +246,20 @@ export function ControlHeader({
           />
         )}
       </button>
+
+      {onToggleInspector && (
+        <button
+          type="button"
+          aria-label={inspectorOpen ? "Hide inspector" : "Show inspector"}
+          title={`${inspectorOpen ? "Hide" : "Show"} inspector (⌥⌘B)`}
+          aria-pressed={inspectorOpen}
+          onClick={onToggleInspector}
+          className="rd-icon-btn"
+          style={TOGGLE_STYLE}
+        >
+          <PanelRightIcon size={16} />
+        </button>
+      )}
     </header>
   );
 }

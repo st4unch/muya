@@ -23,6 +23,7 @@ export interface GridScreenProps {
   onLayoutChange: (layout: GridLayout) => void;
   onWaitingFirst: () => void;
   onBroadcastOpen: () => void;
+  onExitGrid?: () => void;
 
   focusedKey: string | null;
   onFocusPanel: (key: string) => void;
@@ -85,6 +86,7 @@ export function GridScreen(props: GridScreenProps) {
             onLayoutChange={props.onLayoutChange}
             onWaitingFirst={props.onWaitingFirst}
             onBroadcast={props.onBroadcastOpen}
+            onExitGrid={props.onExitGrid}
           />
         }
         rail={<Rail active={props.railActive} onNavigate={props.onRailNavigate} />}
