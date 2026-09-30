@@ -1731,7 +1731,11 @@ export default function App() {
   }, [openTerminals]);
 
   const controlVisible = view === "control" && screen === "control";
-  const gridVisibleKeys = new Set(view === "control" && screen === "grid" ? gridPanels.filter((p) => p.status !== "idle").map((p) => p.key) : []);
+  // Every grid panel shows its terminal — idle ones included (GridPanel.tsx). This set
+  // used to skip idle panels, from when they showed a placeholder; after that changed,
+  // idle terminals were on screen but `active=false`, so their WebGL renderer stayed
+  // suspended and the panel was blank (caught live, 2026-09-30 — see L54).
+  const gridVisibleKeys = new Set(view === "control" && screen === "grid" ? gridPanels.map((p) => p.key) : []);
 
   // ── Render ────────────────────────────────────────────────────────────────
   const headerVM = {

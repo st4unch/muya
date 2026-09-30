@@ -165,3 +165,21 @@
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+/* ⌘K palette (cmdk). The heading colour used to sit on the whole group, so every item
+ * inherited the muted grey; and no item showed which one Enter would run. */
+.rd-palette [cmdk-group-heading] {
+  padding: 8px 10px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+.rd-palette [cmdk-item] {
+  color: var(--text);
+  transition: background-color 120ms;
+}
+.rd-palette [cmdk-item][data-selected="true"] {
+  background: var(--bg-segment);
+  color: var(--text-strong);
+}

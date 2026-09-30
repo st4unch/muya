@@ -29,6 +29,7 @@ export interface CommandPaletteProps {
 export function CommandPalette({ open, onOpenChange, agents, files, commands, onSelectAgent, onOpenFile, onRunCommand }: CommandPaletteProps) {
   return (
     <Command.Dialog
+      className="rd-palette"
       open={open}
       onOpenChange={onOpenChange}
       label="Command palette"
@@ -55,23 +56,29 @@ export function CommandPalette({ open, onOpenChange, agents, files, commands, on
       <Command.List style={{ maxHeight: "calc(55vh - 44px)", overflow: "auto", padding: 8 }}>
         <Command.Empty style={{ padding: "16px 12px", fontSize: 13, color: "var(--text-muted)" }}>No results</Command.Empty>
 
-        <Command.Group heading="Agents" style={{ fontSize: 11, color: "var(--text-muted)", padding: "6px 8px" }}>
+        {agents.length > 0 && (
+        <Command.Group heading="Agents">
           {agents.map((agent) => (
             <Command.Item key={agent.key} value={agent.name} onSelect={() => onSelectAgent(agent.key)} style={{ padding: "8px 10px", borderRadius: 6, fontSize: 13, cursor: "pointer" }}>
               {agent.name} <span style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 11 }}>{agent.path}</span>
             </Command.Item>
           ))}
         </Command.Group>
+        )}
 
-        <Command.Group heading="Files" style={{ fontSize: 11, color: "var(--text-muted)", padding: "6px 8px" }}>
+        {/* A group with nothing in it still printed its heading ("Files" over an empty
+            list) — groups render only when they have items. */}
+        {files.length > 0 && (
+        <Command.Group heading="Files">
           {files.map((file) => (
             <Command.Item key={file.path} value={file.path} onSelect={() => onOpenFile(file.path)} style={{ padding: "8px 10px", borderRadius: 6, fontSize: 13, fontFamily: "var(--font-mono)", cursor: "pointer" }}>
               {file.path}
             </Command.Item>
           ))}
         </Command.Group>
+        )}
 
-        <Command.Group heading="Commands" style={{ fontSize: 11, color: "var(--text-muted)", padding: "6px 8px" }}>
+        <Command.Group heading="Commands">
           {commands.map((cmd) => (
             <Command.Item key={cmd.id} value={cmd.label} onSelect={() => onRunCommand(cmd.id)} style={{ padding: "8px 10px", borderRadius: 6, fontSize: 13, cursor: "pointer" }}>
               {cmd.label}
