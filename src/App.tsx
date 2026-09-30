@@ -47,7 +47,7 @@ import { CommandPalette } from "./redesign/CommandPalette";
 import { ActivityPanel } from "./redesign/ActivityPanel";
 import { AgentPickerDialog, MenuHeading, MenuItem, MenuPopover, MenuSeparator, RenameDialog, anchorFromRect, type Anchor } from "./redesign/Menus";
 import { useAgentModel } from "./redesign/useAgentModel";
-import { abbreviateHome, pickGridPanels, type SessionStatus } from "./redesign/agentModel";
+import { abbreviateHome, pickGridPanels, relativeTo, type SessionStatus } from "./redesign/agentModel";
 import { adoptHosts, createHost, POOL_STYLE } from "./redesign/terminalHosts";
 import type { AgentVM, ChangeVM, FileVM, GridLayout, InspectorVM, PermissionMode, RailItem } from "./redesign/types";
 import type { AgentFilter } from "./redesign/AgentList";
@@ -1515,13 +1515,15 @@ export default function App() {
     const timer = setTimeout(() => {
       gitRunRef.current = { cwd: selectedCwd, at: Date.now() };
       invoke<[string, string][]>("git_status", { root: selectedCwd })
-        .then((pairs) => { if (!cancelled) setChanges(pairs.map(([path, code]) => ({ code, path }))); })
+        // git_status returns absolute paths (the file tree keys on them); the inspector
+        // shows and opens them relative to the session's folder.
+        .then((pairs) => { if (!cancelled) setChanges(pairs.map(([path, code]) => ({ code, path: relativeTo(selectedCwd, path) }))); })
         .catch(() => { if (!cancelled) setChanges([]); });
     }, wait);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [selectedCwd, fsTick, view, screen]);
 
-  const absoluteInRepo = (rel: string) => `${(selectedCwd ?? "").replace(/\/+$/, "")}/${rel}`;
+  const absoluteInRepo = (rel: string) => rel.startsWith("/") ? rel : `${(selectedCwd ?? "").replace(/\/+$/, "")}/${rel}`;
   const openChange = (rel: string) => {
     if (!selectedCwd || rel.endsWith("/")) return;
     openFile(absoluteInRepo(rel));

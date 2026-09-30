@@ -189,3 +189,13 @@ describe("agentIsRunning", () => {
     expect(agentIsRunning(tab("a", { sshServerId: "srv", isClaude: true }), undefined)).toBe(false);
   });
 });
+
+describe("relativeTo", () => {
+  it("strips the base folder, keeps paths outside it absolute", async () => {
+    const { relativeTo } = await import("./agentModel");
+    expect(relativeTo("/r/proj", "/r/proj/src/a.ts")).toBe("src/a.ts");
+    expect(relativeTo("/r/proj/", "/r/proj/b.md")).toBe("b.md");
+    expect(relativeTo("/r/proj", "/r/project-other/x")).toBe("/r/project-other/x");
+    expect(relativeTo("", "/x/y")).toBe("/x/y");
+  });
+});

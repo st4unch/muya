@@ -47,6 +47,12 @@ export interface AgentModelInput {
 export const ANSWERED_GRACE_MS = 20_000;
 
 /** "~"-abbreviate a home directory without knowing whose it is (macOS/Linux layouts). */
+/** `path` relative to `base` when it is inside it; otherwise unchanged (still absolute). */
+export function relativeTo(base: string, path: string): string {
+  const b = base.replace(/\/+$/, "");
+  return b && path.startsWith(`${b}/`) ? path.slice(b.length + 1) : path;
+}
+
 export function abbreviateHome(path: string): string {
   const m = /^(\/Users\/[^/]+|\/home\/[^/]+|\/root)(?=\/|$)/.exec(path);
   return m ? `~${path.slice(m[1].length)}` : path;
