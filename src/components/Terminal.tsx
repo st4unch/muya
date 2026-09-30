@@ -9,6 +9,7 @@ import "@xterm/xterm/css/xterm.css";
 import { altArrowSeq } from "../lib/keys";
 import { terminalTheme } from "../theme/terminalThemes";
 import { parseClaudeScreen, readScreenLines, type ScreenState } from "../lib/screenState";
+import { applyStatusline } from "../lib/statusline";
 
 // Output bytes arrive as a raw ArrayBuffer (binary fetch path — no JSON byte
 // bloat); process-exit arrives as a small JSON object. See src-tauri/src/pty.rs.
@@ -331,7 +332,10 @@ export default function Terminal({
 
       // Cmd+Shift+C → launch claude session
       if (e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey && e.type === "keydown" && e.key.toLowerCase() === "c" && ptyId) {
-        void invoke("pty_write", { id: ptyId, data: "claude --dangerously-skip-permissions\r" });
+        const id = ptyId;
+        void applyStatusline("claude --dangerously-skip-permissions")
+          .then((cmd) => invoke("pty_write", { id, data: `${cmd}\r` }))
+          .catch(() => {});
         e.preventDefault();
         return false;
       }
@@ -480,11 +484,12 @@ export default function Terminal({
         // Not used for SSH tabs (the ssh process is the child itself).
         if (initialCommand && !sshServerId) {
           setTimeout(() => {
-            if (!disposed && ptyId)
-              void invoke("pty_write", {
-                id: ptyId,
-                data: `${initialCommand}\r`,
-              });
+            if (!disposed && ptyId) {
+              const id = ptyId;
+              void applyStatusline(initialCommand)
+                .then((cmd) => (disposed ? undefined : invoke("pty_write", { id, data: `${cmd}\r` })))
+                .catch(() => {});
+            }
           }, 600);
           // 4.6s = the 600ms above (before claude's own process even starts) + a
           // live-tested 4s for claude's own startup + the trust prompt rendering,

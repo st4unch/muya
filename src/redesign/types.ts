@@ -81,6 +81,17 @@ export interface FooterVM {
   version: string;
   /** Grid shows its keyboard hint instead of the encoding. */
   variant: "control" | "grid";
+  /** Claude status fields the user pinned to the footer (absent = feature off, e.g. previews). */
+  status?: FooterStatusVM;
+}
+
+export interface FooterStatusVM {
+  /** Chosen field ids, in the order they were added. */
+  fields: string[];
+  /** Status JSON of the selected Claude session; null when it has none. */
+  data: Record<string, unknown> | null;
+  onToggle: (id: string) => void;
+  onRemove: (id: string) => void;
 }
 
 export type ThemePreference = "system" | "light" | "dark";

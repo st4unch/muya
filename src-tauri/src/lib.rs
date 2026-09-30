@@ -58,6 +58,7 @@ mod pty;
 mod sessions;
 mod slash_commands;
 mod ssh;
+mod statusline;
 #[cfg(test)]
 mod testutil;
 mod validate;
@@ -219,6 +220,8 @@ pub fn run() {
                 // Sweep stale masters from a previous run: ControlPersist doesn't reap
                 // PSMP masters (not idle), so a dead-for-reuse socket would lock the alias.
                 crate::ssh::sweep_control_master_sockets();
+                // Claude status-line capture dir for the footer (PRD statusline-footer).
+                crate::statusline::init();
 
                 // Idle-session reaper (PRD ssh-session): agent_ssh sessions have no other
                 // garbage collector — an agent that opens one and never closes it (crash,
@@ -268,6 +271,7 @@ pub fn run() {
                     pty::kill_all(&*app.state::<pty::PtyManager>());
                     // Close only THIS instance's SSH masters (a second Muya's stay up).
                     crate::ssh::close_own_control_masters();
+                    crate::statusline::cleanup();
                     app.exit(0);
                 } else {
                     LAST_QUIT_MS.store(now, Ordering::Relaxed);
@@ -323,6 +327,8 @@ pub fn run() {
             pty::pty_session_ids,
             fs::list_claude_resources,
             slash_commands::list_slash_commands,
+            statusline::statusline_settings_path,
+            statusline::statusline_get,
             fs::fetch_skill_marketplace,
             fs::fetch_mcp_marketplace,
             fs::install_skill,

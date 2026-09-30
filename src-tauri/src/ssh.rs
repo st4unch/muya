@@ -487,7 +487,7 @@ pub(crate) fn ensure_control_master_dir() {
 
 /// Is `pid` a running process? `kill(pid, 0)` probes without signalling; EPERM still
 /// means "exists" (someone else's process).
-fn process_alive(pid: u32) -> bool {
+pub(crate) fn process_alive(pid: u32) -> bool {
     let Ok(pid) = i32::try_from(pid) else { return false };
     if pid <= 0 {
         return false;

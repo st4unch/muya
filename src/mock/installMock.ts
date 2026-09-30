@@ -334,6 +334,15 @@ function handleInvoke(cmd: string, rawPayload?: unknown): unknown {
       return out;
     }
 
+    // --- claude status line (footer fields) ---------------------------------
+    case "statusline_settings_path":
+      return "/tmp/muya-status-mock/settings.json";
+    case "statusline_get": {
+      // Only Claude sessions have data, like the real command.
+      const tab = ptyTabById.get(String(payload.ptyId));
+      return tab?.session ? mockStatusline(tab.key) : null;
+    }
+
     // --- git / project manager ------------------------------------------------
     case "git_status":
       return payload.root === PRIMARY_WORKSPACE ? MOCK_GIT_STATUS : [];
@@ -492,4 +501,70 @@ function handlePlugin(cmd: string, payload: Record<string, unknown>): unknown {
       if (!cmd.startsWith("plugin:event|")) warnUnknown(cmd);
       return null;
   }
+}
+
+/** Realistic Claude status JSON (the documented schema, every optional block present). */
+function mockStatusline(key: string): Record<string, unknown> {
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    cwd: PRIMARY_WORKSPACE,
+    session_id: `session-${key}`,
+    session_name: "footer status fields",
+    prompt_id: "550e8400-e29b-41d4-a716-446655440000",
+    transcript_path: `${PRIMARY_WORKSPACE}/.claude/transcripts/session-${key}.jsonl`,
+    model: { id: "claude-opus-5-5", display_name: "Opus" },
+    workspace: {
+      current_dir: PRIMARY_WORKSPACE,
+      project_dir: PRIMARY_WORKSPACE,
+      added_dirs: ["/tmp/shared-docs"],
+      git_worktree: "feature-xyz",
+      repo: { host: "github.com", owner: "anthropics", name: "claude-code" },
+    },
+    version: "2.1.260",
+    output_style: { name: "default" },
+    cost: { total_cost_usd: 0.1234, total_duration_ms: 255000, total_api_duration_ms: 42300, total_lines_added: 156, total_lines_removed: 23 },
+    context_window: {
+      total_input_tokens: 16900,
+      total_output_tokens: 1200,
+      context_window_size: 200000,
+      used_percentage: 42,
+      remaining_percentage: 58,
+      current_usage: { input_tokens: 8500, output_tokens: 1200, cache_creation_input_tokens: 5000, cache_read_input_tokens: 3400 },
+    },
+    exceeds_200k_tokens: false,
+    prompt_cache: {
+      warm: true,
+      caching_observed: true,
+      ttl: "1h",
+      expires_at: now + 3000,
+      requests: 14,
+      misses: 2,
+      expected_rebuilds: 1,
+      hit_ratio: 0.91,
+      cache_write_tokens: 352000,
+      miss_recache_tokens: 310200,
+      last_miss_at: now - 900,
+      last_miss_cause: { causes: ["tools_changed"], tools_added: 2, tools_removed: 0 },
+      miss_causes: { tools_changed: 2 },
+      recache_tokens_if_cold: 45000,
+    },
+    fast_mode: false,
+    effort: { level: "high" },
+    thinking: { enabled: true },
+    rate_limits: {
+      five_hour: { used_percentage: 23.5, resets_at: now + 5400 },
+      seven_day: { used_percentage: 41.2, resets_at: now + 3 * 86400 },
+      spend_limit: { used_percentage: 62.8, resets_at: now + 20 * 86400 },
+    },
+    vim: { mode: "NORMAL" },
+    agent: { name: "security-reviewer" },
+    pr: { number: 1234, url: "https://github.com/anthropics/claude-code/pull/1234", review_state: "pending" },
+    worktree: {
+      name: "my-feature",
+      path: `${PRIMARY_WORKSPACE}/.claude/worktrees/my-feature`,
+      branch: "worktree-my-feature",
+      original_cwd: PRIMARY_WORKSPACE,
+      original_branch: "main",
+    },
+  };
 }

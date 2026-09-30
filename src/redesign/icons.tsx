@@ -239,3 +239,11 @@ export function GridSplitIcon({ size = 15, ...p }: IconProps) {
     </svg>
   );
 }
+
+export function PlusIcon({ size = 14, ...p }: IconProps) {
+  return (
+    <svg {...base(size, 2, p)}>
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}

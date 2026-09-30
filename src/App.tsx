@@ -21,6 +21,8 @@ import SshPage from "./components/SshPage";
 import PrdBoard from "./components/PrdBoard";
 import ScheduledPromptModal, { type ScheduledPrompt } from "./components/ScheduledPromptModal";
 import SettingsModal from "./components/SettingsModal";
+import { useStatusFields, useStatusData } from "./redesign/useStatusFields";
+import { applyStatusline } from "./lib/statusline";
 import { buildAgentCommand, singleQuote, detectAgent, AGENT_BASE_COMMAND, type AgentKind } from "./lib/agent";
 import { invoke } from "@tauri-apps/api/core";
 import { copyToClipboard } from "./lib/clipboard";
@@ -632,10 +634,9 @@ export default function App() {
     setOpenTerminals((prev) =>
       prev.map((t) => (t.key === key ? { ...t, needsResume: false } : t))
     );
-    void invoke("pty_write", {
-      id: ptyId,
-      data: `${resumeCommand({ sessionId: tab.sessionId, sessionCwd: tab.sessionCwd }, singleQuote)}\r`,
-    }).catch(() => {});
+    void applyStatusline(resumeCommand({ sessionId: tab.sessionId, sessionCwd: tab.sessionCwd }, singleQuote))
+      .then((cmd) => invoke("pty_write", { id: ptyId, data: `${cmd}\r` }))
+      .catch(() => {});
   };
 
   /** Duplicate a terminal tab into a fresh tab, re-running its command so an SSH
@@ -1811,6 +1812,9 @@ export default function App() {
     clock,
     hasNotifications: model.counts.waiting > 0,
   };
+  const statusFields = useStatusFields();
+  const selectedPtyId = selectedTab ? terminalPtyIds[selectedTab.key] : undefined;
+  const statusData = useStatusData(selectedPtyId, statusFields.fields.length > 0);
   const footerVM = {
     workspaceCount: workspaces.length,
     agents: model.counts.agents,
@@ -1819,6 +1823,7 @@ export default function App() {
     collisions: collisionReport.collisions.length,
     version: appVersion || "…",
     variant: "control" as const,
+    status: { fields: statusFields.fields, data: statusData, onToggle: statusFields.toggle, onRemove: statusFields.remove },
   };
   const updateReady = Boolean(updateAvailable && updateAvailable.version);
 

@@ -143,6 +143,12 @@ pub fn spawn_process(
     if let Some(dir) = cwd.filter(|d| !d.is_empty()) {
         cmd.cwd(dir);
     }
+    // Allocated before the spawn so the child can know it: Claude's status-line tap
+    // writes this PTY's status JSON to MUYA_STATUS_FILE for the footer.
+    let id = format!("pty-{}", manager.counter.fetch_add(1, Ordering::Relaxed));
+    if let Some(f) = crate::statusline::status_file_for(&id) {
+        cmd.env("MUYA_STATUS_FILE", f);
+    }
 
     let child = pair
         .slave
@@ -160,8 +166,6 @@ pub fn spawn_process(
             .take_writer()
             .map_err(|e| format!("take writer failed: {e}"))?,
     ));
-
-    let id = format!("pty-{}", manager.counter.fetch_add(1, Ordering::Relaxed));
 
     // Password injection: give the reader thread a writer handle + the secret. It
     // fires exactly once, when the output tail looks like a password prompt.
