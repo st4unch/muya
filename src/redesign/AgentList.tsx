@@ -23,6 +23,9 @@ export interface AgentListProps {
   resizeHandle?: ReactNode;
   /** The Files section, pinned between the agents list and the footer. */
   filesSection?: ReactNode;
+  /** The expanded Files section fills the panel: the list takes only the height its
+   *  rows need (scrolling past half the panel), Files gets everything else. */
+  filesFill?: boolean;
 }
 
 const GROUPS: { status: AgentStatus; label: string; color: string }[] = [
@@ -31,7 +34,7 @@ const GROUPS: { status: AgentStatus; label: string; color: string }[] = [
   { status: "idle", label: "IDLE", color: "var(--text-muted)" },
 ];
 
-export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelectAgent, onNewAgent, onReorder, width, resizeHandle, filesSection }: AgentListProps) {
+export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelectAgent, onNewAgent, onReorder, width, resizeHandle, filesSection, filesFill = false }: AgentListProps) {
   const dragKeyRef = useRef<string | null>(null);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
 
@@ -155,7 +158,18 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
         })}
       </div>
 
-      <div style={{ flex: "1 1 0", overflow: "auto", padding: "0 10px", display: "flex", flexDirection: "column", gap: 4, minHeight: filesSection ? 120 : 0 }}>
+      <div
+        style={{
+          flex: filesFill ? "0 1 auto" : "1 1 0",
+          maxHeight: filesFill ? "50%" : undefined,
+          overflow: "auto",
+          padding: filesFill ? "0 10px 8px" : "0 10px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 4,
+          minHeight: filesSection && !filesFill ? 120 : 0,
+        }}
+      >
         {(() => {
           let visibleGroupIndex = -1;
           return GROUPS.map(({ status, label, color }) => {

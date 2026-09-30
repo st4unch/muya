@@ -12,13 +12,13 @@ import { ResizeHandle } from "./ResizeHandle";
 
 export const FILES_MIN = 120;
 export const FILES_MAX = 2000;
-export const FILES_DEFAULT = 260;
 
 export interface FilesSectionProps {
   open: boolean;
   onToggle: () => void;
   count: number;
-  height: number;
+  /** null = fill every pixel the agents list doesn't use (the default). */
+  height: number | null;
   onHeightChange: (px: number) => void;
   onHeightReset: () => void;
   children?: ReactNode;
@@ -43,7 +43,7 @@ export function FilesSection({ open, onToggle, count, height, onHeightChange, on
       style={{
         position: "relative",
         boxSizing: "border-box",
-        flex: open ? `0 1 ${height}px` : "0 0 auto",
+        flex: !open ? "0 0 auto" : height === null ? "1 1 0px" : `0 1 ${height}px`,
         minHeight: open ? FILES_MIN : undefined,
         display: "flex",
         flexDirection: "column",

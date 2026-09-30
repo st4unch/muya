@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { asBool, asClampedNumber, usePersistentState } from "./usePersistentState";
-import { FILES_DEFAULT, FILES_MAX, FILES_MIN } from "./FilesSection";
+import { FILES_MAX, FILES_MIN } from "./FilesSection";
 
 export const AGENTS_W = { min: 220, max: 480, default: 296 } as const;
 export const INSPECTOR_W = { min: 260, max: 520, default: 320 } as const;
@@ -39,7 +39,9 @@ export function usePanelLayout(narrow = false) {
   const [agentsW, setAgentsW] = usePersistentState<number | null>(KEY.agentsW, null, asClampedNumber(AGENTS_W.min, AGENTS_W.max));
   const [inspectorW, setInspectorW] = usePersistentState<number | null>(KEY.inspectorW, null, asClampedNumber(INSPECTOR_W.min, INSPECTOR_W.max));
   const [filesOpen, setFilesOpen] = usePersistentState<boolean>(KEY.filesOpen, false, asBool);
-  const [filesH, setFilesH] = usePersistentState<number>(KEY.filesH, FILES_DEFAULT, asClampedNumber(FILES_MIN, FILES_MAX));
+  // null = fill: the expanded Files section takes all the height the agents list
+  // doesn't need. A number once the operator drags the split.
+  const [filesH, setFilesH] = usePersistentState<number | null>(KEY.filesH, null, asClampedNumber(FILES_MIN, FILES_MAX));
 
   const toggleAgents = useCallback(() => setAgentsOpen(!agentsOpen), [agentsOpen, setAgentsOpen]);
   const [narrowInspector, setNarrowInspector] = useState(false);

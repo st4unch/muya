@@ -16,7 +16,7 @@ import { FileHeader } from "./FileHeader";
 import { ProgressStrip } from "./ProgressStrip";
 import { Composer } from "./Composer";
 import { Inspector, type InspectorTab } from "./Inspector";
-import { FILES_DEFAULT, FilesSection } from "./FilesSection";
+import { FilesSection } from "./FilesSection";
 import { ResizeHandle } from "./ResizeHandle";
 import { AGENTS_W, INSPECTOR_W, usePanelLayout } from "./usePanelLayout";
 import type { AgentVM, FileVM, FooterVM, HeaderVM, InspectorVM, PermissionMode, RailItem, ThemePreference } from "./types";
@@ -121,6 +121,7 @@ export function ControlScreen(props: ControlScreenProps) {
             onReset={() => layout.setAgentsW(null)}
           />
         }
+        filesFill={layout.filesOpen && layout.filesH === null}
         filesSection={
           <FilesSection
             open={layout.filesOpen}
@@ -128,7 +129,7 @@ export function ControlScreen(props: ControlScreenProps) {
             count={props.filesCount ?? 0}
             height={layout.filesH}
             onHeightChange={layout.setFilesH}
-            onHeightReset={() => layout.setFilesH(FILES_DEFAULT)}
+            onHeightReset={() => layout.setFilesH(null)}
           >
             {props.filesSlot}
           </FilesSection>

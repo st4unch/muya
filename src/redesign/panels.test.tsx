@@ -144,6 +144,22 @@ describe("files section", () => {
   });
 });
 
+describe("files fill", () => {
+  it("expanded Files fills the panel until the split is dragged; double-click returns to fill", () => {
+    render(<ControlScreen {...controlProps()} />);
+    fireEvent.click(screen.getByRole("button", { name: /FILES/ }));
+    const files = screen.getByLabelText("Files");
+    expect(files.style.flex).toBe("1 1 0px");
+    localStorage.setItem("muya.panels.filesHeight", "300");
+  });
+  it("a stored split height is used instead of fill", () => {
+    localStorage.setItem("muya.panels.filesOpen", "true");
+    localStorage.setItem("muya.panels.filesHeight", "300");
+    render(<ControlScreen {...controlProps()} />);
+    expect(screen.getByLabelText("Files").style.flex).toBe("0 1 300px");
+  });
+});
+
 describe("files search", () => {
   it("the filter button lives in the Files header, only while expanded", () => {
     render(<ControlScreen {...controlProps()} />);
