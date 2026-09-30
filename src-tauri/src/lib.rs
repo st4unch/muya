@@ -195,14 +195,22 @@ pub fn run() {
             {
                 let broker_state = app.state::<broker::BrokerState>();
                 let handle = app.handle().clone();
-                if let Err(e) = tauri::async_runtime::block_on(broker::enable_broker_listener(
-                    &broker_state,
-                    handle,
-                )) {
-                    log::warn!("[ssh-broker] listener start failed: {e}");
-                }
-                if let Err(e) = broker::register_mcp() {
-                    log::warn!("[ssh-broker] mcp registration failed: {e}");
+                let owned_elsewhere = match tauri::async_runtime::block_on(
+                    broker::enable_broker_listener(&broker_state, handle),
+                ) {
+                    Ok(()) => false,
+                    Err(e) => {
+                        log::warn!("[ssh-broker] listener start failed: {e}");
+                        e == broker::BROKER_OWNED_ELSEWHERE
+                    }
+                };
+                // The instance that serves the broker owns the MCP registration too. A
+                // second instance re-registering would point every Claude/opencode
+                // session at ITS helper build while the running one keeps the socket.
+                if !owned_elsewhere {
+                    if let Err(e) = broker::register_mcp() {
+                        log::warn!("[ssh-broker] mcp registration failed: {e}");
+                    }
                 }
                 // ControlMaster socket dir (0700) — ssh reuses one connection per host
                 // via ControlPath in here, so it must exist before any ssh_run.
@@ -257,6 +265,8 @@ pub fn run() {
                 if now.saturating_sub(last) < QUIT_DOUBLE_PRESS_MS {
                     // Kill active PTY children before exit so no shells are orphaned.
                     pty::kill_all(&*app.state::<pty::PtyManager>());
+                    // Close only THIS instance's SSH masters (a second Muya's stay up).
+                    crate::ssh::close_own_control_masters();
                     app.exit(0);
                 } else {
                     LAST_QUIT_MS.store(now, Ordering::Relaxed);

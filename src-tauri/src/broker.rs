@@ -1604,6 +1604,15 @@ async fn handle_scp(app: &AppHandle, servers: &[Server], req: &BrokerReq) -> Str
 // Listener
 // ---------------------------------------------------------------------------
 
+/// Error returned when another running Muya instance already serves the broker.
+pub(crate) const BROKER_OWNED_ELSEWHERE: &str =
+    "another running Muya instance already serves the SSH broker — this instance leaves it (and the MCP registration) alone";
+
+/// Does something accept connections on this Unix socket right now?
+fn socket_is_live(path: &Path) -> bool {
+    std::os::unix::net::UnixStream::connect(path).is_ok()
+}
+
 /// Bind the broker socket (0600), enforce the peer-uid check, and serve requests.
 /// Idempotent: a second call while already listening is a no-op.
 pub async fn enable_broker_listener(state: &BrokerState, app: AppHandle) -> Result<(), String> {
@@ -1613,6 +1622,13 @@ pub async fn enable_broker_listener(state: &BrokerState, app: AppHandle) -> Resu
     }
     let path = socket_path()?;
     if path.exists() {
+        // Only a DEAD socket may be replaced. This used to unlink unconditionally, so a
+        // second Muya (a dev/test build, a second copy) took over the socket of the one
+        // already running: that instance's agents' MCP calls silently went to the new
+        // one. A live socket means another instance owns the broker — leave it alone.
+        if socket_is_live(&path) {
+            return Err(BROKER_OWNED_ELSEWHERE.to_string());
+        }
         fs::remove_file(&path).map_err(|e| format!("remove stale broker socket: {e}"))?;
     }
     let listener =
@@ -1747,6 +1763,19 @@ mod tests {
             ("def456".into(), "frontend refactor".into()),
             ("ghi789".into(), "password rotation".into()),
         ]
+    }
+
+    // A second Muya must not steal the running one's broker socket: a live socket is
+    // detected, a dead leftover is not.
+    #[test]
+    fn live_and_dead_broker_sockets_are_told_apart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("b.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        assert!(socket_is_live(&path));
+        drop(listener); // the socket FILE stays, nobody accepts any more
+        assert!(path.exists());
+        assert!(!socket_is_live(&path));
     }
 
     #[test]

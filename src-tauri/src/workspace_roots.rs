@@ -1,101 +1,71 @@
-//! Persisted workspace roots — the source of truth for `ssh_scp`'s local-path
-//! guardrail (PRD `ssh-scp`, AC3; see `local_guard.rs`).
+//! Workspace roots — the source of truth for `ssh_scp`'s local-path guardrail (PRD
+//! `ssh-scp`, AC3; see `local_guard.rs`).
 //!
-//! GROUNDING NOTE (2026-08-04): before this feature, "workspace roots" existed
-//! ONLY in the frontend's `localStorage` (`apex.workspaces`, `App.tsx`) — there
-//! was no Rust-side/on-disk source `ssh_scp`'s Rust-only guardrail could read (the
-//! mini-PRD assumed one existed and said to grep for it; it does not). This module
-//! is the new, minimal bridge: the frontend mirrors its tracked workspace+worktree
-//! paths here (see `App.tsx`'s `set_workspace_roots` call) via `save_workspace_roots`,
-//! atomically, the same way `ssh.rs`/`credstore.rs` persist their own config. The
-//! broker (`broker.rs::handle_scp`) reads it with `load_workspace_roots` — no
-//! secret, no write path reachable by an agent.
+//! The frontend owns the list (its tracked workspace + worktree paths) and pushes it
+//! here with `set_workspace_roots` whenever it changes. The broker that enforces the
+//! guardrail (`broker.rs::handle_scp`) runs INSIDE the same Muya process, so the list
+//! lives in this process's memory.
+//!
+//! It used to be a shared file (`~/.claude/muya-workspace-roots.json`). Every Muya
+//! instance wrote it and every instance's broker read it, so launching a second Muya
+//! (a dev or test build with no workspaces) replaced the first instance's list with
+//! `[]` — and the running app's `ssh_scp` silently refused every local path.
+//! Found 2026-09-30. The file is no longer written or read; an older running build
+//! may still use it, which is exactly why this one leaves it alone.
+//!
+//! Fail-closed: until the frontend has pushed a list, the guardrail sees `[]`, and
+//! `local_guard` treats an empty list as "refuse everything", not "allow everything".
 
-use std::path::{Path, PathBuf};
+use std::sync::RwLock;
 
-fn roots_path() -> Result<PathBuf, String> {
-    let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
-    Ok(Path::new(&home).join(".claude/muya-workspace-roots.json"))
-}
+static ROOTS: RwLock<Vec<String>> = RwLock::new(Vec::new());
 
-#[derive(serde::Serialize, serde::Deserialize, Default)]
-struct RootsFile {
-    #[serde(default)]
-    roots: Vec<String>,
-}
-
-/// Load the persisted workspace roots. Absent/empty/malformed file ⇒ empty list
-/// (fail-closed for the GUARDRAIL, not the loader: `local_guard` treats an empty
-/// list as "refuse everything", not "allow everything").
+/// The roots this process's frontend last pushed (empty until it has).
 pub(crate) fn load_workspace_roots() -> Result<Vec<String>, String> {
-    load_workspace_roots_from(&roots_path()?)
+    ROOTS
+        .read()
+        .map(|r| r.clone())
+        .map_err(|_| "workspace roots lock poisoned".to_string())
 }
 
-pub(crate) fn load_workspace_roots_from(path: &Path) -> Result<Vec<String>, String> {
-    let text = match std::fs::read_to_string(path) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
-        Err(e) => return Err(format!("read workspace roots: {e}")),
-    };
-    if text.trim().is_empty() {
-        return Ok(vec![]);
-    }
-    match serde_json::from_str::<RootsFile>(&text) {
-        Ok(f) => Ok(f.roots),
-        Err(_) => Ok(vec![]), // malformed ⇒ fail-closed empty (guardrail: refuse, not allow)
-    }
-}
-
-pub(crate) fn save_workspace_roots(roots: &[String]) -> Result<(), String> {
-    save_workspace_roots_to(&roots_path()?, roots)
-}
-
-fn save_workspace_roots_to(path: &Path, roots: &[String]) -> Result<(), String> {
-    let f = RootsFile {
-        roots: roots.to_vec(),
-    };
-    let bytes = serde_json::to_vec_pretty(&f).map_err(|e| e.to_string())?;
-    crate::credstore::atomic_write(path, &bytes)
-}
-
-/// The frontend calls this whenever its tracked workspace/worktree paths change
-/// (mirrors `App.tsx`'s `localStorage.setItem("apex.workspaces", …)` effect) so
-/// the Rust-side broker always has an up-to-date list for the `ssh_scp` guardrail.
+/// The frontend calls this whenever its tracked workspace/worktree paths change.
 /// Carries no secret — just plain filesystem paths the operator already opened.
 #[tauri::command]
 pub fn set_workspace_roots(roots: Vec<String>) -> Result<(), String> {
-    save_workspace_roots(&roots)
+    let mut slot = ROOTS
+        .write()
+        .map_err(|_| "workspace roots lock poisoned".to_string())?;
+    *slot = roots;
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    // One test owns the process-wide static, so the steps can't race each other.
     #[test]
-    fn absent_file_loads_empty() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("muya-workspace-roots.json");
-        assert!(load_workspace_roots_from(&path).unwrap().is_empty());
-    }
+    fn roots_live_in_this_process_and_ignore_the_legacy_shared_file() {
+        set_workspace_roots(vec![]).unwrap();
+        assert!(
+            load_workspace_roots().unwrap().is_empty(),
+            "fail-closed before a push"
+        );
 
-    #[test]
-    fn round_trips_through_disk() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("muya-workspace-roots.json");
-        save_workspace_roots_to(
-            &path,
-            &["/Users/x/proj-a".to_string(), "/Users/x/proj-b".to_string()],
-        )
-        .unwrap();
-        let loaded = load_workspace_roots_from(&path).unwrap();
-        assert_eq!(loaded, vec!["/Users/x/proj-a", "/Users/x/proj-b"]);
-    }
+        set_workspace_roots(vec!["/Users/x/proj-a".into(), "/Users/x/proj-b".into()]).unwrap();
+        assert_eq!(
+            load_workspace_roots().unwrap(),
+            vec!["/Users/x/proj-a", "/Users/x/proj-b"]
+        );
 
-    #[test]
-    fn malformed_file_fails_closed_to_empty() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("muya-workspace-roots.json");
-        std::fs::write(&path, "{ not json").unwrap();
-        assert!(load_workspace_roots_from(&path).unwrap().is_empty());
+        // What another instance (or an older build) writes to the old shared file must
+        // not change this process's list.
+        let home = tempfile::tempdir().unwrap();
+        let legacy = home.path().join(".claude/muya-workspace-roots.json");
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, r#"{"roots":[]}"#).unwrap();
+        assert_eq!(load_workspace_roots().unwrap().len(), 2);
+
+        set_workspace_roots(vec![]).unwrap();
     }
 }

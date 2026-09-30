@@ -452,50 +452,97 @@ fn extra_ssh_opts(server: &Server) -> Vec<String> {
         .collect()
 }
 
-/// Directory holding per-connection ControlMaster sockets (0700). `%C` (ssh's hash of
-/// the connection params) names each socket, so `ssh_run` and interactive `ssh_open`
-/// to the SAME server share ONE master connection — the agent reuses it instead of
-/// reconnecting/re-authing per command. CyberArk PSMP documents this for password auth.
-fn control_master_dir() -> String {
+/// Root holding every Muya instance's ControlMaster sockets: `~/.claude/muya-cm/`.
+fn control_master_base() -> String {
     let home = std::env::var("HOME").unwrap_or_default();
     format!("{home}/.claude/muya-cm")
 }
 
-/// Ensure the ControlMaster socket dir exists, private (0700). ssh does NOT create the
-/// ControlPath parent, so this must run before any connection. Idempotent.
+/// THIS process's ControlMaster socket dir (0700): `~/.claude/muya-cm/<pid>/`. `%C`
+/// (ssh's hash of the connection params) names each socket, so `ssh_run` and
+/// interactive `ssh_open` to the SAME server share ONE master connection — the agent
+/// reuses it instead of reconnecting/re-authing per command (CyberArk PSMP documents
+/// this for password auth).
+///
+/// Per-instance on purpose. All instances used to share one flat directory, and the
+/// startup sweep closed every socket in it — so launching a second Muya (a dev build,
+/// a test build, a second copy) tore down the first one's live PSMP masters, each of
+/// which costs the operator an OTP to re-establish. Found 2026-09-30.
+fn control_master_dir() -> String {
+    format!("{}/{}", control_master_base(), std::process::id())
+}
+
+/// Ensure this process's ControlMaster socket dir exists, private (0700). ssh does NOT
+/// create the ControlPath parent, so this must run before any connection. Idempotent.
 pub(crate) fn ensure_control_master_dir() {
-    let dir = control_master_dir();
-    if std::fs::create_dir_all(&dir).is_ok() {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+    for dir in [control_master_base(), control_master_dir()] {
+        if std::fs::create_dir_all(&dir).is_ok() {
+            #[cfg(unix)]
             let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
         }
     }
 }
 
-/// Close and remove every ControlMaster socket in `~/.claude/muya-cm/`. Run at startup
-/// (and app exit): ControlPersist does NOT reap PSMP masters (they aren't idle), so a
-/// dead-for-reuse master from a previous run would otherwise linger for its whole life
-/// and lock that alias (operator saw a 43-min one). For each socket we ask its master to
-/// exit (`ssh -O exit`), then unlink whatever remains. Best-effort — never fails startup.
-pub(crate) fn sweep_control_master_sockets() {
-    let dir = control_master_dir();
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let p = path.to_string_lossy().into_owned();
-        // Ask the master (if alive) to exit cleanly; the host arg is nominal when
-        // ControlPath points straight at the socket. Then unlink whatever remains.
-        let _ = std::process::Command::new("ssh")
-            .args(["-O", "exit", "-o"])
-            .arg(format!("ControlPath={p}"))
-            .arg("muya-cm-sweep")
-            .output();
-        let _ = std::fs::remove_file(&path);
+/// Is `pid` a running process? `kill(pid, 0)` probes without signalling; EPERM still
+/// means "exists" (someone else's process).
+fn process_alive(pid: u32) -> bool {
+    let Ok(pid) = i32::try_from(pid) else { return false };
+    if pid <= 0 {
+        return false;
     }
+    let r = unsafe { libc::kill(pid, 0) };
+    r == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+/// Ask every master in `dir` to exit (`ssh -O exit`), unlink what remains, drop the dir.
+fn close_masters_in(dir: &std::path::Path) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            // The host arg is nominal when ControlPath points straight at the socket.
+            let _ = std::process::Command::new("ssh")
+                .args(["-O", "exit", "-o"])
+                .arg(format!("ControlPath={}", path.to_string_lossy()))
+                .arg("muya-cm-sweep")
+                .output();
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+    let _ = std::fs::remove_dir(dir);
+}
+
+/// Which per-instance dirs under `base` belong to dead processes. Pure over `alive`
+/// so the ownership rule is testable without spawning anything. Loose files at the
+/// top level (the pre-per-instance layout) are never selected: their owner can't be
+/// known, and it may be a running older Muya.
+fn stale_master_dirs(base: &std::path::Path, own_pid: u32, alive: impl Fn(u32) -> bool) -> Vec<std::path::PathBuf> {
+    let Ok(entries) = std::fs::read_dir(base) else { return vec![] };
+    entries
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| {
+            let pid: u32 = e.file_name().to_str()?.parse().ok()?;
+            (pid != own_pid && !alive(pid)).then(|| e.path())
+        })
+        .collect()
+}
+
+/// Startup: close the masters of Muya instances that are gone. ControlPersist does NOT
+/// reap PSMP masters (they aren't idle), so a dead-for-reuse master from a previous run
+/// would otherwise linger and lock that alias (operator saw a 43-min one). Masters of
+/// a RUNNING instance are never touched. Best-effort — never fails startup.
+pub(crate) fn sweep_control_master_sockets() {
+    let base = control_master_base();
+    for dir in stale_master_dirs(std::path::Path::new(&base), std::process::id(), process_alive) {
+        close_masters_in(&dir);
+    }
+}
+
+/// Quit: close this instance's own masters, so a clean exit leaves nothing behind.
+pub(crate) fn close_own_control_masters() {
+    close_masters_in(std::path::Path::new(&control_master_dir()));
 }
 
 /// The three `-o` options that turn on connection reuse. Pure — the socket dir is
@@ -1007,6 +1054,38 @@ mod tests {
             }
         }
         out
+    }
+
+    // A second Muya must never close a running instance's masters (each PSMP master
+    // costs an OTP). Only dirs whose owning process is gone are swept; loose legacy
+    // sockets at the top level are left alone.
+    #[test]
+    fn sweep_selects_only_dirs_of_dead_instances() {
+        let base = tempfile::tempdir().unwrap();
+        for d in ["100", "200", "300"] {
+            std::fs::create_dir(base.path().join(d)).unwrap();
+        }
+        std::fs::create_dir(base.path().join("not-a-pid")).unwrap();
+        std::fs::write(base.path().join("legacy-socket"), b"").unwrap();
+        let alive = |pid: u32| pid == 200; // 200 is a running instance
+        let mut stale: Vec<String> = stale_master_dirs(base.path(), 300, alive)
+            .into_iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        stale.sort();
+        assert_eq!(stale, vec!["100"]); // not 200 (alive), not 300 (us), not legacy files
+    }
+
+    #[test]
+    fn this_process_is_alive_and_a_bogus_pid_is_not() {
+        assert!(process_alive(std::process::id()));
+        assert!(!process_alive(0));
+        assert!(!process_alive(u32::MAX));
+    }
+
+    #[test]
+    fn control_master_dir_is_per_instance() {
+        assert!(control_master_dir().ends_with(&format!("/muya-cm/{}", std::process::id())));
     }
 
     #[test]
