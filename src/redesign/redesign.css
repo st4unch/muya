@@ -268,27 +268,28 @@
 
 /* Session header in a narrow main area (both side panels open on a small window):
  * Compact / Split to grid become 32×32 icon buttons (label in the tooltip) so the
- * session name keeps its characters. At the reference's 760px it is unchanged. */
+ * session name keeps its characters. At the reference's 760px (720px content) it is unchanged. */
 .rd-session-head {
   container: sess / inline-size;
 }
-.rd-sess-btn {
+.rd-root .rd-sess-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
-.rd-sess-icon {
+/* .rd-root-scoped: the reset's `.rd-root svg` would otherwise out-rank a bare class. */
+.rd-root svg.rd-sess-icon:not(.rd-legacy *) {
   display: none;
 }
-@container sess (max-width: 720px) {
-  .rd-sess-btn {
+@container sess (max-width: 680px) {
+  .rd-root .rd-sess-btn {
     width: 32px;
     padding: 0 !important;
   }
-  .rd-sess-icon {
+  .rd-root svg.rd-sess-icon:not(.rd-legacy *) {
     display: block;
   }
-  .rd-sess-label {
+  .rd-root .rd-sess-label {
     display: none;
   }
 }
