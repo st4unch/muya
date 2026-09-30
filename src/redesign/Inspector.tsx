@@ -113,10 +113,10 @@ export function Inspector({ waitingAgents, onApprove, onDeny, onOpen, activeTab,
             )}
           </div>
           <div style={{ margin: "4px 16px 0", display: "flex", gap: 8, flexShrink: 0 }}>
-            <button type="button" onClick={onReviewDiff} className="rd-btn2" style={{ flexGrow: 1, height: 32, borderRadius: 7, border: "1px solid var(--border-control)", background: "var(--bg-control)", color: "var(--text)", fontSize: 13 }}>
+            <button type="button" onClick={onReviewDiff} disabled={inspector.changes.length === 0} className="rd-btn2" style={{ flexGrow: 1, height: 32, borderRadius: 7, border: "1px solid var(--border-control)", background: "var(--bg-control)", color: "var(--text)", fontSize: 13 }}>
               Review diff
             </button>
-            <button type="button" onClick={onCommit} className="rd-btn2" style={{ flexGrow: 1, height: 32, borderRadius: 7, border: "1px solid var(--border-control)", background: "var(--bg-control)", color: "var(--text)", fontSize: 13 }}>
+            <button type="button" onClick={onCommit} disabled={inspector.changes.length === 0} className="rd-btn2" style={{ flexGrow: 1, height: 32, borderRadius: 7, border: "1px solid var(--border-control)", background: "var(--bg-control)", color: "var(--text)", fontSize: 13 }}>
               Commit…
             </button>
           </div>

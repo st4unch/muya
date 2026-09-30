@@ -103,9 +103,9 @@
 .rd-chip {
   transition: background-color 120ms;
 }
-.rd-btn2:hover,
-.rd-icon-btn:hover,
-.rd-chip:hover {
+.rd-btn2:not(:disabled):hover,
+.rd-icon-btn:not(:disabled):hover,
+.rd-chip:not(:disabled):hover {
   background: var(--bg-segment);
 }
 
@@ -182,4 +182,11 @@
 .rd-palette [cmdk-item][data-selected="true"] {
   background: var(--bg-segment);
   color: var(--text-strong);
+}
+
+/* A grid panel's focus is already shown by its focused styling (--border-selected
+ * border + header). The panel is focused programmatically when the grid opens, which
+ * also triggers :focus-visible and drew a second 2px ring around the border. */
+.rd-root section[tabindex]:focus-visible {
+  outline: none;
 }

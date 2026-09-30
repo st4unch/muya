@@ -69,6 +69,8 @@ export interface ControlScreenProps {
   onReviewDiff: () => void;
   onCommit: () => void;
   onOpenChange?: (path: string) => void;
+  /** Empty-state "New terminal" (⌘T). */
+  onNewTerminal?: () => void;
   filesSlot?: ReactNode;
   activitySlot?: ReactNode;
 
@@ -119,12 +121,29 @@ export function ControlScreen(props: ControlScreenProps) {
           <div style={{ flexGrow: 1, minHeight: 0, minWidth: 0, overflow: "hidden", display: "flex", flexDirection: "column", background: "var(--bg-app)" }}>
             {props.fileSlot}
           </div>
-        ) : (
+        ) : selected ? (
           <div
-            data-terminal-slot={selected?.key ?? "none"}
+            data-terminal-slot={selected.key}
             data-diff-mask
             style={{ flexGrow: 1, minHeight: 0, overflow: "hidden", background: "var(--bg-terminal)" }}
           />
+        ) : (
+          // No agent at all (first launch, or every tab closed): say what to do instead
+          // of leaving a blank pane that reads as broken.
+          <div style={{ flexGrow: 1, minHeight: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, color: "var(--text-muted)", fontSize: 13, background: "var(--bg-terminal)" }}>
+            <span style={{ fontSize: 15, fontWeight: 600, color: "var(--text)" }}>No agents yet</span>
+            <span>Open a terminal or start an agent to begin.</span>
+            <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+              {props.onNewTerminal && (
+                <button type="button" onClick={props.onNewTerminal} className="rd-btn2" style={{ height: 32, padding: "0 12px", borderRadius: 7, border: "1px solid var(--border-control)", background: "var(--bg-control)", color: "var(--text)", fontSize: 13 }}>
+                  New terminal <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-muted)" }}>⌘T</span>
+                </button>
+              )}
+              <button type="button" onClick={props.onNewAgent} style={{ height: 32, padding: "0 12px", borderRadius: 7, border: "none", background: "var(--primary-bg)", color: "var(--primary-fg)", fontSize: 13, fontWeight: 600 }}>
+                + New agent
+              </button>
+            </div>
+          </div>
         )}
 
         {selected && !props.openFile && (

@@ -1526,7 +1526,14 @@ export default function App() {
     () => pickGridPanels(agentVMs, gridKeys, GRID_CAPACITY[gridLayout]),
     [agentVMs, gridKeys, gridLayout],
   );
-  const focusedPanelKey = gridPanels.some((p) => p.key === gridFocusedKey) ? gridFocusedKey : gridPanels[0]?.key ?? null;
+  // Focus defaults to the agent the operator was working with (the Control selection)
+  // when it's on the grid — not blindly to the first panel. Opening the grid straight
+  // (restored screen, ⌘K "Grid") used to land focus on whatever sorted first.
+  const focusedPanelKey = gridPanels.some((p) => p.key === gridFocusedKey)
+    ? gridFocusedKey
+    : gridPanels.some((p) => p.key === selectedAgentKey)
+      ? selectedAgentKey
+      : gridPanels[0]?.key ?? null;
 
   const railActive: RailItem | null =
     view === "control" ? "control" : view === "queue" ? "queue" : view === "prd" ? "kanban" : view === "tools" ? "resources" : view === "ssh" ? "ssh" : view === "chat" ? "chat" : null;
@@ -2017,6 +2024,7 @@ export default function App() {
             onReviewDiff={reviewDiff}
             onCommit={startCommit}
             onOpenChange={openChange}
+            onNewTerminal={openBlankTerminal}
             filesSlot={filesSlot}
             activitySlot={
               <ActivityPanel collisions={collisionReport.collisions} editedFiles={collisionReport.editedFiles} worktreesWatched={trackedPaths.length} />

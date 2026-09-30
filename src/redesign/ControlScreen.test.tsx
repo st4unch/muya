@@ -66,4 +66,15 @@ describe("ControlScreen", () => {
     render(<ControlScreen {...baseProps()} inspectorOpen={false} />);
     expect(screen.queryByLabelText("Inspector")).not.toBeInTheDocument();
   });
+
+  // Live: a first launch showed a blank main pane that read as broken.
+  it("guides the user when there are no agents", () => {
+    const onNewTerminal = vi.fn();
+    const onNewAgent = vi.fn();
+    render(<ControlScreen {...baseProps()} agents={[]} selectedAgentKey={null} onNewTerminal={onNewTerminal} onNewAgent={onNewAgent} />);
+    expect(screen.getByText("No agents yet")).toBeInTheDocument();
+    screen.getByRole("button", { name: /New terminal/ }).click();
+    expect(onNewTerminal).toHaveBeenCalled();
+    expect(document.querySelector("[data-terminal-slot]")).toBeNull();
+  });
 });
