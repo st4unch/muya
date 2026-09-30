@@ -8,8 +8,11 @@
 
 export type AgentStatus = "waiting" | "working" | "idle";
 
-/** Claude Code's permission mode, as shown in its footer. */
-export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypass";
+/** Claude Code's permission mode, as shown in its footer. Measured on Claude Code
+ *  2.1.285 (src/lib/__fixtures__/claude-screens): "default" is what Claude now labels
+ *  "manual"; Shift+Tab cycles default → acceptEdits → plan → auto → default; bypass is
+ *  only reachable by launching with --dangerously-skip-permissions. */
+export type PermissionMode = "default" | "acceptEdits" | "plan" | "auto" | "bypass";
 
 export interface PendingApproval {
   /** Tool the agent wants to run, e.g. "Write", "Bash", "fs_write_file". */
@@ -18,6 +21,8 @@ export interface PendingApproval {
   target?: string;
   /** Fallback text when the dialog couldn't be read, e.g. "permission prompt". */
   summary: string;
+  /** false = the dialog's options could not be parsed, so Allow/Deny are disabled. */
+  actionable?: boolean;
 }
 
 export interface AgentVM {
