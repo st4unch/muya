@@ -112,3 +112,21 @@ Parse edilemeyenler `tasks/todo.md`'ye yazılır. Parser gerçek Claude ekran ö
 | `--text-faint` | `#8A93A3` | `#6B727E` | 2.96:1 (`--bg-panel`), 3.10:1 (`--bg-chrome`) | 4.64:1, 4.85:1 |
 
 Aynı ton koyulaştırıldı; `--text-muted` (5.53:1) ile hiyerarşi korunuyor. Diğer 51 light ve 52 dark çift 4.5:1'in üstünde.
+
+## Sonuç (2026-09-30)
+
+| Ölçüm | Değer |
+|---|---|
+| Piksel diff, dark, 1440×900, terminal gövdeleri maskeli (İngilizce + hizası düzeltilmiş referansa karşı) | Control **0.273%**, Grid **0.303%** (hedef ≤ 1%) |
+| Kontrast | light 52/52, dark 52/52 çift ≥ 4.5:1 — `CONTRAST.md` |
+| Hex taraması (`grep -rE '#[0-9a-fA-F]{3,8}' src/`) | yalnız `tokens.css` + `terminalThemes.ts` |
+| Testler | frontend 247/247, Rust 308/308 |
+| Canlı test (gerçek Tauri build, operatör Mac'i) | izin Allow/Deny, mod değişimi, Control↔Grid (yeni PTY yok), Grid composer, broadcast, düzenler, tema, ⌘K, Open With ile dosya açma/kapatma, dış değişiklik yansıması, Stop, Compact, ⌘1–7, New agent |
+
+Referanstan bilinçli sapmalar (operatör kuralları ve canlı testte bulunan hatalar):
+1. UI İngilizce (referans Türkçe).
+2. Hiçbir metin satır kaydırmaz; referansın kendi 1440px başlık kırılması düzeltildi.
+3. Grid panel başlıkları 49px, alt çubuklar 58px; bekleyen panelin 2px çerçevesi içeriği kaydırmaz.
+4. Grid rail'de Ayarlar var (spec "rail aynı").
+5. Boşta agent panelleri Grid'de gerçek terminalini gösterir; "Waiting for a task" kartı agent'sız boş hücrelere ait.
+6. Açılan dosya ana alanda + "Close" (operatör kararı).

@@ -26,7 +26,7 @@ export default function ImageViewer({ path }: { path: string }) {
       <div className="px-3 py-1 border-b border-[var(--border)] bg-[var(--bg-panel)] text-[10px] font-mono text-neutral-500 dark:text-neutral-400 shrink-0">
         {path}
       </div>
-      <div className="flex-1 overflow-auto flex items-center justify-center bg-[repeating-conic-gradient(#00000008_0%_25%,transparent_0%_50%)] bg-[length:16px_16px] dark:bg-neutral-900">
+      <div className="flex-1 overflow-auto flex items-center justify-center bg-[repeating-conic-gradient(color-mix(in_srgb,var(--text)_7%,transparent)_0%_25%,transparent_0%_50%)] bg-[length:16px_16px] dark:bg-neutral-900">
         {status === "error" ? (
           <div className="p-4 text-xs font-mono text-rose-600 dark:text-red-400">{error}</div>
         ) : status === "loading" ? (
