@@ -7,7 +7,8 @@
 // emphasis is a 1px border + an extra 1px box-shadow ring, never a 2px border,
 // so it never grows taller than its neighbours.
 
-import type { KeyboardEvent } from "react";
+import { useState, type KeyboardEvent } from "react";
+import { InlineRename } from "./InlineRename";
 import type { AgentVM } from "./types";
 import { MaximizeIcon } from "./icons";
 import { messageHint, withDetail } from "./text";
@@ -23,6 +24,8 @@ export interface GridPanelProps {
   composerValue: string;
   onComposerChange: (value: string) => void;
   onSendMessage: (text: string) => void;
+  /** Double-click the panel's name to rename the session in place. */
+  onRename?: (name: string) => void;
 }
 
 const HEAD_HEIGHT = 49;
@@ -39,7 +42,9 @@ export function GridPanel({
   composerValue,
   onComposerChange,
   onSendMessage,
+  onRename,
 }: GridPanelProps) {
+  const [renaming, setRenaming] = useState(false);
   const waiting = agent.status === "waiting";
   const idle = agent.status === "idle";
   const working = agent.status === "working";
@@ -102,9 +107,26 @@ export function GridPanel({
         }}
       >
         {dot}
-        <span className="rd-ellipsis" style={{ fontWeight: 600, fontSize: 14, flexShrink: 1, minWidth: 0 }}>
-          {agent.name}
-        </span>
+        {renaming && onRename ? (
+          <InlineRename
+            initial={agent.name}
+            onCommit={(name) => {
+              setRenaming(false);
+              onRename(name);
+            }}
+            onCancel={() => setRenaming(false)}
+            style={{ fontSize: 14, maxWidth: 240 }}
+          />
+        ) : (
+          <span
+            className="rd-ellipsis"
+            title={onRename ? `${agent.name} — double-click to rename` : undefined}
+            onDoubleClick={onRename ? (e) => { e.stopPropagation(); setRenaming(true); } : undefined}
+            style={{ fontWeight: 600, fontSize: 14, flexShrink: 1, minWidth: 0 }}
+          >
+            {agent.name}
+          </span>
+        )}
         <span style={{ fontSize: 12, color: statusColor, flexShrink: 0 }}>{statusText}</span>
         {agent.mode === "bypass" && !idle && (
           <span style={{ fontSize: 11, padding: "2px 7px", borderRadius: 9, background: "var(--danger-pill-bg)", color: "var(--danger-text)", flexShrink: 0 }}>bypass</span>

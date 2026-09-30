@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ControlScreen } from "./ControlScreen";
 import { GridScreen } from "./GridScreen";
@@ -157,6 +157,44 @@ describe("files fill", () => {
     localStorage.setItem("muya.panels.filesHeight", "300");
     render(<ControlScreen {...controlProps()} />);
     expect(screen.getByLabelText("Files").style.flex).toBe("0 1 300px");
+  });
+});
+
+describe("rename", () => {
+  it("double-click a session in the list renames it in place; Esc cancels", () => {
+    const onRename = vi.fn();
+    render(<ControlScreen {...controlProps()} onRenameAgent={onRename} />);
+    const list = screen.getByLabelText("Agents");
+    fireEvent.doubleClick(within(list).getByText("iptv-2a"));
+    const input = within(list).getByLabelText("Session name");
+    expect(input).toHaveValue("iptv-2a");
+    fireEvent.change(input, { target: { value: "  iptv-main " } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onRename).toHaveBeenCalledWith("iptv-2a", "iptv-main");
+
+    fireEvent.doubleClick(within(list).getByText("muya-all"));
+    const again = within(list).getByLabelText("Session name");
+    fireEvent.change(again, { target: { value: "other" } });
+    fireEvent.keyDown(again, { key: "Escape" });
+    expect(onRename).toHaveBeenCalledTimes(1);
+    expect(within(list).queryByLabelText("Session name")).toBeNull();
+  });
+
+  it("double-click the session header name renames the selected session", () => {
+    const onRename = vi.fn();
+    render(<ControlScreen {...controlProps()} onRenameAgent={onRename} />);
+    fireEvent.doubleClick(screen.getByRole("heading", { level: 1 }));
+    const input = screen.getByLabelText("Session name");
+    fireEvent.change(input, { target: { value: "renamed" } });
+    fireEvent.blur(input);
+    expect(onRename).toHaveBeenCalledWith("muya-all", "renamed");
+  });
+
+  it("right-click on a session asks for its actions menu", () => {
+    const onCtx = vi.fn();
+    render(<ControlScreen {...controlProps()} onAgentContextMenu={onCtx} />);
+    fireEvent.contextMenu(within(screen.getByLabelText("Agents")).getByText("numbat-c3"));
+    expect(onCtx).toHaveBeenCalledWith("numbat-c3", expect.anything());
   });
 });
 

@@ -4,7 +4,8 @@
 // WAITING FOR YOU / WORKING / IDLE (empty groups hidden), filters via the
 // segmented control, and supports HTML5 drag-and-drop reordering + ⌘1–7.
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { InlineRename } from "./InlineRename";
 import type { AgentStatus, AgentVM } from "./types";
 
 export type AgentFilter = "all" | "waiting" | "working";
@@ -17,6 +18,10 @@ export interface AgentListProps {
   onSelectAgent: (key: string) => void;
   onNewAgent: () => void;
   onReorder: (fromKey: string, toKey: string) => void;
+  /** Double-click a session to rename it in place (terminal, Claude, opencode alike). */
+  onRenameAgent?: (key: string, name: string) => void;
+  /** Right-click a session: the caller opens its actions menu at the pointer. */
+  onAgentContextMenu?: (key: string, e: ReactMouseEvent) => void;
   /** Operator-set width in px; undefined = the responsive default (296, 264 at ≤1360). */
   width?: number;
   /** Resize handle for the panel's inner edge (rendered over the border). */
@@ -34,7 +39,7 @@ const GROUPS: { status: AgentStatus; label: string; color: string }[] = [
   { status: "idle", label: "IDLE", color: "var(--text-muted)" },
 ];
 
-export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelectAgent, onNewAgent, onReorder, width, resizeHandle, filesSection, filesFill = false }: AgentListProps) {
+export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelectAgent, onNewAgent, onReorder, width, resizeHandle, filesSection, filesFill = false, onRenameAgent, onAgentContextMenu }: AgentListProps) {
   const dragKeyRef = useRef<string | null>(null);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
 
@@ -55,6 +60,19 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [agents, onSelectAgent]);
+
+  const [renamingKey, setRenamingKey] = useState<string | null>(null);
+  // Per-row extras: double-click → rename in place, right-click → actions menu.
+  const rowExtras = (key: string) => ({
+    onDoubleClick: onRenameAgent ? () => setRenamingKey(key) : undefined,
+    onContextMenu: onAgentContextMenu
+      ? (e: ReactMouseEvent) => {
+          e.preventDefault();
+          onAgentContextMenu(key, e);
+        }
+      : undefined,
+    title: onRenameAgent ? "Double-click to rename" : undefined,
+  });
 
   const filtered = agents.filter((a) => filter === "all" || a.status === filter);
 
@@ -181,8 +199,23 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
               <div key={status} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <div style={{ padding: `${headTop}px 6px 4px`, fontSize: 11, fontWeight: 600, letterSpacing: "0.06em", color }}>{label}</div>
               {members.map((agent) =>
-                status === "idle" ? (
-                  <IdleRow key={agent.key} agent={agent} onSelect={() => onSelectAgent(agent.key)} dragOver={dragOverKey === agent.key} dragProps={dragProps(agent.key)} />
+                agent.key === renamingKey && onRenameAgent ? (
+                  <div
+                    key={agent.key}
+                    style={{ display: "flex", alignItems: "center", gap: 8, padding: status === "idle" ? "8px 12px" : "12px 12px", borderRadius: status === "idle" ? 8 : 10, border: "1px solid var(--border-selected)", background: "var(--bg-selected)" }}
+                  >
+                    <span style={{ width: 8, height: 8, borderRadius: 4, background: status === "idle" ? "transparent" : status === "waiting" ? "var(--warning)" : "var(--success)", border: status === "idle" ? "1.5px solid var(--text-faint)" : "none", boxSizing: "border-box", flexShrink: 0 }} />
+                    <InlineRename
+                      initial={agent.name}
+                      onCommit={(name) => {
+                        setRenamingKey(null);
+                        onRenameAgent(agent.key, name);
+                      }}
+                      onCancel={() => setRenamingKey(null)}
+                    />
+                  </div>
+                ) : status === "idle" ? (
+                  <IdleRow key={agent.key} agent={agent} onSelect={() => onSelectAgent(agent.key)} dragOver={dragOverKey === agent.key} dragProps={{ ...dragProps(agent.key), ...rowExtras(agent.key) }} />
                 ) : (
                   <AgentCard
                     key={agent.key}
@@ -190,7 +223,7 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
                     selected={agent.key === selectedKey}
                     onSelect={() => onSelectAgent(agent.key)}
                     dragOver={dragOverKey === agent.key}
-                    dragProps={dragProps(agent.key)}
+                    dragProps={{ ...dragProps(agent.key), ...rowExtras(agent.key) }}
                   />
                   ),
                 )}

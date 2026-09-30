@@ -8,6 +8,7 @@ import type { CSSProperties, MouseEvent } from "react";
 import type { AgentVM } from "./types";
 import { useLayoutEffect, useRef, useState } from "react";
 import { BypassWarningIcon, CompactIcon, GridSplitIcon } from "./icons";
+import { InlineRename } from "./InlineRename";
 import { withDetail } from "./text";
 
 export interface SessionHeaderProps {
@@ -17,6 +18,8 @@ export interface SessionHeaderProps {
   onStop: () => void;
   /** Receives the click so the caller can anchor the actions menu under the button. */
   onMore: (e: MouseEvent<HTMLElement>) => void;
+  /** Double-click the name to rename the session in place. */
+  onRename?: (name: string) => void;
 }
 
 function statusPill(agent: AgentVM) {
@@ -84,7 +87,8 @@ function useCompactBypass(active: boolean, deps: unknown[]) {
   return { rowRef, nameRef, compact };
 }
 
-export function SessionHeader({ agent, onCompact, onSplitToGrid, onStop, onMore }: SessionHeaderProps) {
+export function SessionHeader({ agent, onCompact, onSplitToGrid, onStop, onMore, onRename }: SessionHeaderProps) {
+  const [renaming, setRenaming] = useState(false);
   const pill = statusPill(agent);
   const bypass = agent.mode === "bypass";
   const { rowRef, nameRef, compact } = useCompactBypass(bypass, [agent.name, pill.text]);
@@ -92,9 +96,27 @@ export function SessionHeader({ agent, onCompact, onSplitToGrid, onStop, onMore 
     <div className="rd-session-head" style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 20px", borderBottom: "1px solid var(--border)", minWidth: 0 }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 3, flexGrow: 1, minWidth: 0 }}>
         <div ref={rowRef} style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-          <h1 ref={nameRef} className="rd-ellipsis" title={agent.name} style={{ margin: 0, fontSize: 17, fontWeight: 600, flexShrink: 1, minWidth: 0 }}>
-            {agent.name}
-          </h1>
+          {renaming && onRename ? (
+            <InlineRename
+              initial={agent.name}
+              onCommit={(name) => {
+                setRenaming(false);
+                onRename(name);
+              }}
+              onCancel={() => setRenaming(false)}
+              style={{ fontSize: 17, height: 28, maxWidth: 360 }}
+            />
+          ) : (
+            <h1
+              ref={nameRef}
+              className="rd-ellipsis"
+              title={onRename ? `${agent.name} — double-click to rename` : agent.name}
+              onDoubleClick={onRename ? () => setRenaming(true) : undefined}
+              style={{ margin: 0, fontSize: 17, fontWeight: 600, flexShrink: 1, minWidth: 0, cursor: onRename ? "text" : undefined }}
+            >
+              {agent.name}
+            </h1>
+          )}
           <span
             style={{
               display: "flex",

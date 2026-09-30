@@ -1826,6 +1826,15 @@ export default function App() {
     setMenu({ kind: "workspaces", anchor: anchorFromRect(e.currentTarget.getBoundingClientRect(), "left") });
   const openActionsMenu = (e: React.MouseEvent<HTMLElement>) =>
     setMenu({ kind: "actions", anchor: anchorFromRect(e.currentTarget.getBoundingClientRect(), "right") });
+  // One rename path for every kind of session (terminal, Claude, opencode): the name is
+  // the tab's, and userRenamed stops a live Claude session name from overwriting it.
+  const renameTerminal = (key: string, name: string) =>
+    setOpenTerminals((prev) => prev.map((t) => (t.key === key ? { ...t, name, userRenamed: true } : t)));
+  // Right-click on a session in the agents list: select it, then its actions menu at the pointer.
+  const openAgentContextMenu = (key: string, e: React.MouseEvent) => {
+    selectAgent(key);
+    setMenu({ kind: "actions", anchor: { x: e.clientX, y: e.clientY, align: "left", place: "below" } });
+  };
   const openModeMenu = (e: React.MouseEvent<HTMLElement>) =>
     setMenu({ kind: "mode", anchor: anchorFromRect(e.currentTarget.getBoundingClientRect(), "left", "above") });
 
@@ -2044,6 +2053,8 @@ export default function App() {
       {controlVisible && (
         <div style={{ width: "100%", height: "100%" }}>
           <ControlScreen
+            onRenameAgent={renameTerminal}
+            onAgentContextMenu={openAgentContextMenu}
             {...headerProps}
             footer={footerVM}
             railActive="control"
@@ -2096,6 +2107,7 @@ export default function App() {
       )}
       {view === "control" && screen === "grid" && (
         <GridScreen
+          onRenameAgent={renameTerminal}
           railActive="control"
           onRailNavigate={navigateRail}
           footer={footerVM}
@@ -2194,7 +2206,7 @@ export default function App() {
           <RenameDialog
             initial={openTerminals.find((t) => t.key === renameKey)?.name ?? ""}
             onClose={() => setRenameKey(null)}
-            onSubmit={(name) => setOpenTerminals((prev) => prev.map((t) => (t.key === renameKey ? { ...t, name, userRenamed: true } : t)))}
+            onSubmit={(name) => renameTerminal(renameKey, name)}
           />
         )}
         {swapKey && (

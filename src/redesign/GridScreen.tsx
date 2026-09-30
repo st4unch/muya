@@ -36,6 +36,7 @@ export interface GridScreenProps {
   composerValues: Record<string, string>;
   onComposerChange: (key: string, value: string) => void;
   onSendMessage: (key: string, text: string) => void;
+  onRenameAgent?: (key: string, name: string) => void;
 
   onAssignFromQueue: (key: string) => void;
   onReplacePanel: (key: string) => void;
@@ -116,6 +117,7 @@ export function GridScreen(props: GridScreenProps) {
               composerValue={props.composerValues[agent.key] ?? ""}
               onComposerChange={(value) => props.onComposerChange(agent.key, value)}
               onSendMessage={(text) => props.onSendMessage(agent.key, text)}
+              onRename={props.onRenameAgent ? (name) => props.onRenameAgent!(agent.key, name) : undefined}
             />
           ))}
           {/* Cells the layout has room for but no agent fills. Their key is

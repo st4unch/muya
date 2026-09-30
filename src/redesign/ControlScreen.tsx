@@ -80,6 +80,10 @@ export interface ControlScreenProps {
   filesCount?: number;
   activitySlot?: ReactNode;
 
+  /** Rename a session (double-click in the list, header or grid). */
+  onRenameAgent?: (key: string, name: string) => void;
+  /** Right-click on a session in the list. */
+  onAgentContextMenu?: (key: string, e: MouseEvent) => void;
   /** window.innerWidth-driven: PROMPT.md §5 responsive breakpoints. */
   inspectorOpen: boolean;
 }
@@ -122,6 +126,8 @@ export function ControlScreen(props: ControlScreenProps) {
           />
         }
         filesFill={layout.filesOpen && layout.filesH === null}
+        onRenameAgent={props.onRenameAgent}
+        onAgentContextMenu={props.onAgentContextMenu}
         filesSection={
           <FilesSection
             open={layout.filesOpen}
@@ -148,7 +154,7 @@ export function ControlScreen(props: ControlScreenProps) {
         {props.openFile ? (
           <FileHeader file={props.openFile} onClose={props.onCloseFile} />
         ) : selected ? (
-          <SessionHeader agent={selected} onCompact={props.onCompact} onSplitToGrid={props.onSplitToGrid} onStop={props.onStop} onMore={props.onMoreActions} />
+          <SessionHeader agent={selected} onRename={props.onRenameAgent ? (name) => props.onRenameAgent!(selected.key, name) : undefined} onCompact={props.onCompact} onSplitToGrid={props.onSplitToGrid} onStop={props.onStop} onMore={props.onMoreActions} />
         ) : null}
 
         {/* The real xterm instance is adopted into this slot by the orchestrator — it
