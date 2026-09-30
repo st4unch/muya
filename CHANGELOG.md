@@ -6,6 +6,52 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-09-30
+
+A new look, and a round of security fixes. Muya's main screens were redesigned from
+scratch; everything you could do before is still there.
+
+### Added
+- **Redesigned Control and Grid screens.** An agents list grouped by what needs you
+  (waiting / working / idle), a session header with Compact, Split to grid and Stop,
+  a message box under the terminal, and an inspector with the session's changed files
+  and activity. Light and dark themes, English UI.
+- **Hide and resize the side panels.** Buttons in the top bar (⌘B / ⌥⌘B) hide the
+  agents list or the inspector; drag their edge to resize, double-click to reset.
+- **Files under the agents list** — a collapsible file tree that fills the panel,
+  with its filter in the header. Empty? It offers "Add workspace…".
+- **Sessions in the left rail**, under Control.
+- **Grid: a clear way back** — "Exit grid", Esc, or Control in the rail.
+- **"/ Commands"** lists everything "/" can do in Claude Code or opencode, including
+  your own commands and skills; pick one to insert it.
+- **Claude status fields in the bottom bar.** Pick any of Claude Code's status-line
+  fields (model, context, cost, duration, rate limits, cache, PR, …) with the "+" next
+  to the version; they move to a second line only when they don't fit. Your own
+  Claude status line keeps working as before.
+- **Chat icon in the bottom bar** shows or hides the message box.
+- **Rename any session in place** — double-click its name in the list, the header or
+  a grid panel; right-click a session for its actions.
+- **New agent and Settings dialogs rebuilt**: agent type, workspace, permission mode,
+  branch, prompt and files, with the exact command under Advanced.
+
+### Fixed
+- Open files now reflect changes made by Claude or another editor within a second.
+- Typing into the terminal works again after switching pages or opening a document.
+- The file tree's right-click menu no longer blinks or eats the first click.
+- SSH tools keep working when macOS runs Muya from a temporary copy (App Translocation),
+  and a second Muya window no longer breaks the running one.
+- A restored Claude session resumes in the folder it ran in.
+- The inspector's Changes list shows repo-relative paths and opens the right file.
+
+### Security
+- **Fixed a local code-execution hole:** an agent-added SSH server whose name started
+  with "-" could pass options to ssh (e.g. ProxyCommand). Such names are rejected and
+  ssh/scp can no longer read the destination as an option.
+- Links in a rendered Markdown file can no longer navigate the app away; web links open
+  in your browser.
+- Updated h2, rustls, anyhow and DOMPurify to patched versions; private files (status
+  data, debug log) are created readable by you only.
+
 ## [0.3.0] - 2026-09-23
 
 ### Added
