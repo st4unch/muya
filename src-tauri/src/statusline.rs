@@ -81,10 +81,16 @@ fn user_statusline(home: &Path) -> Option<Value> {
 
 /// Write tap.sh, user-statusline.sh (when the user has one) and settings.json into `dir`.
 fn write_files(dir: &Path, home: Option<&Path>) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::create_dir_all(dir)?;
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    // Created 0700 in one step (no umask window). A leftover of the same name (pid
+    // reuse, or a planted symlink — remove_dir_all removes the link, never its target)
+    // is removed first; create() then fails if anything re-appears in between.
+    if fs::symlink_metadata(dir).is_ok() {
+        fs::remove_dir_all(dir)?;
+    }
+    fs::DirBuilder::new().recursive(false).mode(0o700).create(dir)?;
     fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
-    fs::write(dir.join("tap.sh"), TAP_SH)?;
+    write_private(&dir.join("tap.sh"), TAP_SH.as_bytes())?;
     let user = home.and_then(user_statusline);
     let user_script = dir.join("user-statusline.sh");
     match user
@@ -92,17 +98,25 @@ fn write_files(dir: &Path, home: Option<&Path>) -> std::io::Result<()> {
         .and_then(|u| u.get("command"))
         .and_then(Value::as_str)
     {
-        Some(cmd) => fs::write(&user_script, format!("{cmd}\n"))?,
+        Some(cmd) => write_private(&user_script, format!("{cmd}\n").as_bytes())?,
         None => {
             let _ = fs::remove_file(&user_script);
         }
     }
     let settings = settings_json(dir, user.as_ref());
-    fs::write(
-        dir.join("settings.json"),
-        serde_json::to_vec_pretty(&settings).unwrap_or_default(),
+    write_private(
+        &dir.join("settings.json"),
+        &serde_json::to_vec_pretty(&settings).unwrap_or_default(),
     )?;
     Ok(())
+}
+
+/// Write a new 0600 file (create_new: never follows or overwrites a planted link).
+fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut f = fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(path)?;
+    f.write_all(bytes)
 }
 
 /// Remove `muya-status-<pid>` dirs under `base` whose pid is no longer running.
@@ -260,6 +274,27 @@ mod tests {
             .unwrap();
         assert!(out.stdout.is_empty());
         assert!(read_status(&dir, "pty-1").is_some());
+    }
+
+    #[test]
+    fn files_are_private_and_a_planted_symlink_is_never_followed() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = tempfile::tempdir().unwrap();
+        let dir = home.path().join("s");
+        write_files(&dir, Some(home.path())).unwrap();
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&dir), 0o700);
+        assert_eq!(mode(&dir.join("tap.sh")), 0o600);
+        assert_eq!(mode(&dir.join("settings.json")), 0o600);
+        // A planted symlink in place of the dir is not followed.
+        let target = home.path().join("elsewhere");
+        fs::create_dir(&target).unwrap();
+        let link = home.path().join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        write_files(&link, Some(home.path())).unwrap();
+        assert!(!target.join("tap.sh").exists(), "never writes through the link");
+        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_dir(), "a fresh real dir replaced it");
+        assert_eq!(mode(&link), 0o700);
     }
 
     #[test]

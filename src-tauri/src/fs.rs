@@ -532,7 +532,7 @@ pub fn remove_worktree(worktree: String) -> Result<String, String> {
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|| worktree.clone());
     let out = Command::new("git")
-        .args(["-C", &main_repo, "worktree", "remove", "--force", &worktree])
+        .args(["-C", &main_repo, "worktree", "remove", "--force", "--", &worktree])
         .output()
         .map_err(|e| format!("git worktree remove failed: {e}"))?;
     if !out.status.success() {
@@ -1379,6 +1379,31 @@ pub fn remove_mcp(name: String) -> Result<(), String> {
     remove_mcp_at(&cfg_path, &name)
 }
 
+/// Remove `name` only when its `command` is Muya's own legacy helper (`muya-ssh-mcp`):
+/// a user's unrelated server that happens to share the old name is left alone.
+pub fn remove_legacy_muya_mcp(name: &str) -> Result<(), String> {
+    let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
+    remove_legacy_muya_mcp_at(&Path::new(&home).join(".claude.json"), name)
+}
+
+fn remove_legacy_muya_mcp_at(cfg_path: &Path, name: &str) -> Result<(), String> {
+    let Ok(content) = std::fs::read_to_string(cfg_path) else {
+        return Ok(());
+    };
+    let Ok(root) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return Ok(()); // not ours to judge; remove_mcp_at would refuse too
+    };
+    let ours = root["mcpServers"][name]["command"]
+        .as_str()
+        .and_then(|c| Path::new(c).file_name())
+        .is_some_and(|f| f == "muya-ssh-mcp");
+    if ours {
+        remove_mcp_at(cfg_path, name)
+    } else {
+        Ok(())
+    }
+}
+
 fn remove_mcp_at(cfg_path: &Path, name: &str) -> Result<(), String> {
     if !cfg_path.exists() {
         return Ok(());
@@ -1863,6 +1888,20 @@ mod tests {
         assert_eq!(v["mcpServers"]["blender"]["command"], "uvx");
         // …and unrelated top-level keys are preserved (not wiped).
         assert_eq!(v["numStartups"], 42);
+    }
+
+    #[test]
+    fn legacy_mcp_entry_removed_only_when_it_is_muyas() {
+        let d = tempfile::tempdir().unwrap();
+        let cfg = d.path().join(".claude.json");
+        std::fs::write(&cfg, r#"{"mcpServers":{"muya-ssh":{"command":"/opt/tools/my-own-server"}}}"#).unwrap();
+        remove_legacy_muya_mcp_at(&cfg, "muya-ssh").unwrap();
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&cfg).unwrap()).unwrap();
+        assert!(v["mcpServers"]["muya-ssh"].is_object(), "a user's own entry is kept");
+        std::fs::write(&cfg, r#"{"mcpServers":{"muya-ssh":{"command":"/Applications/Muya.app/Contents/MacOS/muya-ssh-mcp"}}}"#).unwrap();
+        remove_legacy_muya_mcp_at(&cfg, "muya-ssh").unwrap();
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&cfg).unwrap()).unwrap();
+        assert!(v["mcpServers"].get("muya-ssh").is_none(), "Muya's legacy entry is removed");
     }
 
     #[test]

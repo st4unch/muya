@@ -95,7 +95,9 @@ pub fn log(msg: &str) {
         Err(_) => return,
     };
     let line = format!("[{}] {}\n", rfc3339_now(), msg);
-    if let Ok(mut f) = OpenOptions::new().append(true).create(true).open(&path) {
+    // 0600: the log holds operator metadata (usernames, URLs) — not for other users.
+    use std::os::unix::fs::OpenOptionsExt;
+    if let Ok(mut f) = OpenOptions::new().append(true).create(true).mode(0o600).open(&path) {
         let _ = f.write_all(line.as_bytes());
     }
 }

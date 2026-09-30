@@ -141,7 +141,10 @@ $BAD"
 EOJSON
   ok "latest.json + signature generated"
 else
-  say "⚠️  No signing key at $SIGN_KEY — skipping auto-updater manifest"
+  # Without the manifest, installed copies never see this release. Fail loudly unless
+  # the operator explicitly opts out for this run.
+  [ "${MUYA_SKIP_UPDATER:-}" = "1" ] || die "no updater signing key at $SIGN_KEY — refusing to publish a release installed apps can't update to (set MUYA_SKIP_UPDATER=1 to publish without it)"
+  say "⚠️  MUYA_SKIP_UPDATER=1 — publishing without an auto-updater manifest"
   LATEST=""
 fi
 
