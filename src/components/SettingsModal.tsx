@@ -1,19 +1,50 @@
-import { useState, useEffect } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { X } from "lucide-react";
+import { Check, X } from "lucide-react";
 import type { ThemePreference } from "../theme/theme";
+import { ThemeMonitorIcon, ThemeMoonIcon, ThemeSunIcon } from "../redesign/icons";
 
 const DEFAULT_LOG_PATH = "~/.claude/muya-debug.log";
 
+const THEMES: { value: ThemePreference; label: string; Icon: typeof ThemeSunIcon }[] = [
+  { value: "system", label: "System", Icon: ThemeMonitorIcon },
+  { value: "light", label: "Light", Icon: ThemeSunIcon },
+  { value: "dark", label: "Dark", Icon: ThemeMoonIcon },
+];
+
+const labelStyle: CSSProperties = {
+  fontSize: 11,
+  fontWeight: 600,
+  letterSpacing: ".06em",
+  textTransform: "uppercase",
+  color: "var(--text-muted)",
+  whiteSpace: "nowrap",
+};
+const helperStyle: CSSProperties = { fontSize: 12, color: "var(--text-faint)", lineHeight: 1.45 };
+const groupStyle: CSSProperties = { display: "flex", flexDirection: "column", gap: 8, minWidth: 0 };
+const ghostBtn: CSSProperties = {
+  height: 32,
+  padding: "0 12px",
+  borderRadius: 7,
+  border: "1px solid var(--border-control)",
+  background: "var(--bg-control)",
+  color: "var(--text)",
+  fontSize: 13,
+  whiteSpace: "nowrap",
+  cursor: "pointer",
+};
+
+const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 /**
- * App Settings. Currently exposes debug logging for the CyberArk + SSH flows:
- * a toggle plus the target log-file path. The backend (`debug_log_set`) persists
+ * App Settings, in the v0.4 design (tokens only, same shell as NewAgentModal):
+ * appearance (applies immediately) and debug logging for the CyberArk + SSH flows
+ * (toggle + log-file path, saved with Save). The backend (`debug_log_set`) persists
  * the choice to ~/.claude/muya-settings.json and NEVER logs secret values — only
  * step metadata (usernames, URLs, HTTP status, counts).
  *
- * Uses the app-wide modal convention: a `fixed inset-0 z-50` backdrop + a
- * `role="dialog"` panel, so the Terminal key-guard suppresses PTY input while it
- * is open (same as NewAgentModal / ScheduledPromptModal).
+ * `role="dialog"` + a fixed backdrop, so the Terminal key-guard suppresses PTY
+ * input while it is open (same as NewAgentModal / ScheduledPromptModal).
  */
 export default function SettingsModal({
   open,
@@ -27,46 +58,61 @@ export default function SettingsModal({
   themePreference?: ThemePreference;
   onThemePreferenceChange?: (pref: ThemePreference) => void;
 }) {
+  const uid = useId();
+  const id = (s: string) => `${uid}-${s}`;
   const [enabled, setEnabled] = useState(false);
   const [path, setPath] = useState(DEFAULT_LOG_PATH);
+  // What the backend holds — Save is enabled only when the form differs from it.
+  const [stored, setStored] = useState<{ enabled: boolean; path: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   // Load current settings whenever the modal opens.
   useEffect(() => {
     if (!open) return;
     setError("");
     setSaved(false);
+    setStored(null);
     invoke<{ enabled: boolean; path: string }>("debug_log_get")
       .then((v) => {
-        setEnabled(!!v.enabled);
-        setPath(v.path || DEFAULT_LOG_PATH);
+        const cur = { enabled: !!v.enabled, path: v.path || DEFAULT_LOG_PATH };
+        setEnabled(cur.enabled);
+        setPath(cur.path);
+        setStored(cur);
       })
       .catch((e) => setError(String(e)));
+    const t = setTimeout(() => dialogRef.current?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"], [role="switch"]')?.focus(), 0);
+    return () => clearTimeout(t);
   }, [open]);
 
-  // Esc closes the modal.
+  // Esc closes (capture: a focused xterm would otherwise see it first).
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      onClose();
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [open, onClose]);
 
   if (!open) return null;
 
+  const cleanPath = path.trim() || DEFAULT_LOG_PATH;
+  const dirty = stored !== null && (stored.enabled !== enabled || stored.path !== cleanPath);
+
   const save = async () => {
+    if (!dirty || busy) return;
     setBusy(true);
     setError("");
     setSaved(false);
     try {
-      await invoke("debug_log_set", {
-        enabled,
-        path: path.trim() || DEFAULT_LOG_PATH,
-      });
+      await invoke("debug_log_set", { enabled, path: cleanPath });
+      setStored({ enabled, path: cleanPath });
+      setPath(cleanPath);
       setSaved(true);
     } catch (e) {
       setError(String(e));
@@ -75,124 +121,250 @@ export default function SettingsModal({
     }
   };
 
-  const field =
-    "w-full text-xs font-mono px-2 py-1.5 rounded border border-neutral-200 dark:border-neutral-700 bg-[var(--bg-control)] text-neutral-800 dark:text-neutral-200 focus:outline-none focus:border-indigo-400 dark:focus:border-indigo-400";
-  const lbl =
-    "text-[10px] font-mono uppercase tracking-wider font-bold text-neutral-500 dark:text-neutral-400";
+  const edit = () => setSaved(false);
+
+  // Focus trap + ⌘Enter saves.
+  const onDialogKey = (e: ReactKeyboardEvent) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      void save();
+      return;
+    }
+    if (e.key !== "Tab" || !dialogRef.current) return;
+    const els = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE));
+    if (els.length === 0) return;
+    const first = els[0];
+    const last = els[els.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+
+  // Arrow keys move through the theme segment (radiogroup pattern).
+  const onThemeKey = (e: ReactKeyboardEvent, i: number) => {
+    if (!onThemePreferenceChange) return;
+    const step = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+    if (!step) return;
+    e.preventDefault();
+    const next = THEMES[(i + step + THEMES.length) % THEMES.length].value;
+    onThemePreferenceChange(next);
+    requestAnimationFrame(() => document.getElementById(id(`theme-${next}`))?.focus());
+  };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
+    <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+      <style>{`
+        .st-root input:focus-visible, .st-root button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+        .st-root input::placeholder { color: var(--text-faint); }
+        .st-btn:not(:disabled):hover { background: var(--bg-segment); }
+        .st-seg:not([aria-checked="true"]):hover { color: var(--text); }
+        .st-primary:not(:disabled):hover { filter: brightness(0.92); }
+      `}</style>
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-label="Settings"
-        className="w-[460px] max-h-[85vh] overflow-y-auto bg-[var(--bg-control)] rounded-xl shadow-2xl border border-neutral-200 dark:border-neutral-700"
+        aria-labelledby={id("title")}
+        className="st-root"
+        onKeyDown={onDialogKey}
+        style={{
+          width: 480,
+          maxWidth: "100%",
+          maxHeight: "85vh",
+          display: "flex",
+          flexDirection: "column",
+          borderRadius: 12,
+          border: "1px solid var(--border)",
+          background: "var(--bg-panel)",
+          color: "var(--text)",
+          fontFamily: "var(--font-sans)",
+          overflow: "hidden",
+        }}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200 dark:border-neutral-700">
-          <h2 className="text-sm font-display font-bold text-neutral-800 dark:text-neutral-200">
-            Settings
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-neutral-400 dark:text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300 cursor-pointer"
-          >
-            <X className="h-4 w-4" />
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
+          <h2 id={id("title")} style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>Settings</h2>
+          <button type="button" aria-label="Close" onClick={onClose} className="st-btn" style={{ width: 28, height: 28, borderRadius: 7, border: "none", background: "transparent", color: "var(--text-muted)", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <X size={16} />
           </button>
         </div>
 
-        <div className="p-4 space-y-4">
+        {/* Body */}
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 20, display: "flex", flexDirection: "column", gap: 20 }}>
           {themePreference && onThemePreferenceChange && (
-            <div className="space-y-1">
-              <span className={lbl}>Appearance</span>
-              <div role="radiogroup" aria-label="Theme" className="flex items-center gap-4">
-                {(
-                  [
-                    ["system", "System"],
-                    ["light", "Light"],
-                    ["dark", "Dark"],
-                  ] as const
-                ).map(([value, label]) => (
-                  <label key={value} className="flex items-center gap-2 cursor-pointer select-none">
-                    <input
-                      type="radio"
-                      name="muya-theme"
-                      value={value}
-                      checked={themePreference === value}
-                      onChange={() => onThemePreferenceChange(value)}
-                      className="h-4 w-4 accent-indigo-600 cursor-pointer"
-                    />
-                    <span className="text-xs font-mono text-neutral-700 dark:text-neutral-300">{label}</span>
-                  </label>
-                ))}
+            <div style={groupStyle}>
+              <span id={id("theme")} style={labelStyle}>Appearance</span>
+              <div role="radiogroup" aria-labelledby={id("theme")} style={{ display: "flex", padding: 3, gap: 2, borderRadius: 9, background: "var(--bg-segment)" }}>
+                {THEMES.map(({ value, label, Icon }, i) => {
+                  const active = themePreference === value;
+                  return (
+                    <button
+                      key={value}
+                      id={id(`theme-${value}`)}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      tabIndex={active ? 0 : -1}
+                      onClick={() => onThemePreferenceChange(value)}
+                      onKeyDown={(e) => onThemeKey(e, i)}
+                      className="st-seg"
+                      style={{
+                        flex: 1,
+                        height: 30,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 7,
+                        borderRadius: 7,
+                        border: "none",
+                        background: active ? "var(--bg-segment-active)" : "transparent",
+                        boxShadow: active ? "var(--shadow-segment-active)" : "none",
+                        color: active ? "var(--text)" : "var(--text-muted)",
+                        fontSize: 13,
+                        fontWeight: active ? 600 : 500,
+                        whiteSpace: "nowrap",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <Icon size={14} />
+                      {label}
+                    </button>
+                  );
+                })}
               </div>
+              <div style={helperStyle}>System follows your macOS appearance.</div>
             </div>
           )}
 
-          <div className="space-y-1">
-            <span className={lbl}>Debug logging</span>
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={enabled}
-                onChange={(e) => setEnabled(e.target.checked)}
-                className="h-4 w-4 accent-indigo-600 cursor-pointer"
-              />
-              <span className="text-xs font-mono text-neutral-700 dark:text-neutral-300">
-                Log CyberArk + SSH connection steps
-              </span>
-            </label>
-            <p className="text-[10px] leading-relaxed text-neutral-500 dark:text-neutral-400">
-              When on, each CyberArk logon/list/retrieve and SSH connect step is
-              appended to the log file with a timestamp. Only metadata is written
-              (usernames, URLs, HTTP status, method names, counts) —{" "}
-              <span className="font-bold">never passwords, tokens, or retrieved
-              account secrets</span>. Useful for diagnosing the CyberArk RADIUS
-              push and SSH connect flow.
-            </p>
-          </div>
-
-          <div className="space-y-1">
-            <span className={lbl}>Log file path</span>
-            <input
-              value={path}
-              onChange={(e) => setPath(e.target.value)}
-              placeholder={DEFAULT_LOG_PATH}
-              className={field}
-            />
+          <div style={groupStyle}>
+            <span style={labelStyle}>Debug logging</span>
+            <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 14px" }}>
+                <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span id={id("log")} style={{ fontSize: 13, fontWeight: 600, whiteSpace: "nowrap" }}>Log CyberArk + SSH connection steps</span>
+                  <span style={helperStyle}>
+                    Each CyberArk logon/list/retrieve and SSH connect step is appended with a timestamp. Metadata only —{" "}
+                    <span style={{ color: "var(--text-muted)", fontWeight: 600 }}>never passwords, tokens or account secrets</span>.
+                  </span>
+                </div>
+                <Switch
+                  checked={enabled}
+                  labelledBy={id("log")}
+                  onChange={(v) => {
+                    setEnabled(v);
+                    edit();
+                  }}
+                />
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "12px 14px", borderTop: "1px solid var(--border)", background: "var(--bg-control)" }}>
+                <label htmlFor={id("path")} style={{ ...labelStyle, opacity: enabled ? 1 : 0.6 }}>Log file</label>
+                <input
+                  id={id("path")}
+                  value={path}
+                  onChange={(e) => {
+                    setPath(e.target.value);
+                    edit();
+                  }}
+                  placeholder={DEFAULT_LOG_PATH}
+                  spellCheck={false}
+                  style={{
+                    width: "100%",
+                    boxSizing: "border-box",
+                    height: 32,
+                    padding: "0 10px",
+                    borderRadius: 7,
+                    border: "1px solid var(--border-control)",
+                    background: "var(--bg-panel)",
+                    color: enabled ? "var(--text)" : "var(--text-muted)",
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 12,
+                    minWidth: 0,
+                  }}
+                />
+              </div>
+            </div>
           </div>
 
           {error && (
-            <div className="text-[11px] font-mono text-rose-600 dark:text-red-400 break-words">
+            <div role="alert" style={{ fontSize: 12, color: "var(--danger-text)", overflowWrap: "anywhere" }}>
               {error}
-            </div>
-          )}
-          {saved && !error && (
-            <div className="text-[11px] font-mono text-emerald-600 dark:text-emerald-400">
-              Saved.
             </div>
           )}
         </div>
 
-        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-neutral-200 dark:border-neutral-700">
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-xs font-mono px-3 py-1.5 rounded border border-neutral-200 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer"
-          >
-            Close
-          </button>
-          <button
-            type="button"
-            onClick={() => void save()}
-            disabled={busy}
-            className="text-xs font-mono font-bold px-3 py-1.5 rounded border border-indigo-200 dark:border-indigo-800 bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 cursor-pointer"
-          >
-            {busy ? "Saving…" : "Save"}
-          </button>
+        {/* Footer */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "12px 20px", borderTop: "1px solid var(--border)", flexShrink: 0 }}>
+          <span aria-live="polite" style={{ fontSize: 12, whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 6, color: saved ? "var(--success-text)" : "var(--text-faint)" }}>
+            {saved ? (
+              <>
+                <Check size={13} /> Saved
+              </>
+            ) : dirty ? (
+              "Unsaved changes · ⌘ Enter to save"
+            ) : (
+              "Theme changes apply right away"
+            )}
+          </span>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" onClick={onClose} className="st-btn" style={ghostBtn}>Close</button>
+            <button
+              type="button"
+              onClick={() => void save()}
+              disabled={!dirty || busy}
+              aria-busy={busy}
+              className="st-primary"
+              style={{ height: 32, padding: "0 14px", borderRadius: 7, border: "none", background: "var(--primary-bg)", color: "var(--primary-fg)", fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", opacity: !dirty || busy ? 0.45 : 1, cursor: !dirty || busy ? "default" : "pointer" }}
+            >
+              {busy ? "Saving…" : "Save"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
+  );
+}
+
+/** A 32×18 on/off switch (role="switch"), accent track when on. */
+function Switch({ checked, onChange, labelledBy }: { checked: boolean; onChange: (v: boolean) => void; labelledBy: string }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-labelledby={labelledBy}
+      onClick={() => onChange(!checked)}
+      style={{
+        position: "relative",
+        width: 32,
+        height: 18,
+        flexShrink: 0,
+        marginTop: 1,
+        padding: 0,
+        borderRadius: 9,
+        border: "none",
+        background: checked ? "var(--accent)" : "var(--border-control)",
+        transition: "background-color 120ms",
+        cursor: "pointer",
+      }}
+    >
+      <span
+        style={{
+          position: "absolute",
+          top: 2,
+          left: checked ? 16 : 2,
+          width: 14,
+          height: 14,
+          borderRadius: 7,
+          // Off: a muted knob reads on both themes' grey track; on: panel colour on the accent.
+          background: checked ? "var(--bg-panel)" : "var(--text-muted)",
+          boxShadow: "var(--shadow-segment-active)",
+          transition: "left 120ms, background-color 120ms",
+        }}
+      />
+    </button>
   );
 }
