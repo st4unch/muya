@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ANSWERED_GRACE_MS,
+  agentIsRunning,
   abbreviateHome,
   buildAgents,
   countAgents,
@@ -169,5 +170,22 @@ describe("realBranch", () => {
     expect(realBranch("")).toBeUndefined();
     expect(realBranch(undefined)).toBeUndefined();
     expect(realBranch("main")).toBe("main");
+  });
+});
+
+// Live: an English sentence typed into a tab launched as `claude` (Claude since
+// exited) ran as a shell command. "Agent running" must be live, not launch-time.
+describe("agentIsRunning", () => {
+  it("a tab launched as claude whose Claude has exited is a shell", () => {
+    expect(agentIsRunning(tab("a", { agent: "claude", isClaude: false }), undefined)).toBe(false);
+  });
+  it("Claude's footer on screen means running, before the slow poll catches up", () => {
+    expect(agentIsRunning(tab("a"), { mode: "default", modeDetected: true })).toBe(true);
+  });
+  it("the poll seeing a Claude session means running", () => {
+    expect(agentIsRunning(tab("a", { isClaude: true }), undefined)).toBe(true);
+  });
+  it("ssh tabs are never agent tabs", () => {
+    expect(agentIsRunning(tab("a", { sshServerId: "srv", isClaude: true }), undefined)).toBe(false);
   });
 });

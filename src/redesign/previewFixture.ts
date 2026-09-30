@@ -35,7 +35,7 @@ export const previewAgents: AgentVM[] = [
     path: "~/Documents/claude-control-plane",
     mode: "default",
     approval: { tool: "fs_write_file", target: "docs/[dosya yolu]", summary: "wants to write a file" },
-    kind: "claude",
+    kind: "claude", agentRunning: true,
   },
   {
     key: "muya-all",
@@ -47,7 +47,7 @@ export const previewAgents: AgentVM[] = [
     branch: "main",
     mode: "bypass",
     progress: { verb: "Unfurling…", elapsed: "4m 15s", tokens: "16.9k tokens", thought: "3s" },
-    kind: "claude",
+    kind: "claude", agentRunning: true,
   },
   {
     key: "opencode-review",
@@ -57,12 +57,12 @@ export const previewAgents: AgentVM[] = [
     activity: "[last activity line]",
     path: "~/Documents/claude-control-plane",
     mode: "default",
-    kind: "opencode",
+    kind: "opencode", agentRunning: true,
   },
-  { key: "iptv-2a", name: "iptv-2a", status: "idle", path: "~/Documents/iptv", mode: "default", kind: "shell" },
-  { key: "numbat-c3", name: "numbat-c3", status: "idle", path: "~/Documents/numbat", mode: "default", kind: "shell" },
-  { key: "skills-envanter", name: "skills-envanter", status: "idle", path: "control-plane", mode: "default", kind: "shell" },
-  { key: "serbest", name: "serbest", status: "idle", path: "~", mode: "default", kind: "shell" },
+  { key: "iptv-2a", name: "iptv-2a", status: "idle", path: "~/Documents/iptv", mode: "default", kind: "shell", agentRunning: true },
+  { key: "numbat-c3", name: "numbat-c3", status: "idle", path: "~/Documents/numbat", mode: "default", kind: "shell", agentRunning: true },
+  { key: "skills-envanter", name: "skills-envanter", status: "idle", path: "control-plane", mode: "default", kind: "shell", agentRunning: true },
+  { key: "serbest", name: "serbest", status: "idle", path: "~", mode: "default", kind: "shell", agentRunning: true },
 ];
 
 export const previewInspector: InspectorVM = {
@@ -87,5 +87,5 @@ export const previewLongNameAgent: AgentVM = {
   branch: "feat/a-rather-long-branch-name-for-testing",
   mode: "bypass",
   progress: { verb: "Unfurling…", elapsed: "12h 41m", tokens: "184.2k tokens", thought: "41s" },
-  kind: "claude",
+  kind: "claude", agentRunning: true,
 };

@@ -43,6 +43,10 @@ export interface AgentVM {
   progress?: { verb?: string; elapsed?: string; tokens?: string; thought?: string };
   /** Which CLI runs in it: drives nothing visual today, kept for actions. */
   kind: "claude" | "opencode" | "shell" | "ssh";
+  /** An agent CLI owns this terminal RIGHT NOW (vs a plain shell prompt). Drives what
+   *  the composer and header offer: text typed into a shell runs as a command, and
+   *  "/compact" or a permission-mode switch mean nothing there. */
+  agentRunning: boolean;
 }
 
 export interface ChangeVM {

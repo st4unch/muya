@@ -1457,11 +1457,14 @@ export default function App() {
   };
 
   const attachFile = async (key: string) => {
-    const sel = await openDialog({ multiple: false, directory: false, title: "Add file" });
+    const shell = !agentVMsRef.current.find((a) => a.key === key)?.agentRunning;
+    const sel = await openDialog({ multiple: false, directory: false, title: shell ? "Add path" : "Add file" });
     if (typeof sel !== "string") return;
+    // An agent reads "@path" as a file reference; a shell needs the path itself, quoted.
+    const token = shell ? singleQuote(sel) : `@${sel}`;
     setComposerValues((prev) => {
       const cur = prev[key] ?? "";
-      return { ...prev, [key]: `${cur}${cur && !cur.endsWith(" ") ? " " : ""}@${sel} ` };
+      return { ...prev, [key]: `${cur}${cur && !cur.endsWith(" ") ? " " : ""}${token} ` };
     });
     document.getElementById("rd-composer")?.focus();
   };

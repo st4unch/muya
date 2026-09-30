@@ -88,4 +88,12 @@ describe("NewAgentModal", () => {
     await user.click(backdrop);
     expect(onClose).not.toHaveBeenCalled();
   });
+
+  // Live: the header's "+ New agent" opened a dialog titled "New terminal".
+  it("titles itself after the chosen command", () => {
+    render(<NewAgentModal open onClose={() => {}} workspaces={["/tmp/w"]} onLaunch={vi.fn()} />);
+    expect(screen.getByRole("dialog", { name: "New agent" })).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: "Command" }), { target: { value: "blank" } });
+    expect(screen.getByRole("dialog", { name: "New terminal" })).toBeInTheDocument();
+  });
 });

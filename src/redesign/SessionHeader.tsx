@@ -142,7 +142,15 @@ export function SessionHeader({ agent, onCompact, onSplitToGrid, onStop, onMore 
         </div>
       </div>
 
-      <button type="button" onClick={onCompact} className="rd-btn2" style={secondaryBtn}>
+      {/* /compact is a Claude command; typed into a plain shell it is "command not found". */}
+      <button
+        type="button"
+        onClick={onCompact}
+        disabled={!agent.agentRunning}
+        title={agent.agentRunning ? undefined : "No agent is running in this terminal"}
+        className="rd-btn2"
+        style={secondaryBtn}
+      >
         Compact
       </button>
       <button type="button" onClick={onSplitToGrid} className="rd-btn2" style={secondaryBtn}>

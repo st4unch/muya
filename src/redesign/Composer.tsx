@@ -7,9 +7,11 @@
 
 import type { KeyboardEvent, MouseEvent } from "react";
 import type { PermissionMode } from "./types";
-import { messageHint } from "./text";
+import { messageHint, shortName } from "./text";
 
 export interface ComposerProps {
+  /** "shell" when no agent CLI is running in the terminal (see AgentVM.agentRunning). */
+  target?: "agent" | "shell";
   agentName: string;
   value: string;
   onChange: (value: string) => void;
@@ -31,7 +33,10 @@ const MODE_LABEL: Record<PermissionMode, string> = {
   bypass: "bypass",
 };
 
-export function Composer({ agentName, value, onChange, onSend, mode, onCycleMode, onModeMenu, onAttachFile, onCommands }: ComposerProps) {
+export function Composer({ agentName, value, onChange, onSend, mode, onCycleMode, onModeMenu, onAttachFile, onCommands, target = "agent" }: ComposerProps) {
+  // A plain shell runs whatever is sent as a command (live: an English sentence went
+  // to zsh and ran `write`). Say where the text goes, and drop the agent-only controls.
+  const shell = target === "shell";
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -39,7 +44,7 @@ export function Composer({ agentName, value, onChange, onSend, mode, onCycleMode
       if (trimmed) onSend(trimmed);
       return;
     }
-    if (e.key === "Tab" && e.shiftKey) {
+    if (e.key === "Tab" && e.shiftKey && !shell) {
       e.preventDefault();
       onCycleMode();
     }
@@ -61,7 +66,7 @@ export function Composer({ agentName, value, onChange, onSend, mode, onCycleMode
         }}
       >
         <label htmlFor="rd-composer" style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" }}>
-          Message {agentName}
+          {shell ? `Shell command for ${agentName}` : `Message ${agentName}`}
         </label>
         <textarea
           id="rd-composer"
@@ -69,7 +74,7 @@ export function Composer({ agentName, value, onChange, onSend, mode, onCycleMode
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={`${messageHint(agentName)} ( / commands, @ files )`}
+          placeholder={shell ? `Run a shell command in ${shortName(agentName)}…` : `${messageHint(agentName)} ( / commands, @ files )`}
           style={{
             resize: "none",
             border: "none",
@@ -82,6 +87,7 @@ export function Composer({ agentName, value, onChange, onSend, mode, onCycleMode
           }}
         />
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {!shell && (
           <button
             type="button"
             onClick={(e) => (onModeMenu ? onModeMenu(e) : onCycleMode())}
@@ -99,14 +105,16 @@ export function Composer({ agentName, value, onChange, onSend, mode, onCycleMode
           >
             Mode: {MODE_LABEL[mode]} ▾
           </button>
+          )}
           <button
             type="button"
             onClick={onAttachFile}
             className="rd-chip"
             style={{ height: 26, padding: "0 10px", borderRadius: 13, border: "1px solid var(--border-control)", background: "transparent", color: "var(--text-tertiary)", fontSize: 12, flexShrink: 0 }}
           >
-            @ Add file
+            {shell ? "Add path" : "@ Add file"}
           </button>
+          {!shell && (
           <button
             type="button"
             onClick={onCommands}
@@ -115,8 +123,9 @@ export function Composer({ agentName, value, onChange, onSend, mode, onCycleMode
           >
             / Commands
           </button>
+          )}
           <div style={{ flexGrow: 1 }} />
-          <span style={{ fontSize: 12, color: "var(--text-muted)", flexShrink: 0 }}>⏎ send · ⇧⏎ newline</span>
+          <span style={{ fontSize: 12, color: "var(--text-muted)", flexShrink: 0 }}>{shell ? "⏎ run · ⇧⏎ newline" : "⏎ send · ⇧⏎ newline"}</span>
           <button
             type="button"
             aria-label="Send"

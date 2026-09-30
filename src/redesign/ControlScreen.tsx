@@ -160,6 +160,7 @@ export function ControlScreen(props: ControlScreenProps) {
         {selected && !props.openFile && (
           <Composer
             agentName={selected.name}
+            target={selected.agentRunning ? "agent" : "shell"}
             value={props.composerValue}
             onChange={props.onComposerChange}
             onSend={props.onSendMessage}

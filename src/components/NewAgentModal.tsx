@@ -122,11 +122,13 @@ export default function NewAgentModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
-      <div className="w-[460px] max-h-[85vh] overflow-y-auto bg-[var(--bg-control)] rounded-xl shadow-2xl border border-neutral-200 dark:border-neutral-700">
+      <div role="dialog" aria-modal="true" aria-labelledby="new-agent-title" className="w-[460px] max-h-[85vh] overflow-y-auto bg-[var(--bg-control)] rounded-xl shadow-2xl border border-neutral-200 dark:border-neutral-700">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200 dark:border-neutral-700">
-          <h2 className="text-sm font-display font-bold text-neutral-800 dark:text-neutral-200">
-            New terminal
+          {/* Follows the chosen command: the header's "+ New agent" opened a dialog
+              titled "New terminal" (seen live, 2026-09-30). */}
+          <h2 id="new-agent-title" className="text-sm font-display font-bold text-neutral-800 dark:text-neutral-200">
+            {isBlank ? "New terminal" : "New agent"}
           </h2>
           <button
             type="button"
@@ -187,6 +189,7 @@ export default function NewAgentModal({
           <div className="space-y-1">
             <span className={lbl}>Command</span>
             <select
+              aria-label="Command"
               value={preset}
               onChange={(e) => handlePresetChange(e.target.value as Preset)}
               className={field}

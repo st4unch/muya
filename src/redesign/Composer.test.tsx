@@ -51,4 +51,19 @@ describe("Composer", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     expect(onSend).toHaveBeenCalledWith("hello");
   });
+
+  it("in a plain shell, says text runs as a command and hides agent-only controls", () => {
+    setup({ target: "shell" });
+    expect(screen.getByPlaceholderText(/Run a shell command in muya-all/)).toBeInTheDocument();
+    expect(screen.queryByText(/Mode:/)).not.toBeInTheDocument();
+    expect(screen.queryByText("/ Commands")).not.toBeInTheDocument();
+    expect(screen.getByText("Add path")).toBeInTheDocument();
+    expect(screen.getByText(/⏎ run/)).toBeInTheDocument();
+  });
+
+  it("Shift+Tab does not cycle a permission mode in a shell", () => {
+    const { onCycleMode } = setup({ target: "shell" });
+    fireEvent.keyDown(screen.getByPlaceholderText(/Run a shell command/), { key: "Tab", shiftKey: true });
+    expect(onCycleMode).not.toHaveBeenCalled();
+  });
 });

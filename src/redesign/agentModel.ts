@@ -95,6 +95,17 @@ export function deriveStatus(
   return "idle";
 }
 
+/** Live, not launch-time: Claude's own footer on screen (immediate) or the session
+ *  poll seeing a Claude session in this tab. A tab LAUNCHED as `claude` whose Claude
+ *  has exited is a shell again — the old launch-time `kind` kept calling it "claude",
+ *  so the composer let prose run as shell commands. opencode prints no parseable
+ *  footer; a tab launched with it counts as running it. */
+export function agentIsRunning(tab: AgentTab, screen: ScreenState | undefined): boolean {
+  if (tab.sshServerId) return false;
+  if (tab.agent === "opencode") return true;
+  return Boolean(tab.isClaude || screen?.modeDetected);
+}
+
 function kindOf(tab: AgentTab): AgentVM["kind"] {
   if (tab.sshServerId) return "ssh";
   if (tab.agent === "opencode") return "opencode";
@@ -153,6 +164,7 @@ export function buildAgents(input: AgentModelInput): AgentVM[] {
             ? { verb: activity.verb, elapsed: activity.elapsed, tokens: normalizeTokens(activity.tokens), thought: activity.thought }
             : undefined,
         kind: kindOf(tab),
+        agentRunning: agentIsRunning(tab, screen),
       };
     });
 }
