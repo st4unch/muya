@@ -5,7 +5,7 @@
 // Left of the version: the Claude status fields the user pinned (see StatusPicker) and
 // the "+" that adds more. A field the selected session lacks is simply not rendered.
 
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import type { FooterVM } from "./types";
 import { plural } from "./text";
@@ -29,7 +29,7 @@ function StatusItem({ id, data, onRemove }: { id: string; data: StatusData | nul
         e.preventDefault();
         onRemove(id);
       }}
-      style={{ ...NOWRAP, flexShrink: 1, maxWidth: 200, cursor: "default" }}
+      style={{ ...NOWRAP, flexShrink: 0, maxWidth: 320, cursor: "default" }}
     >
       <span style={{ color: "var(--text-faint)" }}>{field.label} </span>
       {value}
@@ -51,10 +51,73 @@ const FOOTER_ICON_BTN: CSSProperties = {
   color: "var(--text-muted)",
 };
 
+/**
+ * One line while the chosen status fields fit; a second line for them (right-aligned,
+ * never truncated) only once they don't. Measured before paint: the fields are laid out
+ * in the first line, and if they overflow we remember the footer width they would need,
+ * so the footer goes back to one line only when it is wide enough again (no flip-flop
+ * at the boundary). Any change to the fields or their values re-measures from one line.
+ */
+function useStatusSecondLine(key: string) {
+  const rowRef = useRef<HTMLDivElement>(null);
+  const fieldsRef = useRef<HTMLDivElement>(null);
+  const [twoLine, setTwoLine] = useState(false);
+  const need = useRef(0);
+  const lastKey = useRef(key);
+  useLayoutEffect(() => {
+    if (lastKey.current !== key) {
+      lastKey.current = key;
+      need.current = 0;
+      if (twoLine) {
+        setTwoLine(false); // lay out in one line again, then re-measure
+        return;
+      }
+    }
+    const row = rowRef.current;
+    if (!row) return;
+    const check = () => {
+      setTwoLine((was) => {
+        if (!was) {
+          const f = fieldsRef.current;
+          const over = f ? f.scrollWidth - f.clientWidth : 0;
+          if (over <= 0) return false;
+          need.current = row.clientWidth + over;
+          return true;
+        }
+        return row.clientWidth < need.current;
+      });
+    };
+    check();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(check);
+    ro.observe(row);
+    return () => ro.disconnect();
+  }, [key, twoLine]);
+  return { rowRef, fieldsRef, twoLine };
+}
+
 export function Footer({ workspaceCount, agents, working, waiting, collisions, version, variant, status, composer }: FooterVM) {
   const [anchor, setAnchor] = useState<Anchor | null>(null);
+  const shown = status ? status.fields.filter((id) => statusValue(id, status.data) !== null) : [];
+  const key = shown.map((id) => `${id}=${statusValue(id, status?.data ?? null)}`).join("|");
+  const { rowRef, fieldsRef, twoLine } = useStatusSecondLine(key);
+  const items = status
+    ? status.fields.map((id) => <StatusItem key={id} id={id} data={status.data} onRemove={status.onRemove} />)
+    : null;
   return (
     <footer
+      style={{
+        flexShrink: 0,
+        display: "flex",
+        flexDirection: "column",
+        borderTop: "1px solid var(--border)",
+        background: "var(--bg-chrome)",
+        fontSize: 12,
+        color: "var(--text-muted)",
+      }}
+    >
+    <div
+      ref={rowRef}
       style={{
         height: 28,
         flexShrink: 0,
@@ -62,10 +125,7 @@ export function Footer({ workspaceCount, agents, working, waiting, collisions, v
         alignItems: "center",
         gap: 18,
         padding: "0 16px",
-        borderTop: "1px solid var(--border)",
-        background: "var(--bg-chrome)",
-        fontSize: 12,
-        color: "var(--text-muted)",
+        minWidth: 0,
       }}
     >
       <span style={{ display: "flex", alignItems: "center", gap: 6, ...NOWRAP }}>
@@ -79,11 +139,9 @@ export function Footer({ workspaceCount, agents, working, waiting, collisions, v
       </span>
       <span style={NOWRAP}>{plural(collisions, "conflict")}</span>
       <div style={{ flexGrow: 1 }} />
-      {status && (
-        <div style={{ display: "flex", alignItems: "center", gap: 14, minWidth: 0, flexShrink: 1, overflow: "hidden" }}>
-          {status.fields.map((id) => (
-            <StatusItem key={id} id={id} data={status.data} onRemove={status.onRemove} />
-          ))}
+      {status && !twoLine && (
+        <div ref={fieldsRef} style={{ display: "flex", alignItems: "center", gap: 14, minWidth: 0, flexShrink: 1, overflow: "hidden" }}>
+          {items}
         </div>
       )}
       <span style={NOWRAP}>{variant === "grid" ? "Tab to switch panels · ⌘⏎ maximize" : "UTF-8"}</span>
@@ -118,6 +176,15 @@ export function Footer({ workspaceCount, agents, working, waiting, collisions, v
         )}
       </span>
       <span style={NOWRAP}>Muya v{version}</span>
+    </div>
+      {status && twoLine && (
+        <div
+          data-status-line="2"
+          style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", alignItems: "center", columnGap: 14, rowGap: 4, padding: "0 16px 7px", minWidth: 0 }}
+        >
+          {items}
+        </div>
+      )}
       {status && anchor && (
         <StatusPicker anchor={anchor} fields={status.fields} data={status.data} onToggle={status.onToggle} onClose={() => {
             setAnchor(null);
