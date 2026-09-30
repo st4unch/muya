@@ -5,9 +5,13 @@
 // danger palette only in bypass mode (Shift+Tab cycles modes — exposed as a
 // callback, the actual cycle order is the caller's call).
 
+import { useRef, useState } from "react";
 import type { KeyboardEvent, MouseEvent } from "react";
 import type { PermissionMode } from "./types";
 import { messageHint, shortName } from "./text";
+import { SlashCommandsPopover } from "./SlashCommandsPopover";
+import { useSlashCommands } from "./useSlashCommands";
+import type { SlashAgent } from "./slashBuiltins";
 
 export interface ComposerProps {
   /** "shell" when no agent CLI is running in the terminal (see AgentVM.agentRunning). */
@@ -23,6 +27,17 @@ export interface ComposerProps {
   onModeMenu?: (e: MouseEvent<HTMLElement>) => void;
   onAttachFile: () => void;
   onCommands: () => void;
+  /** Agent CLI running in this terminal. When set, "/ Commands" opens the slash-command
+   *  popover (built-ins + this machine's custom commands/skills) instead of `onCommands`. */
+  slashAgent?: SlashAgent;
+  /** Working directory of the terminal, for project-level custom commands. */
+  slashCwd?: string;
+}
+
+/** Put `/name ` at the start of the message, replacing a half-typed leading `/word`. */
+export function insertSlash(value: string, name: string): string {
+  const rest = value.replace(/^\/\S*\s?/, "");
+  return `/${name} ${rest}`;
 }
 
 const MODE_LABEL: Record<PermissionMode, string> = {
@@ -33,7 +48,14 @@ const MODE_LABEL: Record<PermissionMode, string> = {
   bypass: "bypass",
 };
 
-export function Composer({ agentName, value, onChange, onSend, mode, onCycleMode, onModeMenu, onAttachFile, onCommands, target = "agent" }: ComposerProps) {
+export function Composer({ agentName, value, onChange, onSend, mode, onCycleMode, onModeMenu, onAttachFile, onCommands, slashAgent, slashCwd, target = "agent" }: ComposerProps) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [slashAnchor, setSlashAnchor] = useState<DOMRect | null>(null);
+  const slash = useSlashCommands(slashAgent ?? "claude", slashCwd, slashAnchor !== null && slashAgent !== undefined);
+  const closeSlash = () => {
+    setSlashAnchor(null);
+    textareaRef.current?.focus();
+  };
   // A plain shell runs whatever is sent as a command (live: an English sentence went
   // to zsh and ran `write`). Say where the text goes, and drop the agent-only controls.
   const shell = target === "shell";
@@ -70,6 +92,7 @@ export function Composer({ agentName, value, onChange, onSend, mode, onCycleMode
         </label>
         <textarea
           id="rd-composer"
+          ref={textareaRef}
           rows={2}
           value={value}
           onChange={(e) => onChange(e.target.value)}
@@ -117,7 +140,9 @@ export function Composer({ agentName, value, onChange, onSend, mode, onCycleMode
           {!shell && (
           <button
             type="button"
-            onClick={onCommands}
+            onClick={(e) => (slashAgent ? setSlashAnchor(e.currentTarget.getBoundingClientRect()) : onCommands())}
+            aria-haspopup={slashAgent ? "dialog" : undefined}
+            aria-expanded={slashAgent ? slashAnchor !== null : undefined}
             className="rd-chip"
             style={{ height: 26, padding: "0 10px", borderRadius: 13, border: "1px solid var(--border-control)", background: "transparent", color: "var(--text-tertiary)", fontSize: 12, flexShrink: 0 }}
           >
@@ -142,6 +167,18 @@ export function Composer({ agentName, value, onChange, onSend, mode, onCycleMode
           </button>
         </div>
       </div>
+      {slashAnchor && slashAgent && (
+        <SlashCommandsPopover
+          anchor={slashAnchor}
+          items={slash.items}
+          loading={slash.loading}
+          onPick={(name) => {
+            onChange(insertSlash(value, name));
+            closeSlash();
+          }}
+          onClose={closeSlash}
+        />
+      )}
     </div>
   );
 }

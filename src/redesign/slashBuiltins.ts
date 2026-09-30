@@ -1,0 +1,146 @@
+// Created by Claude — Classification: INTERNAL
+//
+// Built-in slash commands, captured from the real CLIs (not guessed):
+//  - Claude Code 2.1.285: `claude --permission-mode manual` in a pty, typed "/" and paged
+//    the popup with the arrow keys, screen rendered through @xterm/headless. Includes the
+//    bundled skills the CLI ships itself (/batch, /loop, /simplify, ...). Custom commands,
+//    user/project skills and plugin skills are excluded — those are read from disk (Rust
+//    `list_slash_commands`). A few entries are account/state dependent (e.g. /ultrareview,
+//    /remote-control); descriptions of long bundled skills are cut where the popup cut them.
+//  - opencode 1.18.32: `opencode` TUI in a pty, typed "/" and paged the list (17 commands).
+
+export type SlashAgent = "claude" | "opencode";
+
+export interface BuiltinSlash {
+  name: string;
+  description: string;
+}
+
+const pairs = (rows: ReadonlyArray<readonly [string, string]>): BuiltinSlash[] =>
+  rows.map(([name, description]) => ({ name, description }));
+
+export const CLAUDE_BUILTINS: BuiltinSlash[] = pairs([
+  ["add-dir", "Add a new working directory"],
+  ["advisor", "Let Claude consult a stronger model at key moments"],
+  ["artifacts", "Browse your published and shared artifacts"],
+  ["auto-mode-setup", "Teach auto mode about your environment, plus optional rule tweaks"],
+  ["autocompact", "Set how full the context gets before auto-summarizing"],
+  ["autofix-pr", "Monitor and autofix any issues with the current PR"],
+  ["background", "Send this session to the background and free the terminal"],
+  ["batch", "Research and plan a large-scale change, then execute it in parallel across 5–30 isolated worktree…"],
+  ["branch", "Create a branch of the current conversation at this point"],
+  ["btw", "Ask a quick side question without interrupting the main conversation"],
+  ["bug", "Report a bug or share your conversation"],
+  ["cd", "Move this session to a new working directory"],
+  ["chrome", "Open Claude in Chrome settings"],
+  ["claude-api", "Reference for the Claude API / Anthropic SDK — model ids, pricing, params, streaming, tool use, MCP,…"],
+  ["clear", "Start a new session with empty context; previous session stays on disk (resumable with /resume)"],
+  ["code-review", "Review the current diff, or a PR number/branch/path target, for correctness…"],
+  ["color", "Set the prompt bar color for this session"],
+  ["compact", "Free up context by summarizing the conversation so far"],
+  ["config", "Open settings"],
+  ["context", "Visualize current context usage as a colored grid"],
+  ["copy", "Copy Claude's last response to clipboard (or /copy N for the Nth-latest)"],
+  ["debug", "Enable debug logging for this session and help diagnose issues"],
+  ["design", "Make a new Design artifact from a brief"],
+  ["design-login", "Authorize design-system access for /design-sync with your claude.ai account"],
+  ["design-sync", "Push a React design system to claude.ai/design. This runs a converter that bundles the real component…"],
+  ["desktop", "Continue the current session in Claude Desktop"],
+  ["diff", "Toggle the diff panel showing uncommitted changes"],
+  ["doctor", "Health-check the user's Claude Code setup and fix issues: diagnose installation health — what the…"],
+  ["effort", "Set effort level for model usage"],
+  ["exit", "Exit the CLI"],
+  ["export", "Export the current conversation to a file or clipboard"],
+  ["fast", "Toggle fast mode (Opus 5.5)"],
+  ["feedback", "Send feedback to Anthropic or report a bug"],
+  ["fewer-permission-prompts", "Scan your transcripts for common read-only Bash and MCP tool calls, then add a prioritized allowlist…"],
+  ["focus", "Toggle focus view: just your prompt, summary, and response"],
+  ["fork", "Copy this conversation into a new background session and keep working here"],
+  ["goal", "Set a goal Claude checks before stopping"],
+  ["help", "Show help and available commands"],
+  ["hooks", "View hook configurations for tool events"],
+  ["ide", "Manage IDE integrations and show status"],
+  ["import", "Import config from another AI coding agent"],
+  ["init", "Initialize a new CLAUDE.md file with codebase documentation"],
+  ["insights", "Generate a report analyzing your Claude Code sessions"],
+  ["install-github-app", "Set up Claude GitHub Actions for a repository"],
+  ["install-slack-app", "Install the Claude Slack app"],
+  ["keybindings", "Open your keyboard shortcuts file"],
+  ["list-agents", "List subagents, teammates, and other Claude sessions you can message"],
+  ["login", "Sign in with your Anthropic account"],
+  ["logout", "Sign out from your Anthropic account"],
+  ["loop", "Run a prompt or slash command on a recurring interval (e.g. /loop 5m /foo). Omit the interval to let…"],
+  ["mcp", "Manage MCP servers"],
+  ["memory", "Edit CLAUDE.md files and memory settings"],
+  ["mobile", "Show QR code to download the Claude mobile app"],
+  ["model", "Set the AI model for Claude Code (currently Opus 5.5)"],
+  ["output-style", "List output styles or switch to one"],
+  ["permissions", "Manage allow and deny tool permission rules"],
+  ["plan", "Enable plan mode or view the current session plan"],
+  ["plugin", "Manage Claude Code plugins"],
+  ["powerup", "Discover Claude Code features through quick interactive lessons"],
+  ["privacy-settings", "View and update your privacy settings"],
+  ["radio", "Listen to Claude FM lo-fi radio"],
+  ["rate-limit-options", "Manage usage limits and upgrade options"],
+  ["recap", "Generate a one-line session recap now"],
+  ["release-notes", "View release notes"],
+  ["reload-plugins", "Activate pending plugin changes in the current session"],
+  ["reload-skills", "Pick up skills added or changed on disk during this session"],
+  ["remote-control", "Connect this session to Remote Control"],
+  ["remote-env", "Choose the default environment for cloud agents"],
+  ["rename", "Rename the current conversation"],
+  ["resume", "Resume a previous conversation"],
+  ["rewind", "Restore the code and/or conversation to a previous point"],
+  ["run", "Launch and drive this project's app to see a change working. Use when asked to run, start, or…"],
+  ["run-skill-generator", "Author or improve the run-<unit> skill - a per-project skill that tells agents how to build, launch,…"],
+  ["sandbox", "Configure sandboxing"],
+  ["schedule", "Create, update, list, or run scheduled cloud agents (routines) that execute on a cron schedule."],
+  ["scroll-speed", "Adjust mouse wheel scroll speed"],
+  ["security-review", "Complete a security review of the pending changes on the current branch"],
+  ["simplify", "Review the changed code for reuse, simplification, efficiency, and altitude cleanups, then apply the…"],
+  ["skill-doctor", "Show which loaded skills are unused and costing context"],
+  ["skills", "List available skills"],
+  ["slides", "Make a new Slides deck artifact from a brief"],
+  ["status", "Show Claude Code status including version, model, account, API connectivity, and tool statuses"],
+  ["statusline", "Set up Claude Code's status line UI"],
+  ["stickers", "Order Claude Code stickers"],
+  ["subtask", "Send a subagent off with your full context; its result comes back here"],
+  ["tasks", "View and manage everything running in the background"],
+  ["team-onboarding", "Help teammates ramp on Claude Code with a guide from your usage"],
+  ["teleport", "Send this session to the cloud, or resume one from claude.ai"],
+  ["terminal-setup", "Install Shift+Enter key binding for newlines"],
+  ["theme", "Change the theme"],
+  ["tui", "Set the terminal UI renderer (default | fullscreen)"],
+  ["ultrareview", "Start a cloud agent that finds and verifies bugs in your branch"],
+  ["update-config", "Use this skill to configure the Claude Code harness via settings.json. Automated behaviors (\"from now…"],
+  ["upgrade", "Upgrade to Max for higher rate limits and more Opus"],
+  ["usage", "Show session cost, plan usage, and activity stats"],
+  ["usage-credits", "Configure usage credits or request them from your admin when you hit a limit"],
+  ["verify", "Verify that a code change actually does what it's supposed to by exercising it end-to-end and…"],
+  ["voice", "Toggle voice mode"],
+  ["web-setup", "Set up cloud sessions with your GitHub account"],
+]);
+
+export const OPENCODE_BUILTINS: BuiltinSlash[] = pairs([
+  ["agents", "Switch agent"],
+  ["connect", "Connect provider"],
+  ["debug", "View debug info"],
+  ["diff", "Open diff viewer"],
+  ["editor", "Open editor"],
+  ["exit", "Exit the app"],
+  ["help", "Help"],
+  ["init", "Guided AGENTS.md setup"],
+  ["mcps", "Toggle MCPs"],
+  ["models", "Switch model"],
+  ["move", "Move to another project dir"],
+  ["new", "New session"],
+  ["review", "Review changes [commit|branch|pr], defaults to uncommitted"],
+  ["sessions", "Switch session"],
+  ["skills", "Skills"],
+  ["status", "View status"],
+  ["themes", "Switch theme"],
+]);
+
+export function builtinsFor(agent: SlashAgent): BuiltinSlash[] {
+  return agent === "claude" ? CLAUDE_BUILTINS : OPENCODE_BUILTINS;
+}

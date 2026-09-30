@@ -426,6 +426,12 @@ function handleInvoke(cmd: string, rawPayload?: unknown): unknown {
       return {};
 
     // --- resources / marketplace -------------------------------------------------------
+    case "list_slash_commands":
+      return [
+        { name: "release", description: "Cut a release from the current branch", source: "project" },
+        { name: "handoff", description: "Summarise this session into a handoff note", source: "user" },
+        { name: "kickoff", description: "Bootstrap a new project structure", source: "skill" },
+      ];
     case "list_claude_resources":
       return { skills: [], agents: [], hooks: [], mcps: [] };
     case "fetch_mcp_marketplace":

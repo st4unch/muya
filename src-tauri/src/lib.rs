@@ -56,6 +56,7 @@ mod opencode;
 mod pm;
 mod pty;
 mod sessions;
+mod slash_commands;
 mod ssh;
 #[cfg(test)]
 mod testutil;
@@ -321,6 +322,7 @@ pub fn run() {
             pty::pty_cwds,
             pty::pty_session_ids,
             fs::list_claude_resources,
+            slash_commands::list_slash_commands,
             fs::fetch_skill_marketplace,
             fs::fetch_mcp_marketplace,
             fs::install_skill,

@@ -1,5 +1,7 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(() => Promise.resolve([{ name: "release", description: "Cut a release", source: "project" }])) }));
 import { Composer } from "./Composer";
 
 function setup(overrides: Partial<React.ComponentProps<typeof Composer>> = {}) {
@@ -65,5 +67,26 @@ describe("Composer", () => {
     const { onCycleMode } = setup({ target: "shell" });
     fireEvent.keyDown(screen.getByPlaceholderText(/Run a shell command/), { key: "Tab", shiftKey: true });
     expect(onCycleMode).not.toHaveBeenCalled();
+  });
+
+  it("/ Commands without slashAgent still calls onCommands", () => {
+    const onCommands = vi.fn();
+    setup({ onCommands });
+    fireEvent.click(screen.getByText("/ Commands"));
+    expect(onCommands).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("/ Commands with slashAgent opens the popover and picking inserts `/name `", async () => {
+    const onCommands = vi.fn();
+    const { onChange } = setup({ onCommands, slashAgent: "claude", slashCwd: "/tmp/x", value: "" });
+    fireEvent.click(screen.getByText("/ Commands"));
+    expect(onCommands).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "Slash commands" })).toBeTruthy();
+    expect(await screen.findByText("/release")).toBeTruthy();
+    fireEvent.mouseDown(screen.getByText("/release"));
+    expect(onChange).toHaveBeenCalledWith("/release ");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(screen.getByPlaceholderText(/Message muya-all/));
   });
 });
