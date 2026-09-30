@@ -91,6 +91,9 @@ export interface FooterStatusVM {
   /** Status JSON of the selected Claude session; null when it has none. */
   data: Record<string, unknown> | null;
   onToggle: (id: string) => void;
+  /** The picker opened/closed: the caller polls while it is open, so the previews are
+   *  live even before any field is chosen. */
+  onPickerOpenChange?: (open: boolean) => void;
   onRemove: (id: string) => void;
 }
 

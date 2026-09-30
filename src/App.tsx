@@ -1814,7 +1814,8 @@ export default function App() {
   };
   const statusFields = useStatusFields();
   const selectedPtyId = selectedTab ? terminalPtyIds[selectedTab.key] : undefined;
-  const statusData = useStatusData(selectedPtyId, statusFields.fields.length > 0);
+  const [statusPickerOpen, setStatusPickerOpen] = useState(false);
+  const statusData = useStatusData(selectedPtyId, statusFields.fields.length > 0 || statusPickerOpen);
   const footerVM = {
     workspaceCount: workspaces.length,
     agents: model.counts.agents,
@@ -1823,7 +1824,7 @@ export default function App() {
     collisions: collisionReport.collisions.length,
     version: appVersion || "…",
     variant: "control" as const,
-    status: { fields: statusFields.fields, data: statusData, onToggle: statusFields.toggle, onRemove: statusFields.remove },
+    status: { fields: statusFields.fields, data: statusData, onToggle: statusFields.toggle, onRemove: statusFields.remove, onPickerOpenChange: setStatusPickerOpen },
   };
   const updateReady = Boolean(updateAvailable && updateAvailable.version);
 

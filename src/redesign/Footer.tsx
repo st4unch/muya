@@ -78,7 +78,10 @@ export function Footer({ workspaceCount, agents, working, waiting, collisions, v
           type="button"
           aria-label="Add status field"
           title="Add status field"
-          onClick={(e) => setAnchor(anchorFromRect(e.currentTarget.getBoundingClientRect(), "right", "above"))}
+          onClick={(e) => {
+            setAnchor(anchorFromRect(e.currentTarget.getBoundingClientRect(), "right", "above"));
+            status?.onPickerOpenChange?.(true);
+          }}
           className="rd-icon-btn"
           style={{ width: 20, height: 20, marginRight: -8, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 0, border: "none", borderRadius: 5, background: "transparent", color: "var(--text-muted)" }}
         >
@@ -87,7 +90,10 @@ export function Footer({ workspaceCount, agents, working, waiting, collisions, v
       )}
       <span style={NOWRAP}>Muya v{version}</span>
       {status && anchor && (
-        <StatusPicker anchor={anchor} fields={status.fields} data={status.data} onToggle={status.onToggle} onClose={() => setAnchor(null)} />
+        <StatusPicker anchor={anchor} fields={status.fields} data={status.data} onToggle={status.onToggle} onClose={() => {
+            setAnchor(null);
+            status.onPickerOpenChange?.(false);
+          }} />
       )}
     </footer>
   );
