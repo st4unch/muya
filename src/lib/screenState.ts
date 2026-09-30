@@ -34,6 +34,10 @@ export interface ScreenState {
   /** true only when a mode footer was actually seen (dialogs hide the footer). */
   modeDetected: boolean;
   permission?: ScreenPermission;
+  /** Claude is mid-turn: its footer says "esc to interrupt". While Claude streams its
+   *  answer there is no spinner line on screen, so without this a working agent read
+   *  as idle (seen live, 2026-09-30). */
+  busy?: boolean;
 }
 
 const SPINNER_GLYPHS = "·✢✳✶✻✽*";
@@ -189,12 +193,25 @@ function parsePermission(lines: string[]): ScreenPermission | undefined {
   return undefined;
 }
 
+/** Footer glyphs/phrases Claude prints on its status line (mode indicator). */
+const FOOTER_MARK_RE = /^\s*(?:⏸|⏵⏵|⏵)\s|\bmode on\b|\bpermissions on\b/;
+
+/** True only when Claude's own footer line — one of the last few lines, carrying the
+ *  mode indicator — says "esc to interrupt". The same words anywhere else on screen
+ *  (an answer quoting them) must not count. */
+export function parseBusy(lines: string[]): boolean {
+  const tail = lines.map((l) => l.trimEnd()).filter((l) => l !== "").slice(-4);
+  return tail.some((l) => FOOTER_MARK_RE.test(l) && /\besc to interrupt\b/.test(l));
+}
+
 export function parseClaudeScreen(lines: string[]): ScreenState {
   const detected = parseMode(lines);
   const permission = parsePermission(lines);
   const activity = permission ? undefined : parseActivity(lines);
+  const busy = !permission && parseBusy(lines);
   return {
     ...(activity ? { activity } : {}),
+    ...(busy ? { busy } : {}),
     mode: detected ?? "default",
     modeDetected: detected !== undefined,
     ...(permission ? { permission } : {}),

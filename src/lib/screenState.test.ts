@@ -24,7 +24,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Terminal } from "@xterm/headless";
 import { describe, expect, it } from "vitest";
-import { parseClaudeScreen, readScreenLines } from "./screenState";
+import { parseBusy, parseClaudeScreen, readScreenLines } from "./screenState";
 
 const DIR = join(__dirname, "__fixtures__", "claude-screens");
 const txt = (n: string) => readFileSync(join(DIR, n + ".txt"), "utf8").split("\n").slice(0, 40);
@@ -155,5 +155,27 @@ describe("false positives", () => {
   });
   it("old dialog scrolled above is still found only if intact; empty screen is empty", () => {
     expect(parseClaudeScreen([])).toEqual({ mode: "default", modeDetected: false });
+  });
+});
+
+describe("parseBusy (footer 'esc to interrupt')", () => {
+  const fixture = (name: string) =>
+    readFileSync(join(__dirname, "__fixtures__", "claude-screens", `${name}.txt`), "utf8").split("\n");
+
+  it("is busy on every captured working screen", () => {
+    for (const f of ["spinner-bare", "spinner-hook", "spinner-thinking-only", "spinner-tokens-growing", "spinner-tokens-thinking"]) {
+      expect(parseBusy(fixture(f)), f).toBe(true);
+    }
+  });
+
+  it("is not busy on idle or plain mode screens", () => {
+    for (const f of ["idle-done", "mode-manual", "mode-acceptedits", "mode-plan", "mode-auto", "mode-bypass"]) {
+      expect(parseBusy(fixture(f)), f).toBe(false);
+    }
+  });
+
+  it("ignores the phrase when it is only in the conversation text", () => {
+    const lines = ["  Tip: press esc to interrupt a long answer.", "", "────────", "> ", "────────", "  ⏸ manual mode on · ? for shortcuts"];
+    expect(parseBusy(lines)).toBe(false);
   });
 });

@@ -83,6 +83,14 @@ describe("buildAgents", () => {
     expect(buildAgents(input({ ...base, now: 1_000_000 + ANSWERED_GRACE_MS + 1 }))[0].status).toBe("waiting");
   });
 
+  // Live: while Claude streams its answer there is no spinner line; only the footer's
+  // "esc to interrupt" says it is working. The row used to read "Idle" mid-answer.
+  it("a busy footer without a spinner still means working", () => {
+    const [a] = buildAgents(input({ tabs: [tab("a")], screens: { a: { mode: "default", modeDetected: true, busy: true } } }));
+    expect(a.status).toBe("working");
+    expect(a.activity).toBe("Working…");
+  });
+
   it("a spinner line means working, with verb, tokens and elapsed", () => {
     const [a] = buildAgents(input({ tabs: [tab("a")], screens: { a: SPINNER } }));
     expect(a.status).toBe("working");

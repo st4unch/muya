@@ -89,7 +89,7 @@ export function deriveStatus(
   const polled = input.sessionStatus[tab.key];
   const answeredAt = input.answered[tab.key];
   const justAnswered = answeredAt !== undefined && input.now - answeredAt < ANSWERED_GRACE_MS;
-  if (screen?.activity) return "working";
+  if (screen?.activity || screen?.busy) return "working";
   if (polled === "waiting-for-input") return justAnswered ? "idle" : "waiting";
   if (polled === "working") return "working";
   return "idle";
