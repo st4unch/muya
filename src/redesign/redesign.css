@@ -26,25 +26,25 @@
    * border-box on everything — every inline metric below was measured without it. */
   line-height: normal;
 }
-.rd-root *:not(.rd-legacy, .rd-legacy *),
-.rd-root *:not(.rd-legacy, .rd-legacy *)::before,
-.rd-root *:not(.rd-legacy, .rd-legacy *)::after {
+.rd-root *:not(.rd-legacy, .rd-legacy *, [data-terminal-slot], [data-terminal-slot] *),
+.rd-root *:not(.rd-legacy, .rd-legacy *, [data-terminal-slot], [data-terminal-slot] *)::before,
+.rd-root *:not(.rd-legacy, .rd-legacy *, [data-terminal-slot], [data-terminal-slot] *)::after {
   box-sizing: content-box;
 }
 /* UA control padding, which preflight zeroes (the reference's buttons carry it). */
-.rd-root button:not(.rd-legacy *) {
+.rd-root button:not(.rd-legacy *, [data-terminal-slot] *) {
   padding: 1px 6px;
   box-sizing: border-box; /* the UA default for buttons (text inputs/textareas stay content-box) */
 }
-.rd-root input:not(.rd-legacy *) {
+.rd-root input:not(.rd-legacy *, [data-terminal-slot] *) {
   padding: 1px 2px;
 }
-.rd-root textarea:not(.rd-legacy *) {
+.rd-root textarea:not(.rd-legacy *, [data-terminal-slot] *) {
   padding: 2px;
 }
 /* preflight makes svg/img block-level; the reference's are inline (baseline-aligned). */
-.rd-root svg:not(.rd-legacy *),
-.rd-root img:not(.rd-legacy *) {
+.rd-root svg:not(.rd-legacy *, [data-terminal-slot] *),
+.rd-root img:not(.rd-legacy *, [data-terminal-slot] *) {
   display: inline;
   vertical-align: baseline;
 }
@@ -54,10 +54,10 @@
  * which silently swaps every button's line metrics and misaligns everything
  * below it. The reference HTML resets this (`button{font-family:inherit}`);
  * match it here for every control we build on. */
-.rd-root button:not(.rd-legacy *),
-.rd-root input:not(.rd-legacy *),
-.rd-root textarea:not(.rd-legacy *),
-.rd-root select:not(.rd-legacy *) {
+.rd-root button:not(.rd-legacy *, [data-terminal-slot] *),
+.rd-root input:not(.rd-legacy *, [data-terminal-slot] *),
+.rd-root textarea:not(.rd-legacy *, [data-terminal-slot] *),
+.rd-root select:not(.rd-legacy *, [data-terminal-slot] *) {
   font-family: inherit;
   color: inherit;
 }
@@ -77,13 +77,14 @@
  * Every text node in the chrome is single-line by default; the terminal slot
  * (real xterm content, or its data-diff-mask placeholder) is the one exception —
  * it owns its own wrapping. Truncating elements additionally get .rd-ellipsis. */
-.rd-root *:not(.rd-legacy, .rd-legacy *) {
+.rd-root *:not(.rd-legacy, .rd-legacy *, [data-terminal-slot], [data-terminal-slot] *) {
   white-space: nowrap;
 }
-.rd-root [data-terminal-slot],
-.rd-root [data-terminal-slot] * {
-  white-space: normal;
-}
+/* Terminal slots are excluded from every reset above (see the :not() lists): xterm
+ * brings its own CSS — its DOM renderer needs `white-space: pre`. An earlier rule
+ * here forced `white-space: normal` into the terminal, and any terminal drawing with
+ * the DOM renderer (no WebGL context — WebKit caps them at 16) lost every space:
+ * "Welcomeback—resumingsession". Nothing may set a value inside the slot. */
 
 .rd-ellipsis {
   min-width: 0;

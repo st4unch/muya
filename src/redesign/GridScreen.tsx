@@ -7,7 +7,7 @@
 
 import { useEffect, useRef } from "react";
 import { GridHeader } from "./GridHeader";
-import { GridPanel } from "./GridPanel";
+import { EmptyGridPanel, GridPanel } from "./GridPanel";
 import { AppFrame } from "./AppFrame";
 import { Rail } from "./Rail";
 import { Footer } from "./Footer";
@@ -46,6 +46,9 @@ const GRID_TEMPLATE: Record<GridLayout, { columns: string; rows: string }> = {
   "2x2": { columns: "repeat(2, minmax(0, 1fr))", rows: "repeat(2, minmax(0, 1fr))" },
   "3x2": { columns: "repeat(3, minmax(0, 1fr))", rows: "repeat(2, minmax(0, 1fr))" },
 };
+
+/** How many cells each layout shows. */
+export const LAYOUT_CAPACITY: Record<GridLayout, number> = { "1": 1, "1x2": 2, "2x2": 4, "3x2": 6 };
 
 export function GridScreen(props: GridScreenProps) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -111,10 +114,20 @@ export function GridScreen(props: GridScreenProps) {
               composerValue={props.composerValues[agent.key] ?? ""}
               onComposerChange={(value) => props.onComposerChange(agent.key, value)}
               onSendMessage={(text) => props.onSendMessage(agent.key, text)}
-              onAssignFromQueue={() => props.onAssignFromQueue(agent.key)}
-              onReplacePanel={() => props.onReplacePanel(agent.key)}
             />
           ))}
+          {/* Cells the layout has room for but no agent fills. Their key is
+              "empty:<n>"; picking an agent for one ADDS it to the grid. */}
+          {Array.from({ length: Math.max(0, LAYOUT_CAPACITY[props.layout] - props.panels.length) }, (_, i) => {
+            const key = `empty:${i}`;
+            return (
+              <EmptyGridPanel
+                key={key}
+                onAssignFromQueue={() => props.onAssignFromQueue(key)}
+                onPickAgent={() => props.onReplacePanel(key)}
+              />
+            );
+          })}
         </div>
       </AppFrame>
     </div>

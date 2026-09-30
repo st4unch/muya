@@ -22,8 +22,6 @@ function renderPanel(agent = waitingAgent, overrides: Partial<React.ComponentPro
       composerValue=""
       onComposerChange={vi.fn()}
       onSendMessage={vi.fn()}
-      onAssignFromQueue={vi.fn()}
-      onReplacePanel={vi.fn()}
       {...overrides}
     />,
   );
@@ -51,10 +49,13 @@ describe("GridPanel", () => {
     expect(onDeny).not.toHaveBeenCalled();
   });
 
-  it("idle panel shows the empty state instead of a composer", () => {
+  // Live bug: an idle Claude session sits at its prompt waiting for input — the grid
+  // used to hide it behind "Waiting for a task", so it could be neither seen nor typed to.
+  it("idle panel still shows its terminal and a composer", () => {
     renderPanel(idleAgent);
-    expect(screen.getByText("Waiting for a task")).toBeInTheDocument();
-    expect(screen.queryByLabelText(/Message /)).not.toBeInTheDocument();
+    expect(document.querySelector(`[data-terminal-slot="${idleAgent.key}"]`)).toBeTruthy();
+    expect(screen.getByLabelText(`Message ${idleAgent.name}`)).toBeInTheDocument();
+    expect(screen.queryByText("Waiting for a task")).not.toBeInTheDocument();
   });
 
   it("working panel composer sends on Enter", () => {

@@ -1592,10 +1592,14 @@ export default function App() {
   };
 
   const swapPanel = (targetKey: string, newKey: string) => {
-    const keys = gridPanels.map((p) => p.key);
-    const i = keys.indexOf(targetKey);
-    if (i === -1) return;
-    keys[i] = newKey;
+    const keys = gridPanels.map((p) => p.key).filter((k) => k !== newKey);
+    // An "empty:<n>" cell has no agent to replace — the pick fills it (appends).
+    if (targetKey.startsWith("empty:")) keys.push(newKey);
+    else {
+      const i = keys.indexOf(targetKey);
+      if (i === -1) return;
+      keys[i] = newKey;
+    }
     setGridKeys(keys);
     setSwapKey(null);
   };

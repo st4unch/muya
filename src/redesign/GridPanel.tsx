@@ -23,8 +23,6 @@ export interface GridPanelProps {
   composerValue: string;
   onComposerChange: (value: string) => void;
   onSendMessage: (text: string) => void;
-  onAssignFromQueue: () => void;
-  onReplacePanel: () => void;
 }
 
 const HEAD_HEIGHT = 49;
@@ -41,8 +39,6 @@ export function GridPanel({
   composerValue,
   onComposerChange,
   onSendMessage,
-  onAssignFromQueue,
-  onReplacePanel,
 }: GridPanelProps) {
   const waiting = agent.status === "waiting";
   const idle = agent.status === "idle";
@@ -135,25 +131,16 @@ export function GridPanel({
         ) : null}
       </div>
 
-      {idle ? (
-        <div style={{ flexGrow: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, color: "var(--text-muted)", fontSize: 13 }}>
-          <span>Waiting for a task</span>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button type="button" onClick={onAssignFromQueue} className="rd-btn2" style={{ height: 32, padding: "0 12px", borderRadius: 7, border: "1px solid var(--border-control)", background: "var(--bg-control)", color: "var(--text)", fontSize: 13 }}>
-              Assign from Queue
-            </button>
-            <button type="button" onClick={onReplacePanel} className="rd-btn2" style={{ height: 32, padding: "0 12px", borderRadius: 7, border: "1px solid var(--border-control)", background: "transparent", color: "var(--text-tertiary)", fontSize: 13 }}>
-              Swap panel
-            </button>
-          </div>
-        </div>
-      ) : (
-        // Real xterm is adopted into this slot; it fills the region with NO padding
-        // of its own — the xterm host itself carries the 14px/16px reference padding.
-        <div data-terminal-slot={agent.key} data-terminal-pad="14px 16px" data-diff-mask style={{ flexGrow: 1, minHeight: 0, overflow: "hidden", background: "var(--bg-terminal)" }} />
-      )}
+      {/* Every agent panel shows its REAL terminal — idle included. An idle Claude
+          session is sitting at its prompt waiting for input; hiding it behind a
+          "Waiting for a task" card (as the reference drew it) made it impossible to
+          see or type to from the grid. Found live, 2026-09-30. The empty-state card
+          now belongs to grid cells with no agent (EmptyGridPanel below). */}
+      {/* Real xterm is adopted into this slot; it fills the region with NO padding
+          of its own — the xterm host itself carries the 14px/16px reference padding. */}
+      <div data-terminal-slot={agent.key} data-terminal-pad="14px 16px" data-diff-mask style={{ flexGrow: 1, minHeight: 0, overflow: "hidden", background: "var(--bg-terminal)" }} />
 
-      {!idle && waiting && (
+      {waiting && (
         <div style={{ height: BAR_HEIGHT, boxSizing: "border-box", display: "flex", alignItems: "center", gap: 8, padding: "0 14px", borderTop: "1px solid var(--border)", background: "var(--bg-chrome)" }}>
           <button type="button" disabled={agent.approval?.actionable === false} onClick={onApprove} style={{ height: 34, padding: "0 16px", borderRadius: 7, border: "none", background: "var(--warning-btn-bg)", color: "var(--warning-btn-fg)", fontSize: 13, fontWeight: 600 }}>
             Allow <span style={{ fontFamily: "var(--font-mono)", fontWeight: 400, fontSize: 11 }}>Y</span>
@@ -167,7 +154,7 @@ export function GridPanel({
         </div>
       )}
 
-      {!idle && !waiting && (
+      {!waiting && (
         <div style={{ height: BAR_HEIGHT, boxSizing: "border-box", display: "flex", alignItems: "center", padding: "0 14px", borderTop: "1px solid var(--border)", background: "var(--bg-chrome)" }}>
           <input
             aria-label={`Message ${agent.name}`}
@@ -185,6 +172,33 @@ export function GridPanel({
           />
         </div>
       )}
+    </section>
+  );
+}
+
+/** A grid cell the current layout has room for but no agent fills. Same frame and
+ *  header height as an agent panel so the grid stays aligned. */
+export function EmptyGridPanel({ onAssignFromQueue, onPickAgent }: { onAssignFromQueue: () => void; onPickAgent: () => void }) {
+  return (
+    <section
+      aria-label="Empty panel"
+      style={{ display: "flex", flexDirection: "column", minHeight: 0, borderRadius: 12, border: "1px solid var(--border)", background: "var(--bg-terminal)", overflow: "hidden" }}
+    >
+      <div style={{ height: HEAD_HEIGHT, boxSizing: "border-box", display: "flex", alignItems: "center", gap: 10, padding: "0 14px", background: "var(--bg-panel)", borderBottom: "1px solid var(--border)" }}>
+        <span style={{ width: 8, height: 8, borderRadius: 4, border: "1.5px solid var(--text-faint)", boxSizing: "border-box", flexShrink: 0 }} />
+        <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Empty panel</span>
+      </div>
+      <div style={{ flexGrow: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, color: "var(--text-muted)", fontSize: 13 }}>
+        <span>Waiting for a task</span>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button type="button" onClick={onAssignFromQueue} className="rd-btn2" style={{ height: 32, padding: "0 12px", borderRadius: 7, border: "1px solid var(--border-control)", background: "var(--bg-control)", color: "var(--text)", fontSize: 13 }}>
+            Assign from Queue
+          </button>
+          <button type="button" onClick={onPickAgent} className="rd-btn2" style={{ height: 32, padding: "0 12px", borderRadius: 7, border: "1px solid var(--border-control)", background: "transparent", color: "var(--text-tertiary)", fontSize: 13 }}>
+            Swap panel
+          </button>
+        </div>
+      </div>
     </section>
   );
 }

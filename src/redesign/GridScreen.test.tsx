@@ -41,4 +41,13 @@ describe("GridScreen", () => {
     expect(screen.getByText("4 panels")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "2×2" })).toBeInTheDocument();
   });
+
+  it("fills unused cells of the layout with empty panels whose pick adds an agent", async () => {
+    const props = { ...baseProps(), panels: previewAgents.slice(0, 2), layout: "2x2" as const };
+    render(<GridScreen {...props} />);
+    const empties = screen.getAllByRole("region", { name: "Empty panel" });
+    expect(empties).toHaveLength(2);
+    screen.getAllByRole("button", { name: "Swap panel" })[0].click();
+    expect(props.onReplacePanel).toHaveBeenCalledWith("empty:0");
+  });
 });
