@@ -1693,7 +1693,7 @@ export default function App() {
     if (selectedCwd) {
       for (const c of changes) {
         if (c.path.endsWith("/")) continue;
-        map.set(c.path, `${selectedCwd.replace(/\/+$/, "")}/${c.path}`);
+        map.set(c.path, absoluteInRepo(c.path));
       }
     }
     return map;
