@@ -92,7 +92,7 @@ export default function SessionsPage({
       const msgs = await invoke<TranscriptMessage[]>("read_session_transcript", { path: h.path });
       setTranscript({ title, id: h.sessionId, msgs });
     } catch (e) {
-      setTranscript({ title, id: h.sessionId, msgs: [{ role: "assistant", text: `Transcript okunamadı: ${e}`, timestamp: null }] });
+      setTranscript({ title, id: h.sessionId, msgs: [{ role: "assistant", text: `Could not read the transcript: ${e}`, timestamp: null }] });
     } finally {
       setTranscriptLoading(false);
     }
@@ -324,7 +324,7 @@ export default function SessionsPage({
                   className="flex items-center gap-1.5 text-[11px] font-mono font-semibold px-2.5 py-1 rounded border border-indigo-200 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/40 cursor-pointer transition-colors"
                 >
                   <Plug className="h-3 w-3" />{" "}
-                  {s.agent === "opencode" ? "Resume" : s.attachable ? "Attach" : "Aç"}
+                  {s.agent === "opencode" ? "Resume" : s.attachable ? "Attach" : "Open"}
                 </button>
                 {s.attachable && s.agent !== "opencode" && (
                   <button

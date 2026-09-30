@@ -67,6 +67,18 @@ export function ControlRailIcon({ size = 18, ...p }: IconProps) {
   );
 }
 
+/* Not in the reference: Sessions rail item (history — clock with a back-arrow), same
+ * 24-viewBox, stroke-1.8, round-cap family as the other rail icons. */
+export function SessionsRailIcon({ size = 18, ...p }: IconProps) {
+  return (
+    <svg {...base(size, 1.8, p)}>
+      <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+      <path d="M3 3v5h5" />
+      <path d="M12 7v5l3 2" />
+    </svg>
+  );
+}
+
 export function QueueRailIcon({ size = 18, ...p }: IconProps) {
   return (
     <svg {...base(size, 1.8, p)}>

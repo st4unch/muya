@@ -99,7 +99,7 @@ export interface FooterStatusVM {
 
 export type ThemePreference = "system" | "light" | "dark";
 
-export type RailItem = "control" | "queue" | "kanban" | "resources" | "ssh" | "chat" | "settings";
+export type RailItem = "control" | "sessions" | "queue" | "kanban" | "resources" | "ssh" | "chat" | "settings";
 
 export type GridLayout = "1" | "1x2" | "2x2" | "3x2";
 

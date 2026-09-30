@@ -1581,7 +1581,7 @@ export default function App() {
       : gridPanels[0]?.key ?? null;
 
   const railActive: RailItem | null =
-    view === "control" ? "control" : view === "queue" ? "queue" : view === "prd" ? "kanban" : view === "tools" ? "resources" : view === "ssh" ? "ssh" : view === "chat" ? "chat" : null;
+    view === "control" ? "control" : view === "sessions" ? "sessions" : view === "queue" ? "queue" : view === "prd" ? "kanban" : view === "tools" ? "resources" : view === "ssh" ? "ssh" : view === "chat" ? "chat" : null;
 
   const navigateRail = (item: RailItem) => {
     if (item === "settings") return setSettingsOpen(true);

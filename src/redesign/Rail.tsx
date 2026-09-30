@@ -1,7 +1,7 @@
 // Created by Claude — Classification: INTERNAL
 //
 // Left navigation rail (PROMPT.md §2), identical on Control and Grid. 64px wide,
-// 7 items (Settings icon-only, pinned to the bottom via a flex spacer).
+// 8 items (Settings icon-only, pinned to the bottom via a flex spacer).
 
 import type { RailItem } from "./types";
 import {
@@ -10,18 +10,20 @@ import {
   KanbanRailIcon,
   QueueRailIcon,
   ResourcesRailIcon,
+  SessionsRailIcon,
   SettingsRailIcon,
   SshRailIcon,
 } from "./icons";
 
 export interface RailProps {
-  /** null on pages that have no rail item (Sessions, Branches). */
+  /** null on pages that have no rail item (Branches). */
   active: RailItem | null;
   onNavigate: (item: RailItem) => void;
 }
 
 const ITEMS: { item: RailItem; label: string; Icon: typeof ControlRailIcon }[] = [
   { item: "control", label: "Control", Icon: ControlRailIcon },
+  { item: "sessions", label: "Sessions", Icon: SessionsRailIcon },
   { item: "queue", label: "Queue", Icon: QueueRailIcon },
   { item: "kanban", label: "Kanban", Icon: KanbanRailIcon },
   { item: "resources", label: "Resources", Icon: ResourcesRailIcon },
