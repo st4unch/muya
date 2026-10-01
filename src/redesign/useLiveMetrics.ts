@@ -25,7 +25,7 @@ const clockNow = () => new Date().toTimeString().slice(0, 5);
 
 /** Live readout; `enabled=false` (fixtures, previews) never polls. */
 export function useLiveMetrics(enabled: boolean): LiveMetrics {
-  const [m, setM] = useState<LiveMetrics>(() => ({ cpu: "0%", ram: "0 MB", clock: clockNow() }));
+  const [m, setM] = useState<LiveMetrics>(() => ({ cpu: "—", ram: "—", clock: clockNow() }));
   useEffect(() => {
     if (!enabled) return;
     let alive = true;
@@ -41,12 +41,20 @@ export function useLiveMetrics(enabled: boolean): LiveMetrics {
         })
         .catch(() => {});
     };
+    // Coming back into view: refresh now instead of showing stale numbers for 2.5 s.
+    const onVisible = () => {
+      if (document.hidden) return;
+      tickClock();
+      poll();
+    };
     tickClock();
     poll();
     const c = setInterval(tickClock, CLOCK_TICK_MS);
     const p = setInterval(poll, METRICS_POLL_MS);
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       alive = false;
+      document.removeEventListener("visibilitychange", onVisible);
       clearInterval(c);
       clearInterval(p);
     };
