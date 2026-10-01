@@ -1,7 +1,7 @@
 // Created by Claude — Classification: INTERNAL
 //
 // Left agent panel on Control (PROMPT.md §3). Groups agents into
-// WAITING FOR YOU / WORKING / IDLE (empty groups hidden), filters via the
+// PINNED / WAITING FOR YOU / WORKING / IDLE (empty groups hidden), filters via the
 // segmented control, and supports HTML5 drag-and-drop reordering + ⌘1–7.
 
 import { AgentKindIcon } from "./AgentKindIcon";
@@ -23,6 +23,8 @@ export interface AgentListProps {
   onRenameAgent?: (key: string, name: string) => void;
   /** Right-click a session: the caller opens its actions menu at the pointer. */
   onAgentContextMenu?: (key: string, e: ReactMouseEvent) => void;
+  /** Agents the operator pinned: listed first under PINNED, whatever their status. */
+  pinnedKeys?: ReadonlySet<string>;
   /** Operator-set width in px; undefined = the responsive default (296, 264 at ≤1360). */
   width?: number;
   /** Resize handle for the panel's inner edge (rendered over the border). */
@@ -40,27 +42,35 @@ const GROUPS: { status: AgentStatus; label: string; color: string }[] = [
   { status: "idle", label: "IDLE", color: "var(--text-muted)" },
 ];
 
-export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelectAgent, onNewAgent, onReorder, width, resizeHandle, filesSection, filesFill = false, onRenameAgent, onAgentContextMenu }: AgentListProps) {
+export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelectAgent, onNewAgent, onReorder, width, resizeHandle, filesSection, filesFill = false, onRenameAgent, onAgentContextMenu, pinnedKeys }: AgentListProps) {
   const dragKeyRef = useRef<string | null>(null);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
 
   const waitingCount = agents.filter((a) => a.status === "waiting").length;
   const workingCount = agents.filter((a) => a.status === "working").length;
 
-  // ⌘1–7 jumps straight to the Nth agent in list order.
+  const filtered = agents.filter((a) => filter === "all" || a.status === filter);
+  const isPinned = (a: AgentVM) => pinnedKeys?.has(a.key) ?? false;
+  const sections = [
+    { id: "pinned", label: "PINNED", color: "var(--text-strong)", members: filtered.filter(isPinned) },
+    ...GROUPS.map((g) => ({ id: g.status, label: g.label, color: g.color, members: filtered.filter((a) => a.status === g.status && !isPinned(a)) })),
+  ];
+  const onScreen = sections.flatMap((sec) => sec.members);
+
+  // ⌘1–9 jumps to the Nth agent as listed on screen (pinned first).
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (!e.metaKey) return;
       const n = Number(e.key);
       if (!Number.isInteger(n) || n < 1 || n > 9) return;
-      const target = agents[n - 1];
+      const target = onScreen[n - 1];
       if (!target) return;
       e.preventDefault();
       onSelectAgent(target.key);
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [agents, onSelectAgent]);
+  }, [onScreen, onSelectAgent]);
 
   const [renamingKey, setRenamingKey] = useState<string | null>(null);
   // Per-row extras: double-click → rename in place, right-click → actions menu.
@@ -74,8 +84,6 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
       : undefined,
     title: onRenameAgent ? "Double-click to rename" : undefined,
   });
-
-  const filtered = agents.filter((a) => filter === "all" || a.status === filter);
 
   function dragProps(key: string) {
     return {
@@ -191,21 +199,20 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
       >
         {(() => {
           let visibleGroupIndex = -1;
-          return GROUPS.map(({ status, label, color }) => {
-            const members = filtered.filter((a) => a.status === status);
+          return sections.map(({ id, label, color, members }) => {
             if (members.length === 0) return null;
             visibleGroupIndex += 1;
             const headTop = visibleGroupIndex === 0 ? 6 : 10;
             return (
-              <div key={status} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <div key={id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <div style={{ padding: `${headTop}px 6px 4px`, fontSize: 11, fontWeight: 600, letterSpacing: "0.06em", color }}>{label}</div>
               {members.map((agent) =>
                 agent.key === renamingKey && onRenameAgent ? (
                   <div
                     key={agent.key}
-                    style={{ display: "flex", alignItems: "center", gap: 8, padding: status === "idle" ? "8px 12px" : "12px 12px", borderRadius: status === "idle" ? 8 : 10, border: "1px solid var(--border-selected)", background: "var(--bg-selected)" }}
+                    style={{ display: "flex", alignItems: "center", gap: 8, padding: agent.status === "idle" ? "8px 12px" : "12px 12px", borderRadius: agent.status === "idle" ? 8 : 10, border: "1px solid var(--border-selected)", background: "var(--bg-selected)" }}
                   >
-                    <span style={{ width: 8, height: 8, borderRadius: 4, background: status === "idle" ? "transparent" : status === "waiting" ? "var(--warning)" : "var(--success)", border: status === "idle" ? "1.5px solid var(--text-faint)" : "none", boxSizing: "border-box", flexShrink: 0 }} />
+                    <span style={{ width: 8, height: 8, borderRadius: 4, background: agent.status === "idle" ? "transparent" : agent.status === "waiting" ? "var(--warning)" : "var(--success)", border: agent.status === "idle" ? "1.5px solid var(--text-faint)" : "none", boxSizing: "border-box", flexShrink: 0 }} />
                     <InlineRename
                       initial={agent.name}
                       onCommit={(name) => {
@@ -215,7 +222,7 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
                       onCancel={() => setRenamingKey(null)}
                     />
                   </div>
-                ) : status === "idle" ? (
+                ) : agent.status === "idle" ? (
                   <IdleRow key={agent.key} agent={agent} onSelect={() => onSelectAgent(agent.key)} dragOver={dragOverKey === agent.key} dragProps={{ ...dragProps(agent.key), ...rowExtras(agent.key) }} />
                 ) : (
                   <AgentCard

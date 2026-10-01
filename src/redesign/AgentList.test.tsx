@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { AgentList } from "./AgentList";
 import { previewAgents } from "./previewFixture";
@@ -60,6 +60,33 @@ describe("AgentList", () => {
     );
     fireEvent.keyDown(window, { key: "1", metaKey: true });
     expect(onSelectAgent).toHaveBeenCalledWith(previewAgents[0].key);
+  });
+
+  it("lists a pinned agent under PINNED and not in its status group", () => {
+    render(
+      <AgentList agents={previewAgents} pinnedKeys={new Set(["iptv-2a"])} selectedKey={null} filter="all" onFilterChange={vi.fn()} onSelectAgent={vi.fn()} onNewAgent={vi.fn()} onReorder={vi.fn()} />,
+    );
+    const pinned = screen.getByText("PINNED").parentElement!;
+    const idle = screen.getByText("IDLE").parentElement!;
+    expect(within(pinned).getByText("iptv-2a")).toBeInTheDocument();
+    expect(within(idle).queryByText("iptv-2a")).not.toBeInTheDocument();
+    expect(within(idle).getByText("numbat-c3")).toBeInTheDocument();
+  });
+
+  it("shows no PINNED group when nothing is pinned", () => {
+    render(
+      <AgentList agents={previewAgents} pinnedKeys={new Set()} selectedKey={null} filter="all" onFilterChange={vi.fn()} onSelectAgent={vi.fn()} onNewAgent={vi.fn()} onReorder={vi.fn()} />,
+    );
+    expect(screen.queryByText("PINNED")).not.toBeInTheDocument();
+  });
+
+  it("⌘1 selects the pinned agent when it is first on screen", () => {
+    const onSelectAgent = vi.fn();
+    render(
+      <AgentList agents={previewAgents} pinnedKeys={new Set(["numbat-c3"])} selectedKey={null} filter="all" onFilterChange={vi.fn()} onSelectAgent={onSelectAgent} onNewAgent={vi.fn()} onReorder={vi.fn()} />,
+    );
+    fireEvent.keyDown(window, { key: "1", metaKey: true });
+    expect(onSelectAgent).toHaveBeenCalledWith("numbat-c3");
   });
 
   it("+ New agent calls onNewAgent", () => {

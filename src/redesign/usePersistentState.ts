@@ -41,6 +41,9 @@ export function usePersistentState<T>(key: string, initial: T, validate: (raw: u
 
 export const asBool = (raw: unknown): boolean | null => (typeof raw === "boolean" ? raw : null);
 
+export const asKeyList = (raw: unknown): string[] | null =>
+  Array.isArray(raw) ? [...new Set(raw.filter((x): x is string => typeof x === "string"))] : null;
+
 export function asClampedNumber(min: number, max: number) {
   return (raw: unknown): number | null =>
     typeof raw === "number" && Number.isFinite(raw) ? Math.min(max, Math.max(min, Math.round(raw))) : null;

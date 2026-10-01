@@ -48,7 +48,7 @@ import { ActivityPanel } from "./redesign/ActivityPanel";
 import { AgentPickerDialog, MenuHeading, MenuItem, MenuPopover, MenuSeparator, RenameDialog, anchorFromRect, type Anchor } from "./redesign/Menus";
 import { useAgentModel } from "./redesign/useAgentModel";
 import { abbreviateHome, pickGridPanels, relativeTo, type SessionStatus } from "./redesign/agentModel";
-import { asBool, usePersistentState } from "./redesign/usePersistentState";
+import { asBool, asKeyList, readStored, usePersistentState, writeStored } from "./redesign/usePersistentState";
 import { adoptHosts, createHost, POOL_STYLE } from "./redesign/terminalHosts";
 import type { AgentVM, ChangeVM, FileVM, GridLayout, InspectorVM, PermissionMode, RailItem } from "./redesign/types";
 import type { AgentFilter } from "./redesign/AgentList";
@@ -143,6 +143,8 @@ function loadList(key: string): string[] {
  *  (initialCommand dropped so we never auto re-launch/attach). File viewers are not
  *  restored: a file is a transient view in Control's main area now, and a hidden
  *  restored viewer would have no way back on screen. */
+const PINNED_AGENTS_KEY = "muya.pinnedAgents";
+
 function loadTabs(): OpenTerminal[] {
   try {
     const v = JSON.parse(localStorage.getItem("apex.openTabs") || "[]");
@@ -295,6 +297,18 @@ export default function App() {
 
   // Open, persistent tabs — one PTY per terminal, alive while you look elsewhere.
   const [openTerminals, setOpenTerminals] = useState<OpenTerminal[]>(loadTabs);
+  // Updater form: closeTerminal also runs from mount-once listeners whose state is stale.
+  const [pinnedList, setPinnedList] = useState<string[]>(() => readStored(PINNED_AGENTS_KEY, asKeyList) ?? []);
+  const updatePinned = useCallback((fn: (prev: string[]) => string[]) => {
+    setPinnedList((prev) => {
+      const next = fn(prev);
+      writeStored(PINNED_AGENTS_KEY, next.length ? next : null);
+      return next;
+    });
+  }, []);
+  const pinnedKeys = useMemo(() => new Set(pinnedList), [pinnedList]);
+  const togglePin = (key: string) =>
+    updatePinned((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
   const openTerminalsRef = useRef(openTerminals);
   openTerminalsRef.current = openTerminals;
   // The selected AGENT (a terminal tab). Files are tracked separately in viewFileKey.
@@ -734,6 +748,7 @@ export default function App() {
     }
     setOpenTerminals((prev) => prev.filter((tm) => tm.key !== key));
     setGridKeys((prev) => prev.filter((k) => k !== key));
+    updatePinned((prev) => prev.filter((k) => k !== key));
     setDirtyTabs((prev) => { const n = { ...prev }; delete n[key]; return n; });
   };
 
@@ -2062,6 +2077,7 @@ export default function App() {
             composerOpen={composerOpen}
             onRenameAgent={renameTerminal}
             onAgentContextMenu={openAgentContextMenu}
+            pinnedAgentKeys={pinnedKeys}
             {...headerProps}
             footer={footerVM}
             railActive="control"
@@ -2160,6 +2176,7 @@ export default function App() {
         />
         {menu?.kind === "actions" && selectedAgentKey && (
           <MenuPopover anchor={menu.anchor} label="Agent actions" onClose={() => setMenu(null)}>
+            <MenuItem label={pinnedKeys.has(selectedAgentKey) ? "Unpin" : "Pin"} onSelect={() => { togglePin(selectedAgentKey); setMenu(null); }} />
             <MenuItem label="Rename…" onSelect={() => { setRenameKey(selectedAgentKey); setMenu(null); }} />
             <MenuItem label="Duplicate" onSelect={() => { duplicateTerminal(selectedAgentKey); setMenu(null); }} />
             <MenuItem label="Reveal in Finder" onSelect={() => { revealTerminalInFinder(selectedAgentKey); setMenu(null); }} />

@@ -84,6 +84,8 @@ export interface ControlScreenProps {
   onRenameAgent?: (key: string, name: string) => void;
   /** Right-click on a session in the list. */
   onAgentContextMenu?: (key: string, e: MouseEvent) => void;
+  /** Agents pinned to the top of the list (PINNED group). */
+  pinnedAgentKeys?: ReadonlySet<string>;
   /** The message box under the terminal; hidden from the footer's chat toggle. */
   composerOpen?: boolean;
   /** window.innerWidth-driven: PROMPT.md §5 responsive breakpoints. */
@@ -130,6 +132,7 @@ export function ControlScreen(props: ControlScreenProps) {
         filesFill={layout.filesOpen && layout.filesH === null}
         onRenameAgent={props.onRenameAgent}
         onAgentContextMenu={props.onAgentContextMenu}
+        pinnedKeys={props.pinnedAgentKeys}
         filesSection={
           <FilesSection
             open={layout.filesOpen}
