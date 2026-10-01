@@ -40,6 +40,9 @@
   --bg-input: #171A20;
   --bg-control: #1A1E25;
   --bg-segment: #1B1F27;
+  /* PDF pages are paper: white in both themes. */
+  --pdf-paper: #FFFFFF;
+  --pdf-page-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
   --bg-segment-active: #2A303C;
   --bg-rail-active: #232936;
   --bg-table-head: #161920;
@@ -108,6 +111,8 @@
   --bg-input: #FFFFFF;
   --bg-control: #FFFFFF;
   --bg-segment: #EEF0F3;
+  --pdf-paper: #FFFFFF;
+  --pdf-page-shadow: 0 1px 4px rgba(16, 24, 40, 0.18);
   --bg-segment-active: #FFFFFF;
   --bg-rail-active: #E8ECF4;
   --bg-table-head: #F4F5F7;

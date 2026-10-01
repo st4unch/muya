@@ -1,43 +1,97 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { formatBytes, imageMime, readFileBytes } from "../lib/fileBytes";
 
 /**
- * Renders a local image file. `read_file` (used by the Monaco editor) requires
- * UTF-8 text and errors on binary — images go through Tauri's asset protocol
- * instead: grant this ONE file read access (`allow_asset_path`, file-scoped, not
- * the whole folder), then load it via `asset://` like any other <img> src.
+ * Renders a local image file from its bytes (`read_file_bytes` → blob: URL). The asset
+ * protocol it used before refused some paths (dot-folders) and showed nothing. Fit to
+ * the area by default; "100%" shows real pixels with scrolling.
  */
 export default function ImageViewer({ path }: { path: string }) {
-  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [src, setSrc] = useState<string | null>(null);
+  const [bytes, setBytes] = useState(0);
   const [error, setError] = useState("");
+  const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
+  const [actual, setActual] = useState(false);
 
   useEffect(() => {
+    let url: string | null = null;
     let cancelled = false;
-    setStatus("loading");
-    invoke("allow_asset_path", { path })
-      .then(() => { if (!cancelled) setStatus("ready"); })
-      .catch((e) => { if (!cancelled) { setError(String(e)); setStatus("error"); } });
-    return () => { cancelled = true; };
+    setSrc(null);
+    setError("");
+    setDims(null);
+    readFileBytes(path)
+      .then((buf) => {
+        if (cancelled) return;
+        url = URL.createObjectURL(new Blob([buf], { type: imageMime(path) }));
+        setBytes(buf.byteLength);
+        setSrc(url);
+      })
+      .catch((e) => !cancelled && setError(String(e)));
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
   }, [path]);
 
+  const name = path.split("/").pop() ?? path;
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="px-3 py-1 border-b border-[var(--border)] bg-[var(--bg-panel)] text-[10px] font-mono text-neutral-500 dark:text-neutral-400 shrink-0">
-        {path}
+    <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--bg-app)" }}>
+      <div
+        style={{
+          height: 32,
+          flexShrink: 0,
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          padding: "0 16px",
+          borderBottom: "1px solid var(--border)",
+          fontSize: 12,
+          color: "var(--text-muted)",
+          fontFamily: "var(--font-mono)",
+        }}
+      >
+        <span>{dims ? `${dims.w} × ${dims.h}` : "—"}</span>
+        <span>{bytes ? formatBytes(bytes) : ""}</span>
+        <span style={{ flexGrow: 1 }} />
+        <button
+          type="button"
+          onClick={() => setActual((a) => !a)}
+          disabled={!src}
+          title={actual ? "Fit to the window" : "Show actual pixels"}
+          style={{ height: 24, padding: "0 10px", borderRadius: 6, border: "1px solid var(--border-control)", background: "var(--bg-control)", color: "var(--text)", fontSize: 12 }}
+        >
+          {actual ? "Fit" : "100%"}
+        </button>
       </div>
-      <div className="flex-1 overflow-auto flex items-center justify-center bg-[repeating-conic-gradient(color-mix(in_srgb,var(--text)_7%,transparent)_0%_25%,transparent_0%_50%)] bg-[length:16px_16px] dark:bg-neutral-900">
-        {status === "error" ? (
-          <div className="p-4 text-xs font-mono text-rose-600 dark:text-red-400">{error}</div>
-        ) : status === "loading" ? (
-          <div className="text-xs font-mono text-neutral-400 dark:text-neutral-500">loading…</div>
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflow: "auto",
+          display: "flex",
+          alignItems: actual ? "flex-start" : "center",
+          justifyContent: actual ? "flex-start" : "center",
+          padding: 16,
+          // Checkerboard so transparent images read as transparent.
+          backgroundImage:
+            "repeating-conic-gradient(color-mix(in srgb, var(--text) 7%, transparent) 0% 25%, transparent 0% 50%)",
+          backgroundSize: "16px 16px",
+        }}
+      >
+        {error ? (
+          <div role="alert" style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: "var(--danger-text)", maxWidth: 560 }}>
+            {error}
+          </div>
+        ) : !src ? (
+          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Loading…</div>
         ) : (
-          // eslint-disable-next-line jsx-a11y/img-redundant-alt -- filename IS the useful description here
           <img
-            src={convertFileSrc(path)}
-            alt={path.split("/").pop()}
-            className="max-w-full max-h-full object-contain select-none"
+            src={src}
+            alt={name}
             draggable={false}
+            onLoad={(e) => setDims({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+            onError={() => setError(`${name} could not be shown as an image.`)}
+            style={actual ? { flexShrink: 0 } : { maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
           />
         )}
       </div>

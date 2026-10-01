@@ -340,6 +340,7 @@ pub fn run() {
             fs::file_access_status,
             fs::relaunch_in_place,
             fs::allow_asset_path,
+            fs::read_file_bytes,
             fs::resolve_path_kind,
             fs::local_ip,
             fs::rename_entry,

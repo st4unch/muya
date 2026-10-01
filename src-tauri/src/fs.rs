@@ -75,6 +75,41 @@ pub fn read_file(path: String) -> Result<String, String> {
     std::fs::read_to_string(p).map_err(|e| format!("read failed: {e}"))
 }
 
+/// Largest file `read_file_bytes` hands to the viewer (images, PDFs).
+const MAX_VIEW_BYTES: u64 = 200 * 1024 * 1024;
+
+/// Raw bytes of a file for the image/PDF viewers. Returned as a binary IPC response
+/// (an ArrayBuffer in JS — no JSON number array, no base64), so the webview renders
+/// from memory instead of the asset protocol, whose path scope silently refused
+/// files under dot-folders. Regular files only, capped at MAX_VIEW_BYTES.
+#[tauri::command(async)]
+pub fn read_file_bytes(path: String) -> Result<tauri::ipc::Response, String> {
+    read_view_bytes(Path::new(&path), MAX_VIEW_BYTES).map(tauri::ipc::Response::new)
+}
+
+fn read_view_bytes(p: &Path, max: u64) -> Result<Vec<u8>, String> {
+    let denied = |e: std::io::Error| {
+        if e.kind() == std::io::ErrorKind::PermissionDenied {
+            access_denied_message(&p.to_string_lossy())
+        } else {
+            format!("cannot open {}: {e}", p.display())
+        }
+    };
+    let meta = std::fs::metadata(p).map_err(denied)?;
+    if !meta.is_file() {
+        return Err(format!("{} is not a file", p.display()));
+    }
+    if meta.len() > max {
+        return Err(format!(
+            "{} is too large to preview ({} MB, limit {} MB)",
+            p.display(),
+            meta.len() / 1_048_576,
+            max / 1_048_576
+        ));
+    }
+    std::fs::read(p).map_err(denied)
+}
+
 /// Write text back to a file (editor save).
 #[tauri::command(async)]
 pub fn write_file(path: String, content: String) -> Result<(), String> {
@@ -1603,6 +1638,19 @@ pub async fn install_muya_plugin() -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn view_bytes_reads_files_and_refuses_dirs_and_oversize() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join(".hidden").join("pic.png");
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        std::fs::write(&f, [0x89, b'P', b'N', b'G', 0, 1, 2]).unwrap();
+        // Dot-folders are fine here (the asset protocol scope refused them).
+        assert_eq!(read_view_bytes(&f, 1024).unwrap(), vec![0x89, b'P', b'N', b'G', 0, 1, 2]);
+        assert!(read_view_bytes(dir.path(), 1024).unwrap_err().contains("not a file"));
+        assert!(read_view_bytes(&f, 3).unwrap_err().contains("too large"));
+        assert!(read_view_bytes(&dir.path().join("nope.pdf"), 1024).unwrap_err().contains("cannot open"));
+    }
     use super::*;
 
     // The relauncher must not open the new copy while the old one is still alive

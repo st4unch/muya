@@ -29,6 +29,7 @@
     "lucide-react": "^0.546.0",
     "marked": "^14.0.0",
     "monaco-editor": "^0.55.1",
+    "pdfjs-dist": "^6.3.289",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },
