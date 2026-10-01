@@ -6,6 +6,19 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.0.2] - 2026-10-01
+
+### Added
+- **Pin agents.** Right-click an agent and choose **Pin** to keep it in a **PINNED**
+  group at the top of the agents list; **Unpin** puts it back. Pins are remembered.
+
+### Fixed
+- **Full color in terminal apps.** Terminals now tell programs they support 24-bit
+  color, so Claude Code, opencode and other full-screen tools use their real palette
+  instead of a coarse 256-color approximation.
+- The turn-progress strip under the terminal no longer shows while the message box is
+  hidden.
+
 ## [4.0.1] - 2026-10-01
 
 Each kind of session gets its own icon, you can change how terminals look, and Muya
