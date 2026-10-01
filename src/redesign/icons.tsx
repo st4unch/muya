@@ -259,3 +259,30 @@ export function PlusIcon({ size = 14, ...p }: IconProps) {
     </svg>
   );
 }
+
+/* Agent kind glyphs (not in the reference): which CLI a session runs, at a glance —
+ * the v0.3 sidebar's spark / code-square / prompt, redrawn in this icon family. */
+export function ClaudeKindIcon({ size = 14, ...p }: IconProps) {
+  return (
+    <svg {...base(size, 2, p)}>
+      <path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4" />
+    </svg>
+  );
+}
+
+export function OpencodeKindIcon({ size = 14, ...p }: IconProps) {
+  return (
+    <svg {...base(size, 1.8, p)}>
+      <rect width="18" height="18" x="3" y="3" rx="3" />
+      <path d="m10 9-3 3 3 3M14 9l3 3-3 3" />
+    </svg>
+  );
+}
+
+export function TerminalKindIcon({ size = 14, ...p }: IconProps) {
+  return (
+    <svg {...base(size, 2, p)}>
+      <path d="m5 7 5 5-5 5M12 18h7" />
+    </svg>
+  );
+}

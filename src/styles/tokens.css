@@ -67,6 +67,9 @@
   --primary-fg: #0F1115;
 
   --success: #4FD1A5;
+  /* Agent kind glyphs (Claude / opencode); terminals use --accent, ssh --text-muted. */
+  --agent-claude: #EE9A72;
+  --agent-opencode: #5FC9E3;
   --success-text: #7BE3BF;
   --success-bg: #15322A;
   --success-card-bg: #172420;
@@ -132,6 +135,8 @@
   --primary-fg: #FFFFFF;
 
   --success: #1E9E72;
+  --agent-claude: #C2582F;
+  --agent-opencode: #0B7A92;
   --success-text: #127A56;
   --success-bg: #E3F5EE;
   --success-card-bg: #EEF8F3;

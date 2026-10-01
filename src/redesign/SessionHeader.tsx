@@ -4,6 +4,7 @@
 // itself wraps at 1440px (a defect — PROMPT update), so every piece here is
 // nowrap + flex-shrink:0, with only the h1 allowed to ellipsis.
 
+import { AgentKindIcon, agentGlyphLabel } from "./AgentKindIcon";
 import type { CSSProperties, MouseEvent } from "react";
 import type { AgentVM } from "./types";
 import { useLayoutEffect, useRef, useState } from "react";
@@ -158,9 +159,13 @@ export function SessionHeader({ agent, onCompact, onSplitToGrid, onStop, onMore,
             </span>
           )}
         </div>
-        <div className="rd-ellipsis" style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-muted)" }}>
-          {agent.path}
-          {agent.branch ? ` · ${agent.branch}` : ""}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+          <AgentKindIcon agent={agent} size={12} />
+          <span style={{ fontSize: 12, color: "var(--text-secondary)", whiteSpace: "nowrap", flexShrink: 0 }}>{agentGlyphLabel(agent)} ·</span>
+          <span className="rd-ellipsis" style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-muted)", minWidth: 0 }}>
+            {agent.path}
+            {agent.branch ? ` · ${agent.branch}` : ""}
+          </span>
         </div>
       </div>
 

@@ -7,6 +7,7 @@
 // emphasis is a 1px border + an extra 1px box-shadow ring, never a 2px border,
 // so it never grows taller than its neighbours.
 
+import { AgentKindIcon } from "./AgentKindIcon";
 import { useState, type KeyboardEvent } from "react";
 import { InlineRename } from "./InlineRename";
 import type { AgentVM } from "./types";
@@ -107,6 +108,7 @@ export function GridPanel({
         }}
       >
         {dot}
+        <AgentKindIcon agent={agent} />
         {renaming && onRename ? (
           <InlineRename
             initial={agent.name}

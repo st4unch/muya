@@ -4,6 +4,7 @@
 // WAITING FOR YOU / WORKING / IDLE (empty groups hidden), filters via the
 // segmented control, and supports HTML5 drag-and-drop reordering + ⌘1–7.
 
+import { AgentKindIcon } from "./AgentKindIcon";
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { InlineRename } from "./InlineRename";
 import type { AgentStatus, AgentVM } from "./types";
@@ -280,6 +281,7 @@ function AgentCard({ agent, selected, onSelect, dragOver, dragProps }: CardProps
     >
       <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ width: 8, height: 8, borderRadius: 4, background: dotColor, flexShrink: 0 }} />
+        <AgentKindIcon agent={agent} />
         <span className="rd-ellipsis" style={{ fontWeight: 600, fontSize: 13, flexGrow: 1, textAlign: "left" }}>
           {agent.name}
         </span>
@@ -317,6 +319,7 @@ function IdleRow({ agent, onSelect, dragOver, dragProps }: { agent: AgentVM; onS
       }}
     >
       <span style={{ width: 8, height: 8, borderRadius: 4, border: "1.5px solid var(--text-faint)", boxSizing: "border-box", flexShrink: 0 }} />
+      <AgentKindIcon agent={agent} />
       {/* The name is what identifies the row: it keeps its full width up to 70% of the
           row and only then truncates. The path takes whatever is left, right-aligned,
           and truncates first. Proportional flex-shrink wasn't enough — a long path
