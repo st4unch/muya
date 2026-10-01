@@ -66,9 +66,11 @@ export interface InspectorVM {
 export interface HeaderVM {
   workspaceName: string;
   workspaceCount: number;
-  cpu: string;
-  ram: string;
-  clock: string;
+  /** Fixed readout values (previews/fixtures). Omitted → the header polls live
+   *  itself (useLiveMetrics), so the poll never re-renders the whole app. */
+  cpu?: string;
+  ram?: string;
+  clock?: string;
   hasNotifications: boolean;
 }
 

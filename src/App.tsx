@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, lazy, Suspense, type ComponentProps } from "react";
 import { createPortal } from "react-dom";
 import { pickNextActiveKey, newSshTabKey, addSshSession, canResumeTab, resumeCommand } from "./lib/tabs";
 import { terminalIsVisible } from "./lib/terminalVisibility";
@@ -254,9 +254,6 @@ export default function App() {
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
 
   // Live metrics of the app process
-  const [cpuUsage, setCpuUsage] = useState(0); // app process CPU %
-  const [ramUsage, setRamUsage] = useState(0); // app process RAM, MB
-  const [clock, setClock] = useState("");
 
   // macOS WKWebView autocorrect/autocapitalize silently rewrites what the
   // operator types into any <input>/<textarea> (hostnames, paths, branch
@@ -277,7 +274,8 @@ export default function App() {
       invoke<AgentSession[]>("list_agent_sessions")
         .then((live) => {
           if (!active || !live.length) return;
-          setAgents(live);
+          // Unchanged list (the usual case) → keep the old array: no app re-render.
+          setAgents((prev) => (JSON.stringify(prev) === JSON.stringify(live) ? prev : live));
           setSelectedAgentId((prev) =>
             live.some((a) => a.id === prev) ? prev : live[0].id
           );
@@ -1120,6 +1118,26 @@ export default function App() {
   const modelRef = useRef(model);
   modelRef.current = model;
   const agentVMs = model.agents;
+
+  // One stable handler set per tab, so the memoized <Terminal> isn't re-rendered by
+  // fresh inline closures every time App renders. Dropped when the tab closes.
+  const terminalHandlersRef = useRef(new Map<string, Pick<ComponentProps<typeof AgentTerminal>, "onPtyReady" | "onPathMenu" | "onScreen">>());
+  const terminalHandlers = (key: string) => {
+    let h = terminalHandlersRef.current.get(key);
+    if (!h) {
+      h = {
+        onPtyReady: (ptyId) => setTerminalPtyIds((prev) => ({ ...prev, [key]: ptyId })),
+        onPathMenu: (resolved, kind, x, y) => setPathMenu({ resolved, kind, x, y }),
+        onScreen: (state) => modelRef.current.reportScreen(key, state),
+      };
+      terminalHandlersRef.current.set(key, h);
+    }
+    return h;
+  };
+  useEffect(() => {
+    const live = new Set(openTerminals.map((t) => t.key));
+    for (const k of terminalHandlersRef.current.keys()) if (!live.has(k)) terminalHandlersRef.current.delete(k);
+  }, [openTerminals]);
   const agentVMsRef = useRef(agentVMs);
   agentVMsRef.current = agentVMs;
 
@@ -1377,27 +1395,8 @@ export default function App() {
     }
   };
 
-  // Clock + live resource usage of the app's own process (not the machine).
-  useEffect(() => {
-    const tickClock = () => setClock(new Date().toTimeString().slice(0, 5));
-    tickClock();
-    const timer = setInterval(tickClock, 10_000);
-    const pollMetrics = () => {
-      if (document.hidden) return;
-      invoke<{ cpu: number; memMb: number }>("app_metrics")
-        .then((m) => {
-          setCpuUsage(Math.round(m.cpu));
-          setRamUsage(m.memMb);
-        })
-        .catch(() => {});
-    };
-    pollMetrics();
-    const cpuTimer = setInterval(pollMetrics, 2500);
-    return () => {
-      clearInterval(timer);
-      clearInterval(cpuTimer);
-    };
-  }, []);
+  // Clock + CPU/RAM of the app's own process: polled by the header readout itself
+  // (src/redesign/useLiveMetrics.ts) so a tick doesn't re-render the whole app.
 
   // Dev-only perf harness hook (src/perf/harness.ts): lets the stress test
   // inflate render load with synthetic branches to measure main-thread blocking.
@@ -1810,9 +1809,6 @@ export default function App() {
   const headerVM = {
     workspaceName: (selectedRoot ?? workspaces[0] ?? "").split("/").filter(Boolean).pop() ?? "No workspace",
     workspaceCount: workspaces.length,
-    cpu: `${cpuUsage}%`,
-    ram: ramUsage < 1024 ? `${Math.round(ramUsage)} MB` : `${(ramUsage / 1024).toFixed(1)} GB`,
-    clock,
     hasNotifications: model.counts.waiting > 0,
   };
   const statusFields = useStatusFields();
@@ -1937,9 +1933,7 @@ export default function App() {
                 isActiveTab: controlVisible && !viewedFile && tm.key === activeTerminalKey,
               })}
               focusToken={controlVisible && tm.key === activeTerminalKey ? tabPickCount : undefined}
-              onPtyReady={(ptyId) => setTerminalPtyIds((prev) => ({ ...prev, [tm.key]: ptyId }))}
-              onPathMenu={(resolved, kind, x, y) => setPathMenu({ resolved, kind, x, y })}
-              onScreen={(state) => model.reportScreen(tm.key, state)}
+              {...terminalHandlers(tm.key)}
             />
           ) : (
             <FileTabView

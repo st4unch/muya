@@ -195,9 +195,11 @@ pub fn spawn_process(
         },
     );
 
-    let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(256); // ≤256×8KB ≈ 2MB buffered
+    // 32 KB reads: a burst (build log, `cat`) arrives in a quarter of the syscalls and
+    // channel sends it took with 8 KB. Bound stays ~2 MB (64 × 32 KB).
+    let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(64);
     std::thread::spawn(move || {
-        let mut buf = [0u8; 8192];
+        let mut buf = vec![0u8; 32 * 1024];
         let mut injected = false;
         let mut tail = String::new();
         loop {

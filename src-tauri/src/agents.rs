@@ -199,6 +199,10 @@ fn branch_for(cwd: &str) -> String {
 
     let branch = resolve_branch(cwd);
     if let Ok(mut map) = cache.lock() {
+        // Every cwd ever seen used to stay forever; drop expired entries as it grows.
+        if map.len() >= 64 {
+            map.retain(|_, (_, at)| at.elapsed() < TTL);
+        }
         map.insert(cwd.to_string(), (branch.clone(), Instant::now()));
     }
     branch

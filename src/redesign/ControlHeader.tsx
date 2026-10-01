@@ -5,7 +5,24 @@
 
 import type { MouseEvent } from "react";
 import type { HeaderVM, ThemePreference } from "./types";
+import { useLiveMetrics } from "./useLiveMetrics";
 import { BellIcon, ChevronDownIcon, PanelLeftIcon, PanelRightIcon, SearchIcon, ThemeMonitorIcon, ThemeMoonIcon, ThemeSunIcon } from "./icons";
+
+/** Its own component so a metrics tick re-renders these three spans, nothing else. */
+function MetricsReadout({ cpu, ram, clock }: Pick<HeaderVM, "cpu" | "ram" | "clock">) {
+  const live = useLiveMetrics(cpu === undefined);
+  return (
+    <>
+      <span>
+        CPU <span style={{ color: "var(--text)" }}>{cpu ?? live.cpu}</span>
+      </span>
+      <span>
+        RAM <span style={{ color: "var(--text)" }}>{ram ?? live.ram}</span>
+      </span>
+      <span style={{ color: "var(--text)" }}>{clock ?? live.clock}</span>
+    </>
+  );
+}
 
 export interface ControlHeaderProps {
   header: HeaderVM;
@@ -181,13 +198,7 @@ export function ControlHeader({
           flexShrink: 0,
         }}
       >
-        <span>
-          CPU <span style={{ color: "var(--text)" }}>{header.cpu}</span>
-        </span>
-        <span>
-          RAM <span style={{ color: "var(--text)" }}>{header.ram}</span>
-        </span>
-        <span style={{ color: "var(--text)" }}>{header.clock}</span>
+        <MetricsReadout cpu={header.cpu} ram={header.ram} clock={header.clock} />
       </div>
 
       <button

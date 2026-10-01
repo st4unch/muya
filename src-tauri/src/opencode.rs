@@ -204,8 +204,7 @@ pub(crate) fn parse_sessions(json: &[u8]) -> Vec<OpencodeSession> {
             }
             let title = first_string(item, &["title", "name", "summary"]).unwrap_or_default();
             let created_at = first_epoch_ms(item, &["time", "updated", "created", "createdAt"]);
-            let directory =
-                first_string(item, &["directory", "cwd", "path"]).unwrap_or_default();
+            let directory = first_string(item, &["directory", "cwd", "path"]).unwrap_or_default();
             Some(OpencodeSession {
                 id,
                 title,
@@ -254,21 +253,51 @@ fn first_epoch_ms(v: &serde_json::Value, keys: &[&str]) -> String {
 /// Never an `Err`: this is merged into the Claude session list, and a machine
 /// without opencode installed is the normal case, not a failure worth showing the
 /// user. A genuinely broken opencode is logged, not surfaced.
+///
+/// Cached: `opencode session list` costs ~0.5 s of CPU per run (measured 2026-10-01)
+/// and the session list is polled every few seconds, which made it the single largest
+/// idle CPU cost of the app. opencode sessions appear/disappear rarely, so a result is
+/// reused for LIST_TTL (NOT_INSTALLED_TTL when opencode isn't there at all).
 pub(crate) fn list_sessions() -> Vec<OpencodeSession> {
+    const LIST_TTL: std::time::Duration = std::time::Duration::from_secs(20);
+    const NOT_INSTALLED_TTL: std::time::Duration = std::time::Duration::from_secs(120);
+    static CACHE: OnceLock<Mutex<Option<(Instant, std::time::Duration, Vec<OpencodeSession>)>>> =
+        OnceLock::new();
+    // Held across the spawn on purpose: concurrent pollers wait for one run and share it.
+    let Ok(mut slot) = CACHE.get_or_init(|| Mutex::new(None)).lock() else {
+        return list_sessions_uncached().1;
+    };
+    if let Some((at, ttl, list)) = slot.as_ref() {
+        if at.elapsed() < *ttl {
+            return list.clone();
+        }
+    }
+    let (installed, list) = list_sessions_uncached();
+    let ttl = if installed {
+        LIST_TTL
+    } else {
+        NOT_INSTALLED_TTL
+    };
+    *slot = Some((Instant::now(), ttl, list.clone()));
+    list
+}
+
+/// One real `opencode session list` run: (opencode could be started, sessions).
+fn list_sessions_uncached() -> (bool, Vec<OpencodeSession>) {
     let out = Command::new(opencode_bin())
         .args(["session", "list", "--format", "json"])
         .output();
     match out {
-        Ok(o) if o.status.success() => parse_sessions(&o.stdout),
+        Ok(o) if o.status.success() => (true, parse_sessions(&o.stdout)),
         Ok(o) => {
             crate::debuglog::log(&format!(
                 "[opencode] session list exited with {}: {}",
                 o.status,
                 String::from_utf8_lossy(&o.stderr).trim()
             ));
-            Vec::new()
+            (true, Vec::new())
         }
-        Err(_) => Vec::new(), // not installed — the common case, not an error
+        Err(_) => (false, Vec::new()), // not installed — the common case, not an error
     }
 }
 
@@ -289,7 +318,10 @@ mod tests {
             working: false,
             at: Instant::now() - RESOLVE_RETRY - Duration::from_secs(1),
         };
-        assert!(!still_usable(&failed_long_ago), "a stale failure must be retried");
+        assert!(
+            !still_usable(&failed_long_ago),
+            "a stale failure must be retried"
+        );
 
         let failed_just_now = Resolved {
             bin: FALLBACK_BIN.to_string(),
@@ -316,7 +348,10 @@ mod tests {
             working: true,
             at: Instant::now() - Duration::from_secs(60 * 60 * 24),
         };
-        assert!(still_usable(&working_old), "a working binary must not expire");
+        assert!(
+            still_usable(&working_old),
+            "a working binary must not expire"
+        );
     }
 
     #[test]
@@ -381,7 +416,11 @@ mod tests {
         }
         let merged = crate::agents::list_agent_sessions_sync(Some(true))
             .expect("list_agent_sessions_sync failed");
-        println!("opencode: {} row(s), merged list: {} row(s)", direct.len(), merged.len());
+        println!(
+            "opencode: {} row(s), merged list: {} row(s)",
+            direct.len(),
+            merged.len()
+        );
         for s in &direct {
             assert!(
                 merged.iter().any(|m| m.id == s.id),
@@ -391,6 +430,23 @@ mod tests {
                 s.title
             );
         }
+    }
+
+    /// The session list is polled every few seconds and one `opencode session list`
+    /// costs ~0.5 s of CPU — repeated calls inside the TTL must reuse the first run.
+    #[test]
+    #[ignore = "requires opencode installed"]
+    fn live_session_list_is_cached_between_polls() {
+        let t = Instant::now();
+        let first = list_sessions();
+        let cold = t.elapsed();
+        let t = Instant::now();
+        for _ in 0..10 {
+            assert_eq!(list_sessions(), first);
+        }
+        let warm = t.elapsed();
+        println!("cold {cold:?}, 10 cached calls {warm:?}");
+        assert!(warm < std::time::Duration::from_millis(20), "cached calls must not spawn opencode: {warm:?}");
     }
 
     #[test]

@@ -27,6 +27,8 @@ static PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 const SETTINGS_FILE: &str = ".claude/muya-settings.json";
 const DEFAULT_LOG_FILE: &str = ".claude/muya-debug.log";
+/// Rotation threshold for the debug log (see `log`).
+const MAX_BYTES: u64 = 5 * 1024 * 1024;
 
 fn home() -> Option<PathBuf> {
     std::env::var("HOME").ok().map(PathBuf::from)
@@ -95,6 +97,13 @@ pub fn log(msg: &str) {
         Err(_) => return,
     };
     let line = format!("[{}] {}\n", rfc3339_now(), msg);
+    // Bounded on disk: once past MAX_BYTES the log becomes `<name>.1` (replacing the
+    // previous one) and a fresh file starts — at most ~2 × MAX_BYTES ever.
+    if std::fs::metadata(&path).map(|m| m.len() > MAX_BYTES).unwrap_or(false) {
+        let mut old = path.clone().into_os_string();
+        old.push(".1");
+        let _ = std::fs::rename(&path, PathBuf::from(old));
+    }
     // 0600: the log holds operator metadata (usernames, URLs) — not for other users.
     use std::os::unix::fs::OpenOptionsExt;
     if let Ok(mut f) = OpenOptions::new().append(true).create(true).mode(0o600).open(&path) {
@@ -212,6 +221,15 @@ mod tests {
         log("retrieve password for account 42 -> 200");
         let after = std::fs::read_to_string(&path).unwrap();
         assert!(!after.contains(secret), "a secret must never reach the log");
+
+        // Past MAX_BYTES the file rotates to `.1` and logging continues in a fresh one.
+        // (Same test: the sink is process-global, parallel tests would race on it.)
+        std::fs::write(&path, vec![b'x'; MAX_BYTES as usize + 1]).unwrap();
+        log("first line after rotation");
+        let rotated = dir.path().join("dbg.log.1");
+        assert_eq!(std::fs::metadata(&rotated).unwrap().len(), MAX_BYTES + 1);
+        let fresh = std::fs::read_to_string(&path).unwrap();
+        assert!(fresh.contains("first line after rotation") && fresh.len() < 200, "{fresh:?}");
 
         // Reset the global so other tests are unaffected.
         set(false, &path_str);

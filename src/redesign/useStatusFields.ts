@@ -52,10 +52,20 @@ export function useStatusData(ptyId: string | undefined, enabled: boolean): Stat
       return;
     }
     let live = true;
+    // The JSON usually doesn't change between polls; keeping the old object then
+    // spares the whole app a re-render every 2 s.
+    let last = "null";
+    const put = (d: StatusData | null) => {
+      const sig = JSON.stringify(d);
+      if (!live || sig === last) return;
+      last = sig;
+      setData(d);
+    };
     const tick = () => {
+      if (document.hidden) return; // window in the background: nobody sees the footer
       invoke<StatusData | null>("statusline_get", { ptyId })
-        .then((d) => { if (live) setData(d && typeof d === "object" ? d : null); })
-        .catch(() => { if (live) setData(null); });
+        .then((d) => put(d && typeof d === "object" ? d : null))
+        .catch(() => put(null));
     };
     setData(null);
     tick();

@@ -37,7 +37,9 @@ pub fn app_metrics(state: State<Metrics>) -> AppMetrics {
     sys.refresh_processes_specifics(
         ProcessesToUpdate::Some(&[pid]),
         true,
-        ProcessRefreshKind::everything(),
+        // Only what the readout shows: `everything()` also re-read the command line,
+        // environment, cwd, exe and disk usage of the process on every 2.5 s poll.
+        ProcessRefreshKind::nothing().with_cpu().with_memory(),
     );
     if let Some(p) = sys.process(pid) {
         AppMetrics {

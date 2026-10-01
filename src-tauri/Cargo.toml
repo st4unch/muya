@@ -96,3 +96,10 @@ core-foundation = "0.10"
 tempfile = "3.27.0"
 wiremock = "0.6"
 
+
+# Smaller, faster release binary. No `panic = "abort"`: a panic on a side thread
+# (a PTY reader, the watcher) must not take every open terminal down with it.
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

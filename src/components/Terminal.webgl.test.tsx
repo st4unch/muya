@@ -62,7 +62,7 @@ vi.mock("../lib/webglRenderer", () => ({
   }),
 }));
 
-import Terminal from "./Terminal";
+import Terminal, { mouseTrackingChange } from "./Terminal";
 
 // jsdom has no ResizeObserver; the terminal only uses it to refit on resize.
 globalThis.ResizeObserver ??= class {
@@ -160,5 +160,19 @@ describe("Terminal: WebGL lease follows visibility", () => {
     await waitFor(() => expect(leases).toHaveLength(1));
     unmount();
     expect(leases[0].release).toHaveBeenCalled();
+  });
+});
+
+describe("mouseTrackingChange", () => {
+  const enc = (s: string) => new TextEncoder().encode(s);
+  it("reads the last mouse-mode switch in a chunk, or nothing", () => {
+    expect(mouseTrackingChange(enc("plain output, no escapes"))).toBeUndefined();
+    expect(mouseTrackingChange(enc("\x1b[31mred\x1b[0m"))).toBeUndefined();
+    expect(mouseTrackingChange(enc("a\x1b[?1000hb"))).toBe(true);
+    expect(mouseTrackingChange(enc("\x1b[?1002h"))).toBe(true);
+    expect(mouseTrackingChange(enc("\x1b[?1003l"))).toBe(false);
+    expect(mouseTrackingChange(enc("\x1b[?1000h then \x1b[?1000l"))).toBe(false);
+    expect(mouseTrackingChange(enc("\x1b[?1001h"))).toBeUndefined(); // not a tracking mode
+    expect(mouseTrackingChange(enc("\x1b[?1000"))).toBeUndefined(); // cut off
   });
 });

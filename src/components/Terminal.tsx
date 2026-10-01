@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
@@ -24,7 +24,33 @@ export type TermTheme = "dark" | "light";
  * in `cwd`; respawns when `cwd` changes. From here the user can run `claude`,
  * `claude attach <id>`, `claude --resume <id>`, git, etc.
  */
-export default function Terminal({
+const MOUSE_SEQ = [0x1b, 0x5b, 0x3f, 0x31, 0x30, 0x30]; // ESC [ ? 1 0 0
+
+/**
+ * Last mouse-tracking mode switch in a PTY chunk: true for `ESC[?1000h`/`1002h`/`1003h`,
+ * false for the matching `…l`, undefined when the chunk has none. Scans the bytes
+ * directly — decoding every chunk of every terminal to a string just to run two regexes
+ * was pure allocation churn. (A sequence split across two chunks is missed, as before.)
+ */
+export function mouseTrackingChange(b: Uint8Array): boolean | undefined {
+  let out: boolean | undefined;
+  for (let i = b.indexOf(0x1b); i !== -1 && i + 7 < b.length; i = b.indexOf(0x1b, i + 1)) {
+    let j = 1;
+    while (j < MOUSE_SEQ.length && b[i + j] === MOUSE_SEQ[j]) j++;
+    if (j < MOUSE_SEQ.length) continue;
+    const variant = b[i + 6];
+    const end = b[i + 7];
+    if ((variant === 0x30 || variant === 0x32 || variant === 0x33) && (end === 0x68 || end === 0x6c)) out = end === 0x68;
+  }
+  return out;
+}
+
+/** Memoized: the app re-renders often (agent status, clock…) and every open terminal is
+ *  mounted, so an unmemoized Terminal re-ran for all of them each time. Pass stable
+ *  callbacks (App keeps one handler set per tab) or the memo never hits. */
+export default memo(Terminal);
+
+function Terminal({
   cwd,
   initialCommand,
   sshServerId,
@@ -282,7 +308,9 @@ export default function Terminal({
         if (disposed) return;
         try {
           const state = parseClaudeScreen(readScreenLines(term));
-          const sig = JSON.stringify(state);
+          // The spinner glyph animates several times a second and nothing shows it;
+          // leaving it in the signature re-rendered the whole app on every frame.
+          const sig = JSON.stringify(state, (k, v) => (k === "glyph" ? undefined : v));
           if (sig === lastScreen) return;
           lastScreen = sig;
           onScreenRef.current?.(state);
@@ -452,10 +480,10 @@ export default function Terminal({
         if (msg instanceof ArrayBuffer) {
           // Detect mouse-tracking mode-set/reset sequences in PTY output so the wheel
           // handler knows whether xterm is already forwarding scroll events to the PTY.
-          const text = new TextDecoder().decode(msg);
-          if (/\x1b\[\?(?:1000|1002|1003)h/.test(text)) mouseTrackingActive = true;
-          if (/\x1b\[\?(?:1000|1002|1003)l/.test(text)) mouseTrackingActive = false;
-          term.write(new Uint8Array(msg));
+          const bytes = new Uint8Array(msg);
+          const mode = mouseTrackingChange(bytes);
+          if (mode !== undefined) mouseTrackingActive = mode;
+          term.write(bytes);
           scheduleScreenParse();
         } else if (msg && msg.type === "exit") {
           mouseTrackingActive = false;

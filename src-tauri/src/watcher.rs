@@ -18,7 +18,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
@@ -34,16 +34,30 @@ const TICK: Duration = Duration::from_millis(40);
 /// (`/private/tmp/x`), the UI may hold `/tmp/x`; matching must go through this map.
 type OpenFiles = Arc<RwLock<HashMap<PathBuf, Vec<String>>>>;
 
+/// "There is work for the flusher" flag + the condvar it sleeps on. The flusher blocks
+/// here while nothing changes, so an idle app has no timer wakeups at all (it used to
+/// tick every 40 ms forever).
+type Wake = Arc<(Mutex<bool>, Condvar)>;
+
+fn wake(w: &Wake) {
+    if let Ok(mut flag) = w.0.lock() {
+        *flag = true;
+        w.1.notify_one();
+    }
+}
+
 /// Holds the live watcher plus a stop flag for its flusher thread so a restart (roots
 /// changed) tears the old thread down instead of leaking it.
 pub struct WatchHandle {
     _watcher: RecommendedWatcher,
     stop: Arc<AtomicBool>,
+    wake: Wake,
 }
 
 impl Drop for WatchHandle {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
+        wake(&self.wake); // the flusher may be blocked waiting for work
     }
 }
 
@@ -136,6 +150,8 @@ fn spawn_watch(
     let files_pending: Arc<Mutex<(HashSet<String>, Instant)>> =
         Arc::new(Mutex::new((HashSet::new(), Instant::now())));
 
+    let wake_flag: Wake = Arc::new((Mutex::new(false), Condvar::new()));
+    let cb_wake = wake_flag.clone();
     let cb_pending = pending.clone();
     let cb_last = last_emit.clone();
     let cb_emit = emit_changed.clone();
@@ -161,6 +177,7 @@ fn spawn_watch(
                     fp.0.extend(hits);
                     fp.1 = Instant::now();
                 }
+                wake(&cb_wake);
             }
         }
 
@@ -178,6 +195,8 @@ fn spawn_watch(
             cb_emit();
         } else {
             cb_pending.store(true, Ordering::Relaxed);
+            drop(l);
+            wake(&cb_wake);
         }
     })
     .map_err(|e| e.to_string())?;
@@ -195,30 +214,53 @@ fn spawn_watch(
     // Flusher: trailing edge of the tree channel, and the settled file batch.
     let stop = Arc::new(AtomicBool::new(false));
     let flush_stop = stop.clone();
+    let flush_wake = wake_flag.clone();
     std::thread::spawn(move || loop {
-        std::thread::sleep(TICK);
-        if flush_stop.load(Ordering::Relaxed) {
-            break;
-        }
-        let batch = match files_pending.lock() {
-            Ok(mut fp) if !fp.0.is_empty() && fp.1.elapsed() >= FILE_SETTLE => {
-                let mut v: Vec<String> = fp.0.drain().collect();
-                v.sort();
-                Some(v)
+        // Idle: sleep until the event callback (or Drop) says there is something to do.
+        {
+            let (lock, cv) = &*flush_wake;
+            let Ok(mut flag) = lock.lock() else { return };
+            while !*flag {
+                flag = match cv.wait(flag) {
+                    Ok(f) => f,
+                    Err(_) => return,
+                };
             }
-            _ => None,
-        };
-        if let Some(v) = batch {
-            emit_files(v);
+            *flag = false;
         }
-        if pending.load(Ordering::Relaxed) {
-            if let Ok(mut l) = last_emit.lock() {
-                if l.elapsed() >= DEBOUNCE {
-                    *l = Instant::now();
-                    drop(l);
-                    pending.store(false, Ordering::Relaxed);
-                    emit_changed();
+        // Busy: tick until both channels have drained, then go back to sleeping.
+        loop {
+            std::thread::sleep(TICK);
+            if flush_stop.load(Ordering::Relaxed) {
+                return;
+            }
+            let batch = match files_pending.lock() {
+                Ok(mut fp) if !fp.0.is_empty() && fp.1.elapsed() >= FILE_SETTLE => {
+                    let mut v: Vec<String> = fp.0.drain().collect();
+                    v.sort();
+                    Some(v)
                 }
+                _ => None,
+            };
+            if let Some(v) = batch {
+                emit_files(v);
+            }
+            if pending.load(Ordering::Relaxed) {
+                if let Ok(mut l) = last_emit.lock() {
+                    if l.elapsed() >= DEBOUNCE {
+                        *l = Instant::now();
+                        drop(l);
+                        pending.store(false, Ordering::Relaxed);
+                        emit_changed();
+                    }
+                }
+            }
+            let files_left = files_pending
+                .lock()
+                .map(|fp| !fp.0.is_empty())
+                .unwrap_or(false);
+            if !files_left && !pending.load(Ordering::Relaxed) {
+                break;
             }
         }
     });
@@ -226,6 +268,7 @@ fn spawn_watch(
     Ok(WatchHandle {
         _watcher: watcher,
         stop,
+        wake: wake_flag,
     })
 }
 
