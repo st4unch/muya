@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { copyToClipboard } from "../lib/clipboard";
 import { relTime, shortCwd } from "../lib/format";
+import { contentTerms, describeQuery, isEmptyQuery, parseSessionQuery, sessionMatches } from "../lib/sessionQuery";
 import { RefreshCw, Play, Plug, FolderGit2, Clock, Square, Search, X, MessageSquare, User, Bot, Copy, Check, Download } from "lucide-react";
 import { buildResumeCommand, isSafeSessionId, singleQuote, type AgentKind } from "../lib/agent";
 
@@ -40,7 +41,13 @@ interface HistoryEntry {
   lastModified: number;
   sizeBytes: number;
   path: string;
+  /** The session's own name (latest /rename, agent name or Claude's title), if any. */
+  name?: string | null;
 }
+
+const folderOf = (cwd: string) => cwd.split("/").filter(Boolean).pop() ?? "";
+/** What a past session is called: its own name, else its folder, else its id. */
+const historyName = (h: HistoryEntry) => h.name || folderOf(h.cwd) || h.sessionId.slice(0, 8);
 
 interface TranscriptMessage {
   role: string;
@@ -85,7 +92,7 @@ export default function SessionsPage({
   const [transcriptLoading, setTranscriptLoading] = useState(false);
 
   const openTranscript = useCallback(async (h: HistoryEntry) => {
-    const title = h.cwd.split("/").filter(Boolean).pop() || h.sessionId.slice(0, 8);
+    const title = historyName(h);
     setTranscriptLoading(true);
     setTranscript({ title, id: h.sessionId, msgs: [] });
     try {
@@ -127,30 +134,44 @@ export default function SessionsPage({
   // Content search: debounced grep of the visible sessions' transcripts, so a word
   // from the CONVERSATION (not just the name/path) surfaces the session. Backend runs
   // it off the worker pool; ≥2 chars only.
+  // Filters (session=, path=, …) narrow WHICH transcripts are grepped; include= (or
+  // plain text) is WHAT is grepped for — every include= term must appear.
+  const pq = useMemo(() => parseSessionQuery(query), [query]);
   useEffect(() => {
-    const q2 = query.trim();
-    if (q2.length < 2) { setContentMatches(new Map()); return; }
+    const terms = contentTerms(pq);
+    if (!terms.length) { setContentMatches(new Map()); return; }
+    const meta = { ...pq, include: [], free: "" };
     let cancelled = false;
     const t = setTimeout(async () => {
       const sessions = [
         // Live sessions only know their cwd → backend derives the transcript path.
-        ...live.map((s) => ({ id: s.id, cwd: s.worktree, path: undefined as string | undefined })),
+        ...live
+          .filter((s) => sessionMatches(meta, { id: s.id, name: s.name, path: s.worktree, branch: s.branch }, true))
+          .map((s) => ({ id: s.id, cwd: s.worktree, path: undefined as string | undefined })),
         // History rows carry the EXACT transcript path — pass it so the backend never
         // has to re-derive (which misses for dotted/odd project dirs).
-        ...history.map((h) => ({ id: h.sessionId, cwd: h.cwd, path: h.path })),
+        ...history
+          .filter((h) => sessionMatches(meta, { id: h.sessionId, name: historyName(h), path: h.cwd }, true))
+          .map((h) => ({ id: h.sessionId, cwd: h.cwd, path: h.path })),
       ].filter((s) => s.id && (s.cwd || s.path));
       try {
-        const matches = await invoke<{ sessionId: string; snippet: string }[]>(
-          "search_session_contents",
-          { query: q2, sessions },
-        );
-        if (!cancelled) setContentMatches(new Map(matches.map((m) => [m.sessionId, m.snippet])));
+        type Hit = { sessionId: string; snippet: string };
+        let found: Map<string, string> | null = null;
+        for (const term of terms) {
+          const pool = found === null ? sessions : sessions.filter((x) => (found as Map<string, string>).has(x.id));
+          const hits = await invoke<Hit[]>("search_session_contents", { query: term, sessions: pool });
+          const next = new Map<string, string>();
+          for (const h of hits) next.set(h.sessionId, (found as Map<string, string> | null)?.get(h.sessionId) ?? h.snippet);
+          found = next;
+          if (next.size === 0) break;
+        }
+        if (!cancelled) setContentMatches(found ?? new Map());
       } catch (e) {
         if (!cancelled) console.warn("[apex] content search failed:", e);
       }
     }, 300);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [query, live, history]);
+  }, [pq, live, history]);
 
   // Export one session's conversation to a Markdown file the operator picks.
   const exportMarkdown = useCallback(async (id: string, cwd: string, label: string) => {
@@ -178,25 +199,14 @@ export default function SessionsPage({
 
   const liveIds = new Set(live.map((s) => s.id));
 
-  const q = query.trim().toLowerCase();
+  const q = !isEmptyQuery(pq);
   const filteredLive = q
-    ? live.filter(s =>
-        s.name.toLowerCase().includes(q) ||
-        s.id.toLowerCase().includes(q) ||
-        s.worktree.toLowerCase().includes(q) ||
-        s.branch.toLowerCase().includes(q) ||
-        s.status.toLowerCase().includes(q) ||
-        contentMatches.has(s.id) // matched inside the conversation
+    ? live.filter((s) =>
+        sessionMatches(pq, { id: s.id, name: s.name, path: s.worktree, branch: s.branch, status: s.status }, contentMatches.has(s.id)),
       )
     : live;
   const filteredHistory = q
-    ? history.filter(h => {
-        const name = h.cwd.split("/").filter(Boolean).pop() ?? "";
-        return name.toLowerCase().includes(q) ||
-          h.cwd.toLowerCase().includes(q) ||
-          h.sessionId.toLowerCase().includes(q) ||
-          contentMatches.has(h.sessionId);
-      })
+    ? history.filter((h) => sessionMatches(pq, { id: h.sessionId, name: historyName(h), path: h.cwd }, contentMatches.has(h.sessionId)))
     : history;
 
   return (
@@ -219,7 +229,7 @@ export default function SessionsPage({
         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-neutral-400 dark:text-neutral-500 pointer-events-none" />
         <input
           type="text"
-          placeholder="Search name, path, branch, ID — and inside the conversation…"
+          placeholder="Search — or filter: session=muya include=v4.1 path=… branch=… id=…"
           value={query}
           onChange={e => setQuery(e.target.value)}
           className="w-full pl-8 pr-8 py-1.5 text-[11px] font-mono rounded border border-neutral-200 dark:border-neutral-700 bg-[var(--bg-control)] text-neutral-800 dark:text-neutral-200 placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none focus:border-indigo-400 dark:focus:border-indigo-600"
@@ -229,6 +239,10 @@ export default function SessionsPage({
             <X className="h-3.5 w-3.5" />
           </button>
         )}
+      </div>
+      {/* What the query means, so a filter typo is visible instead of silently matching nothing. */}
+      <div data-testid="session-query-hint" className="-mt-3 mb-4 text-[10px] font-mono text-[var(--text-muted)]">
+        {q ? describeQuery(pq).join(" · ") : "Filters: session=name  include=text in the conversation  path=  branch=  id=  — combine them, e.g. session=muya include=v4.1"}
       </div>
 
       {/* LIVE */}
@@ -356,7 +370,7 @@ export default function SessionsPage({
           )}
           {filteredHistory.map((h) => {
             const isLive = liveIds.has(h.sessionId);
-            const name = h.cwd.split("/").filter(Boolean).pop() || h.sessionId.slice(0, 8);
+            const name = historyName(h);
             return (
               <div
                 key={h.sessionId}

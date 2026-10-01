@@ -3,6 +3,7 @@
 // App header for both screens' shared chrome (PROMPT.md §2, §3, §6). The theme
 // button (32×32, left of the bell) is the one element not in either reference.
 
+import { onTitleBarMouseDown } from "./titleBar";
 import type { MouseEvent } from "react";
 import type { HeaderVM, ThemePreference } from "./types";
 import { useLiveMetrics } from "./useLiveMetrics";
@@ -78,8 +79,10 @@ export function ControlHeader({
 }: ControlHeaderProps) {
   return (
     <header
-      data-tauri-drag-region
+      onMouseDown={onTitleBarMouseDown}
       style={{
+        userSelect: "none",
+        WebkitUserSelect: "none",
         height: 48,
         flexShrink: 0,
         display: "flex",

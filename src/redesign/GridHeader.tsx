@@ -3,6 +3,7 @@
 // Grid screen's own header (PROMPT.md §4) — a different, denser toolbar than
 // ControlHeader's (no workspace/search/CPU/bell in the grid.reference.html).
 
+import { onTitleBarMouseDown } from "./titleBar";
 import type { GridLayout } from "./types";
 import { plural } from "./text";
 
@@ -26,8 +27,10 @@ const LAYOUTS: { value: GridLayout; label: string }[] = [
 export function GridHeader({ panelCount, layout, onLayoutChange, onWaitingFirst, onBroadcast, onExitGrid }: GridHeaderProps) {
   return (
     <header
-      data-tauri-drag-region
+      onMouseDown={onTitleBarMouseDown}
       style={{
+        userSelect: "none",
+        WebkitUserSelect: "none",
         height: 48,
         flexShrink: 0,
         display: "flex",

@@ -2,8 +2,10 @@
 //! `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`. This scans those files so
 //! the Sessions page can show full history, not just what the live daemon retains.
 
-use std::io::Read;
-use std::path::Path;
+use std::collections::HashMap;
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
 
 use serde::Serialize;
@@ -19,6 +21,77 @@ pub struct SessionHistoryEntry {
     pub size_bytes: u64,
     /// Absolute transcript path — feed to `read_session_transcript`.
     pub path: String,
+    /// The session's own name: the latest `/rename` (custom-title), else the agent
+    /// name, else Claude's auto title. None when the transcript has none.
+    pub name: Option<String>,
+}
+
+/// Name records, best first. Claude appends them as their own JSONL lines, which
+/// always start with the type key, so a prefix check finds them without parsing the
+/// (often megabyte-long) message lines.
+const NAME_RECORDS: [(&[u8], &str); 3] = [
+    (b"{\"type\":\"custom-title\"", "customTitle"),
+    (b"{\"type\":\"agent-name\"", "agentName"),
+    (b"{\"type\":\"ai-title\"", "aiTitle"),
+];
+
+#[derive(Clone, Default)]
+struct NameScan {
+    len: u64,
+    mtime: i64,
+    /// (rank in NAME_RECORDS, name) — lower rank wins; the later record wins a tie.
+    best: Option<(usize, String)>,
+}
+
+/// Scan `path` from `from` for name records, folding them into `best`.
+fn scan_names(path: &Path, from: u64, mut best: Option<(usize, String)>) -> Option<(usize, String)> {
+    let Ok(mut f) = std::fs::File::open(path) else { return best };
+    if from > 0 && f.seek(SeekFrom::Start(from)).is_err() {
+        return best;
+    }
+    let mut r = BufReader::with_capacity(1 << 20, f);
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        match r.read_until(b'\n', &mut line) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {}
+        }
+        for (rank, (prefix, field)) in NAME_RECORDS.iter().enumerate() {
+            if !line.starts_with(prefix) {
+                continue;
+            }
+            let name = serde_json::from_slice::<serde_json::Value>(&line)
+                .ok()
+                .and_then(|v| v.get(*field).and_then(|n| n.as_str()).map(|n| n.trim().to_string()))
+                .filter(|n| !n.is_empty());
+            if let Some(name) = name {
+                if best.as_ref().map_or(true, |(r, _)| rank <= *r) {
+                    best = Some((rank, name));
+                }
+            }
+            break;
+        }
+    }
+    best
+}
+
+/// The session's name, cached per transcript. A transcript only ever grows, so when
+/// it got longer only the new tail is read; anything else (shrunk, rewritten) rescans.
+fn session_name(path: &Path, len: u64, mtime: i64) -> Option<String> {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, NameScan>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let prev = cache.lock().ok().and_then(|c| c.get(path).cloned());
+    let scan = match prev {
+        Some(p) if p.len == len && p.mtime == mtime => p,
+        Some(p) if len > p.len => NameScan { len, mtime, best: scan_names(path, p.len, p.best) },
+        _ => NameScan { len, mtime, best: scan_names(path, 0, None) },
+    };
+    let name = scan.best.as_ref().map(|(_, n)| n.clone());
+    if let Ok(mut c) = cache.lock() {
+        c.insert(path.to_path_buf(), scan);
+    }
+    name
 }
 
 /// Pull `"cwd":"..."` from the first chunk of a JSONL transcript (cheap — no full parse).
@@ -78,12 +151,14 @@ pub fn list_session_history() -> Result<Vec<SessionHistoryEntry>, String> {
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default()
             });
+            let name = session_name(&path, meta.len(), last_modified);
             out.push(SessionHistoryEntry {
                 session_id,
                 cwd,
                 last_modified,
                 size_bytes: meta.len(),
                 path: path.to_string_lossy().into_owned(),
+                name,
             });
         }
     }
@@ -212,6 +287,52 @@ pub fn read_session_transcript(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "machine-specific: reads ~/.claude"]
+    fn names_live_scan_cost() {
+        let t = std::time::Instant::now();
+        let a = list_session_history().unwrap();
+        let cold = t.elapsed();
+        let t = std::time::Instant::now();
+        let _ = list_session_history().unwrap();
+        let warm = t.elapsed();
+        let named: Vec<_> = a.iter().filter_map(|e| e.name.clone()).collect();
+        println!("{} transcripts, {} named, cold {cold:?}, warm {warm:?}, e.g. {:?}", a.len(), named.len(), &named[..named.len().min(6)]);
+    }
+
+    #[test]
+    fn session_name_prefers_rename_then_agent_then_ai_title_and_reads_only_new_tail() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("s.jsonl");
+        let big = "x".repeat(200_000); // a long message line must not hide a record after it
+        let write = |s: &str, append: bool| {
+            let mut f = std::fs::OpenOptions::new().create(true).write(true).append(append).truncate(!append).open(&p).unwrap();
+            f.write_all(s.as_bytes()).unwrap();
+        };
+        let meta = |p: &Path| {
+            let m = std::fs::metadata(p).unwrap();
+            (m.len(), m.modified().unwrap().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64)
+        };
+        write(&format!("{{\"type\":\"user\",\"message\":\"{big}\"}}\n{{\"type\":\"ai-title\",\"aiTitle\":\"Auto title\"}}\n"), false);
+        let (l, m) = meta(&p);
+        assert_eq!(session_name(&p, l, m).as_deref(), Some("Auto title"));
+
+        write("{\"type\":\"agent-name\",\"agentName\":\"muya-all\"}\n", true);
+        let (l, m) = meta(&p);
+        assert_eq!(session_name(&p, l, m).as_deref(), Some("muya-all"));
+
+        // A later /rename wins; an ai-title after it does not override it.
+        write("{\"type\":\"custom-title\",\"customTitle\":\"release v4.1\"}\n{\"type\":\"ai-title\",\"aiTitle\":\"Other\"}\n", true);
+        let (l, m) = meta(&p);
+        assert_eq!(session_name(&p, l, m).as_deref(), Some("release v4.1"));
+
+        let none = dir.path().join("n.jsonl");
+        std::fs::write(&none, "{\"type\":\"user\"}\n").unwrap();
+        let (l, m) = meta(&none);
+        assert_eq!(session_name(&none, l, m), None);
+    }
 
     #[test]
     fn content_to_text_handles_shapes() {

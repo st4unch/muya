@@ -59,6 +59,7 @@ mod sessions;
 mod slash_commands;
 mod ssh;
 mod statusline;
+mod titlebar;
 #[cfg(test)]
 mod testutil;
 mod validate;
@@ -341,6 +342,7 @@ pub fn run() {
             fs::relaunch_in_place,
             fs::allow_asset_path,
             fs::read_file_bytes,
+            titlebar::title_bar_double_click,
             fs::resolve_path_kind,
             fs::local_ip,
             fs::rename_entry,
