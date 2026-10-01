@@ -6,6 +6,36 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.0.1] - 2026-10-01
+
+Each kind of session gets its own icon, you can change how terminals look, and Muya
+uses noticeably less CPU while you work.
+
+### Added
+- **Terminal font size and colors.** A new **Aa** button in the bottom bar sets the
+  terminal font size (also ⌘+ / ⌘− / ⌘0 inside a terminal) and the color scheme:
+  Muya (follows the app theme), Dracula, Nord, One Dark, Tokyo Night, Gruvbox Dark,
+  Solarized Dark, Solarized Light or GitHub Light. It applies to every terminal at
+  once, live, without restarting anything, and is remembered.
+- **Session icons.** Claude Code, opencode, plain terminal and SSH sessions each have
+  their own icon in the agents list, the grid and the session header (which now also
+  says which kind it is, e.g. "Claude Code · ~/project · main").
+
+### Changed
+- **Much lower CPU use while the window is open.** Muya listed opencode sessions
+  every few seconds, and each listing cost about half a second of CPU — around 13% of
+  a core in total. The list is now reused for 20 seconds.
+- The app no longer redraws everything every 2.5 s to update the CPU/RAM readout, or
+  several times a second while a Claude agent is working.
+- Fewer background wake-ups while idle; large terminal output is read in bigger
+  chunks.
+- The app is about a third smaller (26 MB → 17 MB).
+- The header shows "—" instead of "0 MB" until the first CPU/RAM reading arrives.
+
+### Fixed
+- The optional debug log (Settings) no longer grows without limit: it rolls over at
+  5 MB.
+
 ## [4.0.0] - 2026-09-30
 
 A new look, and a round of security fixes. Muya's main screens were redesigned from
