@@ -130,6 +130,8 @@ pub fn spawn_process(
         cmd.arg(a);
     }
     cmd.env("TERM", "xterm-256color");
+    // xterm.js renders 24-bit color; without this, TUIs fall back to 256 colors.
+    cmd.env("COLORTERM", "truecolor");
     // The control plane may itself be launched from inside a Claude Code session
     // (notably during dev), which leaks CLAUDE* env vars. Those mark the new process
     // as a *child* session and disable session persistence — so a `claude` started in
@@ -1323,6 +1325,42 @@ mod tests {
             out.stdout
         );
         assert!(!out.timed_out, "run should not have timed out");
+    }
+
+    /// xterm.js renders 24-bit color, but TUIs only use it when the terminal says so:
+    /// without COLORTERM, Claude Code/opencode drop to a 256-color palette.
+    #[test]
+    fn spawned_terminal_advertises_truecolor() {
+        let manager = PtyManager::default();
+        let out = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let sink = Arc::clone(&out);
+        let ch: Channel<InvokeResponseBody> = Channel::new(move |body| {
+            if let InvokeResponseBody::Raw(b) = body {
+                sink.lock().unwrap().extend_from_slice(&b);
+            }
+            Ok(())
+        });
+        spawn_process(
+            &manager,
+            ch,
+            "/bin/sh",
+            &["-c".to_string(), "printf 'CT=[%s]' \"$COLORTERM\"".to_string()],
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("spawn");
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut s = String::new();
+        while std::time::Instant::now() < deadline {
+            s = String::from_utf8_lossy(&out.lock().unwrap()).into_owned();
+            if s.contains("CT=[") && s[s.find("CT=[").unwrap()..].contains(']') {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(s.contains("CT=[truecolor]"), "COLORTERM not advertised, got: {s:?}");
     }
 
     /// Proves the CLAUDE* env strip works: a shell spawned with the strip sees an
