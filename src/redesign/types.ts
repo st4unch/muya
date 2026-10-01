@@ -103,9 +103,19 @@ export interface FooterStatusVM {
 
 export type ThemePreference = "system" | "light" | "dark";
 
-export type RailItem = "control" | "sessions" | "queue" | "kanban" | "resources" | "ssh" | "chat" | "settings";
+export type RailItem = "control" | "files" | "sessions" | "queue" | "kanban" | "resources" | "ssh" | "chat" | "settings";
 
 export type GridLayout = "1" | "1x2" | "2x2" | "3x2";
+
+/** One open file in the Files rail's list. */
+export interface OpenFileVM {
+  key: string;
+  name: string;
+  /** Containing folder, home-abbreviated. */
+  dir: string;
+  kind: "code" | "markdown" | "image" | "pdf";
+  dirty: boolean;
+}
 
 /** A file open in the Control main area instead of the terminal (FileHeader). */
 export interface FileVM {

@@ -69,6 +69,54 @@ export function ControlRailIcon({ size = 18, ...p }: IconProps) {
 
 /* Not in the reference: Sessions rail item (history — clock with a back-arrow), same
  * 24-viewBox, stroke-1.8, round-cap family as the other rail icons. */
+export function FilesRailIcon({ size = 18, ...p }: IconProps) {
+  return (
+    <svg {...base(size, 1.8, p)}>
+      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+      <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+      <path d="M8 13h8M8 17h5" />
+    </svg>
+  );
+}
+
+/* Open-file kind glyphs (Files list). */
+export function FileCodeIcon({ size = 14, ...p }: IconProps) {
+  return (
+    <svg {...base(size, 1.8, p)}>
+      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+      <path d="m10 12.5-2 2 2 2M14 12.5l2 2-2 2" />
+    </svg>
+  );
+}
+
+export function FileMarkdownIcon({ size = 14, ...p }: IconProps) {
+  return (
+    <svg {...base(size, 1.8, p)}>
+      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+      <path d="M8 17v-5l2 2 2-2v5M15 12v5m-1.5-1.5L15 17l1.5-1.5" />
+    </svg>
+  );
+}
+
+export function FileImageIcon({ size = 14, ...p }: IconProps) {
+  return (
+    <svg {...base(size, 1.8, p)}>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <circle cx="9" cy="9" r="2" />
+      <path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21" />
+    </svg>
+  );
+}
+
+export function FilePdfIcon({ size = 14, ...p }: IconProps) {
+  return (
+    <svg {...base(size, 1.8, p)}>
+      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+      <path d="M8 18v-5h1.5a1.5 1.5 0 0 1 0 3H8M13 13v5h1a2 2 0 0 0 2-2v-1a2 2 0 0 0-2-2Z" />
+    </svg>
+  );
+}
+
 export function SessionsRailIcon({ size = 18, ...p }: IconProps) {
   return (
     <svg {...base(size, 1.8, p)}>

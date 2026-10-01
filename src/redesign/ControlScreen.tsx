@@ -17,9 +17,10 @@ import { ProgressStrip } from "./ProgressStrip";
 import { Composer } from "./Composer";
 import { Inspector, type InspectorTab } from "./Inspector";
 import { FilesSection } from "./FilesSection";
+import { OpenFilesList } from "./OpenFilesList";
 import { ResizeHandle } from "./ResizeHandle";
 import { AGENTS_W, INSPECTOR_W, usePanelLayout } from "./usePanelLayout";
-import type { AgentVM, FileVM, FooterVM, HeaderVM, InspectorVM, PermissionMode, RailItem, ThemePreference } from "./types";
+import type { AgentVM, FileVM, FooterVM, HeaderVM, InspectorVM, OpenFileVM, PermissionMode, RailItem, ThemePreference } from "./types";
 
 export interface ControlScreenProps {
   header: HeaderVM;
@@ -90,12 +91,48 @@ export interface ControlScreenProps {
   composerOpen?: boolean;
   /** window.innerWidth-driven: PROMPT.md §5 responsive breakpoints. */
   inspectorOpen: boolean;
+
+  /** "files" = the Files rail: the left column lists open files and the main area shows
+   *  the selected one. "agents" = terminals only (an open file waits in Files).
+   *  Omitted: the older behavior, where an open file replaces the terminal. */
+  mode?: "agents" | "files";
+  openFiles?: OpenFileVM[];
+  selectedFileKey?: string | null;
+  onSelectFile?: (key: string) => void;
+  onCloseOpenFile?: (key: string) => void;
 }
 
 export function ControlScreen(props: ControlScreenProps) {
   const layout = usePanelLayout(!props.inspectorOpen);
   const selected = props.agents.find((a) => a.key === props.selectedAgentKey) ?? null;
   const waitingAgents = props.agents.filter((a) => a.status === "waiting" && a.approval);
+  const filesMode = props.mode === "files";
+  // Which main area: the open file (Files rail, or the legacy no-mode behavior) or the
+  // selected agent's terminal.
+  const file = filesMode || props.mode === undefined ? props.openFile : null;
+  const agent = filesMode ? null : selected;
+  const filesSection = (
+    <FilesSection
+      open={layout.filesOpen}
+      onToggle={layout.toggleFiles}
+      count={props.filesCount ?? 0}
+      height={layout.filesH}
+      onHeightChange={layout.setFilesH}
+      onHeightReset={() => layout.setFilesH(null)}
+    >
+      {props.filesSlot}
+    </FilesSection>
+  );
+  const listResize = (label: string) => (
+    <ResizeHandle
+      side="right"
+      label={label}
+      min={AGENTS_W.min}
+      max={AGENTS_W.max}
+      onResize={layout.setAgentsW}
+      onReset={() => layout.setAgentsW(null)}
+    />
+  );
 
   return (
     <AppFrame
@@ -116,35 +153,27 @@ export function ControlScreen(props: ControlScreenProps) {
       rail={<Rail active={props.railActive} onNavigate={props.onRailNavigate} />}
       footer={<Footer {...props.footer} />}
     >
-      {layout.agentsOpen && (
+      {layout.agentsOpen && filesMode && (
+        <OpenFilesList
+          files={props.openFiles ?? []}
+          selectedKey={props.selectedFileKey ?? null}
+          onSelect={(key) => props.onSelectFile?.(key)}
+          onClose={(key) => props.onCloseOpenFile?.(key)}
+          width={layout.agentsW ?? undefined}
+          resizeHandle={listResize("Resize files panel")}
+          filesFill={layout.filesOpen && layout.filesH === null}
+          filesSection={filesSection}
+        />
+      )}
+      {layout.agentsOpen && !filesMode && (
       <AgentList
         width={layout.agentsW ?? undefined}
-        resizeHandle={
-          <ResizeHandle
-            side="right"
-            label="Resize agents panel"
-            min={AGENTS_W.min}
-            max={AGENTS_W.max}
-            onResize={layout.setAgentsW}
-            onReset={() => layout.setAgentsW(null)}
-          />
-        }
+        resizeHandle={listResize("Resize agents panel")}
         filesFill={layout.filesOpen && layout.filesH === null}
         onRenameAgent={props.onRenameAgent}
         onAgentContextMenu={props.onAgentContextMenu}
         pinnedKeys={props.pinnedAgentKeys}
-        filesSection={
-          <FilesSection
-            open={layout.filesOpen}
-            onToggle={layout.toggleFiles}
-            count={props.filesCount ?? 0}
-            height={layout.filesH}
-            onHeightChange={layout.setFilesH}
-            onHeightReset={() => layout.setFilesH(null)}
-          >
-            {props.filesSlot}
-          </FilesSection>
-        }
+        filesSection={filesSection}
         agents={props.agents}
         selectedKey={props.selectedAgentKey}
         filter={props.agentFilter}
@@ -156,22 +185,28 @@ export function ControlScreen(props: ControlScreenProps) {
       )}
 
       <main style={{ flexGrow: 1, minWidth: 0, display: "flex", flexDirection: "column", background: "var(--bg-app)", minHeight: 0 }}>
-        {props.openFile ? (
-          <FileHeader file={props.openFile} onClose={props.onCloseFile} />
-        ) : selected ? (
-          <SessionHeader agent={selected} onRename={props.onRenameAgent ? (name) => props.onRenameAgent!(selected.key, name) : undefined} onCompact={props.onCompact} onSplitToGrid={props.onSplitToGrid} onStop={props.onStop} onMore={props.onMoreActions} />
+        {file ? (
+          <FileHeader file={file} onClose={props.onCloseFile} />
+        ) : agent ? (
+          <SessionHeader agent={agent} onRename={props.onRenameAgent ? (name) => props.onRenameAgent!(agent.key, name) : undefined} onCompact={props.onCompact} onSplitToGrid={props.onSplitToGrid} onStop={props.onStop} onMore={props.onMoreActions} />
         ) : null}
 
         {/* The real xterm instance is adopted into this slot by the orchestrator — it
             owns no styling here beyond filling the region edge-to-edge with the
             terminal background; the xterm host itself carries the 20px/28px padding. */}
-        {props.openFile ? (
+        {file ? (
           <div style={{ flexGrow: 1, minHeight: 0, minWidth: 0, overflow: "hidden", display: "flex", flexDirection: "column", background: "var(--bg-app)" }}>
             {props.fileSlot}
           </div>
-        ) : selected ? (
+        ) : filesMode ? (
+          <div style={{ flexGrow: 1, minHeight: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, color: "var(--text-muted)", fontSize: 13, background: "var(--bg-app)" }}>
+            <span style={{ fontSize: 15, fontWeight: 600, color: "var(--text)" }}>No file open</span>
+            <span>Pick a file in the tree on the left, or search with ⌘K.</span>
+            <span>Images and PDFs open here too.</span>
+          </div>
+        ) : agent ? (
           <div
-            data-terminal-slot={selected.key}
+            data-terminal-slot={agent.key}
             data-diff-mask
             style={{ flexGrow: 1, minHeight: 0, overflow: "hidden", background: "var(--bg-terminal)" }}
           />
@@ -194,30 +229,30 @@ export function ControlScreen(props: ControlScreenProps) {
           </div>
         )}
 
-        {selected && !props.openFile && (
+        {agent && !file && (
           // Turn progress belongs to the chat box: with it closed the strip only echoed
           // Claude's own spinner, and showing/hiding it each turn resized the terminal.
           <ProgressStrip
-            {...(props.composerOpen !== false ? selected.progress : undefined)}
+            {...(props.composerOpen !== false ? agent.progress : undefined)}
             updateReady={props.updateReady}
             onRestart={props.onRestartForUpdate}
           />
         )}
 
-        {selected && !props.openFile && props.composerOpen !== false && (
+        {agent && !file && props.composerOpen !== false && (
           <Composer
-            agentName={selected.name}
-            target={selected.agentRunning ? "agent" : "shell"}
+            agentName={agent.name}
+            target={agent.agentRunning ? "agent" : "shell"}
             value={props.composerValue}
             onChange={props.onComposerChange}
             onSend={props.onSendMessage}
-            mode={selected.mode as PermissionMode}
+            mode={agent.mode as PermissionMode}
             onCycleMode={props.onCycleMode}
             onModeMenu={props.onModeMenu}
             onAttachFile={props.onAttachFile}
             onCommands={props.onOpenCommands}
-            slashAgent={selected.kind === "opencode" ? "opencode" : "claude"}
-            slashCwd={selected.cwd}
+            slashAgent={agent.kind === "opencode" ? "opencode" : "claude"}
+            slashCwd={agent.cwd}
           />
         )}
       </main>

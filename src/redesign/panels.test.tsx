@@ -148,7 +148,7 @@ describe("files fill", () => {
   it("expanded Files fills the panel until the split is dragged; double-click returns to fill", () => {
     render(<ControlScreen {...controlProps()} />);
     fireEvent.click(screen.getByRole("button", { name: /FILES/ }));
-    const files = screen.getByLabelText("Files");
+    const files = screen.getByLabelText("File tree");
     expect(files.style.flex).toBe("1 1 0px");
     localStorage.setItem("muya.panels.filesHeight", "300");
   });
@@ -156,7 +156,7 @@ describe("files fill", () => {
     localStorage.setItem("muya.panels.filesOpen", "true");
     localStorage.setItem("muya.panels.filesHeight", "300");
     render(<ControlScreen {...controlProps()} />);
-    expect(screen.getByLabelText("Files").style.flex).toBe("0 1 300px");
+    expect(screen.getByLabelText("File tree").style.flex).toBe("0 1 300px");
   });
 });
 

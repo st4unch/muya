@@ -7,6 +7,7 @@ import type { RailItem } from "./types";
 import {
   ChatRailIcon,
   ControlRailIcon,
+  FilesRailIcon,
   KanbanRailIcon,
   QueueRailIcon,
   ResourcesRailIcon,
@@ -23,6 +24,7 @@ export interface RailProps {
 
 const ITEMS: { item: RailItem; label: string; Icon: typeof ControlRailIcon }[] = [
   { item: "control", label: "Control", Icon: ControlRailIcon },
+  { item: "files", label: "Files", Icon: FilesRailIcon },
   { item: "sessions", label: "Sessions", Icon: SessionsRailIcon },
   { item: "queue", label: "Queue", Icon: QueueRailIcon },
   { item: "kanban", label: "Kanban", Icon: KanbanRailIcon },

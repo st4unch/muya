@@ -93,3 +93,53 @@ describe("ControlScreen", () => {
     expect(document.querySelector("[data-terminal-slot]")).toBeNull();
   });
 });
+
+describe("Files rail", () => {
+  const files = [
+    { key: "edit:/r/a.ts", name: "a.ts", dir: "~/r", kind: "code" as const, dirty: true },
+    { key: "pdf:/r/b.pdf", name: "b.pdf", dir: "~/r", kind: "pdf" as const, dirty: false },
+  ];
+
+  it("lists open files instead of agents; click selects, × closes, unsaved is marked", async () => {
+    const { fireEvent, within } = await import("@testing-library/react");
+    const onSelectFile = vi.fn();
+    const onCloseOpenFile = vi.fn();
+    render(
+      <ControlScreen
+        {...baseProps()}
+        railActive="files"
+        mode="files"
+        openFiles={files}
+        selectedFileKey="edit:/r/a.ts"
+        onSelectFile={onSelectFile}
+        onCloseOpenFile={onCloseOpenFile}
+        openFile={{ name: "a.ts", path: "~/r/a.ts" }}
+        fileSlot={<div data-testid="file-slot" />}
+      />,
+    );
+    expect(screen.queryByLabelText("Agents")).toBeNull();
+    const list = screen.getByRole("list", { name: "Open files" });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(list).getByLabelText("Unsaved changes")).toBeInTheDocument();
+    fireEvent.click(within(list).getByText("b.pdf"));
+    expect(onSelectFile).toHaveBeenCalledWith("pdf:/r/b.pdf");
+    fireEvent.click(within(list).getByRole("button", { name: "Close b.pdf" }));
+    expect(onCloseOpenFile).toHaveBeenCalledWith("pdf:/r/b.pdf");
+    // The main area shows the file, not the terminal or the message box.
+    expect(screen.getByTestId("file-slot")).toBeInTheDocument();
+    expect(document.querySelector("[data-terminal-slot]")).toBeNull();
+  });
+
+  it("with nothing open says how to open a file", () => {
+    render(<ControlScreen {...baseProps()} railActive="files" mode="files" openFiles={[]} selectedFileKey={null} />);
+    expect(screen.getByText("No file open")).toBeInTheDocument();
+    expect(screen.getByText(/No open files/)).toBeInTheDocument();
+  });
+
+  it("agents mode keeps the terminal on screen even while a file is open", () => {
+    render(<ControlScreen {...baseProps()} mode="agents" openFiles={files} openFile={{ name: "a.ts", path: "~/r/a.ts" }} fileSlot={<div data-testid="file-slot" />} />);
+    expect(screen.queryByTestId("file-slot")).toBeNull();
+    expect(document.querySelector('[data-terminal-slot="muya-all"]')).not.toBeNull();
+    expect(screen.getByLabelText("Agents")).toBeInTheDocument();
+  });
+});

@@ -125,6 +125,26 @@
   background: var(--bg-segment);
 }
 
+/* Files rail: open-file rows. Background lives in inline style when selected. */
+.rd-open-file {
+  transition: background-color 120ms;
+}
+.rd-open-file:not([data-selected]):hover {
+  background: var(--bg-segment) !important;
+}
+.rd-open-file-close {
+  opacity: 0;
+}
+.rd-open-file:hover .rd-open-file-close,
+.rd-open-file[data-selected] .rd-open-file-close,
+.rd-open-file-close:focus-visible {
+  opacity: 1;
+}
+.rd-open-file-close:hover {
+  background: var(--bg-segment-active) !important;
+  color: var(--text) !important;
+}
+
 /* Waiting/working agent cards + grid panels being dragged over. */
 .rd-agent-card {
   transition: background-color 120ms;
@@ -262,7 +282,7 @@
 
 /* The Files filter is a borderless inline row (its own bottom rule marks it); the global
  * 2px ring boxed it in like a stray form field. The caret shows focus. */
-.rd-root section[aria-label="Files"] input:focus-visible {
+.rd-root section[aria-label="File tree"] input:focus-visible {
   outline: none;
 }
 

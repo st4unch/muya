@@ -39,7 +39,7 @@ export function FilesSection({ open, onToggle, count, height, onHeightChange, on
   return (
     <section
       ref={ref}
-      aria-label="Files"
+      aria-label="File tree"
       style={{
         position: "relative",
         boxSizing: "border-box",

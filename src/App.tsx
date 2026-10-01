@@ -50,7 +50,7 @@ import { useAgentModel } from "./redesign/useAgentModel";
 import { abbreviateHome, pickGridPanels, relativeTo, type SessionStatus } from "./redesign/agentModel";
 import { asBool, asKeyList, readStored, usePersistentState, writeStored } from "./redesign/usePersistentState";
 import { adoptHosts, createHost, POOL_STYLE } from "./redesign/terminalHosts";
-import type { AgentVM, ChangeVM, FileVM, GridLayout, InspectorVM, PermissionMode, RailItem } from "./redesign/types";
+import type { AgentVM, ChangeVM, FileVM, GridLayout, OpenFileVM, InspectorVM, PermissionMode, RailItem } from "./redesign/types";
 import type { AgentFilter } from "./redesign/AgentList";
 import type { InspectorTab } from "./redesign/Inspector";
 import { shouldExitGridOnEscape } from "./redesign/gridKeys";
@@ -166,11 +166,31 @@ function loadTabs(): OpenTerminal[] {
         // did nothing. `sessionId` is the durable fact — it is only ever written
         // from real session discovery, so its presence alone means "this tab held
         // conversation X and can rejoin it".
-        ({ ...t, initialCommand: undefined, sshServerId: undefined, needsResume: canResumeTab(t) }),
-      );
+        ({ ...t, initialCommand: undefined, sshServerId: undefined, needsResume: canResumeTab(t) }) as OpenTerminal,
+      )
+      .concat(loadOpenFiles());
   } catch {
-    return [];
+    return loadOpenFiles();
   }
+}
+
+/** Files open in the Files rail, remembered across restarts (path + viewer kind). */
+const OPEN_FILES_KEY = "muya.openFiles";
+/** Past this many open files, opening another closes the oldest saved one. */
+const MAX_OPEN_FILES = 30;
+const FILE_KINDS = new Set(["editor", "mdview", "imgview", "pdfview"]);
+
+function loadOpenFiles(): OpenTerminal[] {
+  const files =
+    readStored(OPEN_FILES_KEY, (raw) =>
+      Array.isArray(raw)
+        ? raw.filter(
+            (f): f is { key: string; kind: OpenTerminal["kind"]; filePath: string; name: string } =>
+              !!f && typeof f.key === "string" && typeof f.filePath === "string" && typeof f.name === "string" && FILE_KINDS.has(f.kind),
+          )
+        : null,
+    ) ?? [];
+  return files.slice(-MAX_OPEN_FILES).map((f) => ({ key: f.key, kind: f.kind, filePath: f.filePath, name: f.name }));
 }
 
 const GRID_CAPACITY: Record<GridLayout, number> = { "1": 1, "1x2": 2, "2x2": 4, "3x2": 6 };
@@ -324,6 +344,9 @@ export default function App() {
   }, [activeTerminalKey]);
   // The file currently shown in Control's main area instead of the terminal.
   const [viewFileKey, setViewFileKey] = useState<string | null>(null);
+  // Control's two faces: "agents" (terminals) and "files" (the Files rail — open files
+  // on the left, the selected one in the main area). Open files survive switching.
+  const [controlMode, setControlMode] = useState<"agents" | "files">("agents");
   // Bumped every time the operator deliberately picks an agent (list, ⌘1–7, palette).
   // Grid terminals are all `active` at once, so a pick there would otherwise leave the
   // keyboard wherever it was.
@@ -595,17 +618,8 @@ export default function App() {
 
   // ── Opening / closing tabs ────────────────────────────────────────────────
 
-  // A clean file is a throw-away view; a file with unsaved edits stays open (hidden)
-  // until the operator closes it, so nothing is ever lost by looking at something else.
-  const dropCleanFiles = useCallback((keepKey: string | null) => {
-    setOpenTerminals((prev) => {
-      const next = prev.filter((t) => !isFileTab(t) || t.key === keepKey || dirtyTabsRef.current[t.key]);
-      return next.length === prev.length ? prev : next;
-    });
-  }, []);
-
   // Open (or focus) a persistent tab. A terminal becomes the selected agent; a file
-  // replaces the terminal in Control's main area.
+  // joins the Files rail's list and is shown there.
   const openTerminal = (spec: OpenTerminal) => {
     // Derive the agent from the command whenever the caller didn't state one.
     // `detectAgent` replaces the old inline regex: it also matches an absolute
@@ -621,14 +635,21 @@ export default function App() {
     if (withKind.kind === "terminal") {
       setOpenTerminals((prev) => (prev.some((tm) => tm.key === withKind.key) ? prev : [...prev, withKind]));
       setActiveTerminalKey(withKind.key);
-      setViewFileKey(null);
-      dropCleanFiles(null);
+      setControlMode("agents");
     } else {
+      // Files stay open (listed in the Files rail) — up to MAX_OPEN_FILES; past that the
+      // oldest saved one closes. Unsaved files are never dropped.
       setOpenTerminals((prev) => {
-        const kept = prev.filter((t) => !isFileTab(t) || t.key === withKind.key || dirtyTabsRef.current[t.key]);
-        return kept.some((tm) => tm.key === withKind.key) ? kept : [...kept, withKind];
+        if (prev.some((tm) => tm.key === withKind.key)) return prev;
+        const next = [...prev, withKind];
+        const files = next.filter(isFileTab);
+        const excess = files.length - MAX_OPEN_FILES;
+        if (excess <= 0) return next;
+        const drop = new Set(files.filter((t) => t.key !== withKind.key && !dirtyTabsRef.current[t.key]).slice(0, excess).map((t) => t.key));
+        return next.filter((t) => !drop.has(t.key));
       });
       setViewFileKey(withKind.key);
+      setControlMode("files");
       showControl();
     }
   };
@@ -638,8 +659,7 @@ export default function App() {
    *  empty shell. Runs once per tab — the flag clears after the command is sent. */
   const activateTerminal = (key: string) => {
     pickTab(key);
-    setViewFileKey(null);
-    dropCleanFiles(null);
+    setControlMode("agents");
     const tab = openTerminalsRef.current.find((t) => t.key === key);
     if (!tab?.needsResume || !tab.sessionId) return;
     const ptyId = terminalPtyIdsRef.current[key];
@@ -738,7 +758,11 @@ export default function App() {
       if (tab?.name) void invoke("release_agent_session", { name: tab.name }).catch(() => {});
     }
     if (tab && isFileTab(tab)) {
-      setViewFileKey((cur) => (cur === key ? null : cur));
+      // Closing the shown file shows its neighbour in the Files list (never an agent).
+      const files = list.filter(isFileTab);
+      const i = files.findIndex((t) => t.key === key);
+      const neighbour = files[i + 1] ?? files[i - 1];
+      setViewFileKey((cur) => (cur === key ? neighbour?.key ?? null : cur));
     } else {
       // Focus a neighbouring AGENT — never a file (L19: a file close must not land the
       // next ⌘W on a running Claude session, and a terminal close must not select a file).
@@ -786,9 +810,12 @@ export default function App() {
   // via closeTerminal's dirty check). No-op when none is open.
   const viewFileKeyRef = useRef(viewFileKey);
   viewFileKeyRef.current = viewFileKey;
+  const controlModeRef = useRef(controlMode);
+  controlModeRef.current = controlMode;
   useEffect(() => {
     const un = listen("menu:close-tab", () => {
-      const key = viewFileKeyRef.current ?? activeKeyRef.current;
+      // Files rail: the shown file. Control: the selected agent (never a hidden file).
+      const key = controlModeRef.current === "files" ? viewFileKeyRef.current : activeKeyRef.current;
       if (key && openTerminalsRef.current.some((t) => t.key === key)) void closeTerminal(key);
     });
     return () => {
@@ -942,7 +969,7 @@ export default function App() {
       addSshSession(prev, { key, name: label, kind: "terminal", sshServerId: serverId }),
     );
     setActiveTerminalKey(key);
-    setViewFileKey(null);
+    setControlMode("agents");
     setView("control");
     setScreen("control");
   }, []);
@@ -1070,7 +1097,21 @@ export default function App() {
   }, [worktrees]);
   useEffect(() => {
     localStorage.setItem("apex.openTabs", JSON.stringify(openTerminals.filter((t) => t.kind === "terminal")));
+    writeStored(
+      OPEN_FILES_KEY,
+      openTerminals.filter((t) => isFileTab(t) && t.filePath).map((t) => ({ key: t.key, kind: t.kind, filePath: t.filePath, name: t.name })),
+    );
   }, [openTerminals]);
+  // Restored files whose path is gone (deleted/moved since last run) are dropped quietly.
+  useEffect(() => {
+    const restored = openTerminalsRef.current.filter((t) => isFileTab(t) && t.filePath);
+    if (!restored.length) return;
+    void Promise.all(restored.map((t) => invoke<string>("path_kind", { path: t.filePath }).catch(() => "missing"))).then((kinds) => {
+      const gone = new Set(restored.filter((_, i) => kinds[i] !== "file").map((t) => t.key));
+      if (gone.size) setOpenTerminals((prev) => prev.filter((t) => !gone.has(t.key)));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Sync terminal tab CWDs → worktrees so the file panel stays up-to-date.
   // Also covers restored tabs from localStorage on startup.
@@ -1548,15 +1589,17 @@ export default function App() {
     if (!first || !selectedCwd) return;
     const abs = absoluteInRepo(first.path);
     const existing = openTerminalsRef.current.find((t) => t.key === `edit:${abs}`);
-    if (existing) setViewFileKey(existing.key);
-    else openEditor(abs, { diff: true });
+    if (existing) {
+      setViewFileKey(existing.key);
+      setControlMode("files");
+    } else openEditor(abs, { diff: true });
     showControl();
   };
   // Commit…: put `git commit` in the terminal, unsent, and focus it.
   const startCommit = () => {
     if (!activeTerminalKey) return;
     if (writePty(activeTerminalKey, "git commit ")) {
-      setViewFileKey(null);
+      setControlMode("agents");
       setTabPickCount((n) => n + 1);
     }
   };
@@ -1580,6 +1623,16 @@ export default function App() {
   const selectedAgentKey = selectedTab ? selectedTab.key : null;
   const selectedVM = agentVMs.find((a) => a.key === selectedAgentKey) ?? null;
   const viewedFile = viewFileKey ? openTerminals.find((t) => t.key === viewFileKey && isFileTab(t)) : undefined;
+  const openFilesVM: OpenFileVM[] = openTerminals.filter(isFileTab).map((t) => {
+    const p = t.filePath ?? "";
+    return {
+      key: t.key,
+      name: t.name,
+      dir: abbreviateHome(p.slice(0, p.lastIndexOf("/")) || "/"),
+      kind: t.kind === "mdview" ? "markdown" : t.kind === "imgview" ? "image" : t.kind === "pdfview" ? "pdf" : "code",
+      dirty: !!dirtyTabs[t.key],
+    };
+  });
   const fileVM: FileVM | null = viewedFile ? { name: viewedFile.name, path: abbreviateHome(viewedFile.filePath ?? "") } : null;
 
   const gridPanels = useMemo(
@@ -1596,13 +1649,22 @@ export default function App() {
       : gridPanels[0]?.key ?? null;
 
   const railActive: RailItem | null =
-    view === "control" ? "control" : view === "sessions" ? "sessions" : view === "queue" ? "queue" : view === "prd" ? "kanban" : view === "tools" ? "resources" : view === "ssh" ? "ssh" : view === "chat" ? "chat" : null;
+    view === "control" ? (controlMode === "files" ? "files" : "control") : view === "sessions" ? "sessions" : view === "queue" ? "queue" : view === "prd" ? "kanban" : view === "tools" ? "resources" : view === "ssh" ? "ssh" : view === "chat" ? "chat" : null;
 
   const navigateRail = (item: RailItem) => {
     if (item === "settings") return setSettingsOpen(true);
     if (item === "control") {
       // From the grid, "Control" lands on the agent the operator was looking at.
       if (view === "control" && screen === "grid" && focusedPanelKey) activateTerminal(focusedPanelKey);
+      setControlMode("agents");
+      return showControl();
+    }
+    if (item === "files") {
+      // Back to the file that was shown last, else the most recently opened one.
+      setViewFileKey((cur) =>
+        cur && openTerminalsRef.current.some((t) => t.key === cur) ? cur : [...openTerminalsRef.current].reverse().find(isFileTab)?.key ?? null,
+      );
+      setControlMode("files");
       return showControl();
     }
     setView(item === "kanban" ? "prd" : item === "resources" ? "tools" : item);
@@ -1954,7 +2016,7 @@ export default function App() {
             <FileTabView
               tab={tm}
               theme={effectiveTheme}
-              active={controlVisible && viewFileKey === tm.key}
+              active={controlVisible && controlMode === "files" && viewFileKey === tm.key}
               reloadTick={fsTick}
               fileTick={fileTicks[tm.filePath ?? ""] ?? 0}
               onDirtyChange={(d) => setDirtyTabs((prev) => (prev[tm.key] === d ? prev : { ...prev, [tm.key]: d }))}
@@ -2080,7 +2142,7 @@ export default function App() {
             pinnedAgentKeys={pinnedKeys}
             {...headerProps}
             footer={footerVM}
-            railActive="control"
+            railActive={controlMode === "files" ? "files" : "control"}
             onRailNavigate={navigateRail}
             agents={agentVMs}
             selectedAgentKey={selectedAgentKey}
@@ -2089,6 +2151,11 @@ export default function App() {
             onSelectAgent={selectAgent}
             onNewAgent={() => setNewAgentOpen(true)}
             onReorderAgents={reorderAgents}
+            mode={controlMode}
+            openFiles={openFilesVM}
+            selectedFileKey={viewFileKey}
+            onSelectFile={(key) => { setViewFileKey(key); setControlMode("files"); }}
+            onCloseOpenFile={(key) => void closeTerminal(key)}
             openFile={fileVM}
             onCloseFile={() => { if (viewFileKey) void closeTerminal(viewFileKey); }}
             fileSlot={viewedFile ? <div data-terminal-slot={viewedFile.key} data-terminal-pad="0" style={{ flexGrow: 1, minHeight: 0 }} /> : undefined}
