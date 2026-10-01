@@ -192,11 +192,10 @@ export function ControlScreen(props: ControlScreenProps) {
         )}
 
         {selected && !props.openFile && (
+          // Turn progress belongs to the chat box: with it closed the strip only echoed
+          // Claude's own spinner, and showing/hiding it each turn resized the terminal.
           <ProgressStrip
-            verb={selected.progress?.verb}
-            elapsed={selected.progress?.elapsed}
-            tokens={selected.progress?.tokens}
-            thought={selected.progress?.thought}
+            {...(props.composerOpen !== false ? selected.progress : undefined)}
             updateReady={props.updateReady}
             onRestart={props.onRestartForUpdate}
           />

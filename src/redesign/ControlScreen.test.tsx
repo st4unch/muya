@@ -67,6 +67,21 @@ describe("ControlScreen", () => {
     expect(screen.queryByLabelText("Inspector")).not.toBeInTheDocument();
   });
 
+  // Live: with the chat box closed the strip duplicated Claude's own spinner line, and
+  // appearing/disappearing with every turn resized the terminal so it kept jumping.
+  it("hides the progress strip while the chat box is closed", () => {
+    const { rerender } = render(<ControlScreen {...baseProps()} composerOpen={false} />);
+    expect(screen.queryByText("Unfurling…")).not.toBeInTheDocument();
+    rerender(<ControlScreen {...baseProps()} composerOpen />);
+    expect(screen.getByText("Unfurling…")).toBeInTheDocument();
+  });
+
+  it("still shows the update notice with the chat box closed", () => {
+    render(<ControlScreen {...baseProps()} composerOpen={false} updateReady />);
+    expect(screen.queryByText("Unfurling…")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /restart/i })).toBeInTheDocument();
+  });
+
   // Live: a first launch showed a blank main pane that read as broken.
   it("guides the user when there are no agents", () => {
     const onNewTerminal = vi.fn();
