@@ -6,6 +6,33 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.0.3] - 2026-10-01
+
+### Added
+- **Files.** A new **Files** item in the left rail (under Control) lists every file you
+  have open, like the agents list: kind icon, folder, a dot for unsaved changes, × (or
+  middle-click) to close. The selected file opens in the middle; the file tree stays
+  below the list. Files no longer disappear when you open another one or switch to an
+  agent — up to 30 stay open — and they come back after a restart (deleted ones are
+  skipped). ⌘W closes the file in Files and the agent in Control.
+- **PDFs and images actually show.** PDFs used to be a blank white box; every page now
+  renders inside Muya, with a page counter and zoom (−, fit, +). Images (PNG, JPG, GIF,
+  WebP, SVG, ICO, BMP) open reliably — also from hidden folders — with their size and a
+  Fit / 100% toggle.
+- **Sessions search filters.** Narrow the Sessions list instead of matching everything:
+  `session=muya` (the session's name), `include=v4.1` (inside the conversation),
+  `path=`, `branch=`, `id=`. Combine them — `session=muya include=v4.1` searches only
+  the muya sessions for "v4.1". Plain words work as before, and a line under the box
+  says what is being filtered.
+- Past sessions show their own name (your `/rename`, or Claude's title) instead of just
+  the folder name.
+
+### Fixed
+- **Double-clicking the title bar** zooms the window (or minimizes / does nothing, as
+  set in System Settings › Desktop & Dock) from anywhere on the bar that isn't a
+  button. It used to select the text under the pointer instead. The bar's text is no
+  longer selectable.
+
 ## [4.0.2] - 2026-10-01
 
 ### Added
