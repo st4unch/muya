@@ -7,7 +7,8 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import { X, ChevronUp, ChevronDown } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import { altArrowSeq } from "../lib/keys";
-import { terminalTheme } from "../theme/terminalThemes";
+import { schemeTheme } from "../theme/terminalThemes";
+import { stepTerminalFont, useTerminalPrefs } from "../lib/terminalPrefs";
 import { parseClaudeScreen, readScreenLines, type ScreenState } from "../lib/screenState";
 import { applyStatusline } from "../lib/statusline";
 
@@ -118,6 +119,13 @@ export default function Terminal({
   // The link currently under the mouse (for right-click → same menu).
   const hoveredLinkRef = useRef<{ resolved: string; kind: "file" | "dir" } | null>(null);
 
+  // Operator-picked font size + color scheme (shared by every terminal). Read through a
+  // ref at creation so changing them never respawns the PTY; the effects below apply them live.
+  const prefs = useTerminalPrefs();
+  const prefsRef = useRef(prefs);
+  prefsRef.current = prefs;
+  const xtheme = schemeTheme(prefs.scheme, theme);
+
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -154,11 +162,11 @@ export default function Terminal({
 
     const term = new XTerm({
       fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-      fontSize: 13,
+      fontSize: prefsRef.current.fontSize,
       lineHeight: 1.6,
       cursorBlink: true,
       scrollback: 5000,
-      theme: terminalTheme(theme),
+      theme: schemeTheme(prefsRef.current.scheme, theme),
     });
     termRef.current = term;
     const fit = new FitAddon();
@@ -327,6 +335,13 @@ export default function Terminal({
       // Cmd+F → in-terminal search overlay.
       if (e.key === "f" && e.metaKey && !e.shiftKey && !e.ctrlKey && !e.altKey) {
         if (e.type === "keydown") openSearchRef.current();
+        return false;
+      }
+
+      // Cmd+= / Cmd+- / Cmd+0 → terminal font bigger / smaller / default (all terminals).
+      if (e.metaKey && !e.ctrlKey && !e.altKey && (e.key === "=" || e.key === "+" || e.key === "-" || e.key === "0")) {
+        if (e.type === "keydown") stepTerminalFont(e.key === "-" ? -1 : e.key === "0" ? 0 : 1);
+        e.preventDefault();
         return false;
       }
 
@@ -554,10 +569,19 @@ export default function Terminal({
     termRef.current?.focus();
   }, [focusToken]);
 
-  // Live theme switch — recolors the existing terminal without touching the PTY.
+  // Live theme / scheme switch — recolors the existing terminal without touching the PTY.
   useEffect(() => {
-    if (termRef.current) termRef.current.options.theme = terminalTheme(theme);
-  }, [theme]);
+    if (termRef.current) termRef.current.options.theme = xtheme;
+  }, [xtheme]);
+
+  // Live font size: new cell size → refit and tell the PTY its new grid. A hidden tab
+  // can't be measured; it refits when shown (the `active` effect calls syncRef).
+  useEffect(() => {
+    const t = termRef.current;
+    if (!t || t.options.fontSize === prefs.fontSize) return;
+    t.options.fontSize = prefs.fontSize;
+    syncRef.current();
+  }, [prefs.fontSize]);
 
   const handleSearchChange = (q: string) => {
     setSearchQuery(q);
@@ -587,7 +611,12 @@ export default function Terminal({
           Grid 14/16). */}
       <div
         className="h-full w-full overflow-hidden bg-[var(--bg-terminal)]"
-        style={{ padding: "var(--term-pad, 20px 28px)", boxSizing: "border-box" }}
+        style={{
+          padding: "var(--term-pad, 20px 28px)",
+          boxSizing: "border-box",
+          // A fixed scheme paints its own background, so the padding around the grid matches.
+          ...(prefs.scheme === "muya" ? null : { background: xtheme.background }),
+        }}
       >
         <div ref={ref} data-xterm-host className="h-full w-full overflow-hidden" />
       </div>

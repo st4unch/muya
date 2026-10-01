@@ -9,7 +9,8 @@ import { useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import type { FooterVM } from "./types";
 import { plural } from "./text";
-import { ChatRailIcon, PlusIcon } from "./icons";
+import { ChatRailIcon, PlusIcon, TextSizeIcon } from "./icons";
+import { TerminalAppearanceMenu } from "./TerminalAppearance";
 import { anchorFromRect, type Anchor } from "./Menus";
 import { StatusPicker } from "./StatusPicker";
 import { statusField, statusValue, type StatusData } from "../lib/statusline";
@@ -98,6 +99,7 @@ function useStatusSecondLine(key: string) {
 
 export function Footer({ workspaceCount, agents, working, waiting, collisions, version, variant, status, composer }: FooterVM) {
   const [anchor, setAnchor] = useState<Anchor | null>(null);
+  const [appearance, setAppearance] = useState<Anchor | null>(null);
   const shown = status ? status.fields.filter((id) => statusValue(id, status.data) !== null) : [];
   const key = shown.map((id) => `${id}=${statusValue(id, status?.data ?? null)}`).join("|");
   const { rowRef, fieldsRef, twoLine } = useStatusSecondLine(key);
@@ -146,6 +148,17 @@ export function Footer({ workspaceCount, agents, working, waiting, collisions, v
       )}
       <span style={NOWRAP}>{variant === "grid" ? "Tab to switch panels · ⌘⏎ maximize" : "UTF-8"}</span>
       <span style={{ display: "flex", alignItems: "center", gap: 2, marginRight: -8, flexShrink: 0 }}>
+        <button
+          type="button"
+          aria-label="Terminal appearance"
+          title="Terminal font size and colors"
+          aria-expanded={appearance !== null}
+          onClick={(e) => setAppearance(anchorFromRect(e.currentTarget.getBoundingClientRect(), "right", "above"))}
+          className="rd-icon-btn"
+          style={{ ...FOOTER_ICON_BTN, color: appearance ? "var(--text)" : "var(--text-muted)" }}
+        >
+          <TextSizeIcon size={14} />
+        </button>
         {composer && variant !== "grid" && (
           <button
             type="button"
@@ -184,6 +197,13 @@ export function Footer({ workspaceCount, agents, working, waiting, collisions, v
         >
           {items}
         </div>
+      )}
+      {appearance && (
+        <TerminalAppearanceMenu
+          anchor={appearance}
+          appTheme={document.documentElement.dataset.theme === "light" ? "light" : "dark"}
+          onClose={() => setAppearance(null)}
+        />
       )}
       {status && anchor && (
         <StatusPicker anchor={anchor} fields={status.fields} data={status.data} onToggle={status.onToggle} onClose={() => {
