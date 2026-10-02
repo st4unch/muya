@@ -2007,7 +2007,8 @@ export default function App() {
               active={terminalIsVisible({
                 controlPageVisible: view === "control",
                 inGrid: gridVisibleKeys.has(tm.key),
-                isActiveTab: controlVisible && !viewedFile && tm.key === activeTerminalKey,
+                isActiveTab: controlVisible && tm.key === activeTerminalKey,
+                filesShown: controlMode === "files",
               })}
               focusToken={controlVisible && tm.key === activeTerminalKey ? tabPickCount : undefined}
               {...terminalHandlers(tm.key)}

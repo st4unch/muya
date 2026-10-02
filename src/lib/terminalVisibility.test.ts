@@ -39,4 +39,15 @@ describe("terminalIsVisible", () => {
       terminalIsVisible({ controlPageVisible: true, inGrid: false, isActiveTab: false }),
     ).toBe(false);
   });
+
+  // Regression: open a file in the Files rail, go back to Control → the selected
+  // terminal was blank (renderer released) because "a file is open" counted as hidden.
+  it("the Files rail hides the selected tab; an open file left behind does not", () => {
+    expect(
+      terminalIsVisible({ controlPageVisible: true, inGrid: false, isActiveTab: true, filesShown: true }),
+    ).toBe(false);
+    expect(
+      terminalIsVisible({ controlPageVisible: true, inGrid: false, isActiveTab: true, filesShown: false }),
+    ).toBe(true);
+  });
 });

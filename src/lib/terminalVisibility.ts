@@ -10,6 +10,9 @@ export interface TerminalPlacement {
   inGrid: boolean;
   /** Tabs mode, and this terminal is the selected tab. */
   isActiveTab: boolean;
+  /** The Files rail is showing: its pane (a file, or "No file open") replaces the
+   *  selected tab's terminal. Optional for the grid, which the rail never covers. */
+  filesShown?: boolean;
 }
 
 /**
@@ -22,9 +25,13 @@ export interface TerminalPlacement {
  * operator types into nothing. That is exactly what the page layer cost us — navigate
  * Control → Kanban → Control and the terminal was visible but deaf until clicked.
  *
+ * The same went wrong with the Files rail: visibility was keyed on "a file is open"
+ * instead of "the Files rail is showing". Files stay open after going back to Agents,
+ * so the terminal was on screen with its GPU renderer released — a blank pane.
+ *
  * When a new way to hide the pane is added (another page, a collapsible panel), it
  * belongs here too.
  */
 export function terminalIsVisible(p: TerminalPlacement): boolean {
-  return p.controlPageVisible && (p.inGrid || p.isActiveTab);
+  return p.controlPageVisible && (p.inGrid || (p.isActiveTab && !p.filesShown));
 }
