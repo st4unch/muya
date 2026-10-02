@@ -210,16 +210,17 @@ fn search_one(path: &Path, id: &str, needle_lower: &str) -> Option<SessionMatch>
 }
 
 /// Resolve a session's transcript path: the caller-supplied exact `path` if it exists,
-/// otherwise derive `~/.claude/projects/<cwd '/'→'-'>/<id>.jsonl` from the cwd.
+/// otherwise derive `~/.claude/projects/<cwd '/'→'-'>/<id>.jsonl` from the cwd. Both
+/// come from the webview, so either must pass the transcript trust boundary — without
+/// it the content search grepped ANY readable file (a substring oracle on e.g. ~/.ssh).
 fn resolve_transcript(s: &SessionRef) -> Option<PathBuf> {
     if let Some(p) = &s.path {
-        let pb = PathBuf::from(p);
-        if pb.is_file() {
+        if let Ok(pb) = crate::history::checked_transcript_path(Path::new(p)) {
             return Some(pb);
         }
     }
     let derived = transcript_path(&s.cwd, &s.id)?;
-    derived.is_file().then_some(derived)
+    crate::history::checked_transcript_path(&derived).ok()
 }
 
 /// Read the last `limit` conversation turns of a session's transcript as plain labelled
@@ -494,17 +495,34 @@ mod tests {
         assert!(search_one(&path, "s2", "role").is_none());
     }
 
+    /// The content search takes transcript paths from the webview; it must only ever
+    /// grep transcripts, never an arbitrary file (a substring oracle on ~/.ssh etc.).
     #[test]
-    fn resolve_transcript_prefers_explicit_path_over_derivation() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("real.jsonl");
-        std::fs::write(&path, "{}\n").unwrap();
-        let s = SessionRef {
-            id: "x".into(),
-            cwd: "/nonexistent/derives/nowhere".into(),
-            path: Some(path.to_string_lossy().into_owned()),
-        };
-        assert_eq!(resolve_transcript(&s).unwrap(), path);
+    fn transcript_paths_from_the_webview_stay_inside_projects() {
+        use crate::history::checked_transcript_path_in;
+        let home = tempfile::tempdir().unwrap();
+        let projects = home.path().join("projects");
+        std::fs::create_dir_all(projects.join("-p")).unwrap();
+        let good = projects.join("-p").join("s.jsonl");
+        std::fs::write(&good, "{}\n").unwrap();
+        let secret = home.path().join("id_rsa.jsonl");
+        std::fs::write(&secret, "{}\n").unwrap();
+        let not_jsonl = projects.join("-p").join("notes.txt");
+        std::fs::write(&not_jsonl, "x").unwrap();
+
+        assert_eq!(checked_transcript_path_in(&projects, &good).unwrap(), good.canonicalize().unwrap());
+        assert!(checked_transcript_path_in(&projects, &secret).is_err(), "outside the projects dir");
+        assert!(checked_transcript_path_in(&projects, &projects.join("-p/../../id_rsa.jsonl")).is_err(), "`..` escape");
+        assert!(checked_transcript_path_in(&projects, &not_jsonl).is_err(), "not a transcript");
+        #[cfg(unix)]
+        {
+            let link = projects.join("-p").join("link.jsonl");
+            std::os::unix::fs::symlink(&secret, &link).unwrap();
+            assert!(checked_transcript_path_in(&projects, &link).is_err(), "symlink out of the dir");
+        }
+        // The real resolver refuses a tempdir path (it is not under ~/.claude/projects).
+        let s = SessionRef { id: "x".into(), cwd: "/nonexistent".into(), path: Some(secret.to_string_lossy().into_owned()) };
+        assert!(resolve_transcript(&s).is_none());
     }
 
     // tiny blocking helper so the async command can be unit-tested without a full runtime.

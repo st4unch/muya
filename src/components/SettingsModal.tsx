@@ -294,6 +294,18 @@ export default function SettingsModal({
               {error}
             </div>
           )}
+
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 12, color: "var(--text-muted)" }}>
+            <span>Muya is built on open-source software.</span>
+            <button
+              type="button"
+              onClick={() => void invoke("open_third_party_licenses").catch((e) => setError(`Couldn't open the license notices: ${e}`))}
+              className="st-btn"
+              style={{ ...ghostBtn, height: 28, fontSize: 12 }}
+            >
+              Open-source licenses
+            </button>
+          </div>
         </div>
 
         {/* Footer */}

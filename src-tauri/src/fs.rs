@@ -75,8 +75,9 @@ pub fn read_file(path: String) -> Result<String, String> {
     std::fs::read_to_string(p).map_err(|e| format!("read failed: {e}"))
 }
 
-/// Largest file `read_file_bytes` hands to the viewer (images, PDFs).
-const MAX_VIEW_BYTES: u64 = 200 * 1024 * 1024;
+/// Largest file `read_file_bytes` hands to the viewer (images, PDFs). The webview holds
+/// a copy or two of it (Blob / pdf.js), so this bounds a viewer's memory.
+const MAX_VIEW_BYTES: u64 = 100 * 1024 * 1024;
 
 /// Raw bytes of a file for the image/PDF viewers. Returned as a binary IPC response
 /// (an ArrayBuffer in JS — no JSON number array, no base64), so the webview renders
@@ -107,7 +108,16 @@ fn read_view_bytes(p: &Path, max: u64) -> Result<Vec<u8>, String> {
             max / 1_048_576
         ));
     }
-    std::fs::read(p).map_err(denied)
+    // Read through a cap, not `fs::read`: the file can grow after the size check.
+    use std::io::Read;
+    let mut buf = Vec::with_capacity(meta.len() as usize);
+    std::fs::File::open(p)
+        .and_then(|f| f.take(max + 1).read_to_end(&mut buf))
+        .map_err(denied)?;
+    if buf.len() as u64 > max {
+        return Err(format!("{} grew past the {} MB preview limit while reading", p.display(), max / 1_048_576));
+    }
+    Ok(buf)
 }
 
 /// Write text back to a file (editor save).

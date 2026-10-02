@@ -107,6 +107,31 @@ fn cwd_from_transcript(path: &Path) -> Option<String> {
     Some(rest[..end].replace("\\/", "/"))
 }
 
+/// Trust boundary for any transcript path that came from the webview (or was derived
+/// from webview-supplied cwd/id): only `.jsonl` files under ~/.claude/projects, after
+/// resolving symlinks and `..`. Returns the canonical path.
+pub(crate) fn checked_transcript_path(path: &Path) -> Result<PathBuf, String> {
+    let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
+    checked_transcript_path_in(&Path::new(&home).join(".claude/projects"), path)
+}
+
+pub(crate) fn checked_transcript_path_in(projects: &Path, path: &Path) -> Result<PathBuf, String> {
+    let projects_root = projects
+        .canonicalize()
+        .map_err(|e| format!("projects dir: {e}"))?;
+    let canon = path.canonicalize().map_err(|e| format!("bad path: {e}"))?;
+    if !canon.starts_with(&projects_root) {
+        return Err("path is outside ~/.claude/projects".into());
+    }
+    if canon.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+        return Err("not a .jsonl transcript".into());
+    }
+    if !canon.is_file() {
+        return Err("not a file".into());
+    }
+    Ok(canon)
+}
+
 /// Enumerate all past sessions from `~/.claude/projects/*/*.jsonl`, newest first.
 #[tauri::command(async)]
 pub fn list_session_history() -> Result<Vec<SessionHistoryEntry>, String> {
@@ -214,22 +239,8 @@ pub fn read_session_transcript(
     path: String,
     max_messages: Option<usize>,
 ) -> Result<Vec<TranscriptMessage>, String> {
-    // Trust boundary: the webview supplies the path. Only transcripts under
-    // ~/.claude/projects may be read through this command.
-    let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
-    let projects_root = Path::new(&home)
-        .join(".claude/projects")
-        .canonicalize()
-        .map_err(|e| format!("projects dir: {e}"))?;
-    let canon = Path::new(&path)
-        .canonicalize()
-        .map_err(|e| format!("bad path: {e}"))?;
-    if !canon.starts_with(&projects_root) {
-        return Err("path is outside ~/.claude/projects".into());
-    }
-    if canon.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-        return Err("not a .jsonl transcript".into());
-    }
+    // Trust boundary: the webview supplies the path.
+    let canon = checked_transcript_path(Path::new(&path))?;
 
     const MAX_TEXT_CHARS: usize = 4000;
     let cap = max_messages.unwrap_or(500);

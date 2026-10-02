@@ -34,6 +34,12 @@ describe("SettingsModal", () => {
     expect(save).toBeDisabled();
   });
 
+  it("Open-source licenses opens the bundled notices", async () => {
+    render(<SettingsModal open onClose={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Open-source licenses" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("open_third_party_licenses"));
+  });
+
   it("Escape closes", () => {
     const onClose = vi.fn();
     render(<SettingsModal open onClose={onClose} />);
