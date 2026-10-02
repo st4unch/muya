@@ -6,6 +6,23 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.0.5] - 2026-10-02
+
+### Added
+- **Workspaces scope what you see.** Pick a workspace at the top and the agent list,
+  the grid, ⌘K and the bell show only that workspace's terminals and agents. Terminals
+  in other workspaces keep running — nothing is closed — and come back when you pick
+  their workspace. New terminals (⌘T) and agents open in the picked workspace.
+- The workspace menu has **All workspaces** and shows how many agents each workspace
+  has and how many are waiting, so you still see where you are needed.
+- The grid header has the same Workspace picker.
+- Right-click a folder at the top of the file tree → **Select workspace**.
+
+### Changed
+- The workspace changes only when you pick one. Clicking a folder in the file tree, or
+  a session opening in another workspace, no longer switches it (the session runs in
+  its own workspace).
+
 ## [4.0.4] - 2026-10-02
 
 ### Fixed
