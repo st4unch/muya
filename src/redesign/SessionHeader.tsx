@@ -89,6 +89,21 @@ function useCompactBypass(active: boolean, deps: unknown[]) {
   return { rowRef, nameRef, compact };
 }
 
+/** Icon-only action button in the collapsed header row. */
+const slimBtn: CSSProperties = {
+  width: 26,
+  height: 24,
+  borderRadius: 6,
+  border: "1px solid var(--border-control)",
+  background: "var(--bg-control)",
+  color: "var(--text)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  flexShrink: 0,
+  padding: 0,
+};
+
 /** Expand/collapse toggle; sits left of the name in both states so it never moves. */
 function CollapseToggle({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const label = collapsed ? "Expand session header" : "Collapse session header";
@@ -159,6 +174,34 @@ export function SessionHeader({ agent, onCompact, onSplitToGrid, onStop, onMore,
             <BypassWarningIcon size={12} />
           </span>
         )}
+        <div style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: "auto", flexShrink: 0 }}>
+          <button
+            type="button"
+            onClick={onCompact}
+            disabled={!agent.agentRunning}
+            title={agent.agentRunning ? "Compact" : "No agent is running in this terminal"}
+            aria-label="Compact"
+            className="rd-icon-btn"
+            style={slimBtn}
+          >
+            <CompactIcon size={14} />
+          </button>
+          <button type="button" onClick={onSplitToGrid} title="Split to grid" aria-label="Split to grid" className="rd-icon-btn" style={slimBtn}>
+            <GridSplitIcon size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={onStop}
+            title="Stop (esc)"
+            aria-label="Stop"
+            className="rd-icon-btn"
+            style={{ ...slimBtn, border: "1px solid var(--danger-border)", background: "var(--danger-btn-bg)", color: "var(--danger-text)" }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="5" y="5" width="14" height="14" rx="2.5" fill="currentColor" />
+            </svg>
+          </button>
+        </div>
       </div>
     );
   }

@@ -14,7 +14,8 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   list (across restarts) until you dismiss it or press **Clear all**. Click one to
   jump to that agent, even in another workspace.
 - **Collapsible session header.** The bar with the agent name, Compact, Split to grid
-  and Stop folds into a slim row with the arrow on its left; Muya remembers your choice.
+  and Stop folds into a slim row with the arrow on its left; the slim row keeps
+  Compact, Split to grid and Stop as icon buttons. Muya remembers your choice.
 
 ### Fixed
 - A folder picked with right-click **Select workspace** in Files now stays in the
