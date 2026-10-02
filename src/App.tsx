@@ -2,6 +2,7 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMe
 import { createPortal } from "react-dom";
 import { pickNextActiveKey, newSshTabKey, addSshSession, canResumeTab, resumeCommand } from "./lib/tabs";
 import { terminalIsVisible } from "./lib/terminalVisibility";
+import { belongsTo, inScope, workspaceOf } from "./lib/workspaceScope";
 import { installNoAutocorrect } from "./lib/noAutocorrect";
 import AgentTerminal from "./components/Terminal";
 import FileTree from "./components/FileTree";
@@ -268,6 +269,12 @@ function FileTabView({
   );
 }
 
+/** "3 agents · 1 waiting" for the workspace menu. */
+function agentCountHint(agents: readonly { status: string }[]): string {
+  const waiting = agents.filter((a) => a.status === "waiting").length;
+  return `${agents.length} agent${agents.length === 1 ? "" : "s"}${waiting ? ` · ${waiting} waiting` : ""}`;
+}
+
 export default function App() {
   // Claude Agent Sessions (`claude agents --json`): feeds the file tree's agent badges,
   // the New-agent workspace list, the Kanban roots, the branch view and — where a tab's
@@ -351,7 +358,11 @@ export default function App() {
   // Grid terminals are all `active` at once, so a pick there would otherwise leave the
   // keyboard wherever it was.
   const [tabPickCount, setTabPickCount] = useState(0);
+  // Set once the workspace scope exists (below): a picked agent from another workspace
+  // (palette, bell, jump-to-waiting) switches the scope so it is never hidden.
+  const followScopeRef = useRef<(tab: OpenTerminal | undefined) => void>(() => {});
   const pickTab = useCallback((key: string) => {
+    followScopeRef.current(openTerminalsRef.current.find((t) => t.key === key));
     setActiveTerminalKey(key);
     setTabPickCount((n) => n + 1);
   }, []);
@@ -550,8 +561,29 @@ export default function App() {
     () => localStorage.getItem("apex.selectedRoot") || undefined
   );
   useEffect(() => {
+    // Unset = "All workspaces", which has to survive a restart too.
     if (selectedRoot) localStorage.setItem("apex.selectedRoot", selectedRoot);
+    else localStorage.removeItem("apex.selectedRoot");
   }, [selectedRoot]);
+  // The picked workspace also scopes the agent list (docs/prd-workspace-scope.md).
+  // Terminals elsewhere stay mounted and running — they are only not listed.
+  const scopeRef = useRef(selectedRoot);
+  scopeRef.current = selectedRoot;
+  const trackedPathsRef = useRef(trackedPaths);
+  trackedPathsRef.current = trackedPaths;
+  followScopeRef.current = (tab) => {
+    if (!tab || tab.kind !== "terminal" || inScope(tab, scopeRef.current)) return;
+    setSelectedRoot(workspaceOf(tab, trackedPathsRef.current));
+  };
+  // Switching workspace (or closing the selected agent) never leaves an agent from
+  // another workspace selected: fall to the first one listed here, or none.
+  useEffect(() => {
+    const tabs = openTerminalsRef.current.filter((t) => t.kind === "terminal");
+    const active = tabs.find((t) => t.key === activeTerminalKey);
+    if (active && inScope(active, selectedRoot)) return;
+    const next = tabs.find((t) => inScope(t, selectedRoot))?.key ?? null;
+    if (next !== activeTerminalKey) setActiveTerminalKey(next);
+  }, [selectedRoot, activeTerminalKey]);
   // Drop the selection if its workspace was removed.
   useEffect(() => {
     if (selectedRoot && !trackedPaths.includes(selectedRoot)) setSelectedRoot(undefined);
@@ -633,6 +665,7 @@ export default function App() {
           })()
         : spec;
     if (withKind.kind === "terminal") {
+      followScopeRef.current(withKind);
       setOpenTerminals((prev) => (prev.some((tm) => tm.key === withKind.key) ? prev : [...prev, withKind]));
       setActiveTerminalKey(withKind.key);
       setControlMode("agents");
@@ -1174,6 +1207,13 @@ export default function App() {
   const modelRef = useRef(model);
   modelRef.current = model;
   const agentVMs = model.agents;
+  // The agent list shows the picked workspace only (palette, bell and footer stay global).
+  const scopedAgentVMs = useMemo(() => {
+    const tabByKey = new Map(openTerminals.map((t) => [t.key, t]));
+    return agentVMs.filter((a) => { const t = tabByKey.get(a.key); return !t || inScope(t, selectedRoot); });
+  }, [agentVMs, openTerminals, selectedRoot]);
+  const scopedAgentVMsRef = useRef(scopedAgentVMs);
+  scopedAgentVMsRef.current = scopedAgentVMs;
 
   // One stable handler set per tab, so the memoized <Terminal> isn't re-rendered by
   // fresh inline closures every time App renders. Dropped when the tab closes.
@@ -1794,7 +1834,7 @@ export default function App() {
         }
         const n = Number(e.key);
         if (Number.isInteger(n) && n >= 1 && n <= 9) {
-          const target = agentVMsRef.current[n - 1];
+          const target = scopedAgentVMsRef.current[n - 1];
           if (target) {
             e.preventDefault();
             e.stopPropagation();
@@ -1884,7 +1924,7 @@ export default function App() {
 
   // ── Render ────────────────────────────────────────────────────────────────
   const headerVM = {
-    workspaceName: (selectedRoot ?? workspaces[0] ?? "").split("/").filter(Boolean).pop() ?? "No workspace",
+    workspaceName: selectedRoot ? selectedRoot.split("/").filter(Boolean).pop() ?? selectedRoot : workspaces.length ? "All workspaces" : "No workspace",
     workspaceCount: workspaces.length,
     hasNotifications: model.counts.waiting > 0,
   };
@@ -2145,7 +2185,7 @@ export default function App() {
             footer={footerVM}
             railActive={controlMode === "files" ? "files" : "control"}
             onRailNavigate={navigateRail}
-            agents={agentVMs}
+            agents={scopedAgentVMs}
             selectedAgentKey={selectedAgentKey}
             agentFilter={agentFilter}
             onAgentFilterChange={setAgentFilter}
@@ -2261,8 +2301,17 @@ export default function App() {
           <MenuPopover anchor={menu.anchor} width={420} label="Workspaces" onClose={() => setMenu(null)}>
             <MenuHeading>WORKSPACES</MenuHeading>
             {workspaces.length === 0 && <div style={{ padding: "6px 10px", color: "var(--text-muted)" }}>No workspace yet.</div>}
+            {workspaces.length > 0 && (
+              <MenuItem label="All workspaces" hint={agentCountHint(agentVMs)} checked={selectedRoot === undefined} onSelect={() => { setSelectedRoot(undefined); setMenu(null); }} />
+            )}
             {workspaces.map((w) => (
-              <MenuItem key={w} label={w.split("/").filter(Boolean).pop() ?? w} hint={abbreviateHome(w)} checked={w === (selectedRoot ?? workspaces[0])} onSelect={() => { setSelectedRoot(w); setMenu(null); }} />
+              <MenuItem
+                key={w}
+                label={w.split("/").filter(Boolean).pop() ?? w}
+                hint={`${agentCountHint(agentVMs.filter((a) => { const t = openTerminals.find((x) => x.key === a.key); return !!t && belongsTo(t, w); }))} · ${abbreviateHome(w)}`}
+                checked={w === selectedRoot}
+                onSelect={() => { setSelectedRoot(w); setMenu(null); }}
+              />
             ))}
             <MenuSeparator />
             <MenuItem label="Add workspace…" onSelect={() => { setMenu(null); void addWorkspace(); }} />
