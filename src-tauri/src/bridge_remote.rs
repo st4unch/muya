@@ -39,16 +39,19 @@ use rustls::{DigitallySignedStruct, ServerConfig, SignatureScheme};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use spake2_conflux::{Identity as Spake2Identity, Password, RistrettoGroup, Spake2};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::Mutex;
 use tokio_rustls::TlsAcceptor;
 
+use crate::bridge::{Envelope, EnvelopeType, Kind as BridgeKind, MAX_FRAME_BYTES};
+#[cfg(test)]
 use crate::bridge::{
-    required_approval, ApprovalState as BridgeApprovalState, BridgeState, Envelope, EnvelopeType,
-    InboundRequest, Kind as BridgeKind, MAX_FRAME_BYTES,
+    required_approval, ApprovalState as BridgeApprovalState, BridgeState, InboundRequest,
 };
+#[cfg(test)]
+use tokio::sync::mpsc;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -375,6 +378,11 @@ pub struct PendingSas {
     pub peer_label: String,
     /// The confirmed peer addr.
     pub peer_addr: String,
+    /// We dialed this peer (it is the listening side). Only then is `peer_addr` a
+    /// place we can dial again; on the listening side it is the dialer's ephemeral
+    /// source port, so the peer is stored without an address (messages to it wait in
+    /// the outbox until it polls — see bridge_mcp).
+    pub we_dialed: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -401,6 +409,17 @@ pub struct RemoteBridgeState {
     pub pairing_task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
     /// Monotone counter for generating outbound remote req_ids (bridge_remote_send).
     pub seq: AtomicU64,
+    /// SPKI hashes the RUNNING data listener accepts. Shared with its verifier, so a
+    /// peer paired or revoked while listening takes effect on the next handshake
+    /// (a snapshot taken at listen time would keep accepting a revoked peer).
+    pub live_allowed: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    /// Accept loop of the data listener — aborted on stop so the port is freed
+    /// (the parked task holds its own listener Arc; see `pairing_task`).
+    pub listener_task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    /// Address the data listener is bound to (None = off).
+    pub listen_addr: Mutex<Option<String>>,
+    /// Agent-facing message state (outbox, rate limits, session bindings).
+    pub chat: crate::bridge_mcp::ChatState,
 }
 
 impl Default for RemoteBridgeState {
@@ -413,6 +432,10 @@ impl Default for RemoteBridgeState {
             pairing_listener: Mutex::new(None),
             pairing_task: Mutex::new(None),
             seq: AtomicU64::new(0),
+            live_allowed: Arc::new(std::sync::Mutex::new(Default::default())),
+            listener_task: Mutex::new(None),
+            listen_addr: Mutex::new(None),
+            chat: Default::default(),
         }
     }
 }
@@ -678,123 +701,145 @@ pub struct PakeReply {
 /// `iface` must be a specific interface address + port, e.g. "192.168.1.5:9876".
 /// NEVER accepts 0.0.0.0 / :: — returns an error if attempted.
 ///
-/// Faz 3 data channel: also injects `BridgeState` so accepted connections can
-/// enqueue into the SAME broker queue the local UDS path uses
-/// (`bridge_poll_inbound` drains both origins identically).
+/// Inbound requests from a remote peer are delivered as chat messages into a local
+/// Claude session (bridge_mcp); remote Task/File requests are refused.
 #[tauri::command]
 pub async fn bridge_remote_listen(
     enable: bool,
     iface: String,
     state: State<'_, RemoteBridgeState>,
-    bridge_state: State<'_, BridgeState>,
     app: AppHandle,
+) -> Result<(), String> {
+    remote_listen_impl(&state, enable, &iface, &app).await
+}
+
+/// Start (`enable`) or stop the mTLS data listener. Idempotent: starting while
+/// already listening is a no-op. Shared by the Tauri command and the agent broker.
+pub async fn remote_listen_impl(
+    state: &RemoteBridgeState,
+    enable: bool,
+    iface: &str,
+    app: &AppHandle,
 ) -> Result<(), String> {
     let mut listener_guard = state.listener.lock().await;
 
-    if enable {
-        if listener_guard.is_some() {
-            return Ok(()); // already listening
+    if !enable {
+        if let Some(task) = state.listener_task.lock().await.take() {
+            task.abort();
         }
-
-        // AC-2-2 assertion: NEVER bind wildcard.
-        assert_not_wildcard(&iface)?;
-
-        let (identity, registry) = state.ensure_initialized().await?;
-
-        // Build rustls ServerConfig with fail-closed mTLS verifier.
-        let server_config = build_server_config(&identity, registry.clone()).await?;
-        let acceptor = TlsAcceptor::from(Arc::new(server_config));
-
-        let listener = TcpListener::bind(&iface)
-            .await
-            .map_err(|e| format!("bind remote listener {iface}: {e}"))?;
-        let listener = Arc::new(listener);
-        let listener_clone = listener.clone();
-
-        let app_clone = app.clone();
-        // Clone broker handles NOW (before the command returns) — mirrors the
-        // established pattern in bridge::bridge_local_listen.
-        let inbound_tx = bridge_state.inbound_tx.clone();
-        let staged = bridge_state.staged.clone();
-
-        tauri::async_runtime::spawn(async move {
-            loop {
-                match listener_clone.accept().await {
-                    Ok((stream, peer_addr)) => {
-                        let acceptor2 = acceptor.clone();
-                        let app2 = app_clone.clone();
-                        let tx2 = inbound_tx.clone();
-                        let staged2 = staged.clone();
-                        tauri::async_runtime::spawn(async move {
-                            match acceptor2.accept(stream).await {
-                                Ok(tls_stream) => {
-                                    // AC-2-4: handshake passed the verifier (pinned cert) —
-                                    // the peer is already authenticated, fail-closed, before
-                                    // we ever read a byte of application data.
-                                    let peer_spki = {
-                                        let (_io, conn) = tls_stream.get_ref();
-                                        conn.peer_certificates()
-                                            .and_then(|certs| certs.first())
-                                            .and_then(|cert| {
-                                                compute_spki_hash_from_cert_der(cert.as_ref()).ok()
-                                            })
-                                    };
-                                    let Some(peer_spki) = peer_spki else {
-                                        // Cannot happen post-handshake with client_auth_mandatory
-                                        // = true, but fail closed defensively — drop connection.
-                                        #[cfg(debug_assertions)]
-                                        eprintln!(
-                                            "[bridge-remote] no verifiable client cert from {peer_addr}; dropping"
-                                        );
-                                        let _ = app2.emit(
-                                            "bridge://error",
-                                            format!("no_client_cert:{peer_addr}"),
-                                        );
-                                        return;
-                                    };
-                                    let _ = app2.emit(
-                                        "bridge://peer-status",
-                                        format!("connected:{peer_spki}"),
-                                    );
-                                    handle_remote_data_connection(
-                                        tls_stream, peer_spki, tx2, staged2, app2,
-                                    )
-                                    .await;
-                                }
-                                Err(e) => {
-                                    // Handshake failed — fail-closed (unknown/no cert).
-                                    #[cfg(debug_assertions)]
-                                    eprintln!(
-                                        "[bridge-remote] mTLS handshake rejected {peer_addr}: {e}"
-                                    );
-                                    let _ = app2.emit(
-                                        "bridge://error",
-                                        format!("handshake_rejected:{peer_addr}:{e}"),
-                                    );
-                                }
-                            }
-                        });
-                    }
-                    Err(e) => {
-                        #[cfg(debug_assertions)]
-                        eprintln!("[bridge-remote] accept loop exiting: {e}");
-                        break;
-                    }
-                }
-            }
-        });
-
-        *listener_guard = Some(listener);
-        let _ = app.emit("bridge://peer-status", "remote_listener:started");
-    } else {
-        if let Some(_l) = listener_guard.take() {
+        if listener_guard.take().is_some() {
             let _ = app.emit("bridge://peer-status", "remote_listener:stopped");
         }
+        state.listen_addr.lock().await.take();
+        return Ok(());
     }
+    if listener_guard.is_some() {
+        return Ok(()); // already listening
+    }
+
+    // AC-2-2 assertion: NEVER bind wildcard.
+    assert_not_wildcard(iface)?;
+
+    let (identity, registry) = state.ensure_initialized().await?;
+
+    // Refill the live allow-list from the registry; the verifier shares it, so
+    // later pair/revoke calls update it in place.
+    {
+        let hashes: Vec<String> = registry.lock().await.peers.keys().cloned().collect();
+        let mut live = state.live_allowed.lock().unwrap();
+        live.clear();
+        live.extend(hashes);
+    }
+    let verifier = Arc::new(PinnedSpkiVerifier {
+        allowed: state.live_allowed.clone(),
+    });
+    let server_config = server_config_with_verifier(&identity, verifier)?;
+    let acceptor = TlsAcceptor::from(Arc::new(server_config));
+
+    let listener = TcpListener::bind(iface)
+        .await
+        .map_err(|e| format!("bind remote listener {iface}: {e}"))?;
+    let listener = Arc::new(listener);
+    let listener_clone = listener.clone();
+    let app_clone = app.clone();
+
+    let task = tauri::async_runtime::spawn(async move {
+        loop {
+            match listener_clone.accept().await {
+                Ok((stream, peer_addr)) => {
+                    let acceptor2 = acceptor.clone();
+                    let app2 = app_clone.clone();
+                    tauri::async_runtime::spawn(async move {
+                        match acceptor2.accept(stream).await {
+                            Ok(tls_stream) => {
+                                // AC-2-4: handshake passed the verifier (pinned cert) —
+                                // the peer is already authenticated, fail-closed, before
+                                // we ever read a byte of application data.
+                                let peer_spki = {
+                                    let (_io, conn) = tls_stream.get_ref();
+                                    conn.peer_certificates()
+                                        .and_then(|certs| certs.first())
+                                        .and_then(|cert| {
+                                            compute_spki_hash_from_cert_der(cert.as_ref()).ok()
+                                        })
+                                };
+                                let Some(peer_spki) = peer_spki else {
+                                    let _ = app2.emit(
+                                        "bridge://error",
+                                        format!("no_client_cert:{peer_addr}"),
+                                    );
+                                    return;
+                                };
+                                handle_remote_data_connection(tls_stream, peer_spki, app2).await;
+                            }
+                            Err(e) => {
+                                // Handshake failed — fail-closed (unknown/no cert).
+                                #[cfg(debug_assertions)]
+                                eprintln!(
+                                    "[bridge-remote] mTLS handshake rejected {peer_addr}: {e}"
+                                );
+                                let _ = app2.emit(
+                                    "bridge://error",
+                                    format!("handshake_rejected:{peer_addr}:{e}"),
+                                );
+                            }
+                        }
+                    });
+                }
+                Err(e) => {
+                    #[cfg(debug_assertions)]
+                    eprintln!("[bridge-remote] accept loop exiting: {e}");
+                    break;
+                }
+            }
+        }
+    });
+
+    *state.listener_task.lock().await = Some(task);
+    *listener_guard = Some(listener);
+    *state.listen_addr.lock().await = Some(iface.to_string());
+    let _ = app.emit("bridge://peer-status", "remote_listener:started");
     Ok(())
 }
 
-/// Build a rustls `ServerConfig` with fail-closed SPKI-pinned mTLS.
+fn server_config_with_verifier(
+    identity: &BridgeIdentity,
+    verifier: Arc<PinnedSpkiVerifier>,
+) -> Result<ServerConfig, String> {
+    let cert = CertificateDer::from(identity.cert_der.clone());
+    let key = PrivateKeyDer::try_from(identity.key_der.clone())
+        .map_err(|e| format!("load private key: {e}"))?;
+    ServerConfig::builder_with_provider(rustls::crypto::ring::default_provider().into())
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .map_err(|e| format!("tls config versions: {e}"))?
+        .with_client_cert_verifier(verifier)
+        .with_single_cert(vec![cert], key)
+        .map_err(|e| format!("tls server config: {e}"))
+}
+
+/// Build a rustls `ServerConfig` with fail-closed SPKI-pinned mTLS (snapshot of the
+/// registry — tests; the live listener shares `live_allowed` instead).
+#[cfg(test)]
 async fn build_server_config(
     identity: &BridgeIdentity,
     registry: Arc<Mutex<PeerRegistry>>,
@@ -831,68 +876,80 @@ async fn build_server_config(
 /// By the time this function runs, `PinnedSpkiVerifier::verify_client_cert`
 /// has ALREADY fail-closed-rejected any unpinned/missing client cert at the
 /// TLS handshake layer (tokio-rustls #83 enforced) — `peer_spki` here is a
-/// cryptographically verified identity, not a self-reported field from the
-/// envelope. This is why `InboundRequest.peer` is set from `peer_spki`
-/// (the verified TLS identity), never from `env.peer` (which the sender
-/// could set to anything).
+/// cryptographically verified identity, never the self-reported `env.peer`.
 ///
-/// Loops reading length-prefixed frames (`read_raw_frame`, 16 MiB cap already
-/// enforced inside it), parses each as a `bridge::Envelope`, and — for
-/// `Request` envelopes — enqueues an `InboundRequest` into the SAME broker
-/// queue the local UDS path uses, gated by the SAME `required_approval` rule.
+/// Per frame:
+///   - `Request` + `Question` → a chat message, delivered into a local Claude
+///     session (bridge_mcp::on_inbound — size/rate limits, sanitising, routing).
+///   - `Request` + Task/File → refused (remote execution is not exposed).
+///   - `Control {op:"poll"}` → the messages queued for this peer (it is the
+///     dialing side and cannot be dialed back).
 /// One bad/unparseable frame closes only THIS connection, never the listener.
 async fn handle_remote_data_connection(
     mut tls_stream: tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
     peer_spki: String,
-    inbound_tx: mpsc::Sender<InboundRequest>,
-    staged: Arc<tokio::sync::Mutex<HashMap<String, InboundRequest>>>,
     app: AppHandle,
 ) {
     loop {
         let body = match read_raw_frame(&mut tls_stream).await {
             Ok(b) => b,
-            Err(e) => {
-                #[cfg(debug_assertions)]
-                eprintln!("[bridge-remote] read_raw_frame error from {peer_spki}: {e}");
-                break;
-            }
+            Err(_) => break,
         };
-
         let env: Envelope = match serde_json::from_slice(&body) {
             Ok(e) => e,
-            Err(e) => {
-                #[cfg(debug_assertions)]
-                eprintln!("[bridge-remote] malformed envelope from {peer_spki}: {e}");
-                break; // one bad frame closes this connection, not the listener
-            }
+            Err(_) => break, // one bad frame closes this connection, not the listener
         };
 
-        // Only Request envelopes are handed to the broker (mirrors local UDS path).
-        if env.envelope_type != EnvelopeType::Request {
-            continue;
-        }
+        let reply = |envelope_type: EnvelopeType, payload: serde_json::Value| Envelope {
+            v: 1,
+            envelope_type,
+            id: env.id.clone(),
+            peer: peer_spki.clone(),
+            capability: env.capability.clone(),
+            kind: env.kind.clone(),
+            payload,
+            stream: false,
+            seq: 0,
+            r#final: true,
+            respond_inline: false,
+        };
 
-        let req_id = env.id.clone();
-        let response = ingest_remote_request(env, &peer_spki, &inbound_tx, &staged).await;
-
-        let _ = app.emit("bridge://inbound-request", req_id);
+        let response = match env.envelope_type {
+            EnvelopeType::Request if env.kind == BridgeKind::Question => {
+                match crate::bridge_mcp::on_inbound(&app, &peer_spki, &env.payload).await {
+                    Ok(status) => reply(
+                        EnvelopeType::Response,
+                        serde_json::json!({ "status": status }),
+                    ),
+                    Err(e) => reply(EnvelopeType::Error, serde_json::json!({ "error": e })),
+                }
+            }
+            EnvelopeType::Request => reply(
+                EnvelopeType::Error,
+                serde_json::json!({ "error": "remote tasks and files are not accepted — send a message" }),
+            ),
+            EnvelopeType::Control
+                if env.payload.get("op").and_then(|v| v.as_str()) == Some("poll") =>
+            {
+                let state = app.state::<RemoteBridgeState>();
+                let messages = state.chat.drain_outbox(&peer_spki);
+                reply(
+                    EnvelopeType::Response,
+                    serde_json::json!({ "messages": messages }),
+                )
+            }
+            _ => continue,
+        };
 
         let resp_bytes = match serde_json::to_vec(&response) {
             Ok(b) => b,
-            Err(e) => {
-                #[cfg(debug_assertions)]
-                eprintln!("[bridge-remote] serialize ack failed for {peer_spki}: {e}");
-                break;
-            }
+            Err(_) => break,
         };
-        if let Err(e) = write_raw_frame(&mut tls_stream, &resp_bytes).await {
-            #[cfg(debug_assertions)]
-            eprintln!("[bridge-remote] write ack failed for {peer_spki}: {e}");
+        if write_raw_frame(&mut tls_stream, &resp_bytes).await.is_err() {
             break;
         }
     }
 }
-
 /// Testable core of the receiving side: given a parsed `Request` envelope and
 /// the TLS-verified sender identity, builds the `InboundRequest`, applies the
 /// SAME approval gate as local (`required_approval`), stages it if needed,
@@ -902,6 +959,7 @@ async fn handle_remote_data_connection(
 /// production enqueue path over a REAL socket without needing a Tauri
 /// `AppHandle` (which cannot be constructed in unit tests — same constraint
 /// documented in `bridge.rs`'s local contract tests).
+#[cfg(test)]
 async fn ingest_remote_request(
     env: Envelope,
     peer_spki: &str,
@@ -961,6 +1019,10 @@ async fn ingest_remote_request(
 pub async fn bridge_pair_invite(
     state: State<'_, RemoteBridgeState>,
 ) -> Result<serde_json::Value, String> {
+    pair_invite_impl(&state).await
+}
+
+pub async fn pair_invite_impl(state: &RemoteBridgeState) -> Result<serde_json::Value, String> {
     let (identity, _registry) = state.ensure_initialized().await?;
 
     let pin = generate_pin();
@@ -1105,6 +1167,16 @@ pub async fn bridge_pair_start_listener(
     state: State<'_, RemoteBridgeState>,
     app: AppHandle,
 ) -> Result<(), String> {
+    pair_start_listener_impl(state.inner(), pairing_iface, app).await
+}
+
+/// `state` must be the Tauri-managed instance (it lives for the whole process —
+/// the spawned tasks below keep a pointer to it).
+pub async fn pair_start_listener_impl(
+    state: &RemoteBridgeState,
+    pairing_iface: String,
+    app: AppHandle,
+) -> Result<(), String> {
     // Reject wildcard addresses.
     assert_not_wildcard(&pairing_iface)?;
 
@@ -1136,7 +1208,7 @@ pub async fn bridge_pair_start_listener(
     // watcher tasks can read LIVE state (not a stale snapshot). SAFETY:
     // RemoteBridgeState is managed by Tauri for the whole process lifetime, so
     // this pointer stays valid until exit. `usize` is Copy → both tasks capture it.
-    let state_raw = state.inner() as *const RemoteBridgeState as usize;
+    let state_raw = state as *const RemoteBridgeState as usize;
 
     // Shared result channel: spawned task writes PairingResult; we read it to update state.
     let shared_result: Arc<Mutex<Option<PairingResult>>> = Arc::new(Mutex::new(None));
@@ -1245,6 +1317,7 @@ pub async fn bridge_pair_start_listener(
                         peer_spki: result.peer_spki.clone(),
                         peer_label: result.peer_label.clone(),
                         peer_addr: result.peer_addr.clone(),
+                        we_dialed: false,
                     });
                 }
                 // Pairing window closed (single-use).
@@ -1252,9 +1325,16 @@ pub async fn bridge_pair_start_listener(
                 let state_ref2 = unsafe { &*(state_raw as *const RemoteBridgeState) };
                 let mut pl = state_ref2.pairing_listener.lock().await;
                 pl.take();
-                break;
+                return;
             }
         }
+        // PIN expired with no dialer: close the pairing window instead of leaving
+        // the socket parked in accept() indefinitely.
+        let state_ref = unsafe { &*(state_raw as *const RemoteBridgeState) };
+        if let Some(handle) = state_ref.pairing_task.lock().await.take() {
+            handle.abort();
+        }
+        state_ref.pairing_listener.lock().await.take();
     });
 
     Ok(())
@@ -1409,6 +1489,15 @@ pub async fn bridge_pair_connect(
     label: String,
     state: State<'_, RemoteBridgeState>,
 ) -> Result<serde_json::Value, String> {
+    pair_connect_impl(&state, addr, pin, label).await
+}
+
+pub async fn pair_connect_impl(
+    state: &RemoteBridgeState,
+    addr: String,
+    pin: String,
+    label: String,
+) -> Result<serde_json::Value, String> {
     let (identity, _registry) = state.ensure_initialized().await?;
 
     // Validate addr (must be parseable; not wildcard for good hygiene).
@@ -1509,6 +1598,7 @@ pub async fn bridge_pair_connect(
         peer_spki: peer_spki.clone(),
         peer_label: label.clone(),
         peer_addr: addr.clone(),
+        we_dialed: true,
     };
     {
         let mut ap = state.active_pin.lock().await;
@@ -1542,46 +1632,86 @@ pub async fn bridge_pair_confirm_sas(
     label: String,
     state: State<'_, RemoteBridgeState>,
 ) -> Result<(), String> {
-    if !sas_ok {
-        let mut ap = state.active_pin.lock().await;
-        if let Some(active) = ap.as_mut() {
-            active.pending_sas = None;
+    {
+        let ap = state.active_pin.lock().await;
+        if let Some(p) = ap.as_ref().and_then(|a| a.pending_sas.as_ref()) {
+            if sas_ok && p.peer_spki != peer_spki {
+                return Err(format!(
+                    "SPKI mismatch: expected {}, got {peer_spki}",
+                    p.peer_spki
+                ));
+            }
         }
-        return Err("SAS rejected by operator — pairing aborted (no peer pinned)".to_string());
     }
+    pair_confirm_impl(&state, sas_ok, None, Some(label)).await.map(|_| ())
+}
 
-    let (_identity, registry) = state.ensure_initialized().await?;
-
-    // Retrieve pending SAS from state.
+/// Finish (or abort) the pending pairing. `their_sas`, when given, is the code the
+/// OTHER machine shows: it must equal ours, or nothing is pinned. A wrong PIN does
+/// not fail SPAKE2 itself — it yields different codes on the two sides — so this
+/// comparison is what stops a stranger who connected to the pairing window.
+/// Returns the pinned peer and whether we dialed it (it is the listening side).
+pub async fn pair_confirm_impl(
+    state: &RemoteBridgeState,
+    accept: bool,
+    their_sas: Option<&str>,
+    label: Option<String>,
+) -> Result<(PinnedPeer, bool), String> {
     let pending = {
         let mut ap = state.active_pin.lock().await;
-        let active = ap.as_mut().ok_or("no active pairing session")?;
+        let active = ap.as_mut().ok_or("no pairing in progress")?;
         active
             .pending_sas
             .take()
-            .ok_or("no pending SAS to confirm")?
+            .ok_or("no pending pairing — the other side has not connected yet")?
     };
-
-    if pending.peer_spki != peer_spki {
-        return Err(format!(
-            "SPKI mismatch: expected {}, got {peer_spki}",
-            pending.peer_spki
-        ));
+    if !accept {
+        return Err("pairing rejected — no peer pinned".to_string());
+    }
+    if let Some(theirs) = their_sas {
+        if !sas_matches(&pending.sas, theirs) {
+            return Err(format!(
+                "codes differ (ours {}, theirs {}) — pairing aborted, nothing pinned. \
+                 Either the PIN was wrong or someone else connected; start over with a new invite.",
+                pending.sas,
+                theirs.trim()
+            ));
+        }
     }
 
-    // Pin the peer.
+    let (_identity, registry) = state.ensure_initialized().await?;
+    let label = label
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .unwrap_or_else(|| pending.peer_label.clone());
     let peer = PinnedPeer {
         schema_v: REGISTRY_SCHEMA_VERSION,
-        spki_hash: peer_spki.clone(),
+        spki_hash: pending.peer_spki.clone(),
         label,
-        last_addr: Some(pending.peer_addr),
+        // Only the listening side's address can be dialed again; the dialer's is an
+        // ephemeral source port.
+        last_addr: pending.we_dialed.then(|| pending.peer_addr.clone()),
         paired_at: unix_now(),
         capability: "research".to_string(),
     };
+    registry.lock().await.insert(peer.clone())?;
+    state
+        .live_allowed
+        .lock()
+        .unwrap()
+        .insert(pending.peer_spki.clone());
+    Ok((peer, pending.we_dialed))
+}
 
-    registry.lock().await.insert(peer)?;
-
-    Ok(())
+/// Case/space-insensitive comparison of two short authentication strings.
+pub fn sas_matches(ours: &str, theirs: &str) -> bool {
+    let norm = |s: &str| {
+        s.chars()
+            .filter(|c| !c.is_whitespace() && *c != '-')
+            .collect::<String>()
+            .to_ascii_uppercase()
+    };
+    !ours.is_empty() && norm(ours) == norm(theirs)
 }
 
 /// List all pinned peers.
@@ -1600,8 +1730,14 @@ pub async fn bridge_revoke_peer(
     spki_hash: String,
     state: State<'_, RemoteBridgeState>,
 ) -> Result<(), String> {
+    revoke_impl(&state, &spki_hash).await
+}
+
+pub async fn revoke_impl(state: &RemoteBridgeState, spki_hash: &str) -> Result<(), String> {
     let (_id, registry) = state.ensure_initialized().await?;
-    let result = registry.lock().await.remove(&spki_hash);
+    let result = registry.lock().await.remove(spki_hash);
+    state.live_allowed.lock().unwrap().remove(spki_hash);
+    state.chat.forget_peer(spki_hash);
     result
 }
 
@@ -1706,11 +1842,62 @@ async fn remote_send_impl(
     payload: serde_json::Value,
     state: &RemoteBridgeState,
 ) -> Result<String, String> {
+    let kind_parsed: BridgeKind = serde_json::from_value(serde_json::Value::String(kind.clone()))
+        .unwrap_or(BridgeKind::Unknown);
+    if kind_parsed == BridgeKind::Unknown {
+        return Err(format!("unknown kind: {kind}"));
+    }
+    let (req_id, mut tls_stream) =
+        open_and_write(state, &peer, EnvelopeType::Request, kind_parsed, payload).await?;
+    // Best-effort read of the ack response so delivery is confirmed; don't hang forever.
+    let _ack = tokio::time::timeout(
+        std::time::Duration::from_millis(1500),
+        read_raw_frame(&mut tls_stream),
+    )
+    .await;
+    Ok(req_id)
+}
+
+/// Send one envelope to a pinned peer and wait for its reply envelope.
+pub async fn remote_exchange(
+    state: &RemoteBridgeState,
+    peer: &str,
+    envelope_type: EnvelopeType,
+    kind: BridgeKind,
+    payload: serde_json::Value,
+) -> Result<Envelope, String> {
+    let (_req_id, mut tls_stream) =
+        open_and_write(state, peer, envelope_type, kind, payload).await?;
+    let body = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        read_raw_frame(&mut tls_stream),
+    )
+    .await
+    .map_err(|_| format!("peer {peer} did not answer in time"))??;
+    serde_json::from_slice(&body).map_err(|e| format!("bad reply from peer: {e}"))
+}
+
+/// Dial a pinned peer over mutually authenticated TLS 1.3 and write one envelope.
+/// Fails closed if the peer is unknown/unpaired or has no known address — never
+/// falls back to an unauthenticated path.
+async fn open_and_write(
+    state: &RemoteBridgeState,
+    peer: &str,
+    envelope_type: EnvelopeType,
+    kind: BridgeKind,
+    payload: serde_json::Value,
+) -> Result<
+    (
+        String,
+        tokio_rustls::client::TlsStream<tokio::net::TcpStream>,
+    ),
+    String,
+> {
     let (identity, registry) = state.ensure_initialized().await?;
 
     let pinned = {
         let reg = registry.lock().await;
-        reg.get(&peer)
+        reg.get(peer)
             .cloned()
             .ok_or_else(|| format!("peer {peer} is not paired (unknown SPKI) — pair first"))?
     };
@@ -1719,22 +1906,16 @@ async fn remote_send_impl(
         .clone()
         .ok_or_else(|| format!("peer {peer} has no known address to dial"))?;
 
-    let kind_parsed: BridgeKind = serde_json::from_value(serde_json::Value::String(kind.clone()))
-        .unwrap_or(BridgeKind::Unknown);
-    if kind_parsed == BridgeKind::Unknown {
-        return Err(format!("unknown kind: {kind}"));
-    }
-
     let seq = state.seq.fetch_add(1, Ordering::Relaxed);
     let req_id = format!("remote-{seq}-{}", unix_now());
 
     let env = Envelope {
         v: 1,
-        envelope_type: EnvelopeType::Request,
+        envelope_type,
         id: req_id.clone(),
         peer: identity.spki_hash.clone(),
-        capability: crate::bridge::Capability::Research, // default; callers override via payload
-        kind: kind_parsed,
+        capability: crate::bridge::Capability::Research,
+        kind,
         payload,
         stream: false,
         seq: seq as u32,
@@ -1743,9 +1924,13 @@ async fn remote_send_impl(
     };
 
     // TCP connect to the pinned peer's last known address.
-    let tcp_stream = tokio::net::TcpStream::connect(&addr)
-        .await
-        .map_err(|e| format!("connect to peer {peer} at {addr}: {e}"))?;
+    let tcp_stream = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        tokio::net::TcpStream::connect(&addr),
+    )
+    .await
+    .map_err(|_| format!("connect to peer {peer} at {addr}: timed out"))?
+    .map_err(|e| format!("connect to peer {peer} at {addr}: {e}"))?;
 
     // Mutual-auth TLS 1.3: present OUR identity cert (verified by the acceptor's
     // PinnedSpkiVerifier) AND verify the acceptor's server cert SPKI matches
@@ -1756,7 +1941,7 @@ async fn remote_send_impl(
     let client_key = PrivateKeyDer::try_from(identity.key_der.clone())
         .map_err(|e| format!("load client key: {e}"))?;
     let verifier = Arc::new(PinnedServerCertVerifier {
-        expected_spki: peer.clone(),
+        expected_spki: peer.to_string(),
     });
     let client_config = rustls::ClientConfig::builder_with_provider(
         rustls::crypto::ring::default_provider().into(),
@@ -1778,15 +1963,7 @@ async fn remote_send_impl(
 
     let body = serde_json::to_vec(&env).map_err(|e| format!("serialize envelope: {e}"))?;
     write_raw_frame(&mut tls_stream, &body).await?;
-
-    // Best-effort read of the ack response so delivery is confirmed; don't hang forever.
-    let _ack = tokio::time::timeout(
-        std::time::Duration::from_millis(1500),
-        read_raw_frame(&mut tls_stream),
-    )
-    .await;
-
-    Ok(req_id)
+    Ok((req_id, tls_stream))
 }
 
 // ---------------------------------------------------------------------------

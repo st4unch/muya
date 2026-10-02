@@ -1,11 +1,10 @@
 // Created by Claude — Classification: INTERNAL
 //
 // Left navigation rail (PROMPT.md §2), identical on Control and Grid. 64px wide,
-// 8 items (Settings icon-only, pinned to the bottom via a flex spacer).
+// 7 items (Settings icon-only, pinned to the bottom via a flex spacer).
 
 import type { RailItem } from "./types";
 import {
-  ChatRailIcon,
   ControlRailIcon,
   FilesRailIcon,
   KanbanRailIcon,
@@ -30,7 +29,6 @@ const ITEMS: { item: RailItem; label: string; Icon: typeof ControlRailIcon }[] =
   { item: "kanban", label: "Kanban", Icon: KanbanRailIcon },
   { item: "resources", label: "Resources", Icon: ResourcesRailIcon },
   { item: "ssh", label: "SSH", Icon: SshRailIcon },
-  { item: "chat", label: "Chat", Icon: ChatRailIcon },
 ];
 
 export function Rail({ active, onNavigate }: RailProps) {

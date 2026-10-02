@@ -103,7 +103,7 @@ export interface FooterStatusVM {
 
 export type ThemePreference = "system" | "light" | "dark";
 
-export type RailItem = "control" | "files" | "sessions" | "queue" | "kanban" | "resources" | "ssh" | "chat" | "settings";
+export type RailItem = "control" | "files" | "sessions" | "queue" | "kanban" | "resources" | "ssh" | "settings";
 
 export type GridLayout = "1" | "1x2" | "2x2" | "3x2";
 

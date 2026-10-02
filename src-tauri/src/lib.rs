@@ -43,6 +43,7 @@ mod agents;
 mod askpass;
 mod bridge;
 mod bridge_exec;
+mod bridge_mcp;
 mod bridge_remote;
 mod broker;
 mod credstore;
@@ -191,6 +192,10 @@ pub fn run() {
                     eprintln!("[bridge] auto-listen failed: {e}");
                 }
             }
+
+            // Remote bridge (PRD bridge-mcp): resume polling the peers we dialed, so
+            // messages they queued for us arrive without an agent call first.
+            bridge_mcp::start_pollers(app.handle().clone());
 
             // SSH agent broker (PRD ssh-agent-broker, Faz 1): start the owner-only
             // UDS listener (0600 + getpeereid uid check) and register the muya-ssh

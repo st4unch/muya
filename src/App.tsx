@@ -8,7 +8,6 @@ import { NotificationsPopover, NotificationToast, type NotificationItem } from "
 import { installNoAutocorrect } from "./lib/noAutocorrect";
 import AgentTerminal from "./components/Terminal";
 import FileTree from "./components/FileTree";
-import ChatView from "./components/ChatView";
 import SessionsPage from "./components/SessionsPage";
 import BranchesPage from "./components/BranchesPage";
 import ViewerErrorBoundary from "./components/ViewerErrorBoundary";
@@ -57,6 +56,7 @@ import type { AgentVM, ChangeVM, FileVM, GridLayout, OpenFileVM, InspectorVM, Pe
 import type { AgentFilter } from "./redesign/AgentList";
 import type { InspectorTab } from "./redesign/Inspector";
 import { shouldExitGridOnEscape } from "./redesign/gridKeys";
+import { remoteMessageLine, type RemoteSender } from "./lib/remoteMessage";
 
 // Types matching the user's workflow model
 interface AgentSession {
@@ -127,7 +127,7 @@ interface GitBranchState {
   parent?: string; // real lineage: branch this forked from
 }
 
-type View = "control" | "sessions" | "queue" | "tools" | "prd" | "ssh" | "chat" | "branches";
+type View = "control" | "sessions" | "queue" | "tools" | "prd" | "ssh" | "branches";
 type Screen = "control" | "grid";
 
 const isFileTab = (t: { kind: OpenTerminal["kind"] }) => t.kind !== "terminal";
@@ -223,7 +223,6 @@ const PALETTE_COMMANDS = [
   { id: "kanban", label: "Kanban" },
   { id: "resources", label: "Resources" },
   { id: "ssh", label: "SSH" },
-  { id: "chat", label: "Chat" },
   { id: "settings", label: "Settings" },
   { id: "theme", label: "Cycle theme (system, light, dark)" },
   { id: "schedule", label: "Schedule prompt" },
@@ -1111,14 +1110,14 @@ export default function App() {
   // for answering an interactive screen (a permission prompt, trust-folder dialog)
   // where any extra characters would be typed into the menu itself.
   useEffect(() => {
-    const un = listen<{ sessionId: string; text: string; from?: string; raw?: boolean }>(
+    const un = listen<{ sessionId: string; text: string; from?: string; raw?: boolean; remote?: RemoteSender }>(
       "muya://deliver-message",
       (e) => {
-        const { sessionId, text, from, raw } = e.payload;
+        const { sessionId, text, from, raw, remote } = e.payload;
         const key = sessionIdToKeyRef.current[sessionId];
         const ptyId = key ? terminalPtyIdsRef.current[key] : undefined;
         if (!ptyId) return; // target tab not open here
-        const data = raw ? text : `[message${from ? ` from ${from}` : ""} via Muya] ${text}\n`;
+        const data = raw ? text : remote ? remoteMessageLine(remote, text) : `[message${from ? ` from ${from}` : ""} via Muya] ${text}\n`;
         void invoke("pty_write", { id: ptyId, data }).catch(() => {});
       },
     );
@@ -1701,7 +1700,7 @@ export default function App() {
       : gridPanels[0]?.key ?? null;
 
   const railActive: RailItem | null =
-    view === "control" ? (controlMode === "files" ? "files" : "control") : view === "sessions" ? "sessions" : view === "queue" ? "queue" : view === "prd" ? "kanban" : view === "tools" ? "resources" : view === "ssh" ? "ssh" : view === "chat" ? "chat" : null;
+    view === "control" ? (controlMode === "files" ? "files" : "control") : view === "sessions" ? "sessions" : view === "queue" ? "queue" : view === "prd" ? "kanban" : view === "tools" ? "resources" : view === "ssh" ? "ssh" : null;
 
   const navigateRail = (item: RailItem) => {
     if (item === "settings") return setSettingsOpen(true);
@@ -1811,7 +1810,6 @@ export default function App() {
       case "kanban": return setView("prd");
       case "resources": return setView("tools");
       case "ssh": return setView("ssh");
-      case "chat": return setView("chat");
       case "settings": return setSettingsOpen(true);
       case "theme": return cycleTheme();
       case "schedule": return setScheduleOpen(true);
@@ -2194,12 +2192,6 @@ export default function App() {
                 navigation. Deferred off startup so its load doesn't contend (L32). */}
             <div className={pageClass("ssh")}>
               {mountedViews.has("ssh") && <SshPage onConnect={openSshServer} />}
-            </div>
-            {/* Claude-to-Claude chat bridge — mounted on first visit, then kept alive so an
-                active pairing / conversation survives navigation. Its bridge data-fetches
-                (peers/inbound/local_ip) no longer run at app startup (L32). */}
-            <div className={pageClass("chat")}>
-              {mountedViews.has("chat") && <ChatView />}
             </div>
             <div className={pageClass("branches")}>
               {mountedViews.has("branches") && (

@@ -224,6 +224,10 @@ struct BrokerReq {
     /// filter, and the delivery mode ("auto" = native SendMessage, "muya" = Muya types it).
     #[serde(default)]
     target: Option<String>,
+    /// `bridge_*` (PRD `bridge-mcp`): the tool's arguments, passed through to
+    /// `bridge_mcp::handle`.
+    #[serde(default)]
+    bridge: Option<serde_json::Value>,
     #[serde(default)]
     limit: Option<u32>,
     #[serde(default)]
@@ -493,6 +497,14 @@ async fn handle_request(app: &AppHandle, line: &str) -> String {
         "list_sessions" => handle_list_sessions(&req).await,
         "read_session" => handle_read_session(&req).await,
         "send_to_session" => handle_send_to_session(app, &req).await,
+        op if op.starts_with("bridge_") => crate::bridge_mcp::handle(
+            app,
+            op,
+            req.bridge.as_ref().unwrap_or(&serde_json::Value::Null),
+            req.session_id.as_deref().unwrap_or(""),
+        )
+        .await
+        .to_string(),
         "close_session" => handle_close_session(app, &req).await,
         "session_open" => handle_session_open(app, &servers, &req).await,
         "session_exec" => handle_session_exec(app, &req).await,
@@ -872,7 +884,7 @@ pub(crate) fn resolve_target(target: &str, sessions: &[(String, String)]) -> Tar
 }
 
 /// Running sessions as `(id, name)` pairs plus the full records, for the tools below.
-fn running_sessions() -> Result<Vec<crate::agents::AgentSession>, String> {
+pub(crate) fn running_sessions() -> Result<Vec<crate::agents::AgentSession>, String> {
     let all = crate::agents::list_agent_sessions_sync(Some(true))?;
     Ok(all
         .into_iter()
