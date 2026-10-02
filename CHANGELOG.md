@@ -6,6 +6,20 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.0.6] - 2026-10-02
+
+### Added
+- **Notifications in the bell.** When an agent finishes or starts waiting for your
+  input, a message bubble pops up under the bell and the event is kept in the bell's
+  list (across restarts) until you dismiss it or press **Clear all**. Click one to
+  jump to that agent, even in another workspace.
+- **Collapsible session header.** The bar with the agent name, Compact, Split to grid
+  and Stop folds into a slim row with the arrow on its left; Muya remembers your choice.
+
+### Fixed
+- A folder picked with right-click **Select workspace** in Files now stays in the
+  Workspace menu, so you can switch back to it later.
+
 ## [4.0.5] - 2026-10-02
 
 ### Added
