@@ -6,6 +6,25 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.0.4] - 2026-10-02
+
+### Fixed
+- **Terminal no longer goes blank after visiting Files.** Opening a file in Files and
+  going back to Control left the agent's terminal empty (the agent kept running, it just
+  wasn't drawn). It now shows again right away.
+
+### Security
+- Updated a Tauri dependency (quick-xml, via plist) with a high-severity advisory, and
+  event-listener (unsound code). `cargo audit` and `npm audit` now report no
+  vulnerabilities.
+- Sessions content search only reads conversation files under `~/.claude/projects`;
+  a path from outside (or one escaping with `..` or a symlink) is refused.
+- Images and PDFs are capped at 100 MB, enforced while reading.
+
+### Added
+- **Settings › Open-source licenses** opens the license notices of the 468 open-source
+  packages Muya ships with (now bundled in the app).
+
 ## [4.0.3] - 2026-10-01
 
 ### Added

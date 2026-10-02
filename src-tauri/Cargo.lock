@@ -2905,7 +2905,7 @@ dependencies = [
 
 [[package]]
 name = "muya"
-version = "4.0.3"
+version = "4.0.4"
 dependencies = [
  "aes-gcm",
  "argon2",
