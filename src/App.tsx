@@ -2,7 +2,7 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMe
 import { createPortal } from "react-dom";
 import { pickNextActiveKey, newSshTabKey, addSshSession, canResumeTab, resumeCommand } from "./lib/tabs";
 import { terminalIsVisible } from "./lib/terminalVisibility";
-import { belongsTo, inScope, workspaceOf } from "./lib/workspaceScope";
+import { belongsTo, inScope } from "./lib/workspaceScope";
 import { installNoAutocorrect } from "./lib/noAutocorrect";
 import AgentTerminal from "./components/Terminal";
 import FileTree from "./components/FileTree";
@@ -358,11 +358,7 @@ export default function App() {
   // Grid terminals are all `active` at once, so a pick there would otherwise leave the
   // keyboard wherever it was.
   const [tabPickCount, setTabPickCount] = useState(0);
-  // Set once the workspace scope exists (below): a picked agent from another workspace
-  // (palette, bell, jump-to-waiting) switches the scope so it is never hidden.
-  const followScopeRef = useRef<(tab: OpenTerminal | undefined) => void>(() => {});
   const pickTab = useCallback((key: string) => {
-    followScopeRef.current(openTerminalsRef.current.find((t) => t.key === key));
     setActiveTerminalKey(key);
     setTabPickCount((n) => n + 1);
   }, []);
@@ -565,15 +561,17 @@ export default function App() {
     if (selectedRoot) localStorage.setItem("apex.selectedRoot", selectedRoot);
     else localStorage.removeItem("apex.selectedRoot");
   }, [selectedRoot]);
-  // The picked workspace also scopes the agent list (docs/prd-workspace-scope.md).
-  // Terminals elsewhere stay mounted and running — they are only not listed.
+  // The picked workspace also scopes the agent list, grid, palette and bell
+  // (docs/prd-workspace-scope.md). It changes only when the operator picks one — the
+  // header menu or "Select workspace" on a file-tree root — never as a side effect.
+  // Terminals elsewhere stay mounted and running; they are only not listed.
   const scopeRef = useRef(selectedRoot);
   scopeRef.current = selectedRoot;
-  const trackedPathsRef = useRef(trackedPaths);
-  trackedPathsRef.current = trackedPaths;
-  followScopeRef.current = (tab) => {
-    if (!tab || tab.kind !== "terminal" || inScope(tab, scopeRef.current)) return;
-    setSelectedRoot(workspaceOf(tab, trackedPathsRef.current));
+  /** Make `root` the workspace; a folder not yet tracked becomes a workspace first,
+   *  otherwise the "removed workspace" check below would drop the selection. */
+  const selectWorkspace = (root: string | undefined) => {
+    if (root && !trackedPaths.includes(root)) setWorkspaces((prev) => (prev.includes(root) ? prev : [...prev, root]));
+    setSelectedRoot(root);
   };
   // Switching workspace (or closing the selected agent) never leaves an agent from
   // another workspace selected: fall to the first one listed here, or none.
@@ -665,10 +663,13 @@ export default function App() {
           })()
         : spec;
     if (withKind.kind === "terminal") {
-      followScopeRef.current(withKind);
       setOpenTerminals((prev) => (prev.some((tm) => tm.key === withKind.key) ? prev : [...prev, withKind]));
-      setActiveTerminalKey(withKind.key);
-      setControlMode("agents");
+      // Opened in another workspace (Sessions page, MCP, the New agent modal set to a
+      // different folder): it runs and is listed there; the current view stays put.
+      if (inScope(withKind, scopeRef.current)) {
+        setActiveTerminalKey(withKind.key);
+        setControlMode("agents");
+      }
     } else {
       // Files stay open (listed in the Files rail) — up to MAX_OPEN_FILES; past that the
       // oldest saved one closes. Unsaved files are never dropped.
@@ -1676,8 +1677,8 @@ export default function App() {
   const fileVM: FileVM | null = viewedFile ? { name: viewedFile.name, path: abbreviateHome(viewedFile.filePath ?? "") } : null;
 
   const gridPanels = useMemo(
-    () => pickGridPanels(agentVMs, gridKeys, GRID_CAPACITY[gridLayout]),
-    [agentVMs, gridKeys, gridLayout],
+    () => pickGridPanels(scopedAgentVMs, gridKeys, GRID_CAPACITY[gridLayout]),
+    [scopedAgentVMs, gridKeys, gridLayout],
   );
   // Focus defaults to the agent the operator was working with (the Control selection)
   // when it's on the grid — not blindly to the first panel. Opening the grid straight
@@ -1716,7 +1717,7 @@ export default function App() {
   };
 
   const jumpToWaiting = () => {
-    const first = agentVMs.find((a) => a.status === "waiting");
+    const first = scopedAgentVMs.find((a) => a.status === "waiting");
     if (first) selectAgent(first.key);
   };
 
@@ -1926,7 +1927,7 @@ export default function App() {
   const headerVM = {
     workspaceName: selectedRoot ? selectedRoot.split("/").filter(Boolean).pop() ?? selectedRoot : workspaces.length ? "All workspaces" : "No workspace",
     workspaceCount: workspaces.length,
-    hasNotifications: model.counts.waiting > 0,
+    hasNotifications: scopedAgentVMs.some((a) => a.status === "waiting"),
   };
   const statusFields = useStatusFields();
   const selectedPtyId = selectedTab ? terminalPtyIds[selectedTab.key] : undefined;
@@ -2007,7 +2008,7 @@ export default function App() {
       agents={agents}
       activeCwd={selectedTab?.cwd}
       selectedRoot={selectedRoot}
-      onSelectRoot={(r) => setSelectedRoot((prev) => (prev === r ? undefined : r))}
+      onSelectRoot={selectWorkspace}
       refreshSignal={fsTick}
       onAddWorkspace={() => void addWorkspace()}
     />
@@ -2248,6 +2249,7 @@ export default function App() {
           onWaitingFirst={waitingFirst}
           onBroadcastOpen={() => setBroadcastOpen(true)}
           onExitGrid={exitGrid}
+          workspace={{ name: headerVM.workspaceName, count: headerVM.workspaceCount, onClick: openWorkspaceMenu }}
           focusedKey={focusedPanelKey}
           onFocusPanel={setGridFocusedKey}
           onMaximizePanel={maximizePanel}
@@ -2267,7 +2269,7 @@ export default function App() {
         <CommandPalette
           open={paletteOpen}
           onOpenChange={setPaletteOpen}
-          agents={agentVMs}
+          agents={scopedAgentVMs}
           files={paletteFiles}
           commands={PALETTE_COMMANDS}
           onSelectAgent={(key) => { setPaletteOpen(false); selectAgent(key); }}
@@ -2302,7 +2304,7 @@ export default function App() {
             <MenuHeading>WORKSPACES</MenuHeading>
             {workspaces.length === 0 && <div style={{ padding: "6px 10px", color: "var(--text-muted)" }}>No workspace yet.</div>}
             {workspaces.length > 0 && (
-              <MenuItem label="All workspaces" hint={agentCountHint(agentVMs)} checked={selectedRoot === undefined} onSelect={() => { setSelectedRoot(undefined); setMenu(null); }} />
+              <MenuItem label="All workspaces" hint={agentCountHint(agentVMs)} checked={selectedRoot === undefined} onSelect={() => { selectWorkspace(undefined); setMenu(null); }} />
             )}
             {workspaces.map((w) => (
               <MenuItem
@@ -2310,7 +2312,7 @@ export default function App() {
                 label={w.split("/").filter(Boolean).pop() ?? w}
                 hint={`${agentCountHint(agentVMs.filter((a) => { const t = openTerminals.find((x) => x.key === a.key); return !!t && belongsTo(t, w); }))} · ${abbreviateHome(w)}`}
                 checked={w === selectedRoot}
-                onSelect={() => { setSelectedRoot(w); setMenu(null); }}
+                onSelect={() => { selectWorkspace(w); setMenu(null); }}
               />
             ))}
             <MenuSeparator />
@@ -2353,7 +2355,7 @@ export default function App() {
         {swapKey && (
           <AgentPickerDialog
             title="Swap panel"
-            agents={agentVMs.filter((a) => !gridPanels.some((p) => p.key === a.key))}
+            agents={scopedAgentVMs.filter((a) => !gridPanels.some((p) => p.key === a.key))}
             onClose={() => setSwapKey(null)}
             onPick={(key) => swapPanel(swapKey, key)}
           />

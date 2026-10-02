@@ -509,14 +509,14 @@ export default function FileTree({
                 key={r}
                 className={`border-l-2 mb-1 ${isActive ? "border-indigo-500" : "border-transparent"}`}
               >
-                {/* Root header — click to select as the target workspace */}
+                {/* Root header — the picked workspace is highlighted; right-click →
+                    "Select workspace" picks it (a plain click no longer does). */}
                 <div
-                  className={`flex items-center gap-1.5 px-2 py-0.5 group cursor-pointer rounded ${
+                  className={`flex items-center gap-1.5 px-2 py-0.5 group rounded ${
                     isSelected
                       ? "bg-indigo-100 dark:bg-indigo-500/25 ring-1 ring-inset ring-indigo-400/60"
                       : "hover:bg-neutral-100 dark:hover:bg-neutral-800"
                   }`}
-                  onClick={() => onSelectRoot?.(r)}
                   onContextMenu={(e) => handleContextMenu(e, { name, path: r, isDirectory: true }, r)}
                 >
                   <FolderOpen className="h-3.5 w-3.5 text-indigo-500 dark:text-indigo-400 shrink-0" />
@@ -676,6 +676,12 @@ export default function FileTree({
           {/* Root */}
           {!menu.creating && menu.isRoot && (
             <>
+              {onSelectRoot && selectedRoot !== menu.path && (
+                <>
+                  <MenuItem label="Select workspace" onClick={() => { onSelectRoot(menu.path); setMenu(null); }} />
+                  <Sep />
+                </>
+              )}
               <MenuItem label="New File" onClick={() => setMenu((m) => m ? { ...m, creating: "file" } : m)} />
               <MenuItem label="New Folder" onClick={() => setMenu((m) => m ? { ...m, creating: "folder" } : m)} />
               <Sep />

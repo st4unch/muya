@@ -40,6 +40,36 @@ export interface ControlHeaderProps {
   onToggleInspector?: () => void;
 }
 
+/** The workspace picker button — shared with the grid header, which the picked
+ *  workspace scopes too. */
+export function WorkspaceButton({ name, count, onClick }: { name: string; count: number; onClick: (e: MouseEvent<HTMLElement>) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="rd-btn2"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        height: 32,
+        padding: "0 12px",
+        borderRadius: 8,
+        border: "1px solid var(--border-control)",
+        background: "var(--bg-control)",
+        color: "var(--text)",
+        fontSize: 13,
+        flexShrink: 0,
+      }}
+    >
+      <span style={{ color: "var(--text-muted)" }}>Workspace</span>
+      <span style={{ fontWeight: 500 }}>{name}</span>
+      <span style={{ color: "var(--text-muted)" }}>· {count}</span>
+      <ChevronDownIcon size={14} />
+    </button>
+  );
+}
+
 const TOGGLE_STYLE = {
   width: 32,
   height: 32,
@@ -127,29 +157,7 @@ export function ControlHeader({
         </button>
       )}
 
-      <button
-        type="button"
-        onClick={onWorkspaceClick}
-        className="rd-btn2"
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          height: 32,
-          padding: "0 12px",
-          borderRadius: 8,
-          border: "1px solid var(--border-control)",
-          background: "var(--bg-control)",
-          color: "var(--text)",
-          fontSize: 13,
-          flexShrink: 0,
-        }}
-      >
-        <span style={{ color: "var(--text-muted)" }}>Workspace</span>
-        <span style={{ fontWeight: 500 }}>{header.workspaceName}</span>
-        <span style={{ color: "var(--text-muted)" }}>· {header.workspaceCount}</span>
-        <ChevronDownIcon size={14} />
-      </button>
+      <WorkspaceButton name={header.workspaceName} count={header.workspaceCount} onClick={onWorkspaceClick} />
 
       <div style={{ flexGrow: 1, display: "flex", justifyContent: "center", minWidth: 0 }}>
         <button

@@ -6,7 +6,7 @@
 // Y/N approve/deny are handled per-panel (GridPanel.tsx) once it has focus.
 
 import { useEffect, useRef } from "react";
-import { GridHeader } from "./GridHeader";
+import { GridHeader, type GridHeaderProps } from "./GridHeader";
 import { EmptyGridPanel, GridPanel } from "./GridPanel";
 import { AppFrame } from "./AppFrame";
 import { Rail } from "./Rail";
@@ -24,6 +24,7 @@ export interface GridScreenProps {
   onWaitingFirst: () => void;
   onBroadcastOpen: () => void;
   onExitGrid?: () => void;
+  workspace?: GridHeaderProps["workspace"];
 
   focusedKey: string | null;
   onFocusPanel: (key: string) => void;
@@ -88,6 +89,7 @@ export function GridScreen(props: GridScreenProps) {
             onWaitingFirst={props.onWaitingFirst}
             onBroadcast={props.onBroadcastOpen}
             onExitGrid={props.onExitGrid}
+            workspace={props.workspace}
           />
         }
         rail={<Rail active={props.railActive} onNavigate={props.onRailNavigate} />}

@@ -1,8 +1,11 @@
 // Created by Claude — Classification: INTERNAL
 //
 // Grid screen's own header (PROMPT.md §4) — a different, denser toolbar than
-// ControlHeader's (no workspace/search/CPU/bell in the grid.reference.html).
+// ControlHeader's (no search/CPU/bell in the grid.reference.html). The workspace picker
+// is shared: the picked workspace decides which agents the grid shows.
 
+import type { MouseEvent } from "react";
+import { WorkspaceButton } from "./ControlHeader";
 import { onTitleBarMouseDown } from "./titleBar";
 import type { GridLayout } from "./types";
 import { plural } from "./text";
@@ -15,6 +18,8 @@ export interface GridHeaderProps {
   onBroadcast: () => void;
   /** Back to the Control screen with the focused panel's agent selected (Esc does the same). */
   onExitGrid?: () => void;
+  /** Workspace picker; omitted = not drawn. */
+  workspace?: { name: string; count: number; onClick: (e: MouseEvent<HTMLElement>) => void };
 }
 
 const LAYOUTS: { value: GridLayout; label: string }[] = [
@@ -24,7 +29,7 @@ const LAYOUTS: { value: GridLayout; label: string }[] = [
   { value: "3x2", label: "3×2" },
 ];
 
-export function GridHeader({ panelCount, layout, onLayoutChange, onWaitingFirst, onBroadcast, onExitGrid }: GridHeaderProps) {
+export function GridHeader({ panelCount, layout, onLayoutChange, onWaitingFirst, onBroadcast, onExitGrid, workspace }: GridHeaderProps) {
   return (
     <header
       onMouseDown={onTitleBarMouseDown}
@@ -50,6 +55,7 @@ export function GridHeader({ panelCount, layout, onLayoutChange, onWaitingFirst,
       <span style={{ color: "var(--text-faint)", flexShrink: 0 }}>/</span>
       <span style={{ fontSize: 14, fontWeight: 500, flexShrink: 0 }}>Grid</span>
       <span style={{ fontSize: 13, color: "var(--text-muted)", flexShrink: 0 }}>{plural(panelCount, "panel")}</span>
+      {workspace && <WorkspaceButton {...workspace} />}
 
       <div style={{ flexGrow: 1 }} />
 
