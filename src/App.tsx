@@ -2,7 +2,9 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMe
 import { createPortal } from "react-dom";
 import { pickNextActiveKey, newSshTabKey, addSshSession, canResumeTab, resumeCommand } from "./lib/tabs";
 import { terminalIsVisible } from "./lib/terminalVisibility";
-import { belongsTo, inScope } from "./lib/workspaceScope";
+import { belongsTo, inScope, workspaceOf } from "./lib/workspaceScope";
+import { asNotifications, detectEvents, MAX_NOTIFICATIONS, type AgentNotification } from "./lib/agentNotifications";
+import { NotificationsPopover, NotificationToast, type NotificationItem } from "./redesign/NotificationsPanel";
 import { installNoAutocorrect } from "./lib/noAutocorrect";
 import AgentTerminal from "./components/Terminal";
 import FileTree from "./components/FileTree";
@@ -270,6 +272,7 @@ function FileTabView({
 }
 
 /** "3 agents · 1 waiting" for the workspace menu. */
+
 function agentCountHint(agents: readonly { status: string }[]): string {
   const waiting = agents.filter((a) => a.status === "waiting").length;
   return `${agents.length} agent${agents.length === 1 ? "" : "s"}${waiting ? ` · ${waiting} waiting` : ""}`;
@@ -567,12 +570,20 @@ export default function App() {
   // Terminals elsewhere stay mounted and running; they are only not listed.
   const scopeRef = useRef(selectedRoot);
   scopeRef.current = selectedRoot;
-  /** Make `root` the workspace; a folder not yet tracked becomes a workspace first,
-   *  otherwise the "removed workspace" check below would drop the selection. */
+  /** Make `root` the workspace. It always becomes a real workspace: a Files root that
+   *  is only an auto-tracked session folder (`worktrees`) is not in the header menu,
+   *  so after switching away it could not be picked again. */
   const selectWorkspace = (root: string | undefined) => {
-    if (root && !trackedPaths.includes(root)) setWorkspaces((prev) => (prev.includes(root) ? prev : [...prev, root]));
+    if (root) setWorkspaces((prev) => (prev.includes(root) ? prev : [...prev, root]));
     setSelectedRoot(root);
   };
+  // Same rule for a selection saved by an older version (picked from a worktree root).
+  useEffect(() => {
+    if (selectedRoot && trackedPaths.includes(selectedRoot) && !workspaces.includes(selectedRoot)) {
+      setWorkspaces((prev) => (prev.includes(selectedRoot) ? prev : [...prev, selectedRoot]));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRoot]);
   // Switching workspace (or closing the selected agent) never leaves an agent from
   // another workspace selected: fall to the first one listed here, or none.
   useEffect(() => {
@@ -1657,7 +1668,7 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [broadcastOpen, setBroadcastOpen] = useState(false);
   const [broadcastText, setBroadcastText] = useState("");
-  const [menu, setMenu] = useState<null | { kind: "actions" | "workspaces" | "mode"; anchor: Anchor }>(null);
+  const [menu, setMenu] = useState<null | { kind: "actions" | "workspaces" | "mode" | "notifications"; anchor: Anchor }>(null);
   const [renameKey, setRenameKey] = useState<string | null>(null);
   const [swapKey, setSwapKey] = useState<string | null>(null);
 
@@ -1716,9 +1727,13 @@ export default function App() {
     activateTerminal(key);
   };
 
-  const jumpToWaiting = () => {
-    const first = scopedAgentVMs.find((a) => a.status === "waiting");
-    if (first) selectAgent(first.key);
+  /** Open an agent from the bell. It may sit in another workspace — clicking it is the
+   *  operator's own pick, so the header switches to that workspace (All if it has none). */
+  const openFromNotification = (key: string) => {
+    setMenu(null);
+    const tab = openTerminalsRef.current.find((t) => t.key === key);
+    if (tab && !inScope(tab, selectedRoot)) setSelectedRoot(workspaceOf(tab, trackedPaths));
+    selectAgent(key);
   };
 
   const reorderAgents = (fromKey: string, toKey: string) => {
@@ -1923,11 +1938,45 @@ export default function App() {
   // suspended and the panel was blank (caught live, 2026-09-30 — see L54).
   const gridVisibleKeys = new Set(view === "control" && screen === "grid" ? gridPanels.map((p) => p.key) : []);
 
+  // Bell: a log of agent events ("waiting for you", "finished"). Entries stay until the
+  // operator clears them; the dot means "something new since you last opened the bell".
+  const [notifications, setNotifications] = usePersistentState<AgentNotification[]>("muya.notifications", [], asNotifications);
+  const [notificationsUnread, setNotificationsUnread] = usePersistentState<boolean>("muya.notificationsUnread", false, asBool);
+  const notificationsRef = useRef(notifications);
+  notificationsRef.current = notifications;
+  const prevStatusRef = useRef<Record<string, string>>({});
+  const watchedKeysId = [...gridVisibleKeys, controlVisible && controlMode === "agents" ? activeTerminalKey : null].filter(Boolean).join("|");
+  useEffect(() => {
+    const watched = new Set(watchedKeysId.split("|").filter(Boolean));
+    const events = detectEvents(prevStatusRef.current, agentVMs, watched, Date.now());
+    prevStatusRef.current = Object.fromEntries(agentVMs.map((a) => [a.key, a.status]));
+    if (events.length) {
+      setNotifications([...events, ...notificationsRef.current].slice(0, MAX_NOTIFICATIONS));
+      setNotificationsUnread(true);
+      setToastNotification(events[0]);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentVMs, watchedKeysId]);
+  // A new event also pops a bubble under the bell for a few seconds (it stays in the list).
+  const [toastNotification, setToastNotification] = useState<AgentNotification | null>(null);
+  useEffect(() => {
+    if (!toastNotification) return;
+    const t = setTimeout(() => setToastNotification(null), 6000);
+    return () => clearTimeout(t);
+  }, [toastNotification]);
+  const notificationItem = (n: AgentNotification): NotificationItem => {
+    const t = openTerminals.find((x) => x.key === n.key);
+    const w = t && workspaceOf(t, trackedPaths);
+    const where = !t ? "Closed" : w ? w.split("/").filter(Boolean).pop() ?? w : t.sshServerId ? "SSH" : "No workspace";
+    return { n, where, openable: !!t };
+  };
+
   // ── Render ────────────────────────────────────────────────────────────────
   const headerVM = {
     workspaceName: selectedRoot ? selectedRoot.split("/").filter(Boolean).pop() ?? selectedRoot : workspaces.length ? "All workspaces" : "No workspace",
     workspaceCount: workspaces.length,
-    hasNotifications: scopedAgentVMs.some((a) => a.status === "waiting"),
+    // Global on purpose: an event in another workspace still has to reach you.
+    hasNotifications: notificationsUnread && notifications.length > 0,
   };
   const statusFields = useStatusFields();
   const selectedPtyId = selectedTab ? terminalPtyIds[selectedTab.key] : undefined;
@@ -1968,7 +2017,10 @@ export default function App() {
     header: headerVM,
     themePreference: themeMode,
     onThemeCycle: cycleTheme,
-    onNotificationsClick: jumpToWaiting,
+    onNotificationsClick: (e: React.MouseEvent<HTMLElement>) => {
+      setNotificationsUnread(false);
+      setMenu({ kind: "notifications", anchor: anchorFromRect(e.currentTarget.getBoundingClientRect(), "right") });
+    },
     onWorkspaceClick: openWorkspaceMenu,
     onOpenPalette: () => setPaletteOpen(true),
   };
@@ -2329,6 +2381,23 @@ export default function App() {
               />
             )}
           </MenuPopover>
+        )}
+        {menu?.kind === "notifications" && (
+          <NotificationsPopover
+            anchor={menu.anchor}
+            items={notifications.map(notificationItem)}
+            onOpen={openFromNotification}
+            onDismiss={(id) => setNotifications(notificationsRef.current.filter((n) => n.id !== id))}
+            onClearAll={() => setNotifications([])}
+            onClose={() => setMenu(null)}
+          />
+        )}
+        {toastNotification && menu?.kind !== "notifications" && (
+          <NotificationToast
+            item={notificationItem(toastNotification)}
+            onOpen={() => { setToastNotification(null); openFromNotification(toastNotification.key); }}
+            onDismiss={() => setToastNotification(null)}
+          />
         )}
         {menu?.kind === "mode" && selectedAgentKey && (
           <MenuPopover anchor={menu.anchor} width={300} label="Permission mode" onClose={() => setMenu(null)}>

@@ -29,7 +29,7 @@ export interface ControlHeaderProps {
   header: HeaderVM;
   themePreference: ThemePreference;
   onThemeCycle: () => void;
-  onNotificationsClick: () => void;
+  onNotificationsClick: (e: MouseEvent<HTMLElement>) => void;
   /** Receives the click so the caller can anchor a menu under the button. */
   onWorkspaceClick: (e: MouseEvent<HTMLElement>) => void;
   onOpenPalette: () => void;

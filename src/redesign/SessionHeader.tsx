@@ -8,7 +8,8 @@ import { AgentKindIcon, agentGlyphLabel } from "./AgentKindIcon";
 import type { CSSProperties, MouseEvent } from "react";
 import type { AgentVM } from "./types";
 import { useLayoutEffect, useRef, useState } from "react";
-import { BypassWarningIcon, CompactIcon, GridSplitIcon } from "./icons";
+import { BypassWarningIcon, ChevronDownIcon, CompactIcon, GridSplitIcon } from "./icons";
+import { asBool, usePersistentState } from "./usePersistentState";
 import { InlineRename } from "./InlineRename";
 import { withDetail } from "./text";
 
@@ -88,15 +89,84 @@ function useCompactBypass(active: boolean, deps: unknown[]) {
   return { rowRef, nameRef, compact };
 }
 
+/** Expand/collapse toggle; sits left of the name in both states so it never moves. */
+function CollapseToggle({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+  const label = collapsed ? "Expand session header" : "Collapse session header";
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-label={label}
+      aria-expanded={!collapsed}
+      title={label}
+      className="rd-icon-btn"
+      style={{
+        width: 22,
+        height: 22,
+        borderRadius: 6,
+        border: "none",
+        background: "transparent",
+        color: "var(--text-muted)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+        padding: 0,
+      }}
+    >
+      <ChevronDownIcon size={14} style={{ transform: collapsed ? "rotate(-90deg)" : undefined, transition: "transform 120ms ease" }} />
+    </button>
+  );
+}
+
 export function SessionHeader({ agent, onCompact, onSplitToGrid, onStop, onMore, onRename }: SessionHeaderProps) {
   const [renaming, setRenaming] = useState(false);
+  // One setting for every agent: the operator wants the terminal taller, not this agent's bar hidden.
+  const [collapsed, setCollapsed] = usePersistentState<boolean>("muya.sessionHeaderCollapsed", false, asBool);
   const pill = statusPill(agent);
   const bypass = agent.mode === "bypass";
-  const { rowRef, nameRef, compact } = useCompactBypass(bypass, [agent.name, pill.text]);
+  const { rowRef, nameRef, compact } = useCompactBypass(bypass && !collapsed, [agent.name, pill.text]);
+  const pillEl = (
+    <span
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        height: 22,
+        padding: "0 8px",
+        borderRadius: 11,
+        background: pill.bg,
+        color: pill.fg,
+        fontSize: 12,
+        fontWeight: 500,
+        flexShrink: 0,
+      }}
+    >
+      <span style={{ width: 6, height: 6, borderRadius: 3, background: pill.dot, flexShrink: 0 }} />
+      {pill.text}
+    </span>
+  );
+  if (collapsed) {
+    return (
+      <div className="rd-session-head" style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 20px 4px 14px", borderBottom: "1px solid var(--border)", minWidth: 0 }}>
+        <CollapseToggle collapsed onToggle={() => setCollapsed(false)} />
+        <span className="rd-ellipsis" title={agent.name} style={{ fontSize: 13, fontWeight: 600, minWidth: 0 }}>
+          {agent.name}
+        </span>
+        {pillEl}
+        {bypass && (
+          <span title="Bypass permissions on" aria-label="Bypass permissions on" style={{ display: "flex", color: "var(--danger-text)", flexShrink: 0 }}>
+            <BypassWarningIcon size={12} />
+          </span>
+        )}
+      </div>
+    );
+  }
   return (
-    <div className="rd-session-head" style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 20px", borderBottom: "1px solid var(--border)", minWidth: 0 }}>
+    <div className="rd-session-head" style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 20px 12px 14px", borderBottom: "1px solid var(--border)", minWidth: 0 }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 3, flexGrow: 1, minWidth: 0 }}>
         <div ref={rowRef} style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+          <CollapseToggle collapsed={false} onToggle={() => setCollapsed(true)} />
           {renaming && onRename ? (
             <InlineRename
               initial={agent.name}
@@ -118,24 +188,7 @@ export function SessionHeader({ agent, onCompact, onSplitToGrid, onStop, onMore,
               {agent.name}
             </h1>
           )}
-          <span
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              height: 22,
-              padding: "0 8px",
-              borderRadius: 11,
-              background: pill.bg,
-              color: pill.fg,
-              fontSize: 12,
-              fontWeight: 500,
-              flexShrink: 0,
-            }}
-          >
-            <span style={{ width: 6, height: 6, borderRadius: 3, background: pill.dot, flexShrink: 0 }} />
-            {pill.text}
-          </span>
+          {pillEl}
           {bypass && (
             <span
               title={compact ? "Bypass permissions on" : undefined}
@@ -159,7 +212,7 @@ export function SessionHeader({ agent, onCompact, onSplitToGrid, onStop, onMore,
             </span>
           )}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, paddingLeft: 32 }}>
           <AgentKindIcon agent={agent} size={12} />
           <span style={{ fontSize: 12, color: "var(--text-secondary)", whiteSpace: "nowrap", flexShrink: 0 }}>{agentGlyphLabel(agent)} ·</span>
           <span className="rd-ellipsis" style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-muted)", minWidth: 0 }}>

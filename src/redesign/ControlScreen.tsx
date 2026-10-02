@@ -27,7 +27,7 @@ export interface ControlScreenProps {
   footer: FooterVM;
   themePreference: ThemePreference;
   onThemeCycle: () => void;
-  onNotificationsClick: () => void;
+  onNotificationsClick: (e: MouseEvent<HTMLElement>) => void;
   onWorkspaceClick: (e: MouseEvent<HTMLElement>) => void;
   onOpenPalette: () => void;
 
