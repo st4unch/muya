@@ -6,6 +6,27 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.0.7] - 2026-10-03
+
+### Added
+- **Claude-to-Claude bridge between two Macs.** Claude sessions on two machines can
+  now pair and message each other through new `muya-mcp` tools (`bridge_invite`,
+  `bridge_connect`, `bridge_confirm`, `bridge_send`, `bridge_peers`, `bridge_revoke`,
+  `bridge_listen`). Traffic is encrypted and both machines verify each other (mTLS).
+  Pairing uses a one-time 8-digit PIN, and each side must type in the 6-character
+  code shown on the other machine, so a wrong PIN or an eavesdropper can't pair.
+  Incoming messages are typed into the paired Claude session, marked as untrusted
+  remote data. Restart your Claude sessions to see the new tools.
+
+### Changed
+- Messages from the other machine are limited to 4 KB each and 10 per minute, and
+  can't run commands or send files.
+- Revoking a paired machine takes effect immediately, turning the bridge off frees its
+  port, and an unused pairing window closes when its PIN expires.
+
+### Removed
+- The Chat page. Its job is now done by the bridge tools above.
+
 ## [4.0.6] - 2026-10-02
 
 ### Added
