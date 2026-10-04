@@ -6,6 +6,17 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.0.9] - 2026-10-04
+
+### Added
+- **Find any file on your Mac from ⌘K.** Type two or more letters and an "On this Mac"
+  list shows matching files (Spotlight, by name, like Finder's search). Files in
+  your workspaces come first. Pick one and it opens in Muya.
+- **⌘O — File → Open…** opens the macOS file picker; the chosen files open in Muya.
+- **⌘⇧T — File → Reopen Closed Tab** brings back what you closed last, newest first:
+  a Claude tab rejoins its own conversation, an SSH tab reconnects, a terminal
+  reopens in its folder and a file reopens in its viewer.
+
 ## [4.0.8] - 2026-10-04
 
 ### Added
