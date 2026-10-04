@@ -59,6 +59,7 @@ mod pm;
 mod pty;
 mod sessions;
 mod slash_commands;
+mod spotlight;
 mod ssh;
 mod statusline;
 mod titlebar;
@@ -125,6 +126,14 @@ pub fn run() {
             let close_tab = MenuItemBuilder::with_id("close_tab", "Close Tab")
                 .accelerator("CmdOrCtrl+W")
                 .build(app)?;
+            // ⌘O: macOS open dialog; the chosen files open in Muya. Emits "menu:open-file".
+            let open_file = MenuItemBuilder::with_id("open_file", "Open…")
+                .accelerator("CmdOrCtrl+O")
+                .build(app)?;
+            // ⌘⇧T: bring back the last closed session / terminal / file (newest first).
+            let reopen_tab = MenuItemBuilder::with_id("reopen_tab", "Reopen Closed Tab")
+                .accelerator("CmdOrCtrl+Shift+T")
+                .build(app)?;
             // Custom quit item so we can intercept ⌘Q for double-press guard.
             // The built-in .quit() calls NSApplication.terminate() directly,
             // bypassing RunEvent::ExitRequested, so we must own it here.
@@ -154,8 +163,10 @@ pub fn run() {
                 .build()?;
             let file_menu = SubmenuBuilder::new(app, "File")
                 .item(&new_file)
+                .item(&open_file)
                 .separator()
                 .item(&close_tab)
+                .item(&reopen_tab)
                 .build()?;
             let edit_menu = SubmenuBuilder::new(app, "Edit")
                 .undo()
@@ -261,6 +272,12 @@ pub fn run() {
             }
             "close_tab" => {
                 let _ = app.emit("menu:close-tab", ());
+            }
+            "open_file" => {
+                let _ = app.emit("menu:open-file", ());
+            }
+            "reopen_tab" => {
+                let _ = app.emit("menu:reopen-closed-tab", ());
             }
             "check_update" => {
                 let _ = app.emit("menu:check-update", ());
@@ -424,6 +441,7 @@ pub fn run() {
             debuglog::debug_log_set,
             login_item::login_item_get,
             login_item::login_item_set,
+            spotlight::spotlight_search,
             debuglog::debug_log_get,
             frontend_log
         ])

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, lazy, Suspense, type ComponentProps } from "react";
 import { createPortal } from "react-dom";
-import { pickNextActiveKey, newSshTabKey, addSshSession, canResumeTab, resumeCommand } from "./lib/tabs";
+import { pickNextActiveKey, newSshTabKey, addSshSession, canResumeTab, resumeCommand, pushClosed, reopenSpec, type ClosedTab } from "./lib/tabs";
 import { loadResumeOnLaunch } from "./lib/startup";
 import { terminalIsVisible } from "./lib/terminalVisibility";
 import { belongsTo, inScope, workspaceOf } from "./lib/workspaceScope";
@@ -790,6 +790,8 @@ export default function App() {
     });
   };
 
+  /** Closed tabs for ⌘⇧T, newest last (lib/tabs.ts pushClosed / reopenSpec). */
+  const closedTabsRef = useRef<ClosedTab[]>([]);
   const closeTerminal = async (key: string) => {
     const list = openTerminalsRef.current;
     const tab = list.find((t) => t.key === key);
@@ -802,6 +804,23 @@ export default function App() {
     }
     // If this was an agent-opened ssh_open session, tell the broker it's gone so a
     // later ssh_send to this id is refused (not written to a recycled/dead PTY).
+    // Remember it for ⌘⇧T, at the folder the shell is in NOW (refs: this runs from
+    // mount-once listeners too, whose state closures are stale).
+    if (tab) {
+      closedTabsRef.current = pushClosed(closedTabsRef.current, {
+        key: tab.key,
+        name: tab.name,
+        kind: tab.kind,
+        cwd: liveCwdsRef.current[key] ?? tab.cwd,
+        filePath: tab.filePath,
+        initialCommand: tab.initialCommand,
+        sessionId: tab.sessionId,
+        sessionCwd: tab.sessionCwd,
+        sshServerId: tab.sshServerId,
+        userRenamed: tab.userRenamed,
+        startInDiff: tab.startInDiff,
+      });
+    }
     if (key.startsWith("ssh:")) void invoke("ssh_release_session", { sessionId: key }).catch(() => {});
     // Same idea for open_session tabs (PRD close-session) — release the ownership
     // entry on ANY close (agent-initiated via close_session, or the operator closing
@@ -871,6 +890,44 @@ export default function App() {
       // Files rail: the shown file. Control: the selected agent (never a hidden file).
       const key = controlModeRef.current === "files" ? viewFileKeyRef.current : activeKeyRef.current;
       if (key && openTerminalsRef.current.some((t) => t.key === key)) void closeTerminal(key);
+    });
+    return () => {
+      void un.then((f) => f());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // File > Reopen Closed Tab (⌘⇧T): the newest closed tab comes back — a Claude tab in
+  // its own conversation, an SSH tab reconnected, a file in its viewer.
+  useEffect(() => {
+    const un = listen("menu:reopen-closed-tab", () => {
+      const stack = closedTabsRef.current;
+      const last = stack[stack.length - 1];
+      if (!last) return;
+      closedTabsRef.current = stack.slice(0, -1);
+      const spec = reopenSpec(last, singleQuote) as OpenTerminal;
+      openTerminal(spec); // selects it (terminal) or shows it (file)
+      showControl();
+    });
+    return () => {
+      void un.then((f) => f());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // File > Open… (⌘O): the macOS open dialog; every chosen file opens in Muya.
+  const selectedRootRef = useRef(selectedRoot);
+  selectedRootRef.current = selectedRoot;
+  useEffect(() => {
+    const un = listen("menu:open-file", async () => {
+      const picked = await openDialog({
+        title: "Open",
+        multiple: true,
+        directory: false,
+        defaultPath: selectedRootRef.current ?? workspacesRef.current[0],
+      });
+      const paths = picked === null ? [] : Array.isArray(picked) ? picked : [picked];
+      for (const p of paths) openFile(p);
     });
     return () => {
       void un.then((f) => f());
@@ -1237,6 +1294,8 @@ export default function App() {
   // IS now (after the user `cd`s), not the directory it was spawned in. One
   // backend call covers every shell, so polling cost doesn't grow with tab count.
   const [liveCwds, setLiveCwds] = useState<Record<string, string>>({});
+  const liveCwdsRef = useRef(liveCwds);
+  liveCwdsRef.current = liveCwds;
   // The cwd probe is cheap (~10ms); the Claude-session probe spawns the CLI
   // (~180ms), so it only runs on every SESSION_EVERY-th tick.
   const SESSION_EVERY = 5; // 5 × 3s = ~15s
@@ -1868,6 +1927,35 @@ export default function App() {
   }, [openTerminals, changes, selectedCwd]);
   const paletteFiles = useMemo(() => [...paletteFileMap.keys()].map((path) => ({ path })), [paletteFileMap]);
 
+  // Palette "On this Mac": Spotlight by file name (spotlight_search), 200 ms after the
+  // user stops typing. A stale reply (query changed meanwhile) is dropped.
+  const [paletteQuery, setPaletteQuery] = useState("");
+  const [macFiles, setMacFiles] = useState<string[]>([]);
+  useEffect(() => {
+    const q = paletteQuery.trim();
+    if (!paletteOpen) setPaletteQuery(""); // the input starts empty next time
+    if (!paletteOpen || q.length < 2) {
+      setMacFiles([]);
+      return;
+    }
+    let live = true;
+    const t = setTimeout(() => {
+      invoke<string[]>("spotlight_search", { query: q, roots: workspacesRef.current })
+        .then((hits) => { if (live) setMacFiles(hits); })
+        .catch(() => { if (live) setMacFiles([]); });
+    }, 200);
+    return () => { live = false; clearTimeout(t); };
+  }, [paletteQuery, paletteOpen]);
+  const paletteMacFiles = useMemo(() => {
+    const listed = new Set(paletteFileMap.values());
+    return macFiles
+      .filter((p) => !listed.has(p))
+      .map((p) => {
+        const i = p.lastIndexOf("/");
+        return { path: p, name: p.slice(i + 1), dir: abbreviateHome(p.slice(0, i)) };
+      });
+  }, [macFiles, paletteFileMap]);
+
   // ⌘K / ⌘1–9 / grid shortcuts. Capture phase: xterm owns ⌘K (kill-to-EOL) and swallows
   // keys typed into a focused terminal, so a bubbling listener would never see them.
   const overlayOpen = paletteOpen || broadcastOpen || swapKey !== null || menu !== null || renameKey !== null || settingsOpen || newAgentOpen;
@@ -2356,6 +2444,8 @@ export default function App() {
           onSelectAgent={(key) => { setPaletteOpen(false); selectAgent(key); }}
           onOpenFile={(p) => { setPaletteOpen(false); openFile(paletteFileMap.get(p) ?? p); }}
           onRunCommand={runCommand}
+          macFiles={paletteMacFiles}
+          onQueryChange={setPaletteQuery}
         />
         <BroadcastModal
           open={broadcastOpen}

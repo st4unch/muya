@@ -81,3 +81,48 @@ export function resumeCommand(t: { sessionId: string; sessionCwd?: string }, quo
   const resume = `claude --resume ${quote(t.sessionId)} --dangerously-skip-permissions`;
   return t.sessionCwd ? `cd ${quote(t.sessionCwd)} && ${resume}` : resume;
 }
+
+/** What ⌘⇧T needs to bring a closed tab back. */
+export interface ClosedTab {
+  key: string;
+  name: string;
+  kind: "terminal" | "editor" | "mdview" | "imgview" | "pdfview";
+  cwd?: string;
+  filePath?: string;
+  initialCommand?: string;
+  sessionId?: string;
+  sessionCwd?: string;
+  sshServerId?: string;
+  userRenamed?: boolean;
+  startInDiff?: boolean;
+}
+
+/** Closed tabs kept for ⌘⇧T (newest last). In memory only. */
+export const MAX_CLOSED_TABS = 20;
+
+export function pushClosed(stack: ClosedTab[], tab: ClosedTab, max: number = MAX_CLOSED_TABS): ClosedTab[] {
+  return [...stack, tab].slice(-max);
+}
+
+/** The tab to open for a closed one (⌘⇧T).
+ *  - File: the same tab again (same key + viewer), so it never opens twice.
+ *  - SSH: a fresh `ssh:` tab for the same server, which reconnects.
+ *  - Claude tab with a session id: its own conversation, resumed in its session folder.
+ *  - Anything else: a new tab re-running its command (or a plain shell) in the
+ *    folder it was in when closed.
+ *  `agent`/`isClaude` are left out so `openTerminal` re-derives them from the command. */
+export function reopenSpec(t: ClosedTab, quote: (s: string) => string, now: number = Date.now()): ClosedTab {
+  if (t.kind !== "terminal") return { ...t };
+  const base = { name: t.name, kind: t.kind, cwd: t.cwd, userRenamed: t.userRenamed };
+  if (t.sshServerId) return { ...base, key: newSshTabKey(t.sshServerId, now), sshServerId: t.sshServerId };
+  if (t.sessionId) {
+    return {
+      ...base,
+      key: `reopen-${now}`,
+      initialCommand: resumeCommand({ sessionId: t.sessionId, sessionCwd: t.sessionCwd }, quote),
+      sessionId: t.sessionId,
+      sessionCwd: t.sessionCwd,
+    };
+  }
+  return { ...base, key: `reopen-${now}`, initialCommand: t.initialCommand };
+}

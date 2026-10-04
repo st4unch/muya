@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { pickNextActiveKey, newSshTabKey, addSshSession, canResumeTab, resumeCommand, type TabLike } from "./tabs";
+import { pickNextActiveKey, newSshTabKey, addSshSession, canResumeTab, resumeCommand, pushClosed, reopenSpec, MAX_CLOSED_TABS, type ClosedTab, type TabLike } from "./tabs";
 import { singleQuote } from "./agent";
 
 const T = (key: string, kind: TabLike["kind"]): TabLike => ({ key, kind });
@@ -98,5 +98,42 @@ describe("resumeCommand: resume where the session actually ran", () => {
     expect(resumeCommand({ sessionId: "abc-123" }, singleQuote)).toBe(
       "claude --resume 'abc-123' --dangerously-skip-permissions",
     );
+  });
+});
+
+describe("reopen closed tabs (⌘⇧T)", () => {
+  const q = (s: string) => `'${s}'`;
+
+  it("keeps the newest 20, newest last", () => {
+    let stack: ClosedTab[] = [];
+    for (let i = 0; i < 25; i++) stack = pushClosed(stack, { key: `k${i}`, name: `n${i}`, kind: "terminal" });
+    expect(stack).toHaveLength(MAX_CLOSED_TABS);
+    expect(stack[0].key).toBe("k5");
+    expect(stack[stack.length - 1].key).toBe("k24");
+  });
+
+  it("a file comes back as the same tab", () => {
+    const f: ClosedTab = { key: "mdview:/p/a.md", name: "a.md", kind: "mdview", filePath: "/p/a.md" };
+    expect(reopenSpec(f, q, 1)).toEqual(f);
+  });
+
+  it("a Claude tab resumes its own conversation in its session folder", () => {
+    const s = reopenSpec({ key: "claude-1", name: "api", kind: "terminal", cwd: "/p", sessionId: "abc", sessionCwd: "/p/sub", initialCommand: "claude" }, q, 7);
+    expect(s.key).toBe("reopen-7");
+    expect(s.initialCommand).toBe("cd '/p/sub' && claude --resume 'abc' --dangerously-skip-permissions");
+    expect(s.sessionId).toBe("abc");
+    expect(s.cwd).toBe("/p");
+  });
+
+  it("an SSH tab reconnects to the same server under a fresh ssh: key", () => {
+    const s = reopenSpec({ key: "ssh:srv1:1:aa", name: "prod", kind: "terminal", sshServerId: "srv1" }, q, 9);
+    expect(s.key.startsWith("ssh:srv1:9:")).toBe(true);
+    expect(s.sshServerId).toBe("srv1");
+    expect(s.initialCommand).toBeUndefined();
+  });
+
+  it("a plain terminal reopens as a shell in its folder, re-running its command", () => {
+    expect(reopenSpec({ key: "term-1", name: "t", kind: "terminal", cwd: "/w" }, q, 3)).toEqual({ key: "reopen-3", name: "t", kind: "terminal", cwd: "/w", userRenamed: undefined, initialCommand: undefined });
+    expect(reopenSpec({ key: "claude-2", name: "c", kind: "terminal", cwd: "/w", initialCommand: "claude --dangerously-skip-permissions" }, q, 4).initialCommand).toBe("claude --dangerously-skip-permissions");
   });
 });

@@ -10,6 +10,14 @@ export interface PaletteFile {
   path: string;
 }
 
+/** A file Spotlight found elsewhere on the Mac ("On this Mac"). */
+export interface PaletteMacFile {
+  path: string;
+  name: string;
+  /** Parent folder, home-abbreviated, for display. */
+  dir: string;
+}
+
 export interface PaletteCommand {
   id: string;
   label: string;
@@ -24,9 +32,13 @@ export interface CommandPaletteProps {
   onSelectAgent: (key: string) => void;
   onOpenFile: (path: string) => void;
   onRunCommand: (id: string) => void;
+  /** Spotlight results for the current query (the orchestrator runs the search). */
+  macFiles?: PaletteMacFile[];
+  /** The typed query, so the orchestrator can search the Mac for it. */
+  onQueryChange?: (query: string) => void;
 }
 
-export function CommandPalette({ open, onOpenChange, agents, files, commands, onSelectAgent, onOpenFile, onRunCommand }: CommandPaletteProps) {
+export function CommandPalette({ open, onOpenChange, agents, files, commands, onSelectAgent, onOpenFile, onRunCommand, macFiles = [], onQueryChange }: CommandPaletteProps) {
   return (
     <Command.Dialog
       className="rd-palette"
@@ -50,7 +62,8 @@ export function CommandPalette({ open, onOpenChange, agents, files, commands, on
       }}
     >
       <Command.Input
-        placeholder="Search agents, files or commands…"
+        onValueChange={onQueryChange}
+        placeholder="Search agents, files, commands — or files on this Mac…"
         style={{ width: "100%", height: 44, border: "none", borderBottom: "1px solid var(--border)", background: "var(--bg-input)", color: "var(--text)", padding: "0 14px", fontSize: 14, outline: "none", boxSizing: "border-box" }}
       />
       <Command.List style={{ maxHeight: "calc(55vh - 44px)", overflow: "auto", padding: 8 }}>
@@ -73,6 +86,19 @@ export function CommandPalette({ open, onOpenChange, agents, files, commands, on
           {files.map((file) => (
             <Command.Item key={file.path} value={file.path} onSelect={() => onOpenFile(file.path)} style={{ padding: "8px 10px", borderRadius: 6, fontSize: 13, fontFamily: "var(--font-mono)", cursor: "pointer" }}>
               {file.path}
+            </Command.Item>
+          ))}
+        </Command.Group>
+        )}
+
+        {/* Spotlight, by file name, like Finder's search box. Values are prefixed so a
+            path that is also under Files can't collide with that item. */}
+        {macFiles.length > 0 && (
+        <Command.Group heading="On this Mac">
+          {macFiles.map((file) => (
+            <Command.Item key={file.path} value={`mac:${file.path}`} onSelect={() => onOpenFile(file.path)} style={{ padding: "8px 10px", borderRadius: 6, fontSize: 13, cursor: "pointer", display: "flex", gap: 8, alignItems: "baseline", minWidth: 0 }}>
+              <span style={{ flexShrink: 0 }}>{file.name}</span>
+              <span style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.dir}</span>
             </Command.Item>
           ))}
         </Command.Group>
