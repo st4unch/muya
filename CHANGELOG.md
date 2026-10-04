@@ -6,6 +6,14 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.0.8] - 2026-10-04
+
+### Added
+- **Open Muya at login** (Settings → Startup): Muya starts by itself when you log in.
+- **Resume Claude sessions on launch** (Settings → Startup): Claude tabs from last
+  time pick up their own conversations at startup without a click. If there are
+  none, a new Claude session opens in your workspace.
+
 ## [4.0.7] - 2026-10-03
 
 ### Added
