@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Check, X } from "lucide-react";
 import type { ThemePreference } from "../theme/theme";
 import { ThemeMonitorIcon, ThemeMoonIcon, ThemeSunIcon } from "../redesign/icons";
+import { loadResumeOnLaunch, saveResumeOnLaunch } from "../lib/startup";
 
 const DEFAULT_LOG_PATH = "~/.claude/muya-debug.log";
 
@@ -67,12 +68,18 @@ export default function SettingsModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [loginItem, setLoginItem] = useState(false);
+  const [resumeOnLaunch, setResumeOnLaunch] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
 
   // Load current settings whenever the modal opens.
   useEffect(() => {
     if (!open) return;
     setError("");
+    setResumeOnLaunch(loadResumeOnLaunch());
+    invoke<boolean>("login_item_get")
+      .then((v) => setLoginItem(!!v))
+      .catch(() => setLoginItem(false));
     setSaved(false);
     setStored(null);
     invoke<{ enabled: boolean; path: string }>("debug_log_get")
@@ -239,6 +246,44 @@ export default function SettingsModal({
               <div style={helperStyle}>System follows your macOS appearance.</div>
             </div>
           )}
+
+          <div style={groupStyle}>
+            <span style={labelStyle}>Startup</span>
+            <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 14px" }}>
+                <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span id={id("login")} style={{ fontSize: 13, fontWeight: 600 }}>Open Muya at login</span>
+                  <span style={helperStyle}>Muya starts by itself when you log in to this Mac.</span>
+                </div>
+                <Switch
+                  checked={loginItem}
+                  labelledBy={id("login")}
+                  onChange={(v) => {
+                    setError("");
+                    invoke<boolean>("login_item_set", { enabled: v })
+                      .then(setLoginItem)
+                      .catch((e) => setError(String(e)));
+                  }}
+                />
+              </div>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 14px", borderTop: "1px solid var(--border)" }}>
+                <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span id={id("resume")} style={{ fontSize: 13, fontWeight: 600 }}>Resume Claude sessions on launch</span>
+                  <span style={helperStyle}>
+                    Claude tabs from last time pick up their conversations without a click. If there are none, a new Claude session opens.
+                  </span>
+                </div>
+                <Switch
+                  checked={resumeOnLaunch}
+                  labelledBy={id("resume")}
+                  onChange={(v) => {
+                    saveResumeOnLaunch(v);
+                    setResumeOnLaunch(v);
+                  }}
+                />
+              </div>
+            </div>
+          </div>
 
           <div style={groupStyle}>
             <span style={labelStyle}>Debug logging</span>

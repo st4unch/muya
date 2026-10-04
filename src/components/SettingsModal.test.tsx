@@ -34,6 +34,33 @@ describe("SettingsModal", () => {
     expect(save).toBeDisabled();
   });
 
+  it("Open at login shows the real state and toggles the login item", async () => {
+    let on = true;
+    invoke.mockImplementation(async (cmd: string, args?: { enabled: boolean }) => {
+      if (cmd === "debug_log_get") return { enabled: false, path: "~/.claude/muya-debug.log" };
+      if (cmd === "login_item_get") return on;
+      if (cmd === "login_item_set") return (on = !!args?.enabled);
+    });
+    render(<SettingsModal open onClose={() => {}} />);
+    const sw = screen.getByRole("switch", { name: "Open Muya at login" });
+    await waitFor(() => expect(sw).toHaveAttribute("aria-checked", "true"));
+    fireEvent.click(sw);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("login_item_set", { enabled: false }));
+    await waitFor(() => expect(sw).toHaveAttribute("aria-checked", "false"));
+  });
+
+  it("Resume on launch is remembered immediately", () => {
+    localStorage.removeItem("muya.resumeOnLaunch");
+    render(<SettingsModal open onClose={() => {}} />);
+    const sw = screen.getByRole("switch", { name: "Resume Claude sessions on launch" });
+    expect(sw).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(sw);
+    expect(sw).toHaveAttribute("aria-checked", "true");
+    expect(localStorage.getItem("muya.resumeOnLaunch")).toBe("1");
+    fireEvent.click(sw);
+    expect(localStorage.getItem("muya.resumeOnLaunch")).toBeNull();
+  });
+
   it("Open-source licenses opens the bundled notices", async () => {
     render(<SettingsModal open onClose={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: "Open-source licenses" }));

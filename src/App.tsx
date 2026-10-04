@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, lazy, Suspense, type ComponentProps } from "react";
 import { createPortal } from "react-dom";
 import { pickNextActiveKey, newSshTabKey, addSshSession, canResumeTab, resumeCommand } from "./lib/tabs";
+import { loadResumeOnLaunch } from "./lib/startup";
 import { terminalIsVisible } from "./lib/terminalVisibility";
 import { belongsTo, inScope, workspaceOf } from "./lib/workspaceScope";
 import { asNotifications, detectEvents, MAX_NOTIFICATIONS, type AgentNotification } from "./lib/agentNotifications";
@@ -704,10 +705,19 @@ export default function App() {
   const activateTerminal = (key: string) => {
     pickTab(key);
     setControlMode("agents");
+    resumeTab(key);
+  };
+
+  /** Keys already sent their resume line — a tab is resumed once, by click or launch. */
+  const resumedKeysRef = useRef(new Set<string>());
+  /** Type a restored tab's own `claude --resume` into its shell. No-op unless the tab
+   *  still needs resuming and its shell is up. */
+  const resumeTab = (key: string) => {
     const tab = openTerminalsRef.current.find((t) => t.key === key);
-    if (!tab?.needsResume || !tab.sessionId) return;
+    if (!tab?.needsResume || !tab.sessionId || resumedKeysRef.current.has(key)) return;
     const ptyId = terminalPtyIdsRef.current[key];
     if (!ptyId) return; // shell not ready yet — try again on the next click
+    resumedKeysRef.current.add(key);
     setOpenTerminals((prev) =>
       prev.map((t) => (t.key === key ? { ...t, needsResume: false } : t))
     );
@@ -1173,6 +1183,7 @@ export default function App() {
   // PTY id map: terminalKey → ptyId (populated by onPtyReady callbacks)
   const [terminalPtyIds, setTerminalPtyIds] = useState<Record<string, string>>({});
 
+
   // Scheduled prompts
   const [scheduledPrompts, setScheduledPrompts] = useState<ScheduledPrompt[]>([]);
   const [scheduleOpen, setScheduleOpen] = useState(false);
@@ -1195,6 +1206,32 @@ export default function App() {
   const sessionIdToKeyRef = useRef<Record<string, string>>({});
   const terminalPtyIdsRef = useRef(terminalPtyIds);
   useEffect(() => { terminalPtyIdsRef.current = terminalPtyIds; }, [terminalPtyIds]);
+
+  // Settings → Startup → "Resume Claude sessions on launch". Read once: it applies to
+  // the tabs restored at THIS launch. Each restored Claude tab is resumed as soon as
+  // its shell is up; with none to resume, one new Claude session opens instead.
+  // Declared after the ref sync above: effects run in order, and resumeTab reads the ref.
+  const resumeOnLaunchRef = useRef(loadResumeOnLaunch());
+  useEffect(() => {
+    if (!resumeOnLaunchRef.current) return;
+    for (const t of openTerminalsRef.current) if (t.needsResume && terminalPtyIds[t.key]) resumeTab(t.key);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [terminalPtyIds]);
+  const launchClaudeOpenedRef = useRef(false);
+  useEffect(() => {
+    if (!resumeOnLaunchRef.current || launchClaudeOpenedRef.current) return;
+    launchClaudeOpenedRef.current = true;
+    if (openTerminalsRef.current.some((t) => t.needsResume)) return;
+    const cwd = selectedRoot ?? workspaces[0];
+    openTerminal({
+      key: `claude-${Date.now()}`,
+      name: cwd?.split("/").pop() || "Claude",
+      kind: "terminal",
+      cwd,
+      initialCommand: "claude --dangerously-skip-permissions",
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Live working directory per terminal key. The list must show where each shell
   // IS now (after the user `cd`s), not the directory it was spawned in. One

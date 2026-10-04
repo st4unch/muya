@@ -52,6 +52,7 @@ mod debuglog;
 mod fs;
 mod history;
 mod local_guard;
+mod login_item;
 mod metrics;
 mod opencode;
 mod pm;
@@ -196,6 +197,7 @@ pub fn run() {
             // Remote bridge (PRD bridge-mcp): resume polling the peers we dialed, so
             // messages they queued for us arrive without an agent call first.
             bridge_mcp::start_pollers(app.handle().clone());
+            login_item::refresh();
 
             // SSH agent broker (PRD ssh-agent-broker, Faz 1): start the owner-only
             // UDS listener (0600 + getpeereid uid check) and register the muya-ssh
@@ -420,6 +422,8 @@ pub fn run() {
             agent_ops::agent_ops_upsert,
             workspace_roots::set_workspace_roots,
             debuglog::debug_log_set,
+            login_item::login_item_get,
+            login_item::login_item_set,
             debuglog::debug_log_get,
             frontend_log
         ])
