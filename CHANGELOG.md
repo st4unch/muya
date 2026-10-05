@@ -6,6 +6,14 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.0.10] - 2026-10-05
+
+### Added
+- **Tighter (or looser) terminal text.** The terminal appearance menu (the text-size button at
+  the bottom right of the window) now has **Line spacing** (1.0–2.0) and **Letter spacing** (0–4 px)
+  next to font size. Changes apply to every open terminal at once and are remembered.
+  The default line spacing stays 1.6; try 1.2 for denser Claude tables and lists.
+
 ## [4.0.9] - 2026-10-04
 
 ### Added

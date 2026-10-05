@@ -151,7 +151,7 @@ export function Footer({ workspaceCount, agents, working, waiting, collisions, v
         <button
           type="button"
           aria-label="Terminal appearance"
-          title="Terminal font size and colors"
+          title="Terminal font size, spacing and colors"
           aria-expanded={appearance !== null}
           onClick={(e) => setAppearance(anchorFromRect(e.currentTarget.getBoundingClientRect(), "right", "above"))}
           className="rd-icon-btn"

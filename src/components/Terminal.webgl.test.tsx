@@ -1,19 +1,22 @@
 // Created by Claude — Classification: INTERNAL
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, waitFor } from "@testing-library/react";
+import { act, render, waitFor } from "@testing-library/react";
 
 // xterm itself is irrelevant here: any method is a no-op returning a disposable.
 const focus = vi.fn();
+const xterms: { options: Record<string, unknown> }[] = [];
 vi.mock("@xterm/xterm", () => ({
   Terminal: class {
     cols = 80;
     rows = 24;
     element?: HTMLElement;
-    options = {};
+    options: Record<string, unknown> = {};
     buffer = { active: { getLine: () => undefined } };
     focus = focus;
-    constructor() {
+    constructor(opts: Record<string, unknown> = {}) {
+      this.options = { ...opts };
+      xterms.push(this);
       return new Proxy(this, {
         get: (t, k) =>
           k in t ? t[k as keyof typeof t] : () => ({ dispose() {} }),
@@ -63,6 +66,7 @@ vi.mock("../lib/webglRenderer", () => ({
 }));
 
 import Terminal, { mouseTrackingChange } from "./Terminal";
+import { LETTER_DEFAULT, LINE_DEFAULT, setTerminalPrefs } from "../lib/terminalPrefs";
 
 // jsdom has no ResizeObserver; the terminal only uses it to refit on resize.
 globalThis.ResizeObserver ??= class {
@@ -160,6 +164,19 @@ describe("Terminal: WebGL lease follows visibility", () => {
     await waitFor(() => expect(leases).toHaveLength(1));
     unmount();
     expect(leases[0].release).toHaveBeenCalled();
+  });
+});
+
+describe("Terminal: spacing prefs", () => {
+  it("starts with the saved spacing and re-spaces an open terminal live", () => {
+    xterms.length = 0;
+    setTerminalPrefs({ lineHeight: 1.2, letterSpacing: 1 });
+    render(<Terminal active />);
+    const t = xterms[xterms.length - 1];
+    expect(t.options).toMatchObject({ lineHeight: 1.2, letterSpacing: 1 });
+    act(() => setTerminalPrefs({ lineHeight: 1.0, letterSpacing: 3 }));
+    expect(t.options).toMatchObject({ lineHeight: 1.0, letterSpacing: 3 });
+    act(() => setTerminalPrefs({ lineHeight: LINE_DEFAULT, letterSpacing: LETTER_DEFAULT }));
   });
 });
 

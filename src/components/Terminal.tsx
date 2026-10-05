@@ -189,7 +189,8 @@ function Terminal({
     const term = new XTerm({
       fontFamily: '"JetBrains Mono", ui-monospace, monospace',
       fontSize: prefsRef.current.fontSize,
-      lineHeight: 1.6,
+      lineHeight: prefsRef.current.lineHeight,
+      letterSpacing: prefsRef.current.letterSpacing,
       cursorBlink: true,
       scrollback: 5000,
       theme: schemeTheme(prefsRef.current.scheme, theme),
@@ -610,6 +611,15 @@ function Terminal({
     t.options.fontSize = prefs.fontSize;
     syncRef.current();
   }, [prefs.fontSize]);
+
+  // Live line / letter spacing: same cell-size change as the font, same refit.
+  useEffect(() => {
+    const t = termRef.current;
+    if (!t || (t.options.lineHeight === prefs.lineHeight && t.options.letterSpacing === prefs.letterSpacing)) return;
+    t.options.lineHeight = prefs.lineHeight;
+    t.options.letterSpacing = prefs.letterSpacing;
+    syncRef.current();
+  }, [prefs.lineHeight, prefs.letterSpacing]);
 
   const handleSearchChange = (q: string) => {
     setSearchQuery(q);
