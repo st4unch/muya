@@ -1,0 +1,764 @@
+{
+ "version": 1,
+ "commit": "4c902e0",
+ "questions": [
+  {
+   "id": "q01",
+   "lang": "en",
+   "type": "identifier",
+   "q": "Where is credstore_lock defined and what does it do besides clearing the unlocked state?",
+   "gold": [
+    {
+     "path": "src-tauri/src/credstore.rs",
+     "start": 379,
+     "end": 385,
+     "primary": true
+    }
+   ]
+  },
+  {
+   "id": "q02",
+   "lang": "en",
+   "type": "identifier",
+   "q": "Where is build_scp_command implemented, and how does it build the PSMP destination for scp?",
+   "gold": [
+    {
+     "path": "src-tauri/src/ssh.rs",
+     "start": 786,
+     "end": 875,
+     "primary": true
+    }
+   ]
+  },
+  {
+   "id": "q03",
+   "lang": "en",
+   "type": "identifier",
+   "q": "Where is derive_sas implemented?",
+   "gold": [
+    {
+     "path": "src-tauri/src/bridge_remote.rs",
+     "start": 649,
+     "end": 675,
+     "primary": true
+    }
+   ]
+  },
+  {
+   "id": "q04",
+   "lang": "en",
+   "type": "identifier",
+   "q": "Where is the list_slash_commands command defined and which function does the actual directory scan?",
+   "gold": [
+    {
+     "path": "src-tauri/src/slash_commands.rs",
+     "start": 288,
+     "end": 295,
+     "primary": true
+    },
+    {
+     "path": "src-tauri/src/slash_commands.rs",
+     "start": 251,
+     "end": 286,
+     "primary": false
+    }
+   ]
+  },
+  {
+   "id": "q05",
+   "lang": "en",
+   "type": "identifier",
+   "q": "Find enforce_arg_policy: where are agent-supplied arguments checked against an operator-pinned operation?",
+   "gold": [
+    {
+     "path": "src-tauri/src/agent_ops.rs",
+     "start": 195,
+     "end": 238,
+     "primary": true
+    }
+   ]
+  },
+  {
+   "id": "q06",
+   "lang": "en",
+   "type": "identifier",
+   "q": "Where is the pty_spawn Tauri command defined?",
+   "gold": [
+    {
+     "path": "src-tauri/src/pty.rs",
+     "start": 76,
+     "end": 99,
+     "primary": true
+    },
+    {
+     "path": "src-tauri/src/pty.rs",
+     "start": 101,
+     "end": 273,
+     "primary": false
+    }
+   ]
+  },
+  {
+   "id": "q07",
+   "lang": "tr",
+   "type": "identifier",
+   "q": "list_agent_sessions fonksiyonu nerede tanımlı ve claude'u hangi argümanlarla çalıştırıyor?",
+   "gold": [
+    {
+     "path": "src-tauri/src/agents.rs",
+     "start": 372,
+     "end": 383,
+     "primary": true
+    },
+    {
+     "path": "src-tauri/src/agents.rs",
+     "start": 385,
+     "end": 413,
+     "primary": false
+    }
+   ]
+  },
+  {
+   "id": "q08",
+   "lang": "tr",
+   "type": "identifier",
+   "q": "scan_prd_docs komutu nerede, docs klasöründeki hangi dosyaları tarıyor?",
+   "gold": [
+    {
+     "path": "src-tauri/src/fs.rs",
+     "start": 2257,
+     "end": 2369,
+     "primary": true
+    }
+   ]
+  },
+  {
+   "id": "q09",
+   "lang": "tr",
+   "type": "identifier",
+   "q": "title_bar_double_click komutu nerede tanımlı?",
+   "gold": [
+    {
+     "path": "src-tauri/src/titlebar.rs",
+     "start": 41,
+     "end": 58,
+     "primary": true
+    },
+    {
+     "path": "src-tauri/src/titlebar.rs",
+     "start": 16,
+     "end": 39,
+     "primary": false
+    }
+   ]
+  },
+  {
+   "id": "q10",
+   "lang": "tr",
+   "type": "identifier",
+   "q": "spotlight_search fonksiyonunun gövdesini göster; mdfind'ı nasıl çağırıyor?",
+   "gold": [
+    {
+     "path": "src-tauri/src/spotlight.rs",
+     "start": 81,
+     "end": 115,
+     "primary": true
+    }
+   ]
+  },
+  {
+   "id": "q11",
+   "lang": "tr",
+   "type": "identifier",
+   "q": "register_mcp fonksiyonu nerede, muya-mcp girdisini nereye yazıyor?",
+   "gold": [
+    {
+     "path": "src-tauri/src/broker.rs",
+     "start": 1731,
+     "end": 1745,
+     "primary": true
+    },
+    {
+     "path": "src-tauri/src/broker.rs",
+     "start": 1717,
+     "end": 1729,
+     "primary": false
+    }
+   ]
+  },
+  {
+   "id": "q12",
+   "lang": "tr",
+   "type": "identifier",
+   "q": "classifyStatus fonksiyonu nerede, hangi status metni hangi kolona düşüyor?",
+   "gold": [
+    {
+     "path": "src/components/PrdBoard.tsx",
+     "start": 40,
+     "end": 46,
+     "primary": true
+    }
+   ]
+  },
+  {
+   "id": "q13",
+   "lang": "en",
+   "type": "cross",
+   "q": "When a paired Mac sends a bridge message, how does it end up typed into a terminal tab on this machine?",
+   "gold": [
+    {
+     "path": "src-tauri/src/bridge_mcp.rs",
+     "start": 302,
+     "end": 365,
+     "primary": true
+    },
+    {
+     "path": "src/App.tsx",
+     "start": 1179,
+     "end": 1192,
+     "primary": false
+    },
+    {
+     "path": "src/lib/remoteMessage.ts",
+     "start": 17,
+     "end": 23,
+     "primary": false
+    }
+   ]
+  },
+  {
+   "id": "q14",
+   "lang": "en",
+   "type": "cross",
+   "q": "How does the footer get the live model, cost and context numbers for a given terminal tab?",
+   "gold": [
+    {
+     "path": "src/redesign/useStatusFields.ts",
+     "start": 46,
+     "end": 76,
+     "primary": true
+    },
+    {
+     "path": "src-tauri/src/statusline.rs",
+     "start": 164,
+     "end": 186,
+     "primary": false
+    },
+    {
+     "path": "src-tauri/src/statusline.rs",
+     "start": 27,
+     "end": 38,
+     "primary": false
+    }
+   ]
+  },
+  {
+   "id": "q15",
+   "lang": "en",
+   "type": "cross",
+   "q": "When an agent edits a file on disk, how does an already open editor tab find out and reload?",
+   "gold": [
+    {
+     "path": "src-tauri/src/watcher.rs",
+     "start": 275,
+     "end": 299,
+     "primary": true
+    },
+    {
+     "path": "src/App.tsx",
+     "start": 499,
+     "end": 515,
+     "primary": false
+    },
+    {
+     "path": "src/components/FileEditor.tsx",
+     "start": 93,
+     "end": 126,
+     "primary": false
+    }
+   ]
+  },
+  {
+   "id": "q16",
+   "lang": "en",
+   "type": "cross",
+   "q": "How does the command palette find files that are not in any open workspace?",
+   "gold": [
+    {
+     "path": "src/App.tsx",
+     "start": 1930,
+     "end": 1957,
+     "primary": true
+    },
+    {
+     "path": "src-tauri/src/spotlight.rs",
+     "start": 81,
+     "end": 115,
+     "primary": false
+    }
+   ]
+  },
+  {
+   "id": "q17",
+   "lang": "tr",
+   "type": "cross",
+   "q": "Kasa boştayken kendini nerede kilitliyor ve kilitlenince arayüz bunu nasıl öğreniyor?",
+   "gold": [
+    {
+     "path": "src/App.tsx",
+     "start": 1150,
+     "end": 1171,
+     "primary": true
+    },
+    {
+     "path": "src-tauri/src/credstore.rs",
+     "start": 379,
+     "end": 385,
+     "primary": false
+    },
+    {
+     "path": "src/components/SshPage.tsx",
+     "start": 270,
+     "end": 282,
+     "primary": false
+    }
+   ]
+  },
+  {
+   "id": "q18",
+   "lang": "tr",
+   "type": "cross",
+   "q": "Ajanın scp ile dokunabileceği klasörlerin listesi nerede tutuluyor ve arayüz bunu nasıl güncelliyor?",
+   "gold": [
+    {
+     "path": "src-tauri/src/workspace_roots.rs",
+     "start": 1,
+     "end": 40,
+     "primary": true
+    },
+    {
+     "path": "src/App.tsx",
+     "start": 643,
+     "end": 653,
+     "primary": false
+    },
+    {
+     "path": "src-tauri/src/local_guard.rs",
+     "start": 25,
+     "end": 79,
+     "primary": false
+    }
+   ]
+  },
+  {
+   "id": "q19",
+   "lang": "tr",
+   "type": "cross",
+   "q": "Bir ajan plan takibi başlattığında Kanban panosunda kart nasıl beliriyor?",
+   "gold": [
+    {
+     "path": "src-tauri/src/bin/muya_ssh_mcp.rs",
+     "start": 842,
+     "end": 893,
+     "primary": true
+    },
+    {
+     "path": "src-tauri/src/fs.rs",
+     "start": 2257,
+     "end": 2369,
+     "primary": false
+    },
+    {
+     "path": "src/components/PrdBoard.tsx",
+     "start": 176,
+     "end": 186,
+     "primary": false
+    }
+   ]
+  },
+  {
+   "id": "q20",
+   "lang": "tr",
+   "type": "cross",
+   "q": "Ayarlardaki oturum açılışında başlat anahtarı arka planda ne yapıyor?",
+   "gold": [
+    {
+     "path": "src-tauri/src/login_item.rs",
+     "start": 76,
+     "end": 92,
+     "primary": true
+    },
+    {
+     "path": "src/components/SettingsModal.tsx",
+     "start": 255,
+     "end": 267,
+     "primary": false
+    }
+   ]
+  },
+  {
+   "id": "q21",
+   "lang": "en",
+   "type": "concept",
+   "q": "Where does the app decide which claude binary to run, and how does it avoid picking an outdated one?",
+   "gold": [
+    {
+     "path": "src-tauri/src/agents.rs",
+     "start": 96,
+     "end": 128,
+     "primary": true
+    },
+    {
+     "path": "src-tauri/src/agents.rs",
+     "start": 140,
+     "end": 145,
+     "primary": false
+    }
+   ]
+  },
+  {
+   "id": "q22",
+   "lang": "en",
+   "type": "concept",
+   "q": "How is the destination string assembled for an interactive SSH connection that goes through the CyberArk privileged-session proxy?",
+   "gold": [
+    {
+     "path": "src-tauri/src/ssh.rs",
+     "start": 594,
+     "end": 639,
+     "primary": true
+    }
+   ]
+  },
+  {
+   "id": "q23",
+   "lang": "en",
+   "type": "concept",
+   "q": "What stops the stored password from being typed into a one-time-code prompt during a proxied SSH login?",
+   "gold": [
+    {
+     "path": "src-tauri/src/pty.rs",
+     "start": 62,
+     "end": 74,
+     "primary": true
+    },
+    {
+     "path": "src-tauri/src/pty.rs",
+     "start": 436,
+     "end": 451,
+     "primary": false
+    },
+    {
+     "path": "src-tauri/src/agent_ssh.rs",
+     "start": 106,
+     "end": 126,
+     "primary": false
+    }
+   ]
+  },
+  {
+   "id": "q24",
+   "lang": "en",
+   "type": "concept",
+   "q": "How is terminal output grouped into chunks before it is sent to the webview, and what limits the rate?",
+   "gold": [
+    {
+     "path": "src-tauri/src/pty.rs",
+     "start": 234,
+     "end": 270,
+     "primary": true
+    }
+   ]
+  },
+  {
+   "id": "q25",
+   "lang": "en",
+   "type": "concept",
+   "q": "How is text coming from a remote peer cleaned so escape sequences cannot reach the terminal?",
+   "gold": [
+    {
+     "path": "src-tauri/src/bridge_mcp.rs",
+     "start": 129,
+     "end": 175,
+     "primary": true
+    }
+   ]
+  },
+  {
+   "id": "q26",
+   "lang": "en",
+   "type": "concept",
+   "q": "How is the environment for a task run on behalf of a paired peer built so that secrets are not inherited?",
+   "gold": [
+    {
+     "path": "src-tauri/src/bridge_exec.rs",
+     "start": 231,
+     "end": 273,
+     "primary": true
+    },
+    {
+     "path": "src-tauri/src/bridge_exec.rs",
+     "start": 275,
+     "end": 284,
+     "primary": false
+    }
+   ]
+  },
+  {
+   "id": "q27",
+   "lang": "en",
+   "type": "concept",
+   "q": "How does the release script produce and sign the archive that the auto-updater downloads?",
+   "gold": [
+    {
+     "path": "scripts/publish-release.sh",
+     "start": 87,
+     "end": 149,
+     "primary": true
+    }
+   ]
+  },
+  {
+   "id": "q28",
+   "lang": "en",
+   "type": "concept",
+   "q": "Where does the app look for a new version at startup and how does it install it?",
+   "gold": [
+    {
+     "path": "src/App.tsx",
+     "start": 491,
+     "end": 497,
+     "primary": true
+    },
+    {
+     "path": "src/App.tsx",
+     "start": 974,
+     "end": 995,
+     "primary": false
+    }
+   ]
+  },
+  {
+   "id": "q29",
+   "lang": "en",
+   "type": "concept",
+   "q": "How does the file tree tell apart a folder that macOS is blocking from one that simply does not exist?",
+   "gold": [
+    {
+     "path": "src-tauri/src/fs.rs",
+     "start": 22,
+     "end": 64,
+     "primary": true
+    },
+    {
+     "path": "src-tauri/src/fs.rs",
+     "start": 732,
+     "end": 738,
+     "primary": false
+    }
+   ]
+  },
+  {
+   "id": "q30",
+   "lang": "en",
+   "type": "concept",
+   "q": "What cleans up SSH connection-reuse sockets when the app quits or after a crash?",
+   "gold": [
+    {
+     "path": "src-tauri/src/ssh.rs",
+     "start": 546,
+     "end": 556,
+     "primary": true
+    },
+    {
+     "path": "src-tauri/src/lib.rs",
+     "start": 294,
+     "end": 300,
+     "primary": false
+    }
+   ]
+  },
+  {
+   "id": "q31",
+   "lang": "tr",
+   "type": "concept",
+   "q": "Touch ID ile kasa açmak için anahtar macOS Keychain'e nasıl ve hangi erişim koşuluyla yazılıyor?",
+   "gold": [
+    {
+     "path": "src-tauri/src/credstore.rs",
+     "start": 397,
+     "end": 454,
+     "primary": true
+    }
+   ]
+  },
+  {
+   "id": "q32",
+   "lang": "tr",
+   "type": "concept",
+   "q": "Master parolayı şifreleme anahtarına çeviren kısım nerede, hangi algoritma ve parametrelerle?",
+   "gold": [
+    {
+     "path": "src-tauri/src/credstore.rs",
+     "start": 163,
+     "end": 172,
+     "primary": true
+    },
+    {
+     "path": "src-tauri/src/credstore.rs",
+     "start": 31,
+     "end": 39,
+     "primary": false
+    }
+   ]
+  },
+  {
+   "id": "q33",
+   "lang": "tr",
+   "type": "concept",
+   "q": "Ajanların konuştuğu yerel sokete başka bir kullanıcının bağlanması nerede engelleniyor?",
+   "gold": [
+    {
+     "path": "src-tauri/src/broker.rs",
+     "start": 1634,
+     "end": 1691,
+     "primary": true
+    }
+   ]
+  },
+  {
+   "id": "q34",
+   "lang": "tr",
+   "type": "concept",
+   "q": "Ajanın açıp unuttuğu SSH oturumlarını periyodik olarak kapatan döngü nerede?",
+   "gold": [
+    {
+     "path": "src-tauri/src/lib.rs",
+     "start": 245,
+     "end": 264,
+     "primary": true
+    },
+    {
+     "path": "src-tauri/src/agent_ssh.rs",
+     "start": 363,
+     "end": 385,
+     "primary": false
+    }
+   ]
+  },
+  {
+   "id": "q35",
+   "lang": "tr",
+   "type": "concept",
+   "q": "Oturumların konuşma içeriğinde arama yapılırken hangi dosyalara bakılıyor ve sonuç sayısı nasıl sınırlanıyor?",
+   "gold": [
+    {
+     "path": "src-tauri/src/sessions.rs",
+     "start": 279,
+     "end": 307,
+     "primary": true
+    },
+    {
+     "path": "src-tauri/src/sessions.rs",
+     "start": 165,
+     "end": 210,
+     "primary": false
+    }
+   ]
+  },
+  {
+   "id": "q36",
+   "lang": "tr",
+   "type": "concept",
+   "q": "Bir oturumun konuşmasını Markdown dosyasına aktaran kod nerede?",
+   "gold": [
+    {
+     "path": "src-tauri/src/sessions.rs",
+     "start": 349,
+     "end": 373,
+     "primary": true
+    },
+    {
+     "path": "src-tauri/src/sessions.rs",
+     "start": 325,
+     "end": 347,
+     "primary": false
+    }
+   ]
+  },
+  {
+   "id": "q37",
+   "lang": "tr",
+   "type": "concept",
+   "q": "Terminalde Option ile ok tuşlarına basınca kelime kelime gezinme nasıl sağlanıyor?",
+   "gold": [
+    {
+     "path": "src/components/Terminal.tsx",
+     "start": 415,
+     "end": 427,
+     "primary": true
+    },
+    {
+     "path": "src/lib/keys.ts",
+     "start": 1,
+     "end": 20,
+     "primary": false
+    }
+   ]
+  },
+  {
+   "id": "q38",
+   "lang": "tr",
+   "type": "concept",
+   "q": "Yazı boyutu veya satır aralığı değişince açık olan bütün terminaller nasıl aynı anda güncelleniyor?",
+   "gold": [
+    {
+     "path": "src/lib/terminalPrefs.ts",
+     "start": 48,
+     "end": 92,
+     "primary": true
+    },
+    {
+     "path": "src/components/Terminal.tsx",
+     "start": 608,
+     "end": 622,
+     "primary": false
+    }
+   ]
+  },
+  {
+   "id": "q39",
+   "lang": "tr",
+   "type": "concept",
+   "q": "Hata ayıklama günlüğü çok büyüyünce ne oluyor, dosya izinleri nasıl ayarlanıyor?",
+   "gold": [
+    {
+     "path": "src-tauri/src/debuglog.rs",
+     "start": 85,
+     "end": 112,
+     "primary": true
+    }
+   ]
+  },
+  {
+   "id": "q40",
+   "lang": "tr",
+   "type": "concept",
+   "q": "CyberArk'tan bir hesabın parolası nasıl çekiliyor, ve neden arayüze hiç dönmüyor?",
+   "gold": [
+    {
+     "path": "src-tauri/src/cyberark.rs",
+     "start": 381,
+     "end": 430,
+     "primary": true
+    },
+    {
+     "path": "src-tauri/src/cyberark.rs",
+     "start": 553,
+     "end": 562,
+     "primary": false
+    }
+   ]
+  }
+ ]
+}
