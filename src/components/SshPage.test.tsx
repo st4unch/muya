@@ -13,9 +13,16 @@ vi.mock("@tauri-apps/api/core", () => ({
 // listen() reaches into window.__TAURI_INTERNALS__ directly (not through the
 // invoke() mock above), which jsdom doesn't have — StoreTab's "muya://vault-locked"
 // subscription would otherwise throw an unhandled rejection on every render.
+// Handlers are kept so a test can play the backend's events.
+const eventHandlers = new Map<string, Set<() => void>>();
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: () => Promise.resolve(() => {}),
+  listen: (name: string, h: () => void) => {
+    if (!eventHandlers.has(name)) eventHandlers.set(name, new Set());
+    eventHandlers.get(name)!.add(h);
+    return Promise.resolve(() => eventHandlers.get(name)?.delete(h));
+  },
 }));
+const emit = (name: string) => eventHandlers.get(name)?.forEach((h) => h());
 
 beforeEach(() => {
   resetMockBackend();
@@ -182,6 +189,30 @@ describe("SshPage — Password Store", () => {
     await user.type(input, "hunter2");
     await user.click(screen.getByText(/^Unlock$/));
     expect(await screen.findByText(/Unlocked ·/)).toBeTruthy();
+  });
+});
+
+describe("SshPage — lock state follows the backend", () => {
+  // Live bug: the idle auto-lock fired while the Servers tab was showing. Only the
+  // Password Store tab listened, so the page kept saying "unlocked" while agents
+  // were already refused.
+  it("an idle lock on another tab shows up without touching the Password Store", async () => {
+    const user = userEvent.setup();
+    render(<SshPage />);
+    await user.click(screen.getByText("Password Store"));
+    await user.type(screen.getByPlaceholderText("Master password"), "hunter2");
+    await user.click(screen.getByText("Create"));
+    await screen.findByText(/Unlocked ·/);
+
+    await user.click(screen.getByText("Servers"));
+    await user.click(screen.getByText("Add server"));
+    await screen.findByLabelText("Username");
+    expect(screen.queryByText(/Unlock the Password Store/)).toBeNull();
+
+    // What App.tsx's idle timer does: the backend locks and emits the event.
+    await mockInvoke("credstore_lock", {});
+    emit("muya://vault-locked");
+    expect(await screen.findByText(/Unlock the Password Store/)).toBeTruthy();
   });
 });
 

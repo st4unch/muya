@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Plus } from "lucide-react";
+import { BTN, BTN_GHOST, ICON_BTN, INPUT } from "./sshStyles";
 
 // Reusable "pick a credential from the encrypted Password Store, or save a new
 // one" control. Used by the SSH CyberArk form and any future flow that needs a
@@ -15,13 +16,6 @@ export type CredentialSource = {
   localCredId?: string | null;
   cyberarkAccountId?: string | null;
 };
-
-const INPUT =
-  "w-full px-2.5 py-1.5 rounded border border-[var(--border-control)] bg-[var(--bg-panel)] text-sm outline-none focus:border-indigo-500";
-const BTN =
-  "px-3 py-1.5 rounded text-sm font-medium bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 cursor-pointer";
-const BTN_GHOST =
-  "px-2.5 py-1.5 rounded text-sm text-neutral-600 dark:text-neutral-300 hover:bg-[var(--bg-control)] cursor-pointer";
 
 const PROMPT = "__prompt__";
 
@@ -76,7 +70,7 @@ export default function CredentialPicker({
     <div className="space-y-2">
       <div className="flex gap-2 items-center">
         <select
-          className={INPUT}
+          className={`${INPUT} muya-select`}
           value={selectValue}
           onChange={(e) => {
             const v = e.target.value;
@@ -100,14 +94,14 @@ export default function CredentialPicker({
           ))}
         </select>
         {unlocked && (
-          <button type="button" className={BTN_GHOST} title="Save a new credential to the store" onClick={() => setAdding({ label: "", username: "", secret: "" })}>
+          <button type="button" className={ICON_BTN} title="Save a new credential to the store" onClick={() => setAdding({ label: "", username: "", secret: "" })}>
             <Plus className="h-4 w-4" />
           </button>
         )}
       </div>
 
       {!unlocked && (
-        <p className="text-[11px] text-neutral-400">
+        <p className="text-[11px] text-[var(--text-faint)]">
           Unlock the Password Store (Password Store tab) to pick or save a credential.
         </p>
       )}

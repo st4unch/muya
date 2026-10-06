@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 
 import CredentialPicker from "./CredentialPicker";
+import { BTN, BTN_GHOST, CARD, ICON_BTN, ICON_BTN_DANGER, INPUT, LABEL } from "./sshStyles";
 
 // Small dev/prod-safe helpers around the Tauri dialog plugin.
 async function pickSavePath(title: string, defaultPath: string): Promise<string | null> {
@@ -95,15 +96,6 @@ type CredMeta = { id: string; label: string; username: string; secretKind: Secre
 type CredStoreStatus = { initialized: boolean; unlocked: boolean };
 
 type Tab = "servers" | "cyberark" | "store";
-
-const CARD =
-  "rounded-lg border border-[var(--border)] bg-[var(--bg-control)] p-4";
-const INPUT =
-  "w-full px-2.5 py-1.5 rounded border border-[var(--border-control)] bg-[var(--bg-panel)] text-sm outline-none focus:border-indigo-500";
-const BTN =
-  "px-3 py-1.5 rounded text-sm font-medium bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 cursor-pointer";
-const BTN_GHOST =
-  "px-2.5 py-1.5 rounded text-sm text-neutral-600 dark:text-neutral-300 hover:bg-[var(--bg-control)] cursor-pointer";
 
 const emptyServer = (): Server => ({
   id: "",
@@ -198,12 +190,12 @@ function GroupCard({
         aria-expanded={!collapsed}
       >
         {collapsed ? (
-          <ChevronRight className="h-4 w-4 shrink-0 text-neutral-400" />
+          <ChevronRight className="h-4 w-4 shrink-0 text-[var(--text-faint)]" />
         ) : (
-          <ChevronDown className="h-4 w-4 shrink-0 text-neutral-400" />
+          <ChevronDown className="h-4 w-4 shrink-0 text-[var(--text-faint)]" />
         )}
         <span className="text-sm font-medium truncate">{name}</span>
-        <span className="text-xs text-neutral-500 shrink-0">({count})</span>
+        <span className="text-xs text-[var(--text-muted)] shrink-0">({count})</span>
       </button>
       {!collapsed && <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">{children}</div>}
     </div>
@@ -269,8 +261,24 @@ export default function SshPage({ onConnect }: { onConnect?: (serverId: string, 
     }
   }, []);
 
+  // Re-read on every tab switch: the store can change behind this page's back.
   useEffect(() => {
     void refresh();
+  }, [refresh, tab]);
+
+  // The store can lock while this page isn't looking at it: App.tsx's 15-minute idle
+  // timer fires whatever tab (or page) is showing, and SshPage stays mounted while
+  // hidden. Only StoreTab used to listen, so on Servers/CyberArk the page kept saying
+  // "unlocked" while agents were already refused. Listen here, for the whole page,
+  // and also re-check when the window comes back to the front.
+  useEffect(() => {
+    const un = listen("muya://vault-locked", () => void refresh());
+    const onFocus = () => void refresh();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      void un.then((f) => f());
+      window.removeEventListener("focus", onFocus);
+    };
   }, [refresh]);
 
   return (
@@ -279,7 +287,7 @@ export default function SshPage({ onConnect }: { onConnect?: (serverId: string, 
           earns the whole window instead of a centred 4xl strip. */}
       <div className="w-full p-6 space-y-4">
         <div className="flex items-center gap-2">
-          <ServerIcon className="h-5 w-5 text-indigo-500" />
+          <ServerIcon className="h-5 w-5 text-[var(--text-muted)]" />
           <h1 className="text-lg font-semibold">SSH Configuration</h1>
         </div>
 
@@ -296,8 +304,8 @@ export default function SshPage({ onConnect }: { onConnect?: (serverId: string, 
               onClick={() => setTab(t)}
               className={`px-3 py-2 text-sm cursor-pointer border-b-2 -mb-px ${
                 tab === t
-                  ? "border-indigo-500 text-indigo-600 dark:text-indigo-400 font-semibold"
-                  : "border-transparent text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200"
+                  ? "border-[var(--text)] text-[var(--text)] font-semibold"
+                  : "border-transparent text-[var(--text-muted)] hover:text-[var(--text)]"
               }`}
             >
               {label}
@@ -306,7 +314,7 @@ export default function SshPage({ onConnect }: { onConnect?: (serverId: string, 
         </div>
 
         {err && (
-          <div className="text-sm rounded bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 px-3 py-2 flex items-center justify-between">
+          <div className="text-sm rounded bg-[var(--danger-pill-bg)] text-[var(--danger-text)] px-3 py-2 flex items-center justify-between">
             <span>{err}</span>
             <button type="button" className="cursor-pointer" onClick={() => setErr(null)}>
               <X className="h-4 w-4" />
@@ -420,7 +428,7 @@ function ServersTab({
   return (
     <div className="space-y-3">
       <div className="flex justify-between items-center">
-        <p className="text-sm text-neutral-500">{cfg.servers.length} server(s)</p>
+        <p className="text-sm text-[var(--text-muted)]">{cfg.servers.length} server(s)</p>
         <button type="button" className={BTN} onClick={() => setDraft(emptyServer())}>
           <Plus className="h-4 w-4 inline -mt-0.5 mr-1" /> Add server
         </button>
@@ -428,7 +436,7 @@ function ServersTab({
 
       {cfg.servers.length > 0 && (
         <div className="relative">
-          <SearchIcon className="h-4 w-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-400" />
+          <SearchIcon className="h-4 w-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-faint)]" />
           <input
             className={`${INPUT} pl-8`}
             placeholder="Search servers — label, host, username, group, tag…"
@@ -439,10 +447,10 @@ function ServersTab({
       )}
 
       {cfg.servers.length === 0 && (
-        <div className={`${CARD} text-sm text-neutral-500`}>No servers yet. Start with "Add server".</div>
+        <div className={`${CARD} text-sm text-[var(--text-muted)]`}>No servers yet. Start with "Add server".</div>
       )}
       {q && groups.length === 0 && (
-        <p className="text-xs text-neutral-400 text-center py-4">No servers match &quot;{query}&quot;.</p>
+        <p className="text-xs text-[var(--text-faint)] text-center py-4">No servers match &quot;{query}&quot;.</p>
       )}
 
       {/* A brand-new server has no row to sit in, so its form leads the list. */}
@@ -470,14 +478,14 @@ function ServersTab({
                     <span className="truncate">{s.label || `${s.username}@${s.host}`}</span>
                     {s.agentAdded && (
                       <span
-                        className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+                        className="shrink-0 rounded bg-[var(--warning-bg)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--warning-text)]"
                         title="Registered by a Claude agent via ssh_add_server — verify the host before attaching a credential."
                       >
                         agent-added
                       </span>
                     )}
                   </div>
-                  <div className="text-xs text-neutral-500 font-mono truncate">
+                  <div className="text-xs text-[var(--text-muted)] font-mono truncate">
                     {s.username}@{s.host}:{s.port} · {s.connectionType === "psmp" ? "PSMP" : "direct"} ·{" "}
                     {s.credentialSource.kind}
                     {s.lastConnectedAt ? ` · last: ${s.lastConnectedAt}` : ""}
@@ -485,16 +493,16 @@ function ServersTab({
                 </div>
                 <div className="flex gap-1 shrink-0 items-center">
                   {onConnect && (
-                    <button type="button" className={BTN} onClick={() => onConnect(s.id, s.label || `${s.username}@${s.host}`)}>
+                    <button type="button" className={BTN_GHOST} onClick={() => onConnect(s.id, s.label || `${s.username}@${s.host}`)}>
                       Connect
                     </button>
                   )}
-                  <button type="button" className={BTN_GHOST} title="Edit server" onClick={() => setDraft(s)}>
+                  <button type="button" className={ICON_BTN} title="Edit server" onClick={() => setDraft(s)}>
                     <Pencil className="h-4 w-4" />
                   </button>
                   <button
                     type="button"
-                    className={`${BTN_GHOST} text-rose-600`}
+                    className={ICON_BTN_DANGER}
                     title="Delete server"
                     onClick={() => remove(s.id)}
                   >
@@ -540,19 +548,19 @@ function ServerForm({
       <div className="font-medium text-sm">{draft.id ? "Edit server" : "New server"}</div>
       <div className="grid grid-cols-2 gap-2">
         <label className="text-xs space-y-1">
-          <span className="text-neutral-500">Label</span>
+          <span className={LABEL}>Label</span>
           <input className={INPUT} value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} />
         </label>
         <label className="text-xs space-y-1">
-          <span className="text-neutral-500">Username</span>
+          <span className={LABEL}>Username</span>
           <input className={INPUT} value={draft.username} onChange={(e) => setDraft({ ...draft, username: e.target.value })} />
         </label>
         <label className="text-xs space-y-1">
-          <span className="text-neutral-500">Host / address</span>
+          <span className={LABEL}>Host / address</span>
           <input className={INPUT} value={draft.host} onChange={(e) => setDraft({ ...draft, host: e.target.value })} />
         </label>
         <label className="text-xs space-y-1">
-          <span className="text-neutral-500">Port</span>
+          <span className={LABEL}>Port</span>
           <input
             type="number"
             className={INPUT}
@@ -561,7 +569,7 @@ function ServerForm({
           />
         </label>
         <label className="text-xs space-y-1">
-          <span className="text-neutral-500">Group</span>
+          <span className={LABEL}>Group</span>
           <GroupField
             value={draft.group ?? ""}
             onChange={(group) => setDraft({ ...draft, group })}
@@ -570,9 +578,9 @@ function ServerForm({
           />
         </label>
         <label className="text-xs space-y-1">
-          <span className="text-neutral-500">Connection type</span>
+          <span className={LABEL}>Connection type</span>
           <select
-            className={INPUT}
+            className={`${INPUT} muya-select`}
             value={draft.connectionType}
             onChange={(e) => setDraft({ ...draft, connectionType: e.target.value as Server["connectionType"] })}
           >
@@ -582,9 +590,9 @@ function ServerForm({
         </label>
         {draft.connectionType === "psmp" && (
           <label className="text-xs space-y-1">
-            <span className="text-neutral-500">PSMP profile</span>
+            <span className={LABEL}>PSMP profile</span>
             <select
-              className={INPUT}
+              className={`${INPUT} muya-select`}
               value={draft.psmpProfileId ?? ""}
               onChange={(e) => setDraft({ ...draft, psmpProfileId: e.target.value || null })}
             >
@@ -598,7 +606,7 @@ function ServerForm({
           </label>
         )}
         <label className="text-xs space-y-1 col-span-2">
-          <span className="text-neutral-500">Credential source</span>
+          <span className={LABEL}>Credential source</span>
           <CredentialPicker
             creds={creds}
             unlocked={unlocked}
@@ -610,7 +618,7 @@ function ServerForm({
           />
         </label>
         <label className="text-xs space-y-1 col-span-2">
-          <span className="text-neutral-500">Extra SSH options (optional)</span>
+          <span className={LABEL}>Extra SSH options (optional)</span>
           <input
             className={`${INPUT} font-mono`}
             placeholder="-X -L 8080:localhost:80 -J jump@host"
@@ -624,7 +632,7 @@ function ServerForm({
             checked={!!draft.agentAccess}
             onChange={(e) => setDraft({ ...draft, agentAccess: e.target.checked })}
           />
-          <span className="text-neutral-500">
+          <span className="text-[var(--text-muted)]">
             Agent may use this server (exposes it by alias to Claude via the muya-mcp MCP; the password is never shared)
           </span>
         </label>
@@ -666,27 +674,27 @@ function PsmpProfiles({
     <div className={`${CARD} space-y-2`}>
       <div className="flex justify-between items-center">
         <span className="text-sm font-medium">PSMP jump-server profiles</span>
-        <button type="button" className={BTN_GHOST} onClick={() => setDraft(blank())}>
+        <button type="button" className={ICON_BTN} title="Add PSMP profile" onClick={() => setDraft(blank())}>
           <Plus className="h-4 w-4" />
         </button>
       </div>
       {cfg.psmpProfiles.map((p) => (
-        <div key={p.id} className="text-xs font-mono text-neutral-500 flex justify-between items-center">
+        <div key={p.id} className="text-xs font-mono text-[var(--text-muted)] flex justify-between items-center">
           <span className="truncate">
             {p.label}: {p.vaultUser}@…@{p.psmpAddress}
           </span>
           <div className="flex gap-1 shrink-0 items-center">
             <button
               type="button"
-              className="text-neutral-500 hover:text-indigo-500 cursor-pointer"
+              className={ICON_BTN}
               title="Edit profile"
               onClick={() => setDraft({ ...p })}
             >
-              <Pencil className="h-3.5 w-3.5" />
+              <Pencil className="h-4 w-4" />
             </button>
             <button
               type="button"
-              className="text-rose-600 cursor-pointer"
+              className={ICON_BTN_DANGER}
               title="Delete profile"
               onClick={async () => {
                 try {
@@ -697,7 +705,7 @@ function PsmpProfiles({
                 }
               }}
             >
-              <Trash2 className="h-3.5 w-3.5" />
+              <Trash2 className="h-4 w-4" />
             </button>
           </div>
         </div>
@@ -770,23 +778,23 @@ function CyberarkTab({
   return (
     <div className={`${CARD} space-y-3`}>
       <div className="flex items-center gap-2">
-        <ShieldCheck className="h-4 w-4 text-emerald-500" />
+        <ShieldCheck className="h-4 w-4 text-[var(--success-text)]" />
         <span className="font-medium text-sm">CyberArk PAM connection</span>
       </div>
       <div className="grid grid-cols-2 gap-2">
         <label className="text-xs space-y-1">
-          <span className="text-neutral-500">PVWA API URL</span>
+          <span className={LABEL}>PVWA API URL</span>
           <input className={INPUT} placeholder="https://pvwa.corp" value={form.baseUrl} onChange={(e) => setForm({ ...form, baseUrl: e.target.value })} />
         </label>
         <label className="text-xs space-y-1">
-          <span className="text-neutral-500">Vault username</span>
+          <span className={LABEL}>Vault username</span>
           <input className={INPUT} placeholder="vault-user" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
         </label>
       </div>
       <div className="grid grid-cols-2 gap-2">
         <label className="text-xs space-y-1">
-          <span className="text-neutral-500">Auth method</span>
-          <select className={INPUT} value={form.authMethod} onChange={(e) => setForm({ ...form, authMethod: e.target.value as CyberarkConfig["authMethod"] })}>
+          <span className={LABEL}>Auth method</span>
+          <select className={`${INPUT} muya-select`} value={form.authMethod} onChange={(e) => setForm({ ...form, authMethod: e.target.value as CyberarkConfig["authMethod"] })}>
             <option>Cyberark</option>
             <option>LDAP</option>
             <option>RADIUS</option>
@@ -794,12 +802,12 @@ function CyberarkTab({
           </select>
         </label>
         <label className="text-xs space-y-1">
-          <span className="text-neutral-500">Internal CA cert path (optional)</span>
+          <span className={LABEL}>Internal CA cert path (optional)</span>
           <input className={INPUT} placeholder="/path/to/ca.pem" value={form.caCertPath ?? ""} onChange={(e) => setForm({ ...form, caCertPath: e.target.value || null })} />
         </label>
       </div>
       <div className="space-y-1">
-        <span className="text-xs text-neutral-500">Login credential</span>
+        <span className={LABEL}>Login credential</span>
         <CredentialPicker
           creds={creds}
           unlocked={unlocked}
@@ -810,17 +818,17 @@ function CyberarkTab({
           promptLabel="Ask each time (session-only)"
         />
       </div>
-      <label className="flex items-center gap-2 text-xs text-neutral-600 dark:text-neutral-300">
+      <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
         <input type="checkbox" checked={form.tlsVerify} onChange={(e) => setForm({ ...form, tlsVerify: e.target.checked })} />
         TLS verification on (recommended — no disable option)
       </label>
       <div className="flex items-center justify-between pt-1">
-        <span className="text-xs text-neutral-400">
+        <span className="text-xs text-[var(--text-faint)]">
           Pick a stored credential to reuse it, or "Ask each time".
         </span>
         <div className="flex items-center gap-2">
           {saved && (
-            <span className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+            <span className="text-xs text-[var(--success-text)] flex items-center gap-1">
               <ShieldCheck className="h-3.5 w-3.5" /> Saved
             </span>
           )}
@@ -924,7 +932,7 @@ function CyberarkTester({
         )}
       </div>
       {status && (
-        <div className="text-xs text-emerald-600 dark:text-emerald-400">{status}</div>
+        <div className="text-xs text-[var(--success-text)]">{status}</div>
       )}
 
       {loggedOn && (
@@ -938,12 +946,12 @@ function CyberarkTester({
           {accounts.length > 0 && (
             <div className="max-h-48 overflow-auto space-y-1">
               {accounts.map((a) => (
-                <div key={a.id} className="text-xs font-mono text-neutral-600 dark:text-neutral-300 flex justify-between border-b border-[var(--border)] py-0.5">
+                <div key={a.id} className="text-xs font-mono text-[var(--text-secondary)] flex justify-between border-b border-[var(--border)] py-0.5">
                   <span className="truncate">{a.name || a.address} · {a.username}@{a.address}</span>
-                  <span className="text-neutral-400 shrink-0 ml-2">{a.safe}</span>
+                  <span className="text-[var(--text-faint)] shrink-0 ml-2">{a.safe}</span>
                 </div>
               ))}
-              <p className="text-[11px] text-neutral-400 pt-1">
+              <p className="text-[11px] text-[var(--text-faint)] pt-1">
                 {accounts.length} account(s). Assign one to a server in the Servers tab (credential source → CyberArk).
               </p>
             </div>
@@ -951,7 +959,7 @@ function CyberarkTester({
         </div>
       )}
       {!loggedOn && (
-        <p className="text-[11px] text-neutral-400">
+        <p className="text-[11px] text-[var(--text-faint)]">
           Log on to fetch the account list, then set a server's credential source to a CyberArk account.
         </p>
       )}
@@ -1008,10 +1016,8 @@ function StoreTab({
   // in `revealed`'s React state) until something else happened to call
   // onChange(). Backend emits this on every lock, manual or idle-triggered.
   useEffect(() => {
-    const un = listen("muya://vault-locked", () => {
-      setRevealed({});
-      void onChange();
-    });
+    // SshPage itself re-reads the status on this event; here only drop what was revealed.
+    const un = listen("muya://vault-locked", () => setRevealed({}));
     return () => { void un.then((f) => f()); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1201,20 +1207,20 @@ function StoreTab({
     return (
       <div className={`${CARD} space-y-3`}>
         <div className="flex items-center gap-2">
-          <KeyRound className="h-4 w-4 text-indigo-500" />
+          <KeyRound className="h-4 w-4 text-[var(--accent)]" />
           <span className="font-medium text-sm">Create password store</span>
         </div>
-        <p className="text-xs text-neutral-500">
+        <p className="text-xs text-[var(--text-muted)]">
           Your credentials are stored encrypted with AES-256-GCM. Keep your master password safe — the app never
           stores it, so you can also export an encrypted backup once unlocked.
         </p>
         <div className="relative">
           <input type={showMaster ? "text" : "password"} className={INPUT} placeholder="Master password" value={master} disabled={busy} onChange={(e) => setMaster(e.target.value)} />
-          <button type="button" className="absolute right-2 top-1.5 text-neutral-400 hover:text-neutral-600 cursor-pointer" onClick={() => setShowMaster(!showMaster)} title={showMaster ? "Hide" : "Show"}>
+          <button type="button" className="absolute right-2 top-1.5 text-[var(--text-faint)] hover:text-[var(--text)] cursor-pointer" onClick={() => setShowMaster(!showMaster)} title={showMaster ? "Hide" : "Show"}>
             {showMaster ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </button>
         </div>
-        {busy && <p className="text-xs text-neutral-500">Deriving the key (Argon2id) — this can take a second or two.</p>}
+        {busy && <p className="text-xs text-[var(--text-muted)]">Deriving the key (Argon2id) — this can take a second or two.</p>}
         <div className="flex gap-2">
           <button type="button" className={BTN} disabled={busy} onClick={doInit}>
             {busy ? <><Loader2 className="h-4 w-4 inline -mt-0.5 mr-1 animate-spin" /> Creating…</> : "Create"}
@@ -1223,7 +1229,7 @@ function StoreTab({
             <Download className="h-4 w-4 inline -mt-0.5 mr-1" /> Export master password
           </button>
         </div>
-        <p className="text-[11px] text-amber-600 dark:text-amber-400">
+        <p className="text-[11px] text-[var(--warning)]">
           ⚠️ "Export master password" saves it to a plaintext file you pick. Prefer keeping it in a password manager — the app never stores it.
         </p>
       </div>
@@ -1234,7 +1240,7 @@ function StoreTab({
     return (
       <div className={`${CARD} space-y-3`}>
         <div className="flex items-center gap-2">
-          <Lock className="h-4 w-4 text-amber-500" />
+          <Lock className="h-4 w-4 text-[var(--warning)]" />
           <span className="font-medium text-sm">Store locked</span>
         </div>
         {biometricAvailable && (
@@ -1252,10 +1258,10 @@ function StoreTab({
           </button>
         )}
         {biometricAvailable && (
-          <div className="flex items-center gap-2 text-[10px] text-neutral-400">
-            <div className="h-px flex-1 bg-neutral-200 dark:bg-neutral-700" />
+          <div className="flex items-center gap-2 text-[10px] text-[var(--text-faint)]">
+            <div className="h-px flex-1 bg-[var(--bg-segment)]" />
             or use your master password
-            <div className="h-px flex-1 bg-neutral-200 dark:bg-neutral-700" />
+            <div className="h-px flex-1 bg-[var(--bg-segment)]" />
           </div>
         )}
         <div className="relative">
@@ -1268,7 +1274,7 @@ function StoreTab({
             onChange={(e) => setMaster(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && !busy && doUnlock()}
           />
-          <button type="button" className="absolute right-2 top-1.5 text-neutral-400 hover:text-neutral-600 cursor-pointer" onClick={() => setShowMaster(!showMaster)} title={showMaster ? "Hide" : "Show"}>
+          <button type="button" className="absolute right-2 top-1.5 text-[var(--text-faint)] hover:text-[var(--text)] cursor-pointer" onClick={() => setShowMaster(!showMaster)} title={showMaster ? "Hide" : "Show"}>
             {showMaster ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </button>
         </div>
@@ -1280,7 +1286,7 @@ function StoreTab({
           )}
         </button>
         {busy && (
-          <p className="text-xs text-neutral-500">Deriving the key (Argon2id) — this can take a second or two, hang tight.</p>
+          <p className="text-xs text-[var(--text-muted)]">Deriving the key (Argon2id) — this can take a second or two, hang tight.</p>
         )}
       </div>
     );
@@ -1307,7 +1313,7 @@ function StoreTab({
   return (
     <div className="space-y-3">
       <div className="flex justify-between items-center">
-        <span className="text-sm text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+        <span className="text-sm text-[var(--success-text)] flex items-center gap-1">
           <Unlock className="h-4 w-4" /> Unlocked · {creds.length} item(s)
         </span>
         <div className="flex gap-2">
@@ -1343,7 +1349,7 @@ function StoreTab({
       </div>
 
       <div className="relative">
-        <SearchIcon className="h-4 w-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-400" />
+        <SearchIcon className="h-4 w-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-faint)]" />
         <input
           className={`${INPUT} pl-8`}
           placeholder="Search credentials — label, username, group, note…"
@@ -1376,7 +1382,7 @@ function StoreTab({
             <input className={INPUT} placeholder="Username (optional)" value={importSecretDraft.username} onChange={(e) => setImportSecretDraft({ ...importSecretDraft, username: e.target.value })} />
             <select
               aria-label="Import kind"
-              className={INPUT}
+              className={`${INPUT} muya-select`}
               value={importSecretDraft.secretKind}
               onChange={(e) => setImportSecretDraft({ ...importSecretDraft, secretKind: e.target.value as SecretKind })}
             >
@@ -1393,7 +1399,7 @@ function StoreTab({
             />
             <input className={`${INPUT} col-span-2`} placeholder="Note (optional)" value={importSecretDraft.description} onChange={(e) => setImportSecretDraft({ ...importSecretDraft, description: e.target.value })} />
           </div>
-          <p className="text-xs text-neutral-400">The file's contents become the secret value; a single trailing newline is dropped automatically (SSH keys are read byte-for-byte).</p>
+          <p className="text-xs text-[var(--text-faint)]">The file's contents become the secret value; a single trailing newline is dropped automatically (SSH keys are read byte-for-byte).</p>
           <div className="flex gap-2 justify-end">
             <button type="button" className={BTN_GHOST} onClick={() => setImportSecretDraft(null)}>Cancel</button>
             <button type="button" className={BTN} onClick={importSecret}>
@@ -1405,7 +1411,7 @@ function StoreTab({
       {draft && !draft.id && form}
 
       {q && groups.length === 0 && (
-        <p className="text-xs text-neutral-400 text-center py-4">No credentials match &quot;{query}&quot;.</p>
+        <p className="text-xs text-[var(--text-faint)] text-center py-4">No credentials match &quot;{query}&quot;.</p>
       )}
 
       {groups.map(([name, items]) => (
@@ -1428,31 +1434,31 @@ function StoreTab({
                 <div className="flex justify-between items-center gap-2">
                   <div className="text-sm min-w-0">
                     <span className="font-medium">{c.label}</span>{" "}
-                    <span className="text-xs text-neutral-500 font-mono">
+                    <span className="text-xs text-[var(--text-muted)] font-mono">
                       {c.username} · {c.secretKind === "key" ? "SSH key" : c.secretKind === "token" ? "token" : c.secretKind === "api_key" ? "API key" : "password"}
                     </span>
-                    {c.description && <div className="text-xs text-neutral-400 mt-0.5">{c.description}</div>}
+                    {c.description && <div className="text-xs text-[var(--text-faint)] mt-0.5">{c.description}</div>}
                   </div>
                   <div className="flex gap-1 shrink-0">
-                    <button type="button" className={BTN_GHOST} onClick={() => toggleReveal(c.id)} title={c.id in revealed ? "Hide value" : "View value"}>
+                    <button type="button" className={ICON_BTN} onClick={() => toggleReveal(c.id)} title={c.id in revealed ? "Hide value" : "View value"}>
                       {c.id in revealed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </button>
-                    <button type="button" className={BTN_GHOST} onClick={() => copyCred(c.id)} title="Copy value">
-                      {copiedId === c.id ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
+                    <button type="button" className={ICON_BTN} onClick={() => copyCred(c.id)} title="Copy value">
+                      {copiedId === c.id ? <Check className="h-4 w-4 text-[var(--success-text)]" /> : <Copy className="h-4 w-4" />}
                     </button>
-                    <button type="button" className={BTN_GHOST} onClick={() => editCred(c)} title="Edit credential">
+                    <button type="button" className={ICON_BTN} onClick={() => editCred(c)} title="Edit credential">
                       <Pencil className="h-4 w-4" />
                     </button>
-                    <button type="button" className={BTN_GHOST} onClick={() => exportCred(c)} title={`Export ${c.secretKind}`}>
+                    <button type="button" className={ICON_BTN} onClick={() => exportCred(c)} title={`Export ${c.secretKind}`}>
                       <Download className="h-4 w-4" />
                     </button>
-                    <button type="button" className={`${BTN_GHOST} text-rose-600`} onClick={() => removeCred(c.id)}>
+                    <button type="button" className={ICON_BTN_DANGER} onClick={() => removeCred(c.id)}>
                       <Trash2 className="h-4 w-4" />
                     </button>
                   </div>
                 </div>
                 {c.id in revealed && (
-                  <pre className="text-xs font-mono bg-neutral-100 dark:bg-neutral-800 rounded p-2 whitespace-pre-wrap break-all select-text max-h-40 overflow-auto">
+                  <pre className="text-xs font-mono bg-[var(--bg-segment)] rounded p-2 whitespace-pre-wrap break-all select-text max-h-40 overflow-auto">
                     {revealed[c.id]}
                   </pre>
                 )}
@@ -1482,7 +1488,7 @@ function CredForm({
       <div className="grid grid-cols-2 gap-2">
         <input className={INPUT} placeholder="Label" value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} />
         <input className={INPUT} placeholder="Username" value={draft.username} onChange={(e) => setDraft({ ...draft, username: e.target.value })} />
-        <select aria-label="Secret kind" className={INPUT} value={draft.secretKind} onChange={(e) => setDraft({ ...draft, secretKind: e.target.value as SecretKind })}>
+        <select aria-label="Secret kind" className={`${INPUT} muya-select`} value={draft.secretKind} onChange={(e) => setDraft({ ...draft, secretKind: e.target.value as SecretKind })}>
           <option value="password">Password</option>
           <option value="key">SSH private key</option>
           <option value="token">Token</option>

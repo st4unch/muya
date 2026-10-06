@@ -91,3 +91,21 @@ html { background: var(--bg-app); }
 @media (prefers-reduced-motion: reduce) {
   .session-needs-decision { animation: none; border-color: rgba(245, 158, 11, 1); }
 }
+
+/* Themed dropdown (SSH page): WebKit's native popup button ignores padding and
+   height, so it sat shorter than the text fields next to it. Drop the native look
+   and draw the chevron from two gradients so its color is a token, not baked into
+   an SVG. Kept unlayered on purpose so it beats Tailwind's utilities. */
+.muya-select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 28px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
+    linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 15px) 50%,
+    calc(100% - 10px) 50%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+}

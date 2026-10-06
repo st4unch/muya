@@ -6,6 +6,21 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.0.11] - 2026-10-06
+
+### Fixed
+- **The SSH page no longer says "unlocked" after the password store has locked itself.**
+  The 15-minute idle lock only refreshed the Password Store tab, so on Servers or
+  CyberArk (or with the page in the background) the page kept showing an unlocked
+  store while agents were already told it was locked. The whole page now follows
+  the lock, and it also re-checks on every tab switch and when Muya comes back to
+  the front.
+
+### Changed
+- **The SSH page now matches the rest of Muya.** Same colors in light and dark, the
+  neutral main button instead of purple, Settings-style field labels, matching
+  fields and dropdowns, and quiet icon buttons for edit/delete/copy/reveal.
+
 ## [4.0.10] - 2026-10-05
 
 ### Added

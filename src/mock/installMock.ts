@@ -51,6 +51,23 @@ const FROZEN_MS = new Date(2026, 8, 30, 23, 21, 0).getTime();
 
 let installed = false;
 
+const mockVault = { unlocked: false };
+const MOCK_CREDS = [
+  { id: "c1", label: "prod-db root", username: "root", secretKind: "password", description: "Primary database", group: "Production" },
+  { id: "c2", label: "deploy key", username: "deploy", secretKind: "key", description: "", group: "Production" },
+  { id: "c3", label: "grafana", username: "admin", secretKind: "token", description: "Read-only API token", group: "" },
+];
+const MOCK_SSH_CONFIG = {
+  version: 1,
+  servers: [
+    { id: "s1", label: "web-01", host: "10.0.1.11", port: 22, username: "ubuntu", connectionType: "direct", credentialSource: { kind: "local", localCredId: "c2" }, agentAccess: true, group: "Production", tags: [] },
+    { id: "s2", label: "db-01", host: "10.0.1.21", port: 22, username: "root", connectionType: "psmp", psmpProfileId: "p1", credentialSource: { kind: "prompt" }, agentAccess: false, group: "Production", tags: [] },
+    { id: "s3", label: "lab box", host: "192.168.1.40", port: 2222, username: "me", connectionType: "direct", credentialSource: { kind: "prompt" }, group: "", tags: [] },
+  ],
+  psmpProfiles: [{ id: "p1", label: "Corp PSMP", psmpAddress: "psmp.corp.example", vaultUser: "jdoe", userDelim: "@", paramDelim: "%" }],
+  cyberark: null,
+};
+
 export function maybeInstallMock(): boolean {
   if (installed) return true; // idempotent — a second call (e.g. StrictMode) is a no-op
   if (!(import.meta.env.DEV || import.meta.env.MODE === "mock")) return false;
@@ -227,9 +244,6 @@ const NULL_OK = new Set([
   "credstore_import_key",
   "credstore_import_secret",
   "credstore_init",
-  "credstore_lock",
-  "credstore_unlock",
-  "credstore_unlock_biometric",
   "cyberark_logoff",
   "cyberark_test_connection",
   "debug_log_set",
@@ -406,18 +420,26 @@ function handleInvoke(cmd: string, rawPayload?: unknown): unknown {
       return MOCK_APP_METRICS;
 
     // --- credstore ---------------------------------------------------------------
+    // Stateful just enough to click through lock/unlock in the browser preview.
     case "credstore_status":
-      return { initialized: false, unlocked: false };
+      return { initialized: true, unlocked: mockVault.unlocked };
+    case "credstore_unlock":
+    case "credstore_unlock_biometric":
+      mockVault.unlocked = true;
+      return null;
+    case "credstore_lock":
+      mockVault.unlocked = false;
+      return null;
     case "credstore_biometric_available":
-      return false;
+      return true;
     case "credstore_cred_list":
-      return [];
+      return mockVault.unlocked ? MOCK_CREDS : [];
     case "credstore_cred_upsert":
       return `mock-cred-${Date.now()}`;
 
     // --- ssh -----------------------------------------------------------------------
     case "ssh_get_config":
-      return { version: 1, servers: [], psmpProfiles: [], cyberark: null };
+      return MOCK_SSH_CONFIG;
     case "ssh_upsert_server":
     case "ssh_upsert_psmp_profile":
       return `mock-ssh-${Date.now()}`;
