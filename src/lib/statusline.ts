@@ -33,15 +33,46 @@ export function statuslineSettingsPath(): Promise<string | null> {
   return settingsPathPromise;
 }
 
-/** Test hook: forget the cached settings path. */
+/** Test hook: forget the cached settings path and channel support. */
 export function resetStatuslineCache(): void {
   settingsPathPromise = null;
+  channelsPromise = null;
 }
 
-/** `cmd` with the status tap attached to every claude launch (unchanged when unavailable). */
-export async function applyStatusline(cmd: string): Promise<string> {
+/** Muya's channel flag: loads the muya-mcp server as a Claude Code channel, so messages
+ *  for the session (bridge peers, other sessions) arrive as channel events instead of
+ *  being typed into its terminal. PRD `bridge-channel-delivery`. */
+export const CHANNEL_FLAG = "--dangerously-load-development-channels server:muya-mcp";
+
+/** Insert CHANNEL_FLAG after every `claude` launch, like `withStatusline` (subcommands
+ *  skipped, idempotent). */
+export function withChannel(cmd: string, enabled: boolean): string {
+  if (!enabled || /(^|\s)--dangerously-load-development-channels(\s|=)/.test(cmd)) return cmd;
+  return cmd.replace(/(^|&&|;)(\s*)claude(?=\s|$)([ \t]*)(\S*)/g, (m, sep: string, ws: string, gap: string, next: string) => {
+    if (/^[A-Za-z][\w-]*$/.test(next)) return m; // subcommand
+    return `${sep}${ws}claude ${CHANNEL_FLAG}${next ? (gap || " ") + next : gap}`;
+  });
+}
+
+let channelsPromise: Promise<boolean> | null = null;
+
+/** Does the installed Claude CLI take CHANNEL_FLAG (fetched once)? False on any error:
+ *  an unknown flag would stop the session from starting at all. */
+export function channelsSupported(): Promise<boolean> {
+  if (!channelsPromise) {
+    channelsPromise = invoke<boolean>("claude_channels_supported")
+      .then((ok) => ok === true)
+      .catch(() => false);
+  }
+  return channelsPromise;
+}
+
+/** `cmd` with Muya's launch flags on every claude launch: the status tap and the
+ *  channel flag (each left out when unavailable). */
+export async function applyLaunchFlags(cmd: string): Promise<string> {
   if (!/claude/.test(cmd)) return cmd;
-  return withStatusline(cmd, await statuslineSettingsPath());
+  const [settings, channels] = await Promise.all([statuslineSettingsPath(), channelsSupported()]);
+  return withChannel(withStatusline(cmd, settings), channels);
 }
 
 // ── Formatters ────────────────────────────────────────────────────────────────

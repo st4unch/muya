@@ -321,6 +321,7 @@ pub fn run() {
         .manage(cyberark::CyberarkState::default())
         .invoke_handler(tauri::generate_handler![
             agents::list_agent_sessions,
+            agents::claude_channels_supported,
             agents::stop_agent,
             agents::kill_session,
             history::list_session_history,

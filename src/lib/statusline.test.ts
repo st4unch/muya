@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-import { STATUS_FIELDS, STATUS_GROUPS, fmtBool, fmtDuration, fmtEpoch, fmtLines, fmtPct, fmtTokens, fmtUsd, statusValue, withStatusline } from "./statusline";
+import { STATUS_FIELDS, STATUS_GROUPS, fmtBool, fmtDuration, fmtEpoch, fmtLines, fmtPct, fmtTokens, fmtUsd, statusValue, withChannel, withStatusline, CHANNEL_FLAG } from "./statusline";
 
 const q = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 const P = "/tmp/muya-status-1/settings.json";
@@ -83,5 +83,24 @@ describe("catalogue", () => {
     const ids = STATUS_FIELDS.map((f) => f.id);
     expect(new Set(ids).size).toBe(ids.length);
     for (const g of STATUS_GROUPS) expect(STATUS_FIELDS.some((f) => f.group === g)).toBe(true);
+  });
+});
+
+describe("withChannel", () => {
+  it("adds Muya's channel flag to every claude launch", () => {
+    expect(withChannel("claude --dangerously-skip-permissions", true)).toBe(`claude ${CHANNEL_FLAG} --dangerously-skip-permissions`);
+    expect(withChannel("cd '/a b' && claude --resume 'x'", true)).toBe(`cd '/a b' && claude ${CHANNEL_FLAG} --resume 'x'`);
+    expect(withChannel('claude "fix it"', true)).toBe(`claude ${CHANNEL_FLAG} "fix it"`);
+  });
+
+  it("leaves subcommands, other CLIs, unsupported CLIs and already-flagged commands alone", () => {
+    for (const c of ["claude attach abc", "claude agents", "opencode --auto", "echo claudex"]) expect(withChannel(c, true)).toBe(c);
+    expect(withChannel("claude", false)).toBe("claude");
+    const once = withChannel("claude -c", true);
+    expect(withChannel(once, true)).toBe(once);
+  });
+
+  it("composes with the status tap", () => {
+    expect(withChannel(withStatusline("claude -c", "/s.json"), true)).toBe(`claude ${CHANNEL_FLAG} --settings '/s.json' -c`);
   });
 });

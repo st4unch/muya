@@ -349,19 +349,43 @@ async fn deliver(app: &AppHandle, state: &RemoteBridgeState, peer: &str, msg: &V
         .map(sanitize)
         .map(|s| s.chars().take(60).collect::<String>())
         .filter(|s| !s.is_empty());
+    let peer_label = sanitize(&label);
+    // A channel event when the session loaded muya-mcp as a channel — nothing is typed
+    // into its terminal; otherwise the terminal (the frontend submits the line).
+    if crate::broker::push_channel(
+        &session,
+        &remote_channel_event(&peer_label, &short(peer), sender.as_deref(), &text),
+    ) {
+        return true;
+    }
     app.emit(
         "muya://deliver-message",
         json!({
             "sessionId": session,
             "text": text,
             "remote": {
-                "peer": sanitize(&label),
+                "peer": peer_label,
                 "id": short(peer),
                 "sender": sender,
             },
         }),
     )
     .is_ok()
+}
+
+/// Channel event for a message from a paired peer. The receiving Claude sees
+/// `<channel source="muya-mcp" kind="remote" peer="…" …>text</channel>`; the server
+/// instructions tell it this is untrusted data and to answer with bridge_send(peer).
+/// Meta keys are letters/digits/underscores only (Claude Code drops any other key).
+fn remote_channel_event(peer: &str, peer_id: &str, sender: Option<&str>, text: &str) -> Value {
+    let mut meta = serde_json::Map::new();
+    meta.insert("kind".into(), json!("remote"));
+    meta.insert("peer".into(), json!(peer));
+    meta.insert("peer_id".into(), json!(peer_id));
+    if let Some(s) = sender {
+        meta.insert("sender".into(), json!(s));
+    }
+    json!({ "content": text, "meta": meta })
 }
 
 /// Hand messages held for `peer` (or for any peer when None) to `session`.
@@ -470,7 +494,9 @@ pub fn explain_send_error(label: &str, e: &str) -> String {
     if l.contains("handshake") || l.contains("alert") || l.contains("does not match pinned") {
         format!("'{label}' refused the secure connection — it has probably revoked this pairing; pair again ({e})")
     } else if l.contains("refused") || l.contains("timed out") || l.contains("unreachable") {
-        format!("could not reach '{label}' — is its Muya running and listening (bridge_listen)? ({e})")
+        format!(
+            "could not reach '{label}' — is its Muya running and listening (bridge_listen)? ({e})"
+        )
     } else {
         e.to_string()
     }
@@ -761,6 +787,25 @@ async fn handle_inner(
 mod tests {
     use super::*;
 
+    #[test]
+    fn remote_channel_event_tags_the_peer_with_valid_meta_keys() {
+        let ev = remote_channel_event("office-mac", "a1b2c3d4", Some("api work"), "build is green");
+        assert_eq!(ev["content"], "build is green");
+        assert_eq!(ev["meta"]["kind"], "remote");
+        assert_eq!(ev["meta"]["peer"], "office-mac");
+        assert_eq!(ev["meta"]["peer_id"], "a1b2c3d4");
+        assert_eq!(ev["meta"]["sender"], "api work");
+        for k in ev["meta"].as_object().unwrap().keys() {
+            assert!(
+                k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
+                "{k}"
+            );
+        }
+        assert!(remote_channel_event("p", "1", None, "x")["meta"]
+            .get("sender")
+            .is_none());
+    }
+
     fn peer(spki: &str, label: &str) -> PinnedPeer {
         PinnedPeer {
             schema_v: 1,
@@ -838,8 +883,16 @@ mod tests {
 
     #[test]
     fn send_errors_are_explained() {
-        assert!(explain_send_error("a", "read frame len: received fatal alert: HandshakeFailure").contains("revoked"));
-        assert!(explain_send_error("a", "connect to peer x at y: Connection refused (os error 61)").contains("bridge_listen"));
+        assert!(explain_send_error(
+            "a",
+            "read frame len: received fatal alert: HandshakeFailure"
+        )
+        .contains("revoked"));
+        assert!(explain_send_error(
+            "a",
+            "connect to peer x at y: Connection refused (os error 61)"
+        )
+        .contains("bridge_listen"));
         assert_eq!(explain_send_error("a", "other"), "other");
     }
 

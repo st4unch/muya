@@ -369,6 +369,38 @@ fn disambiguate_names(sessions: &mut [AgentSession]) {
     }
 }
 
+/// Oldest Claude Code Muya starts with `--dangerously-load-development-channels`
+/// (PRD `bridge-channel-delivery`). The docs give no minimum for channels; 2.1.234 is
+/// the release they name for the per-session channel opt-in, so anything at or above
+/// it has the flag. An older CLI would reject the unknown option and the session
+/// would not start — and `--version` cannot be used to probe it (it ignores other
+/// flags), hence a version check.
+const CHANNELS_MIN_VERSION: (u64, u64, u64) = (2, 1, 234);
+
+/// `"2.1.292 (Claude Code)"` → `(2, 1, 292)`.
+fn parse_cli_version(out: &str) -> Option<(u64, u64, u64)> {
+    let v = out.split_whitespace().next()?;
+    let mut it = v.split('.').map(|p| p.parse::<u64>().ok());
+    Some((it.next()??, it.next()??, it.next()??))
+}
+
+/// Tauri command: may Muya launch Claude with its channel flag? False when the CLI
+/// is missing, unparseable, or older than `CHANNELS_MIN_VERSION` — messages to such
+/// sessions are then typed into their terminal instead.
+#[tauri::command(async)]
+pub fn claude_channels_supported() -> bool {
+    static SUPPORTED: OnceLock<bool> = OnceLock::new();
+    *SUPPORTED.get_or_init(|| {
+        Command::new(claude_bin())
+            .arg("--version")
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| parse_cli_version(&String::from_utf8_lossy(&o.stdout)))
+            .is_some_and(|v| v >= CHANNELS_MIN_VERSION)
+    })
+}
+
 /// Tauri command: live Claude Code sessions from `claude agents --json`.
 /// `--all` includes completed sessions too.
 #[tauri::command(async)]
@@ -406,7 +438,11 @@ pub(crate) fn list_agent_sessions_sync(
     // opencode sessions join the same list. `list_sessions` never errors — a
     // machine without opencode is the normal case, and a broken opencode must not
     // be able to empty the Claude list, which is the one people depend on.
-    sessions.extend(crate::opencode::list_sessions().into_iter().map(map_opencode));
+    sessions.extend(
+        crate::opencode::list_sessions()
+            .into_iter()
+            .map(map_opencode),
+    );
     disambiguate_names(&mut sessions);
     sort_newest_first(&mut sessions);
     Ok(sessions)
@@ -488,7 +524,10 @@ mod tests {
         assert_eq!(row.pid, None);
         assert_eq!(row.parent_id, None);
         assert_eq!(row.waiting_for, None);
-        assert!(!row.attachable, "opencode resumes with --session, not claude attach");
+        assert!(
+            !row.attachable,
+            "opencode resumes with --session, not claude attach"
+        );
     }
 
     #[test]
@@ -635,6 +674,20 @@ mod tests {
             }
             Err(e) => println!("list_agent_sessions errored (claude may be unavailable): {e}"),
         }
+    }
+
+    #[test]
+    fn cli_version_parses_and_gates_channels() {
+        assert_eq!(
+            parse_cli_version("2.1.292 (Claude Code)"),
+            Some((2, 1, 292))
+        );
+        assert_eq!(parse_cli_version("2.1.234"), Some((2, 1, 234)));
+        assert_eq!(parse_cli_version("garbage"), None);
+        assert_eq!(parse_cli_version(""), None);
+        assert!(parse_cli_version("2.1.234").unwrap() >= CHANNELS_MIN_VERSION);
+        assert!(parse_cli_version("2.1.233").unwrap() < CHANNELS_MIN_VERSION);
+        assert!(parse_cli_version("2.2.0").unwrap() >= CHANNELS_MIN_VERSION);
     }
 
     #[test]

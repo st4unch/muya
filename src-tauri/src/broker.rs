@@ -24,7 +24,7 @@
 //!   Request : {"op":"list_servers"} | {"op":"open","alias":"<label|id>"}
 //!   Response: {"ok":true,"servers":[..]} | {"ok":true} | {"ok":false,"error":".."}
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::io::{AsRawFd, RawFd};
@@ -54,6 +54,80 @@ const MCP_LEGACY_ENTRY_NAME: &str = "muya-ssh";
 /// because opens and sends are separate MCP calls.
 static SSH_SESSIONS: LazyLock<StdMutex<HashSet<String>>> =
     LazyLock::new(|| StdMutex::new(HashSet::new()));
+
+/// Live channel subscribers (PRD `bridge-channel-delivery`): Claude session id → the
+/// write side of that session's muya-mcp sidecar subscription. A sidecar subscribes
+/// only when its `claude` process was started with Muya's channel flag, so a message
+/// pushed here appears in the session as a channel event instead of being typed into
+/// its terminal. Entries go away when the sidecar's connection closes.
+static CHANNELS: LazyLock<StdMutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>> =
+    LazyLock::new(|| StdMutex::new(HashMap::new()));
+
+/// Push one channel event (`{"content": …, "meta": {…}}`) to `session_id`'s sidecar.
+/// False when that session has no live subscriber — the caller falls back to the
+/// terminal, so a message is never silently dropped.
+pub(crate) fn push_channel(session_id: &str, event: &serde_json::Value) -> bool {
+    let mut map = CHANNELS.lock().unwrap();
+    let Some(tx) = map.get(session_id) else {
+        return false;
+    };
+    if tx.send(event.to_string()).is_ok() {
+        return true;
+    }
+    map.remove(session_id); // receiver gone: the sidecar exited
+    false
+}
+
+/// Channel event for a message from another Claude session on THIS Mac
+/// (`send_to_session(deliver:"muya")`). Meta keys are letters/digits/underscores only:
+/// Claude Code silently drops any other key.
+pub(crate) fn session_channel_event(from: &str, text: &str) -> serde_json::Value {
+    let mut meta = serde_json::Map::new();
+    meta.insert("kind".into(), json!("session"));
+    if !from.trim().is_empty() {
+        meta.insert("from".into(), json!(from));
+    }
+    json!({ "content": text, "meta": meta })
+}
+
+/// Serve a `subscribe` connection: register it for `session_id`, acknowledge, then
+/// forward every pushed event as one line until either side goes away.
+async fn serve_subscription(
+    session_id: String,
+    mut lines: tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
+    mut write_half: tokio::net::unix::OwnedWriteHalf,
+) {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    CHANNELS
+        .lock()
+        .unwrap()
+        .insert(session_id.clone(), tx.clone());
+    if write_half.write_all(b"{\"ok\":true}\n").await.is_ok() {
+        loop {
+            tokio::select! {
+                ev = rx.recv() => match ev {
+                    Some(mut line) => {
+                        line.push('\n');
+                        if write_half.write_all(line.as_bytes()).await.is_err() {
+                            break;
+                        }
+                    }
+                    None => break,
+                },
+                // The sidecar never sends more; EOF here means it exited.
+                r = lines.next_line() => if !matches!(r, Ok(Some(_))) { break },
+            }
+        }
+    }
+    // Only drop OUR registration — a newer sidecar of the same session may have replaced it.
+    let mut map = CHANNELS.lock().unwrap();
+    if map
+        .get(&session_id)
+        .is_some_and(|cur| cur.same_channel(&tx))
+    {
+        map.remove(&session_id);
+    }
+}
 
 fn register_ssh_session(id: &str) {
     if let Ok(mut set) = SSH_SESSIONS.lock() {
@@ -617,6 +691,17 @@ async fn handle_request(app: &AppHandle, line: &str) -> String {
                 Err(e) => err_resp(e),
             }
         }
+        // Dev builds only: push a channel event to a session, for live-testing the
+        // channel path without a second Mac (PRD bridge-channel-delivery AC7).
+        #[cfg(debug_assertions)]
+        "debug_push_channel" => {
+            let id = req.session_id.clone().unwrap_or_default();
+            let ok = push_channel(
+                &id,
+                &session_channel_event("debug", req.text.as_deref().unwrap_or("")),
+            );
+            json!({ "ok": ok }).to_string()
+        }
         "list_psmp_profiles" => match crate::ssh::load_config() {
             Ok(cfg) => {
                 json!({"ok": true, "profiles": crate::ssh::agent_psmp_profiles(&cfg)}).to_string()
@@ -1160,13 +1245,21 @@ async fn handle_send_to_session(app: &AppHandle, req: &BrokerReq) -> String {
         } else {
             from.clone()
         };
-        let payload = json!({ "sessionId": id, "text": text, "from": sender });
-        if let Err(e) = app.emit("muya://deliver-message", payload) {
-            return err_resp(format!("failed to deliver: {e}"));
-        }
+        // A channel event when the target loaded muya-mcp as a channel (nothing is
+        // typed); otherwise its terminal, submitted by the frontend.
+        let via = if push_channel(&id, &session_channel_event(&sender, &text)) {
+            "channel"
+        } else {
+            let payload = json!({ "sessionId": id, "text": text, "from": sender });
+            if let Err(e) = app.emit("muya://deliver-message", payload) {
+                return err_resp(format!("failed to deliver: {e}"));
+            }
+            "terminal"
+        };
         return json!({
             "ok": true,
             "delivered": "muya",
+            "via": via,
             "target": { "id": id, "name": name, "cwd": cwd },
         })
         .to_string();
@@ -1769,6 +1862,16 @@ pub async fn enable_broker_listener(state: &BrokerState, app: AppHandle) -> Resu
     Ok(())
 }
 
+/// `{"op":"subscribe","sessionId":"…"}` → the session id; anything else → None.
+fn subscribe_request(line: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(line).ok()?;
+    if v.get("op")?.as_str()? != "subscribe" {
+        return None;
+    }
+    let id = v.get("sessionId")?.as_str()?.trim();
+    (!id.is_empty()).then(|| id.to_string())
+}
+
 async fn serve_connection(stream: tokio::net::UnixStream, app: AppHandle) {
     let (read_half, mut write_half) = stream.into_split();
     let mut lines = BufReader::new(read_half).lines();
@@ -1777,6 +1880,11 @@ async fn serve_connection(stream: tokio::net::UnixStream, app: AppHandle) {
             Ok(Some(line)) => {
                 if line.trim().is_empty() {
                     continue;
+                }
+                // A sidecar's long-lived channel subscription takes over the connection.
+                if let Some(session_id) = subscribe_request(&line) {
+                    serve_subscription(session_id, lines, write_half).await;
+                    return;
                 }
                 let mut resp = handle_request(&app, &line).await;
                 resp.push('\n');
@@ -1831,6 +1939,54 @@ pub(crate) fn register_mcp() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- channel delivery (PRD bridge-channel-delivery) ------------------
+
+    #[test]
+    fn subscribe_request_needs_op_and_session() {
+        assert_eq!(
+            subscribe_request(r#"{"op":"subscribe","sessionId":"abc"}"#).as_deref(),
+            Some("abc")
+        );
+        assert_eq!(
+            subscribe_request(r#"{"op":"subscribe","sessionId":"  "}"#),
+            None
+        );
+        assert_eq!(subscribe_request(r#"{"op":"list_servers"}"#), None);
+        assert_eq!(subscribe_request("not json"), None);
+    }
+
+    #[test]
+    fn push_channel_reaches_a_live_subscriber_and_reports_a_missing_one() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+        CHANNELS.lock().unwrap().insert("sess-live".into(), tx);
+        let ev = session_channel_event("api", "done");
+        assert!(push_channel("sess-live", &ev));
+        assert_eq!(rx.try_recv().unwrap(), ev.to_string());
+        drop(rx); // the sidecar went away
+        assert!(
+            !push_channel("sess-live", &ev),
+            "a closed subscriber must fall back"
+        );
+        assert!(!CHANNELS.lock().unwrap().contains_key("sess-live"));
+        assert!(!push_channel("sess-none", &ev));
+    }
+
+    #[test]
+    fn channel_meta_keys_survive_claude_code() {
+        // Claude Code silently drops meta keys with anything but letters/digits/_.
+        let ev = session_channel_event("api", "hi");
+        for k in ev["meta"].as_object().unwrap().keys() {
+            assert!(
+                k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
+                "{k}"
+            );
+        }
+        assert_eq!(ev["meta"]["kind"], "session");
+        assert!(session_channel_event("", "hi")["meta"]
+            .get("from")
+            .is_none());
+    }
     use crate::ssh::{CredentialSource, Server};
 
     fn srv(id: &str, label: &str, agent: bool, kind: &str) -> Server {

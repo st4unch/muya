@@ -25,7 +25,7 @@ import PrdBoard from "./components/PrdBoard";
 import ScheduledPromptModal, { type ScheduledPrompt } from "./components/ScheduledPromptModal";
 import SettingsModal from "./components/SettingsModal";
 import { useStatusFields, useStatusData } from "./redesign/useStatusFields";
-import { applyStatusline } from "./lib/statusline";
+import { applyLaunchFlags } from "./lib/statusline";
 import { buildAgentCommand, singleQuote, detectAgent, AGENT_BASE_COMMAND, type AgentKind } from "./lib/agent";
 import { invoke } from "@tauri-apps/api/core";
 import { copyToClipboard } from "./lib/clipboard";
@@ -57,7 +57,7 @@ import type { AgentVM, ChangeVM, FileVM, GridLayout, OpenFileVM, InspectorVM, Pe
 import type { AgentFilter } from "./redesign/AgentList";
 import type { InspectorTab } from "./redesign/Inspector";
 import { shouldExitGridOnEscape } from "./redesign/gridKeys";
-import { remoteMessageLine, type RemoteSender } from "./lib/remoteMessage";
+import { deliveryWrites, SUBMIT_DELAY_MS, type RemoteSender } from "./lib/remoteMessage";
 
 // Types matching the user's workflow model
 interface AgentSession {
@@ -721,7 +721,7 @@ export default function App() {
     setOpenTerminals((prev) =>
       prev.map((t) => (t.key === key ? { ...t, needsResume: false } : t))
     );
-    void applyStatusline(resumeCommand({ sessionId: tab.sessionId, sessionCwd: tab.sessionCwd }, singleQuote))
+    void applyLaunchFlags(resumeCommand({ sessionId: tab.sessionId, sessionCwd: tab.sessionCwd }, singleQuote))
       .then((cmd) => invoke("pty_write", { id: ptyId, data: `${cmd}\r` }))
       .catch(() => {});
   };
@@ -1184,8 +1184,11 @@ export default function App() {
         const key = sessionIdToKeyRef.current[sessionId];
         const ptyId = key ? terminalPtyIdsRef.current[key] : undefined;
         if (!ptyId) return; // target tab not open here
-        const data = raw ? text : remote ? remoteMessageLine(remote, text) : `[message${from ? ` from ${from}` : ""} via Muya] ${text}\n`;
-        void invoke("pty_write", { id: ptyId, data }).catch(() => {});
+        // Only sessions without Muya's channel get here (channel delivery happens in Rust).
+        const [first, ...rest] = deliveryWrites({ text, from, raw, remote });
+        void invoke("pty_write", { id: ptyId, data: first }).catch(() => {});
+        // Enter as its own keypress once the text has landed, or it stays in the prompt.
+        for (const data of rest) setTimeout(() => void invoke("pty_write", { id: ptyId, data }).catch(() => {}), SUBMIT_DELAY_MS);
       },
     );
     return () => { void un.then((f) => f()); };

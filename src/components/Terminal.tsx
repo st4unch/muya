@@ -10,7 +10,8 @@ import { altArrowSeq } from "../lib/keys";
 import { schemeTheme } from "../theme/terminalThemes";
 import { stepTerminalFont, useTerminalPrefs } from "../lib/terminalPrefs";
 import { parseClaudeScreen, readScreenLines, type ScreenState } from "../lib/screenState";
-import { applyStatusline } from "../lib/statusline";
+import { isMuyaChannelWarning } from "../lib/channelPrompt";
+import { applyLaunchFlags } from "../lib/statusline";
 
 // Output bytes arrive as a raw ArrayBuffer (binary fetch path — no JSON byte
 // bloat); process-exit arrives as a small JSON object. See src-tauri/src/pty.rs.
@@ -321,6 +322,42 @@ function Terminal({
       }, 300);
     };
 
+    // Claude Code asks once per session before loading Muya's channel (CHANNEL_FLAG in
+    // statusline.ts). Muya confirms it (operator decision, PRD bridge-channel-delivery):
+    // only output that could be that screen triggers a look, and the screen must name
+    // Muya's channel alone with option 1 selected (isMuyaChannelWarning).
+    const decoder = new TextDecoder();
+    // The phrase can straddle two PTY reads: test it against the recent tail, not one chunk.
+    let outputTail = "";
+    let channelTimer: number | undefined;
+    let channelAcceptedAt = 0;
+    const checkChannelWarning = (bytes: Uint8Array) => {
+      outputTail = (outputTail + decoder.decode(bytes, { stream: true })).slice(-400);
+      if (channelTimer !== undefined || !/development\s+channels/i.test(outputTail)) return;
+      outputTail = "";
+      // xterm renders asynchronously and the screen then stays still (no more output to
+      // re-trigger us), so look a few times before giving up.
+      const look = (triesLeft: number) => {
+        channelTimer = window.setTimeout(() => {
+          channelTimer = undefined;
+          if (disposed || !ptyId || Date.now() - channelAcceptedAt < 5000) return;
+          let found = false;
+          try {
+            found = isMuyaChannelWarning(readScreenLines(term));
+          } catch {
+            return;
+          }
+          if (!found) {
+            if (triesLeft > 0) look(triesLeft - 1);
+            return;
+          }
+          channelAcceptedAt = Date.now();
+          void invoke("pty_write", { id: ptyId, data: "\r" }).catch(() => {});
+        }, 250);
+      };
+      look(4);
+    };
+
     // xterm measures its cell size from the font at term.open() time. JetBrains Mono is
     // bundled (fontsource) but may not have finished loading yet on a cold start, so the
     // very first fit above can use a fallback-font cell size and mis-measure cols/rows.
@@ -377,7 +414,7 @@ function Terminal({
       // Cmd+Shift+C → launch claude session
       if (e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey && e.type === "keydown" && e.key.toLowerCase() === "c" && ptyId) {
         const id = ptyId;
-        void applyStatusline("claude --dangerously-skip-permissions")
+        void applyLaunchFlags("claude --dangerously-skip-permissions")
           .then((cmd) => invoke("pty_write", { id, data: `${cmd}\r` }))
           .catch(() => {});
         e.preventDefault();
@@ -486,6 +523,7 @@ function Terminal({
           if (mode !== undefined) mouseTrackingActive = mode;
           term.write(bytes);
           scheduleScreenParse();
+          checkChannelWarning(bytes);
         } else if (msg && msg.type === "exit") {
           mouseTrackingActive = false;
           term.write("\r\n\x1b[2m[process exited — close or reselect a session]\x1b[0m\r\n");
@@ -530,7 +568,7 @@ function Terminal({
           setTimeout(() => {
             if (!disposed && ptyId) {
               const id = ptyId;
-              void applyStatusline(initialCommand)
+              void applyLaunchFlags(initialCommand)
                 .then((cmd) => (disposed ? undefined : invoke("pty_write", { id, data: `${cmd}\r` })))
                 .catch(() => {});
             }

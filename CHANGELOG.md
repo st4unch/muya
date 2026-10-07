@@ -6,6 +6,20 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.0.13] - 2026-10-07
+
+### Changed
+- **Messages from another Mac (bridge) and from other sessions no longer need you to press
+  Enter.** Claude sessions Muya starts (new agent, resume, restored tabs) now receive them
+  as Claude Code channel events: the message appears in the session and Claude answers on
+  its own — nothing is typed into the prompt, so whatever you are typing stays as it is.
+  Muya confirms Claude Code's one-time "development channels" question for its own channel.
+  Needs Claude Code 2.1.234 or newer.
+
+### Fixed
+- Sessions started outside Muya (or with an older Claude Code) still get the message typed
+  into their terminal, and it is now sent — no Enter needed there either.
+
 ## [4.0.12] - 2026-10-07
 
 ### Added
