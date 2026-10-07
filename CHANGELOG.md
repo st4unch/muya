@@ -6,6 +6,18 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.0.12] - 2026-10-07
+
+### Added
+- **Agents can now add servers that sit behind CyberArk PSMP.** An agent picks one of
+  the PSMP profiles you set up (by name) and gives only the target address and target
+  account — Muya adds the vault user and PSMP address from your profile. Before, an
+  agent could only add direct servers, so PSMP servers it added never connected.
+- **Agents can fix the servers they added themselves** — wrong account, wrong address,
+  or direct instead of PSMP. Servers you set up are still off-limits to agents, and
+  agents still cannot create or change PSMP profiles.
+- Agents can list your PSMP profiles (name and address only; never the vault user).
+
 ## [4.0.11] - 2026-10-06
 
 ### Fixed

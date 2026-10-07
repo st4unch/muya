@@ -347,11 +347,11 @@ fn reject_injection(field: &str, value: &str) -> Result<(), String> {
 
 /// Create a server ON BEHALF OF a Claude agent (broker `add_server` op). Structural
 /// guardrails (PRD `ssh-agent-add-server`, operator-overridden D1):
-///   * host + username are validated as inert tokens (`reject_injection`) — no
-///     whitespace/control/`@`, so an agent cannot inject ssh flags or rewrite the
-///     destination.
-///   * `connection_type` is FORCED `"direct"` — an agent can never select PSMP
-///     (that needs an operator-authored profile).
+///   * host + username are validated as inert tokens (`check_agent_target`) — no
+///     whitespace/control/leading `-`, and no delimiter that would rewrite the
+///     destination (`@` for direct; the profile's delimiters for PSMP).
+///   * `connection_type` is `"direct"` unless `psmp_profile` names a profile the
+///     OPERATOR defined (PRD `ssh-agent-psmp`); an agent can never author a profile.
 ///   * `ssh_options` is FORCED `None` — agents never get raw ssh flags
 ///     (`-o ProxyCommand=` would be local RCE on the Muya host).
 ///   * `agent_access = true` (the agent may use what it added) and
@@ -371,25 +371,17 @@ pub(crate) fn agent_add_server_in(
     username: &str,
     port: Option<u16>,
     credential_ref: Option<String>,
+    psmp_profile: Option<&str>,
 ) -> Result<String, String> {
-    reject_injection("host", host)?;
-    reject_injection("username", username)?;
     let port = port.unwrap_or(DEFAULT_PORT);
     if port == 0 {
         return Err("port must be 1–65535".into());
     }
-
-    let credential_source = match credential_ref.as_deref() {
-        Some(r) if !r.trim().is_empty() => CredentialSource {
-            kind: "local".into(),
-            local_cred_id: Some(r.to_string()),
-            cyberark_account_id: None,
-        },
-        _ => CredentialSource {
-            kind: "prompt".into(),
-            ..Default::default()
-        },
+    let psmp_profile_id = match psmp_profile.filter(|p| !p.trim().is_empty()) {
+        Some(name) => Some(find_psmp_profile(cfg, name)?.id.clone()),
+        None => None,
     };
+    check_agent_target(cfg, host, username, psmp_profile_id.as_deref())?;
 
     let server = Server {
         id: String::new(),
@@ -397,9 +389,16 @@ pub(crate) fn agent_add_server_in(
         host: host.trim().to_string(),
         port,
         username: username.trim().to_string(),
-        connection_type: "direct".into(), // forced — agent cannot select PSMP
-        psmp_profile_id: None,
-        credential_source,
+        // PSMP only through a profile the OPERATOR defined — the profile decides where
+        // the vault password goes, and the agent can only name one, never author it.
+        connection_type: if psmp_profile_id.is_some() {
+            "psmp"
+        } else {
+            "direct"
+        }
+        .into(),
+        psmp_profile_id,
+        credential_source: agent_credential_source(credential_ref.as_deref()),
         agent_access: true, // the agent may use what it added
         ssh_options: None,  // forced — agents never get raw ssh flags (`-o ProxyCommand=`)
         last_connected_at: None,
@@ -410,8 +409,237 @@ pub(crate) fn agent_add_server_in(
 
     // CREATE-ONLY dedup: collision (esp. with a human server) → Err, no overwrite.
     let id = upsert_server_in(cfg, server)?;
-    let alias = cfg
+    let alias = alias_for(cfg, &id);
+
+    let cred_desc = credential_ref
+        .as_deref()
+        .filter(|r| !r.trim().is_empty())
+        .unwrap_or("prompt");
+    crate::debuglog::log(&format!(
+        "agent added ssh server {alias} ({}, credential={cred_desc})",
+        describe_target(cfg, &id)
+    ));
+    Ok(alias)
+}
+
+/// What an agent may change on a server it added (`ssh_update_server`). `None` leaves
+/// the field as it is. `credential: Some("")` goes back to the operator typing the
+/// password; `psmp_profile: Some("")` (or "none"/"direct") makes it a direct server.
+#[derive(Default)]
+pub(crate) struct AgentServerEdit {
+    pub label: Option<String>,
+    pub host: Option<String>,
+    pub username: Option<String>,
+    pub port: Option<u16>,
+    pub credential: Option<String>,
+    pub psmp_profile: Option<String>,
+}
+
+/// Change a server ON BEHALF OF a Claude agent. Only servers the agent ADDED
+/// (`agent_added`) can be changed — an operator-configured server is refused, so an
+/// agent can never repoint a host the human set up (and may have bound a credential
+/// to). Same validation as `agent_add_server_in`; `agent_added`, `agent_access` and
+/// `ssh_options: None` are kept. Returns the (possibly renamed) alias.
+pub(crate) fn agent_update_server_in(
+    cfg: &mut SshConfig,
+    id: &str,
+    edit: AgentServerEdit,
+) -> Result<String, String> {
+    let current = cfg
         .servers
+        .iter()
+        .find(|s| s.id == id)
+        .ok_or("server not found")?
+        .clone();
+    if !current.agent_added {
+        return Err(format!(
+            "'{}' was set up by the operator; agents can only change servers they added. \
+             Ask the operator to change it in Muya's SSH page.",
+            alias_for(cfg, id)
+        ));
+    }
+
+    let mut next = current.clone();
+    if let Some(label) = edit.label {
+        next.label = label.trim().to_string();
+    }
+    if let Some(host) = edit.host {
+        next.host = host.trim().to_string();
+    }
+    if let Some(username) = edit.username {
+        next.username = username.trim().to_string();
+    }
+    if let Some(port) = edit.port {
+        if port == 0 {
+            return Err("port must be 1–65535".into());
+        }
+        next.port = port;
+    }
+    if let Some(cred) = edit.credential.as_deref() {
+        next.credential_source = agent_credential_source(Some(cred));
+    }
+    if let Some(profile) = edit.psmp_profile.as_deref() {
+        let p = profile.trim();
+        if p.is_empty() || p.eq_ignore_ascii_case("none") || p.eq_ignore_ascii_case("direct") {
+            next.connection_type = "direct".into();
+            next.psmp_profile_id = None;
+        } else {
+            next.connection_type = "psmp".into();
+            next.psmp_profile_id = Some(find_psmp_profile(cfg, p)?.id.clone());
+        }
+    }
+    check_agent_target(
+        cfg,
+        &next.host,
+        &next.username,
+        next.psmp_profile_id.as_deref(),
+    )?;
+    // Whatever the agent sent, these stay agent-shaped.
+    next.agent_added = true;
+    next.agent_access = true;
+    next.ssh_options = None;
+
+    upsert_server_in(cfg, next)?;
+    let alias = alias_for(cfg, id);
+    crate::debuglog::log(&format!(
+        "agent updated ssh server {alias} ({})",
+        describe_target(cfg, id)
+    ));
+    Ok(alias)
+}
+
+/// A PSMP profile as an agent may see it: the name to pass back as `psmpProfile`
+/// and the proxy address. Never the vault user or the delimiters.
+#[derive(Serialize, Debug, PartialEq)]
+pub(crate) struct AgentPsmpProfile {
+    pub name: String,
+    #[serde(rename = "psmpAddress")]
+    pub psmp_address: String,
+}
+
+pub(crate) fn agent_psmp_profiles(cfg: &SshConfig) -> Vec<AgentPsmpProfile> {
+    cfg.psmp_profiles
+        .iter()
+        .map(|p| AgentPsmpProfile {
+            name: profile_name(p),
+            psmp_address: p.psmp_address.clone(),
+        })
+        .collect()
+}
+
+/// The name a profile goes by for agents: its label, else its id.
+pub(crate) fn profile_name(p: &PsmpProfile) -> String {
+    if p.label.trim().is_empty() {
+        p.id.clone()
+    } else {
+        p.label.clone()
+    }
+}
+
+/// Resolve the profile an agent named — by label (case-insensitive) or id. The error
+/// lists the names that do exist, so the agent can correct itself.
+fn find_psmp_profile<'a>(cfg: &'a SshConfig, name: &str) -> Result<&'a PsmpProfile, String> {
+    let name = name.trim();
+    cfg.psmp_profiles
+        .iter()
+        .find(|p| p.id == name || p.label.trim().eq_ignore_ascii_case(name))
+        .ok_or_else(|| {
+            if cfg.psmp_profiles.is_empty() {
+                format!(
+                    "no PSMP profile named '{name}' — none are set up. The operator adds \
+                     PSMP profiles in Muya's SSH page."
+                )
+            } else {
+                let names: Vec<String> = cfg.psmp_profiles.iter().map(profile_name).collect();
+                format!(
+                    "no PSMP profile named '{name}'. Available: {}",
+                    names.join(", ")
+                )
+            }
+        })
+}
+
+/// Validate an agent-supplied target. Direct: `reject_injection` (no `@`). PSMP: the
+/// values are interpolated into `vaultUser@targetUser@targetAddress@psmpAddress`, so
+/// a profile delimiter inside one would shift every later segment. The target user
+/// may carry `#` (CyberArk domain accounts, `user#corp.local`) unless `#` is the
+/// user delimiter itself; the host may carry neither delimiter (`#` there means port).
+fn check_agent_target(
+    cfg: &SshConfig,
+    host: &str,
+    username: &str,
+    psmp_profile_id: Option<&str>,
+) -> Result<(), String> {
+    let Some(pid) = psmp_profile_id else {
+        reject_injection("host", host)?;
+        return reject_injection("username", username);
+    };
+    let profile = cfg
+        .psmp_profiles
+        .iter()
+        .find(|p| p.id == pid)
+        .ok_or("PSMP profile not found")?;
+    let ud = if profile.user_delim.is_empty() {
+        "@"
+    } else {
+        profile.user_delim.as_str()
+    };
+    let pd = if profile.param_delim.is_empty() {
+        "#"
+    } else {
+        profile.param_delim.as_str()
+    };
+    reject_plain_token("host", host)?;
+    for d in ["@", ud, pd] {
+        if host.contains(d) {
+            return Err(format!(
+                "host must not contain '{d}' — give only the target address"
+            ));
+        }
+    }
+    reject_plain_token("username", username)?;
+    if username.contains(ud) {
+        return Err(format!(
+            "username must not contain '{ud}' — give only the target account (e.g. 'root' \
+             or 'user#domain'); Muya adds the vault user and PSMP address from the profile"
+        ));
+    }
+    Ok(())
+}
+
+/// Non-empty, one token, no control chars, no leading '-' (it would become an ssh
+/// option). The '@' rule is separate: it depends on direct vs PSMP.
+fn reject_plain_token(field: &str, value: &str) -> Result<(), String> {
+    if value.trim().is_empty() {
+        return Err(format!("{field} is required"));
+    }
+    if value.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(format!(
+            "{field} must not contain whitespace or control characters"
+        ));
+    }
+    if value.starts_with('-') {
+        return Err(format!("{field} must not start with '-'"));
+    }
+    Ok(())
+}
+
+fn agent_credential_source(credential_ref: Option<&str>) -> CredentialSource {
+    match credential_ref {
+        Some(r) if !r.trim().is_empty() => CredentialSource {
+            kind: "local".into(),
+            local_cred_id: Some(r.trim().to_string()),
+            cyberark_account_id: None,
+        },
+        _ => CredentialSource {
+            kind: "prompt".into(),
+            ..Default::default()
+        },
+    }
+}
+
+fn alias_for(cfg: &SshConfig, id: &str) -> String {
+    cfg.servers
         .iter()
         .find(|s| s.id == id)
         .map(|s| {
@@ -421,16 +649,23 @@ pub(crate) fn agent_add_server_in(
                 s.label.clone()
             }
         })
-        .unwrap_or_else(|| id.clone());
+        .unwrap_or_else(|| id.to_string())
+}
 
-    let cred_desc = credential_ref
+/// `user@host:port` or `psmp:<profile> user@host:port` for the audit log.
+fn describe_target(cfg: &SshConfig, id: &str) -> String {
+    let Some(s) = cfg.servers.iter().find(|s| s.id == id) else {
+        return id.to_string();
+    };
+    let base = format!("{}@{}:{}", s.username, s.host, s.port);
+    match s
+        .psmp_profile_id
         .as_deref()
-        .filter(|r| !r.trim().is_empty())
-        .unwrap_or("prompt");
-    crate::debuglog::log(&format!(
-        "agent added ssh server {alias} ({username}@{host}:{port}, credential={cred_desc})"
-    ));
-    Ok(alias)
+        .and_then(|pid| cfg.psmp_profiles.iter().find(|p| p.id == pid))
+    {
+        Some(p) => format!("psmp:{} {base}", profile_name(p)),
+        None => base,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -498,7 +733,9 @@ pub(crate) fn ensure_control_master_dir() {
 /// Is `pid` a running process? `kill(pid, 0)` probes without signalling; EPERM still
 /// means "exists" (someone else's process).
 pub(crate) fn process_alive(pid: u32) -> bool {
-    let Ok(pid) = i32::try_from(pid) else { return false };
+    let Ok(pid) = i32::try_from(pid) else {
+        return false;
+    };
     if pid <= 0 {
         return false;
     }
@@ -527,8 +764,14 @@ fn close_masters_in(dir: &std::path::Path) {
 /// so the ownership rule is testable without spawning anything. Loose files at the
 /// top level (the pre-per-instance layout) are never selected: their owner can't be
 /// known, and it may be a running older Muya.
-fn stale_master_dirs(base: &std::path::Path, own_pid: u32, alive: impl Fn(u32) -> bool) -> Vec<std::path::PathBuf> {
-    let Ok(entries) = std::fs::read_dir(base) else { return vec![] };
+fn stale_master_dirs(
+    base: &std::path::Path,
+    own_pid: u32,
+    alive: impl Fn(u32) -> bool,
+) -> Vec<std::path::PathBuf> {
+    let Ok(entries) = std::fs::read_dir(base) else {
+        return vec![];
+    };
     entries
         .flatten()
         .filter(|e| e.path().is_dir())
@@ -545,7 +788,11 @@ fn stale_master_dirs(base: &std::path::Path, own_pid: u32, alive: impl Fn(u32) -
 /// a RUNNING instance are never touched. Best-effort — never fails startup.
 pub(crate) fn sweep_control_master_sockets() {
     let base = control_master_base();
-    for dir in stale_master_dirs(std::path::Path::new(&base), std::process::id(), process_alive) {
+    for dir in stale_master_dirs(
+        std::path::Path::new(&base),
+        std::process::id(),
+        process_alive,
+    ) {
         close_masters_in(&dir);
     }
 }
@@ -1407,13 +1654,24 @@ mod tests {
         let cmd = build_connect_command(&s, None).unwrap();
         assert_eq!(
             without_cm(&cmd.args),
-            vec!["-X", "-L", "8080:localhost:80", "-J", "jump@host", "--", "u@h"]
+            vec![
+                "-X",
+                "-L",
+                "8080:localhost:80",
+                "-J",
+                "jump@host",
+                "--",
+                "u@h"
+            ]
         );
         // With a non-standard port, `-p N` comes first, then the extra opts, then dest.
         let mut s2 = srv("h", 2222, "u");
         s2.ssh_options = Some("-v".into());
         let cmd2 = build_connect_command(&s2, None).unwrap();
-        assert_eq!(without_cm(&cmd2.args), vec!["-p", "2222", "-v", "--", "u@h"]);
+        assert_eq!(
+            without_cm(&cmd2.args),
+            vec!["-p", "2222", "-v", "--", "u@h"]
+        );
     }
 
     // A PSMP server with no profile is a clear error, not a broken string.
@@ -1444,9 +1702,13 @@ mod tests {
         // directly, so they stayed green even when the save path stopped
         // calling it — they prove the rule, not that anything enforces it.
         let mut cfg = SshConfig::default();
-        let bad = upsert_psmp_profile_in(&mut cfg, profile("maydogan@target@host", "psmp.corp", "@"));
+        let bad =
+            upsert_psmp_profile_in(&mut cfg, profile("maydogan@target@host", "psmp.corp", "@"));
         assert!(bad.is_err(), "save path must reject a pasted destination");
-        assert!(cfg.psmp_profiles.is_empty(), "nothing may be persisted on reject");
+        assert!(
+            cfg.psmp_profiles.is_empty(),
+            "nothing may be persisted on reject"
+        );
 
         // Non-vacuous: a good profile still saves through the same path.
         let ok = upsert_psmp_profile_in(&mut cfg, profile("maydogan", "psmp.corp", "@"));
@@ -1461,8 +1723,8 @@ mod tests {
         // delimiter inside vaultUser shifts every later segment and ssh dials a
         // destination nobody wrote — an opaque login failure with a profile that
         // looks right on screen.
-        let err = validate_psmp_profile(&profile("maydogan@target@host", "psmp.corp", "@"))
-            .unwrap_err();
+        let err =
+            validate_psmp_profile(&profile("maydogan@target@host", "psmp.corp", "@")).unwrap_err();
         assert!(err.contains("vaultUser"), "{err}");
         assert!(err.contains("delimiter"), "{err}");
     }
@@ -1500,7 +1762,7 @@ mod tests {
     fn agent_add_creates_prompt_direct_flagged() {
         let mut cfg = SshConfig::default();
         let alias =
-            agent_add_server_in(&mut cfg, "web1", "10.0.0.9", "deploy", None, None).unwrap();
+            agent_add_server_in(&mut cfg, "web1", "10.0.0.9", "deploy", None, None, None).unwrap();
         assert_eq!(alias, "web1");
         assert_eq!(cfg.servers.len(), 1);
         let s = &cfg.servers[0];
@@ -1525,6 +1787,7 @@ mod tests {
             "oracle",
             Some(2222),
             Some("prod-db-pass".into()),
+            None,
         )
         .unwrap();
         let s = &cfg.servers[0];
@@ -1551,20 +1814,32 @@ mod tests {
             "h -oProxyCommand=touch /tmp/x",
             "u",
             None,
+            None,
             None
         )
         .is_err());
         // leading '-' → ssh/scp option; ${IFS} dodges the whitespace rule (audit 2026-09-30)
-        assert!(agent_add_server_in(&mut cfg, "x", "host", "-oProxyCommand=sh${IFS}-c${IFS}id", None, None).is_err());
-        assert!(agent_add_server_in(&mut cfg, "x", "-oProxyCommand=id", "u", None, None).is_err());
+        assert!(agent_add_server_in(
+            &mut cfg,
+            "x",
+            "host",
+            "-oProxyCommand=sh${IFS}-c${IFS}id",
+            None,
+            None,
+            None
+        )
+        .is_err());
+        assert!(
+            agent_add_server_in(&mut cfg, "x", "-oProxyCommand=id", "u", None, None, None).is_err()
+        );
         // newline
-        assert!(agent_add_server_in(&mut cfg, "x", "h\nevil", "u", None, None).is_err());
+        assert!(agent_add_server_in(&mut cfg, "x", "h\nevil", "u", None, None, None).is_err());
         // `@` rewrites the destination
-        assert!(agent_add_server_in(&mut cfg, "x", "host", "u@evil", None, None).is_err());
-        assert!(agent_add_server_in(&mut cfg, "x", "h@evil", "u", None, None).is_err());
+        assert!(agent_add_server_in(&mut cfg, "x", "host", "u@evil", None, None, None).is_err());
+        assert!(agent_add_server_in(&mut cfg, "x", "h@evil", "u", None, None, None).is_err());
         // empty host / user
-        assert!(agent_add_server_in(&mut cfg, "x", "", "u", None, None).is_err());
-        assert!(agent_add_server_in(&mut cfg, "x", "h", "  ", None, None).is_err());
+        assert!(agent_add_server_in(&mut cfg, "x", "", "u", None, None, None).is_err());
+        assert!(agent_add_server_in(&mut cfg, "x", "h", "  ", None, None, None).is_err());
         // nothing was persisted
         assert_eq!(cfg.servers.len(), 0);
     }
@@ -1576,7 +1851,7 @@ mod tests {
         // A human-configured server on the same host/port/user.
         upsert_server_in(&mut cfg, srv("10.0.0.5", 22, "oracle")).unwrap();
         let human_id = cfg.servers[0].id.clone();
-        let dup = agent_add_server_in(&mut cfg, "evil", "10.0.0.5", "oracle", Some(22), None);
+        let dup = agent_add_server_in(&mut cfg, "evil", "10.0.0.5", "oracle", Some(22), None, None);
         assert!(dup.is_err(), "agent must not overwrite an existing server");
         assert_eq!(cfg.servers.len(), 1);
         // The original human server is untouched (not flagged agent_added).
@@ -1595,9 +1870,216 @@ mod tests {
         assert!(!s.agent_added, "missing agentAdded must default to false");
 
         let mut cfg = SshConfig::default();
-        agent_add_server_in(&mut cfg, "a", "h", "u", None, None).unwrap();
+        agent_add_server_in(&mut cfg, "a", "h", "u", None, None, None).unwrap();
         let json = serde_json::to_string(&cfg.servers[0]).unwrap();
         assert!(json.contains("\"agentAdded\":true"));
+    }
+
+    // ---- agent PSMP add / update (PRD ssh-agent-psmp) -------------------
+
+    fn cfg_with_psmp() -> SshConfig {
+        let mut cfg = SshConfig::default();
+        cfg.psmp_profiles.push(psmp()); // id p1, label "bastion", vault user "ferhat"
+        cfg
+    }
+
+    // AC1 + AC4 — naming the operator's profile makes a PSMP server that connects
+    // through it: vaultUser@targetUser@targetAddress@psmpAddress.
+    #[test]
+    fn agent_add_psmp_server_by_profile_name() {
+        let mut cfg = cfg_with_psmp();
+        let alias = agent_add_server_in(
+            &mut cfg,
+            "cribl",
+            "10.185.27.136",
+            "gatar",
+            None,
+            None,
+            Some("Bastion"),
+        )
+        .unwrap();
+        assert_eq!(alias, "cribl");
+        let s = &cfg.servers[0];
+        assert_eq!(s.connection_type, "psmp");
+        assert_eq!(s.psmp_profile_id.as_deref(), Some("p1"));
+        assert!(s.agent_added && s.agent_access && s.ssh_options.is_none());
+        let cmd = build_connect_command(s, Some(&psmp())).unwrap();
+        assert_eq!(
+            cmd.args.last().map(String::as_str),
+            Some("ferhat@gatar@10.185.27.136@bastion.corp")
+        );
+        // by id works too
+        agent_add_server_in(
+            &mut cfg,
+            "",
+            "10.185.27.189",
+            "gatar",
+            None,
+            None,
+            Some("p1"),
+        )
+        .unwrap();
+        assert_eq!(cfg.servers[1].psmp_profile_id.as_deref(), Some("p1"));
+    }
+
+    // AC2 — an unknown profile is refused, names the real ones, writes nothing.
+    #[test]
+    fn agent_add_unknown_profile_lists_available() {
+        let mut cfg = cfg_with_psmp();
+        let err =
+            agent_add_server_in(&mut cfg, "x", "h", "u", None, None, Some("nope")).unwrap_err();
+        assert!(err.contains("bastion"), "{err}");
+        assert!(cfg.servers.is_empty());
+        let err = agent_add_server_in(
+            &mut SshConfig::default(),
+            "x",
+            "h",
+            "u",
+            None,
+            None,
+            Some("nope"),
+        )
+        .unwrap_err();
+        assert!(err.contains("none are set up"), "{err}");
+    }
+
+    // AC3 — PSMP target user may be a domain account (`#`), never carry the user
+    // delimiter; host carries neither delimiter. Injection rules still apply.
+    #[test]
+    fn agent_psmp_target_validation() {
+        let mut cfg = cfg_with_psmp();
+        let p = Some("bastion");
+        agent_add_server_in(
+            &mut cfg,
+            "a",
+            "svmsecsfwprd001",
+            "gokay#corp.local",
+            None,
+            None,
+            p,
+        )
+        .unwrap();
+        for (host, user) in [
+            ("h", "gatar@gokay#corp.local"), // the whole PSMP string in the username
+            ("h#2222", "u"),                 // port smuggled through the param delimiter
+            ("h@evil", "u"),
+            ("h", "-oProxyCommand=id"),
+            ("h x", "u"),
+            ("h", "u\n"),
+        ] {
+            assert!(
+                agent_add_server_in(&mut cfg, "x", host, user, None, None, p).is_err(),
+                "{host} / {user} should be refused"
+            );
+        }
+        // a direct server still refuses '@' and accepts nothing new
+        assert!(agent_add_server_in(&mut cfg, "d", "h", "u@x", None, None, None).is_err());
+        assert_eq!(cfg.servers.len(), 1);
+    }
+
+    // AC5 — the agent repairs a server it added: direct → PSMP, new target account;
+    // id, provenance and the forced fields survive.
+    #[test]
+    fn agent_update_own_server_to_psmp() {
+        let mut cfg = cfg_with_psmp();
+        agent_add_server_in(
+            &mut cfg,
+            "opencti",
+            "10.185.27.10",
+            "gokay",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let id = cfg.servers[0].id.clone();
+        cfg.servers[0].ssh_options = Some("-X".into()); // even if something set it
+        let alias = agent_update_server_in(
+            &mut cfg,
+            &id,
+            AgentServerEdit {
+                username: Some("gatar".into()),
+                psmp_profile: Some("bastion".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(alias, "opencti");
+        let s = &cfg.servers[0];
+        assert_eq!(s.id, id);
+        assert_eq!(
+            (s.host.as_str(), s.username.as_str()),
+            ("10.185.27.10", "gatar")
+        );
+        assert_eq!(s.connection_type, "psmp");
+        assert_eq!(s.psmp_profile_id.as_deref(), Some("p1"));
+        assert!(s.agent_added && s.agent_access && s.ssh_options.is_none());
+        // and back to direct
+        agent_update_server_in(
+            &mut cfg,
+            &id,
+            AgentServerEdit {
+                psmp_profile: Some("none".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(cfg.servers[0].connection_type, "direct");
+        assert!(cfg.servers[0].psmp_profile_id.is_none());
+    }
+
+    // AC6 — an operator-configured server is never changed by an agent.
+    #[test]
+    fn agent_update_refuses_operator_server() {
+        let mut cfg = cfg_with_psmp();
+        upsert_server_in(&mut cfg, srv("10.0.0.5", 22, "oracle")).unwrap();
+        let id = cfg.servers[0].id.clone();
+        let before = serde_json::to_string(&cfg).unwrap();
+        let err = agent_update_server_in(
+            &mut cfg,
+            &id,
+            AgentServerEdit {
+                host: Some("evil.example".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(err.contains("operator"), "{err}");
+        assert_eq!(serde_json::to_string(&cfg).unwrap(), before);
+    }
+
+    // AC7 — an update that collides with another server is refused.
+    #[test]
+    fn agent_update_refuses_duplicate() {
+        let mut cfg = cfg_with_psmp();
+        upsert_server_in(&mut cfg, srv("10.0.0.5", 22, "oracle")).unwrap();
+        agent_add_server_in(&mut cfg, "mine", "10.0.0.6", "oracle", None, None, None).unwrap();
+        let id = cfg.servers[1].id.clone();
+        assert!(agent_update_server_in(
+            &mut cfg,
+            &id,
+            AgentServerEdit {
+                host: Some("10.0.0.5".into()),
+                ..Default::default()
+            },
+        )
+        .is_err());
+        assert_eq!(cfg.servers[1].host, "10.0.0.6");
+    }
+
+    // AC8 — agents see a profile's name and address, never the vault user.
+    #[test]
+    fn agent_psmp_profiles_hide_vault_user() {
+        let cfg = cfg_with_psmp();
+        let list = agent_psmp_profiles(&cfg);
+        assert_eq!(
+            list,
+            vec![AgentPsmpProfile {
+                name: "bastion".into(),
+                psmp_address: "bastion.corp".into()
+            }]
+        );
+        assert!(!serde_json::to_string(&list).unwrap().contains("ferhat"));
     }
 
     // ---- build_scp_command (PRD ssh-scp) ----------------------------------
@@ -1722,7 +2204,13 @@ mod tests {
         .unwrap();
         assert_eq!(
             up.args,
-            vec!["-o", "LogLevel=ERROR", "--", "/local/a.txt", "u@h:/remote/a.txt"]
+            vec![
+                "-o",
+                "LogLevel=ERROR",
+                "--",
+                "/local/a.txt",
+                "u@h:/remote/a.txt"
+            ]
         );
         let down = build_scp_command(
             &s,
@@ -1736,7 +2224,13 @@ mod tests {
         .unwrap();
         assert_eq!(
             down.args,
-            vec!["-o", "LogLevel=ERROR", "--", "u@h:/remote/b.txt", "/local/b.txt"]
+            vec![
+                "-o",
+                "LogLevel=ERROR",
+                "--",
+                "u@h:/remote/b.txt",
+                "/local/b.txt"
+            ]
         );
     }
 

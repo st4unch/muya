@@ -152,6 +152,14 @@ pub struct ServerMeta {
     pub port: u16,
     #[serde(rename = "connectionType")]
     pub connection_type: String,
+    /// PSMP servers: the name of the operator's PSMP profile they go through
+    /// (PRD `ssh-agent-psmp`). Absent for direct servers.
+    #[serde(
+        rename = "psmpProfile",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub psmp_profile: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -196,6 +204,10 @@ struct BrokerReq {
     port: Option<u16>,
     #[serde(default)]
     credential: Option<String>,
+    /// `add_server` / `update_server` (PRD `ssh-agent-psmp`): the NAME of an
+    /// operator-defined PSMP profile; on update "" / "none" / "direct" means direct.
+    #[serde(rename = "psmpProfile", default)]
+    psmp_profile: Option<String>,
     /// `scp` (PRD `ssh-scp`): explicit transfer direction — "upload" | "download".
     /// NEVER inferred from argument shape/order.
     #[serde(default)]
@@ -261,7 +273,16 @@ fn alias_of(s: &Server) -> String {
 
 /// AC4 — the metadata list for `list_servers`: ONLY servers with `agent_access`.
 /// Works regardless of store lock state (no secret access).
+#[cfg(test)]
 pub(crate) fn agent_visible(servers: &[Server]) -> Vec<ServerMeta> {
+    agent_visible_with(servers, &[])
+}
+
+/// `agent_visible` plus each PSMP server's profile name, resolved from `profiles`.
+pub(crate) fn agent_visible_with(
+    servers: &[Server],
+    profiles: &[crate::ssh::PsmpProfile],
+) -> Vec<ServerMeta> {
     servers
         .iter()
         .filter(|s| s.agent_access)
@@ -271,6 +292,11 @@ pub(crate) fn agent_visible(servers: &[Server]) -> Vec<ServerMeta> {
             username: s.username.clone(),
             port: s.port,
             connection_type: s.connection_type.clone(),
+            psmp_profile: s
+                .psmp_profile_id
+                .as_deref()
+                .and_then(|pid| profiles.iter().find(|p| p.id == pid))
+                .map(crate::ssh::profile_name),
         })
         .collect()
 }
@@ -440,7 +466,10 @@ async fn handle_request(app: &AppHandle, line: &str) -> String {
 
     match req.op.as_str() {
         "list_servers" => {
-            let metas = agent_visible(&servers);
+            let profiles = crate::ssh::load_config()
+                .map(|c| c.psmp_profiles)
+                .unwrap_or_default();
+            let metas = agent_visible_with(&servers, &profiles);
             json!({"ok": true, "servers": metas}).to_string()
         }
         "open" => {
@@ -535,7 +564,13 @@ async fn handle_request(app: &AppHandle, line: &str) -> String {
                 Err(e) => return err_resp(e),
             };
             match crate::ssh::agent_add_server_in(
-                &mut cfg, label, host, username, req.port, credential,
+                &mut cfg,
+                label,
+                host,
+                username,
+                req.port,
+                credential,
+                req.psmp_profile.as_deref(),
             ) {
                 Ok(alias) => match crate::ssh::save_config(&cfg) {
                     Ok(()) => json!({"ok": true, "alias": alias}).to_string(),
@@ -544,6 +579,50 @@ async fn handle_request(app: &AppHandle, line: &str) -> String {
                 Err(e) => err_resp(e),
             }
         }
+        // PRD `ssh-agent-psmp` — fix a server the agent added. The ownership rule
+        // (agentAdded only) lives in `ssh::agent_update_server_in`.
+        "update_server" => {
+            let alias = match req.alias.as_deref() {
+                Some(a) if !a.trim().is_empty() => a,
+                _ => return err_resp("`update_server` requires an `alias`"),
+            };
+            let id = match resolve_open(&servers, alias) {
+                OpenResolution::Ok(s) => s.id.clone(),
+                OpenResolution::NotAccessible => {
+                    return err_resp(format!(
+                        "'{alias}' was set up by the operator; agents can only change servers they added"
+                    ))
+                }
+                OpenResolution::NotFound => {
+                    return err_resp(format!("no SSH server named '{alias}' (see ssh_list_servers)"))
+                }
+            };
+            let edit = crate::ssh::AgentServerEdit {
+                label: req.label.clone(),
+                host: req.host.clone(),
+                username: req.username.clone(),
+                port: req.port,
+                credential: req.credential.clone(),
+                psmp_profile: req.psmp_profile.clone(),
+            };
+            let mut cfg = match crate::ssh::load_config() {
+                Ok(c) => c,
+                Err(e) => return err_resp(e),
+            };
+            match crate::ssh::agent_update_server_in(&mut cfg, &id, edit) {
+                Ok(alias) => match crate::ssh::save_config(&cfg) {
+                    Ok(()) => json!({"ok": true, "alias": alias}).to_string(),
+                    Err(e) => err_resp(e),
+                },
+                Err(e) => err_resp(e),
+            }
+        }
+        "list_psmp_profiles" => match crate::ssh::load_config() {
+            Ok(cfg) => {
+                json!({"ok": true, "profiles": crate::ssh::agent_psmp_profiles(&cfg)}).to_string()
+            }
+            Err(e) => err_resp(e),
+        },
         // Faz 3.1 — secret-operation broker (AC12/AC15). These do not touch SSH
         // servers; they surface stored-secret metadata + operator-defined ops.
         "list_secrets" => {
@@ -1737,7 +1816,8 @@ pub(crate) fn register_mcp() -> Result<(), String> {
     // opencode reads a different file in a different shape. Best-effort: a machine
     // without opencode should not fail Claude's registration, which is the one that
     // must always work. Logged so a genuine failure is still findable.
-    if let Err(e) = crate::fs::install_opencode_mcp(MCP_ENTRY_NAME.to_string(), command.clone(), vec![])
+    if let Err(e) =
+        crate::fs::install_opencode_mcp(MCP_ENTRY_NAME.to_string(), command.clone(), vec![])
     {
         crate::debuglog::log(&format!("[mcp] opencode registration skipped: {e}"));
     }
@@ -1951,7 +2031,10 @@ mod tests {
         // have no way to notice.
         let err = normalize_agent(Some("gpt")).unwrap_err();
         assert!(err.contains("gpt"), "{err}");
-        assert!(err.contains("opencode"), "error must name the valid options: {err}");
+        assert!(
+            err.contains("opencode"),
+            "error must name the valid options: {err}"
+        );
     }
 
     #[test]

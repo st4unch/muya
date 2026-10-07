@@ -103,7 +103,7 @@ fn tools_list() -> Value {
         "tools": [
             {
                 "name": "ssh_list_servers",
-                "description": "List the SSH servers the operator has allowed agents to use. Returns each server's alias plus host/username/port/connectionType. No passwords or credentials are ever returned. Use the returned alias with ssh_open.",
+                "description": "List the SSH servers the operator has allowed agents to use. Returns each server's alias plus host/username/port/connectionType (and psmpProfile for PSMP servers). No passwords or credentials are ever returned. Use the returned alias with ssh_open.",
                 "inputSchema": { "type": "object", "additionalProperties": false }
             },
             {
@@ -340,7 +340,7 @@ fn tools_list() -> Value {
             },
             {
                 "name": "ssh_add_server",
-                "description": "Register a NEW SSH server that you can then use with ssh_open / ssh_run. Provide host and login username (and optionally a label and port; port defaults to 22). Optionally attach a stored credential BY NAME (from list_secrets) so ssh_run can authenticate non-interactively — Muya resolves and injects that secret itself; you never see its value. Omit 'credential' for a server whose password is typed by the operator each time ('prompt'). You CANNOT set raw ssh options, a jump host, or a PSMP profile. The connection is always a direct ssh. Fails if a server for that host+username already exists (it will not overwrite an existing server), or if host/username contain spaces, control characters, or '@'.",
+                "description": "Register a NEW SSH server that you can then use with ssh_open / ssh_run. Provide host and login username (and optionally a label and port; port defaults to 22). For a server reached through CyberArk PSMP, pass psmpProfile = the NAME of a PSMP profile the operator already set up (see ssh_list_psmp_profiles); then host is the TARGET address and username is the TARGET account only (e.g. 'root', or a domain account like 'user#corp.local') — Muya adds the vault user and the PSMP address from the profile, so never type a full 'vault@target@host@psmp' string. You cannot create PSMP profiles. Optionally attach a stored credential BY NAME (from list_secrets) so ssh_run can authenticate non-interactively — Muya resolves and injects that secret itself; you never see its value. Omit 'credential' for a server whose password is typed by the operator each time ('prompt'). You CANNOT set raw ssh options or a jump host. Fails if a server for that host+username already exists (it will not overwrite an existing server; use ssh_update_server to fix one you added), or if host/username contain spaces or control characters, '@' (direct), or the profile's delimiters (PSMP).",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -348,11 +348,35 @@ fn tools_list() -> Value {
                         "host": { "type": "string", "description": "Hostname or IP of the SSH server. No spaces, control characters, or '@'." },
                         "username": { "type": "string", "description": "SSH login username. No spaces, control characters, or '@'." },
                         "port": { "type": "integer", "description": "SSH port. Defaults to 22.", "minimum": 1, "maximum": 65535 },
-                        "credential": { "type": "string", "description": "Optional name of a stored secret (from list_secrets) to attach as this server's password. Muya injects it at connect time; you never see the value. Omit to have the operator type the password each time." }
+                        "credential": { "type": "string", "description": "Optional name of a stored secret (from list_secrets) to attach as this server's password. Muya injects it at connect time; you never see the value. Omit to have the operator type the password each time." },
+                        "psmpProfile": { "type": "string", "description": "Optional NAME of an operator-defined PSMP profile (from ssh_list_psmp_profiles). Makes this a PSMP server: host = target address, username = target account. Omit for a direct ssh server." }
                     },
                     "required": ["host", "username"],
                     "additionalProperties": false
                 }
+            },
+            {
+                "name": "ssh_update_server",
+                "description": "Fix an SSH server YOU added earlier with ssh_add_server (servers the operator set up are refused — ask the operator to change those in Muya). Pass the alias plus only the fields to change: label, host, username, port, credential (secret name; \"\" = operator types the password), psmpProfile (profile name to route through PSMP; \"none\" = direct ssh). Same rules as ssh_add_server; it will not overwrite another server.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "alias": { "type": "string", "description": "Alias of the server to change (from ssh_list_servers)." },
+                        "label": { "type": "string", "description": "New friendly name / alias." },
+                        "host": { "type": "string", "description": "New host (PSMP: target address)." },
+                        "username": { "type": "string", "description": "New login username (PSMP: target account only)." },
+                        "port": { "type": "integer", "minimum": 1, "maximum": 65535, "description": "New port." },
+                        "credential": { "type": "string", "description": "Secret name to attach (from list_secrets), or \"\" to have the operator type the password." },
+                        "psmpProfile": { "type": "string", "description": "PSMP profile name to route through, or \"none\" for direct ssh." }
+                    },
+                    "required": ["alias"],
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "ssh_list_psmp_profiles",
+                "description": "List the CyberArk PSMP profiles the operator set up: each profile's name (pass it as psmpProfile to ssh_add_server / ssh_update_server) and PSMP address. The vault user is never returned. Agents cannot create or change profiles.",
+                "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
             },
             {
                 "name": "ssh_scp",
@@ -750,7 +774,10 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
             .map_err(|e| (-32000, e))?;
             if resp.get("ok").and_then(Value::as_bool) == Some(true) {
                 Ok(tool_ok(
-                    resp.get("text").and_then(Value::as_str).unwrap_or("ok").to_string(),
+                    resp.get("text")
+                        .and_then(Value::as_str)
+                        .unwrap_or("ok")
+                        .to_string(),
                     resp.get("data").cloned(),
                 ))
             } else {
@@ -1113,6 +1140,11 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                     call["credential"] = json!(cred);
                 }
             }
+            if let Some(profile) = args.get("psmpProfile").and_then(Value::as_str) {
+                if !profile.trim().is_empty() {
+                    call["psmpProfile"] = json!(profile);
+                }
+            }
             let resp = app_call(&call).map_err(|e| (-32000, e))?;
             if resp.get("ok").and_then(Value::as_bool) == Some(true) {
                 let alias = resp.get("alias").and_then(Value::as_str).unwrap_or("");
@@ -1128,6 +1160,53 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                     resp.get("error")
                         .and_then(Value::as_str)
                         .unwrap_or("add_server failed")
+                        .to_string(),
+                ))
+            }
+        }
+        "ssh_update_server" => {
+            let alias = match args.get("alias").and_then(Value::as_str) {
+                Some(a) if !a.trim().is_empty() => a.to_string(),
+                _ => return Ok(tool_error("missing required argument 'alias'")),
+            };
+            let mut call = json!({ "op": "update_server", "alias": alias });
+            // Present-but-empty is meaningful here ("" credential = prompt), so pass
+            // every string the agent sent as is; absent fields stay unchanged.
+            for key in ["label", "host", "username", "credential", "psmpProfile"] {
+                if let Some(v) = args.get(key).and_then(Value::as_str) {
+                    call[key] = json!(v);
+                }
+            }
+            if let Some(port) = args.get("port").and_then(Value::as_u64) {
+                call["port"] = json!(port);
+            }
+            let resp = app_call(&call).map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                let alias = resp.get("alias").and_then(Value::as_str).unwrap_or("");
+                Ok(tool_ok(
+                    format!("Updated SSH server '{alias}'."),
+                    Some(json!({ "alias": alias })),
+                ))
+            } else {
+                Ok(tool_error(
+                    resp.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("update_server failed")
+                        .to_string(),
+                ))
+            }
+        }
+        "ssh_list_psmp_profiles" => {
+            let resp = app_call(&json!({ "op": "list_psmp_profiles" })).map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                let profiles = resp.get("profiles").cloned().unwrap_or_else(|| json!([]));
+                let text = serde_json::to_string_pretty(&profiles).unwrap_or_else(|_| "[]".into());
+                Ok(tool_ok(text, Some(json!({ "profiles": profiles }))))
+            } else {
+                Ok(tool_error(
+                    resp.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("list_psmp_profiles failed")
                         .to_string(),
                 ))
             }

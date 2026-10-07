@@ -135,7 +135,7 @@ Muya ships an MCP server so a Claude Code agent can drive it: **21 tools** acros
 
 | Group | Tools |
 |---|---|
-| **Remote exec** | `ssh_list_servers`, `ssh_run`, `ssh_open`, `ssh_send`, `ssh_session_open/exec/close`, `ssh_scp`, `ssh_add_server` |
+| **Remote exec** | `ssh_list_servers`, `ssh_run`, `ssh_open`, `ssh_send`, `ssh_session_open/exec/close`, `ssh_scp`, `ssh_add_server`, `ssh_update_server`, `ssh_list_psmp_profiles` |
 | **Sessions** | `list_sessions`, `read_session`, `send_to_session`, `open_session`, `close_session` |
 | **Secrets** | `list_secrets`, `add_secret`, `get_secret`, `update_secret` |
 | **Operations** | `list_operations`, `run_operation` — operator-pinned commands that use a secret the agent never sees |

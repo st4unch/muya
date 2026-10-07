@@ -1,6 +1,6 @@
 ---
 name: muya-mcp
-description: How to use the `muya-mcp` MCP server's tools well — SSH (ssh_open/ssh_run/ssh_scp/ssh_session_*/ssh_add_server), cross-session messaging (list_sessions/read_session/send_to_session), opening/closing local sessions (open_session/close_session), secrets (add_secret/get_secret/update_secret/list_secrets), operator-pinned operations (list_operations/run_operation), and Kanban tracking (track_plan). Use whenever the muya-mcp server is connected and the task involves SSH, another running Claude session, spinning up a parallel session, a stored credential, or an operator-approved operation — or when unsure which muya-mcp tool fits.
+description: How to use the `muya-mcp` MCP server's tools well — SSH (ssh_open/ssh_run/ssh_scp/ssh_session_*/ssh_add_server/ssh_update_server/ssh_list_psmp_profiles), cross-session messaging (list_sessions/read_session/send_to_session), opening/closing local sessions (open_session/close_session), secrets (add_secret/get_secret/update_secret/list_secrets), operator-pinned operations (list_operations/run_operation), and Kanban tracking (track_plan). Use whenever the muya-mcp server is connected and the task involves SSH, another running Claude session, spinning up a parallel session, a stored credential, or an operator-approved operation — or when unsure which muya-mcp tool fits.
 ---
 
 # muya-mcp — Muya's agent tool surface
@@ -24,6 +24,8 @@ a group** — you need real names/aliases, and guessing is never allowed (see be
 | Run commands that must share shell state (cd/env/sudo) | `ssh_session_open` → `ssh_session_exec` (repeat) → `ssh_session_close` |
 | Do interactive remote work a human should watch (login, 2FA/OTP/RADIUS, a TUI) | `ssh_open` (opens a visible tab) + `ssh_send` for follow-up keystrokes |
 | Register a new SSH server | `ssh_add_server` |
+| Register a server behind CyberArk PSMP | `ssh_list_psmp_profiles` → `ssh_add_server(host=<target address>, username=<target account>, psmpProfile=<profile name>)` — never a `vault@target@host@psmp` string |
+| Fix a server you added (wrong account, direct instead of PSMP…) | `ssh_update_server(alias, …only the fields to change)` — operator-added servers are refused |
 | Copy a file to/from a server | `ssh_scp` |
 | See what other Claude sessions are running | `list_sessions` |
 | Check what another session is doing, without messaging it | `read_session` |
