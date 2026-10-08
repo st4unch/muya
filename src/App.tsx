@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, lazy, Suspense, type ComponentProps } from "react";
 import { createPortal } from "react-dom";
-import { pickNextActiveKey, newSshTabKey, addSshSession, canResumeTab, resumeCommand, pushClosed, reopenSpec, type ClosedTab } from "./lib/tabs";
+import { pickNextActiveKey, newSshTabKey, addSshSession, canResumeTab, resumeCommand, pushClosed, reopenSpec, splitClone, type ClosedTab } from "./lib/tabs";
 import { loadResumeOnLaunch } from "./lib/startup";
 import { terminalIsVisible } from "./lib/terminalVisibility";
 import { appModalOpen } from "./lib/modalOpen";
-import { addPane, closePane, isEmptyPane, MAX_SPLIT, neighbourAfterClose, placeAgent, resolvePanes } from "./lib/controlSplit";
+import { addToGroup, asSplitGroups, canSplit, groupOf, neighbourAfterClose, removeFromGroups, resolveGroups, type SplitGroup } from "./lib/controlSplit";
 import type { SplitPaneVM } from "./redesign/SplitArea";
 import { belongsTo, inScope, workspaceOf } from "./lib/workspaceScope";
 import { asNotifications, detectEvents, MAX_NOTIFICATIONS, type AgentNotification } from "./lib/agentNotifications";
@@ -1861,55 +1861,55 @@ export default function App() {
     setScreen("grid");
   };
 
-  // ── Split Control (lib/controlSplit): up to 8 panes in the Control terminal area ──
-  const [splitKeys, setSplitKeys] = usePersistentState<string[]>("muya.splitKeys", [], asKeyList);
-  const [splitFocus, setSplitFocus] = useState<string | null>(null);
-  const splitPanes = useMemo(
-    () => resolvePanes(splitKeys, new Set(scopedAgentVMs.map((a) => a.key))),
-    [splitKeys, scopedAgentVMs],
+  // ── Split Control (lib/controlSplit): split groups of 2–8 panes ──────────────
+  // Split clones the terminal on screen (lib/tabs splitClone: a running Claude forks
+  // its conversation, SSH reconnects, a shell opens in its live folder) and the clone
+  // joins that terminal's group. Selecting any grouped terminal shows its whole group;
+  // a terminal outside every group shows alone. The agent list shows each group as one
+  // collapsible row.
+  const [rawSplitGroups, setSplitGroups] = usePersistentState<SplitGroup[]>("muya.splitGroups", [], asSplitGroups);
+  const [collapsedGroups, setCollapsedGroups] = usePersistentState<string[]>("muya.splitGroupsCollapsed", [], asKeyList);
+  const splitGroups = useMemo(
+    () => resolveGroups(rawSplitGroups, new Set(openTerminals.filter((t) => t.kind === "terminal").map((t) => t.key))),
+    [rawSplitGroups, openTerminals],
   );
-  const splitFocusKey =
-    splitFocus && splitPanes.includes(splitFocus)
-      ? splitFocus
-      : activeTerminalKey && splitPanes.includes(activeTerminalKey)
-        ? activeTerminalKey
-        : splitPanes[0] ?? null;
-  // The selected agent is always on screen: picked in the list (or newly opened) while
-  // split, it goes into the focused pane.
-  useEffect(() => {
-    if (splitPanes.length < 2 || !activeTerminalKey || splitPanes.includes(activeTerminalKey)) return;
-    if (!scopedAgentVMs.some((a) => a.key === activeTerminalKey)) return;
-    setSplitKeys(placeAgent(splitPanes, splitFocusKey, activeTerminalKey));
-    setSplitFocus(activeTerminalKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTerminalKey, splitPanes]);
+  const activeGroup = groupOf(splitGroups, activeTerminalKey);
+  const splitPanes = activeGroup?.keys ?? [];
+  const splitFocusKey = activeGroup ? activeTerminalKey : null;
   const focusPane = (key: string) => {
-    setSplitFocus(key);
-    if (!isEmptyPane(key) && key !== activeTerminalKey) activateTerminal(key);
+    if (key !== activeTerminalKey) activateTerminal(key);
   };
   const addSplitPane = () => {
-    const r = addPane(splitPanes, activeTerminalKey, scopedAgentVMs.map((a) => a.key));
-    if (!r) return;
-    setSplitKeys(r.panes);
-    setSplitFocus(r.added);
-    if (!isEmptyPane(r.added)) activateTerminal(r.added);
-    // An empty pane waits for a pick; the keyboard stays with the current terminal
-    // (not on the Split button that was just clicked).
-    else if (activeTerminalKey) pickTab(activeTerminalKey);
+    const src = activeTerminalKey ? openTerminalsRef.current.find((t) => t.key === activeTerminalKey && t.kind === "terminal") : undefined;
+    if (!src) return;
+    const running = !!agentVMsRef.current.find((a) => a.key === src.key)?.agentRunning;
+    const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const clone = splitClone(src, { liveCwd: liveCwds[src.key], agentRunning: running, id }, singleQuote);
+    const next = addToGroup(splitGroups, src.key, clone.key, `split-group-${id}`);
+    if (!next) return;
+    setSplitGroups(next);
+    openTerminal({ ...clone, kind: "terminal" });
   };
   const closeSplitPane = (key: string) => {
-    const next = closePane(splitPanes, key);
-    setSplitKeys(next);
-    if (key !== splitFocusKey) {
+    setSplitGroups(removeFromGroups(splitGroups, key));
+    if (key !== activeTerminalKey) {
       // The × took the keyboard; hand it back to the focused terminal.
       if (activeTerminalKey) pickTab(activeTerminalKey);
       return;
     }
-    const nb = next.length ? neighbourAfterClose(splitPanes, key) : splitPanes.find((k) => k !== key) ?? null;
-    setSplitFocus(nb);
-    if (nb && !isEmptyPane(nb)) activateTerminal(nb);
+    const nb = neighbourAfterClose(splitPanes, key);
+    if (nb) activateTerminal(nb);
   };
-  const splitPaneVMs: SplitPaneVM[] = splitPanes.map((k) => ({ key: k, agent: scopedAgentVMs.find((a) => a.key === k) ?? null }));
+  const selectSplitGroup = (id: string) => {
+    const g = splitGroups.find((x) => x.id === id);
+    if (!g) return;
+    showControl();
+    if (!activeTerminalKey || !g.keys.includes(activeTerminalKey)) activateTerminal(g.keys[0]);
+    else setControlMode("agents");
+  };
+  const toggleSplitGroup = (id: string) =>
+    setCollapsedGroups(collapsedGroups.includes(id) ? collapsedGroups.filter((x) => x !== id) : [...collapsedGroups, id]);
+  const splitPaneVMs: SplitPaneVM[] = splitPanes.map((k) => ({ key: k, agent: agentVMs.find((a) => a.key === k) ?? null }));
 
   const maximizePanel = (key: string) => {
     if (gridLayout === "1" && layoutBeforeMaximizeRef.current) {
@@ -2126,7 +2126,7 @@ export default function App() {
   // suspended and the panel was blank (caught live, 2026-09-30 — see L54).
   const gridVisibleKeys = new Set(view === "control" && screen === "grid" ? gridPanels.map((p) => p.key) : []);
   // Split Control: every pane's terminal is on screen (the Files rail still covers them).
-  const splitVisibleKeys = new Set(controlVisible && splitPanes.length > 1 ? splitPanes.filter((k) => !isEmptyPane(k)) : []);
+  const splitVisibleKeys = new Set(controlVisible && splitPanes.length > 1 ? splitPanes : []);
 
   // Bell: a log of agent events ("waiting for you", "finished"). Entries stay until the
   // operator clears them; the dot means "something new since you last opened the bell".
@@ -2435,11 +2435,14 @@ export default function App() {
             onReorderAgents={reorderAgents}
             mode={controlMode}
             splitPanes={splitPaneVMs}
+            splitGroups={splitGroups.map((g) => ({ ...g, collapsed: collapsedGroups.includes(g.id) }))}
+            onToggleGroup={toggleSplitGroup}
+            onSelectGroup={selectSplitGroup}
             splitFocusKey={splitFocusKey}
             onFocusPane={focusPane}
             onClosePane={closeSplitPane}
             onSplit={addSplitPane}
-            splitDisabled={splitPanes.length >= MAX_SPLIT}
+            splitDisabled={!canSplit(splitGroups, activeTerminalKey)}
             openFiles={openFilesVM}
             selectedFileKey={viewFileKey}
             onSelectFile={(key) => { setViewFileKey(key); setControlMode("files"); }}

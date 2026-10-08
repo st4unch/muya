@@ -106,6 +106,10 @@ export interface ControlScreenProps {
   splitFocusKey?: string | null;
   onFocusPane?: (key: string) => void;
   onClosePane?: (key: string) => void;
+  /** Split groups for the agent list (one collapsible row each). */
+  splitGroups?: { id: string; keys: string[]; collapsed: boolean }[];
+  onToggleGroup?: (id: string) => void;
+  onSelectGroup?: (id: string) => void;
   /** Header "Split" button. */
   onSplit?: () => void;
   splitDisabled?: boolean;
@@ -191,6 +195,9 @@ export function ControlScreen(props: ControlScreenProps) {
         onSelectAgent={props.onSelectAgent}
         onNewAgent={props.onNewAgent}
         onReorder={props.onReorderAgents}
+        splitGroups={props.splitGroups}
+        onToggleGroup={props.onToggleGroup}
+        onSelectGroup={props.onSelectGroup}
       />
       )}
 
@@ -220,8 +227,6 @@ export function ControlScreen(props: ControlScreenProps) {
             focusedKey={props.splitFocusKey ?? null}
             onFocusPane={(k) => props.onFocusPane?.(k)}
             onClosePane={(k) => props.onClosePane?.(k)}
-            onNewTerminal={props.onNewTerminal}
-            onNewAgent={props.onNewAgent}
           />
         ) : agent ? (
           <div

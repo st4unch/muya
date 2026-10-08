@@ -111,6 +111,8 @@ function Terminal({
   const webglRef = useRef<WebglLease | null>(null);
   const activeRef = useRef(active);
   activeRef.current = active;
+  const focusTokenRef = useRef(focusToken);
+  focusTokenRef.current = focusToken;
   // Consecutive GPU losses while visible; reset on a normal hide.
   const gpuLossesRef = useRef(0);
   // Acquire the GPU renderer for a visible, laid-out terminal. Without WebGL the DOM
@@ -622,7 +624,10 @@ function Terminal({
       return;
     }
     // Focus now, not in the rAF: keys typed during the renderer swap would be lost.
-    termRef.current?.focus();
+    // Only the SELECTED terminal (the one given a focusToken): when a split or the grid
+    // shows several at once, each one focusing itself left the keyboard in whichever
+    // ran last, not in the pane the operator picked.
+    if (focusTokenRef.current !== undefined) termRef.current?.focus();
     const raf = requestAnimationFrame(() => {
       attachRenderer();
       syncRef.current();

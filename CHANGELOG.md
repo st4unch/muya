@@ -6,6 +6,26 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.0.15] - 2026-10-08
+
+### Changed
+- **Split now clones the terminal on screen, and a split is a group in the agent list.**
+  Split (or ⌘⇧D) opens a copy of the selected terminal next to it: a shell opens in the
+  same folder, an SSH tab connects to the same server, and a running Claude session is
+  **forked** — the new pane continues the same conversation as a separate branch. The
+  terminals of a split are listed together under SPLITS as one row you can expand or
+  collapse; picking any of them shows the whole split, a terminal outside a split shows
+  alone. Closing a pane takes it out of the group (it keeps running); a group of one ends.
+
+### Fixed
+- **Showing a split no longer leaves the keyboard in the wrong pane** — only the selected
+  terminal takes it.
+
+### Security
+- **The bridge never listens on all interfaces, whatever address is given.** Besides
+  `0.0.0.0` and `::`, the IPv4-in-IPv6 form `[::ffff:0.0.0.0]`, the broadcast address and
+  multicast addresses are now refused, and every listener binds the checked address only.
+
 ## [4.0.14] - 2026-10-08
 
 ### Added

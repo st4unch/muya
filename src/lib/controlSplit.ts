@@ -1,14 +1,19 @@
 // Created by Claude — Classification: INTERNAL
 //
-// Split Control: the terminal area of the Control screen shows up to MAX_SPLIT panes
-// side by side, without leaving for the Grid screen. A pane holds an agent's tab key,
-// or an "empty:<n>" placeholder waiting for the operator to pick an agent. These
-// helpers are pure so the add / close / place rules can be tested without the UI.
+// Split Control: the Split button clones the terminal on screen (lib/tabs splitClone)
+// and the clone joins that terminal's split GROUP. A group shows as 2–8 panes in the
+// Control terminal area and as one collapsible row in the agent list; picking any of
+// its terminals shows the whole group, a terminal outside every group shows alone.
+// These helpers are pure so the grouping rules can be tested without the UI.
 
 export const MAX_SPLIT = 8;
-const EMPTY_PREFIX = "empty:";
 
-export const isEmptyPane = (key: string): boolean => key.startsWith(EMPTY_PREFIX);
+export interface SplitGroup {
+  /** Stable id (the collapsed state is keyed on it). */
+  id: string;
+  /** Tab keys, in pane order. */
+  keys: string[];
+}
 
 /** Columns × rows for `n` panes: 2 → 2×1, 3 → 3×1, 4 → 2×2, 5–6 → 3×2, 7–8 → 4×2. */
 export function splitLayout(n: number): { cols: number; rows: number } {
@@ -19,60 +24,67 @@ export function splitLayout(n: number): { cols: number; rows: number } {
   return { cols: 4, rows: 2 };
 }
 
-function nextEmptyKey(panes: string[]): string {
-  let n = 1;
-  while (panes.includes(`${EMPTY_PREFIX}${n}`)) n++;
-  return `${EMPTY_PREFIX}${n}`;
+export function groupOf(groups: readonly SplitGroup[], key: string | null | undefined): SplitGroup | null {
+  if (!key) return null;
+  return groups.find((g) => g.keys.includes(key)) ?? null;
+}
+
+/** Is there room to split `source` again? (Its group is not full.) */
+export function canSplit(groups: readonly SplitGroup[], source: string | null | undefined): boolean {
+  if (!source) return false;
+  return (groupOf(groups, source)?.keys.length ?? 1) < MAX_SPLIT;
 }
 
 /**
- * Add a pane. Starting from a single terminal, the current agent becomes the first
- * pane. The new pane takes the first agent (in list order) that isn't shown yet,
- * otherwise an empty placeholder. Returns the new list and the added key, or null at
- * the limit.
+ * `clone` was split off `source`: it joins `source`'s group, or the two start a new
+ * group with id `newId`. Null when the group is already full.
  */
-export function addPane(panes: string[], current: string | null, agentOrder: string[]): { panes: string[]; added: string } | null {
-  const base = panes.length > 0 ? panes : current ? [current] : [];
-  if (base.length >= MAX_SPLIT) return null;
-  const added = agentOrder.find((k) => !base.includes(k)) ?? nextEmptyKey(base);
-  return { panes: [...base, added], added };
+export function addToGroup(groups: readonly SplitGroup[], source: string, clone: string, newId: string): SplitGroup[] | null {
+  if (clone === source || groupOf(groups, clone)) return null;
+  const g = groupOf(groups, source);
+  if (!g) return [...groups, { id: newId, keys: [source, clone] }];
+  if (g.keys.length >= MAX_SPLIT) return null;
+  return groups.map((x) => (x === g ? { ...x, keys: [...x.keys, clone] } : x));
 }
 
-/** Remove a pane (the agent keeps running). One pane left = back to the plain terminal. */
-export function closePane(panes: string[], key: string): string[] {
-  const next = panes.filter((k) => k !== key);
-  return next.length <= 1 ? [] : next;
+/** A pane closed (or its tab closed): the terminal leaves its group; a group left with
+ *  one terminal dissolves. */
+export function removeFromGroups(groups: readonly SplitGroup[], key: string): SplitGroup[] {
+  return groups
+    .map((g) => (g.keys.includes(key) ? { ...g, keys: g.keys.filter((k) => k !== key) } : g))
+    .filter((g) => g.keys.length > 1);
 }
 
-/** Pane to focus after `closed` goes away: its right neighbour, else its left one. */
-export function neighbourAfterClose(panes: string[], closed: string): string | null {
-  const i = panes.indexOf(closed);
+/** Pane to focus after `closed` leaves `keys`: its right neighbour, else its left one. */
+export function neighbourAfterClose(keys: readonly string[], closed: string): string | null {
+  const i = keys.indexOf(closed);
   if (i < 0) return null;
-  return panes[i + 1] ?? panes[i - 1] ?? null;
+  return keys[i + 1] ?? keys[i - 1] ?? null;
 }
 
-/**
- * The operator picked `key` in the agent list while the area is split. Already in a
- * pane → just focus it. Otherwise it replaces the focused pane (an empty one, or the
- * agent shown there).
- */
-export function placeAgent(panes: string[], focused: string | null, key: string): string[] {
-  if (panes.includes(key)) return panes;
-  const i = focused ? panes.indexOf(focused) : -1;
-  if (i < 0) return panes;
-  const next = [...panes];
-  next[i] = key;
-  return next;
+/** Groups against the tabs that exist: drop closed tabs and keys already claimed by an
+ *  earlier group, cap at MAX_SPLIT, dissolve groups under two. */
+export function resolveGroups(groups: readonly SplitGroup[], existing: ReadonlySet<string>): SplitGroup[] {
+  const claimed = new Set<string>();
+  const out: SplitGroup[] = [];
+  for (const g of groups) {
+    const keys = g.keys.filter((k) => existing.has(k) && !claimed.has(k)).slice(0, MAX_SPLIT);
+    if (keys.length < 2) continue;
+    keys.forEach((k) => claimed.add(k));
+    out.push({ id: g.id, keys });
+  }
+  return out;
 }
 
-/** Saved panes after a restart / agent close: drop agents that no longer exist, keep
- *  placeholders, cap at MAX_SPLIT; fewer than two panes means "not split". */
-export function resolvePanes(saved: string[], existing: ReadonlySet<string>): string[] {
-  const seen = new Set<string>();
-  const kept = saved.filter((k) => {
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return isEmptyPane(k) || existing.has(k);
-  }).slice(0, MAX_SPLIT);
-  return kept.length <= 1 ? [] : kept;
+/** localStorage validator for the persisted groups. */
+export function asSplitGroups(raw: unknown): SplitGroup[] | null {
+  if (!Array.isArray(raw)) return null;
+  const out: SplitGroup[] = [];
+  for (const g of raw) {
+    if (!g || typeof g !== "object") continue;
+    const { id, keys } = g as { id?: unknown; keys?: unknown };
+    if (typeof id !== "string" || !Array.isArray(keys)) continue;
+    out.push({ id, keys: keys.filter((k): k is string => typeof k === "string") });
+  }
+  return out;
 }

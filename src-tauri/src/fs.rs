@@ -701,8 +701,9 @@ pub fn local_ip() -> Result<String, String> {
         Some(sock.local_addr().ok()?.ip())
     })();
     match candidate {
-        // Verify it's a real, bindable interface address before suggesting it.
-        Some(ip) if TcpListener::bind((ip, 0)).is_ok() => Ok(ip.to_string()),
+        // Verify it's a real, bindable interface address before suggesting it — and
+        // never suggest a wildcard (the bridge refuses one anyway).
+        Some(ip) if !ip.is_unspecified() && TcpListener::bind((ip, 0)).is_ok() => Ok(ip.to_string()),
         _ => Ok(LOOPBACK.to_string()),
     }
 }

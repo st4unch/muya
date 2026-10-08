@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { pickNextActiveKey, newSshTabKey, addSshSession, canResumeTab, resumeCommand, pushClosed, reopenSpec, MAX_CLOSED_TABS, type ClosedTab, type TabLike } from "./tabs";
+import { pickNextActiveKey, newSshTabKey, addSshSession, canResumeTab, resumeCommand, pushClosed, reopenSpec, MAX_CLOSED_TABS, splitClone, type ClosedTab, type TabLike } from "./tabs";
 import { singleQuote } from "./agent";
 
 const T = (key: string, kind: TabLike["kind"]): TabLike => ({ key, kind });
@@ -135,5 +135,39 @@ describe("reopen closed tabs (⌘⇧T)", () => {
   it("a plain terminal reopens as a shell in its folder, re-running its command", () => {
     expect(reopenSpec({ key: "term-1", name: "t", kind: "terminal", cwd: "/w" }, q, 3)).toEqual({ key: "reopen-3", name: "t", kind: "terminal", cwd: "/w", userRenamed: undefined, initialCommand: undefined });
     expect(reopenSpec({ key: "claude-2", name: "c", kind: "terminal", cwd: "/w", initialCommand: "claude --dangerously-skip-permissions" }, q, 4).initialCommand).toBe("claude --dangerously-skip-permissions");
+  });
+});
+
+describe("splitClone", () => {
+  const q = (s: string) => `'${s}'`;
+  const id = "k1";
+  it("forks a running Claude conversation from the folder it runs in", () => {
+    const c = splitClone({ name: "api", cwd: "/w", sessionId: "abc-1", sessionCwd: "/w/api", agent: "claude" }, { liveCwd: "/w/api", agentRunning: true, id }, q);
+    expect(c).toEqual({
+      key: `split-${id}`,
+      name: "api (fork)",
+      cwd: "/w/api",
+      initialCommand: "cd '/w/api' && claude --resume 'abc-1' --fork-session --dangerously-skip-permissions",
+      agent: "claude",
+      isClaude: true,
+    });
+  });
+  it("starts a fresh Claude when there is no conversation yet", () => {
+    const c = splitClone({ name: "api", cwd: "/w", isClaude: true }, { agentRunning: true, id }, q);
+    expect(c.initialCommand).toBe("claude --dangerously-skip-permissions");
+    expect(c.cwd).toBe("/w");
+  });
+  it("never builds a fork from an unsafe session id", () => {
+    const c = splitClone({ name: "x", sessionId: "a;rm -rf", agent: "claude" }, { agentRunning: true, id }, q);
+    expect(c.initialCommand).toBe("claude --dangerously-skip-permissions");
+  });
+  it("starts a fresh opencode", () => {
+    expect(splitClone({ name: "o", agent: "opencode" }, { agentRunning: true, id }, q).initialCommand).toBe("opencode --auto");
+  });
+  it("reconnects SSH to the same server", () => {
+    expect(splitClone({ name: "box", sshServerId: "srv1" }, { agentRunning: false, id }, q)).toEqual({ key: `ssh:srv1:${id}`, name: "box", cwd: undefined, sshServerId: "srv1" });
+  });
+  it("opens a plain shell in the live folder when no agent runs (even with a stale session id)", () => {
+    expect(splitClone({ name: "sh", cwd: "/w", sessionId: "abc", agent: "claude" }, { liveCwd: "/w/sub", agentRunning: false, id }, q)).toEqual({ key: `split-${id}`, name: "sh", cwd: "/w/sub" });
   });
 });

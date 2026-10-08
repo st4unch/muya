@@ -1,6 +1,6 @@
 // Created by Claude — Classification: INTERNAL
 import { describe, expect, it } from "vitest";
-import { addPane, closePane, isEmptyPane, MAX_SPLIT, neighbourAfterClose, placeAgent, resolvePanes, splitLayout } from "./controlSplit";
+import { addToGroup, asSplitGroups, canSplit, groupOf, MAX_SPLIT, neighbourAfterClose, removeFromGroups, resolveGroups, splitLayout, type SplitGroup } from "./controlSplit";
 
 describe("splitLayout", () => {
   it.each([
@@ -17,30 +17,35 @@ describe("splitLayout", () => {
   });
 });
 
-describe("addPane", () => {
-  const order = ["a", "b", "c"];
-  it("splits a single terminal: current first, next unshown agent second", () => {
-    expect(addPane([], "b", order)).toEqual({ panes: ["b", "a"], added: "a" });
+describe("addToGroup", () => {
+  it("a first split starts a group of the source and its clone", () => {
+    expect(addToGroup([], "a", "a2", "g1")).toEqual([{ id: "g1", keys: ["a", "a2"] }]);
   });
-  it("adds an empty pane when every agent is shown", () => {
-    expect(addPane(["a", "b", "c"], "a", order)).toEqual({ panes: ["a", "b", "c", "empty:1"], added: "empty:1" });
-    expect(addPane(["a", "empty:1"], "a", ["a"])?.added).toBe("empty:2");
+  it("splitting a grouped terminal adds the clone to that group", () => {
+    const groups: SplitGroup[] = [{ id: "g1", keys: ["a", "a2"] }, { id: "g2", keys: ["b", "b2"] }];
+    expect(addToGroup(groups, "b2", "b3", "new")).toEqual([{ id: "g1", keys: ["a", "a2"] }, { id: "g2", keys: ["b", "b2", "b3"] }]);
   });
-  it(`stops at ${MAX_SPLIT}`, () => {
-    let panes: string[] = [];
-    for (let i = 0; i < 20; i++) panes = addPane(panes, "a", order)?.panes ?? panes;
-    expect(panes).toHaveLength(MAX_SPLIT);
-    expect(addPane(panes, "a", order)).toBeNull();
+  it("refuses a clone key that is already used", () => {
+    const groups: SplitGroup[] = [{ id: "g1", keys: ["a", "a2"] }];
+    expect(addToGroup(groups, "a", "a2", "g")).toBeNull();
+    expect(addToGroup(groups, "a", "a", "g")).toBeNull();
   });
-  it("needs a current agent to start from", () => {
-    expect(addPane([], null, [])).toEqual({ panes: ["empty:1"], added: "empty:1" });
+  it(`stops at ${MAX_SPLIT} panes per group`, () => {
+    let groups: SplitGroup[] = [];
+    for (let i = 1; i < 20; i++) groups = addToGroup(groups, "a", `c${i}`, "g") ?? groups;
+    expect(groups[0].keys).toHaveLength(MAX_SPLIT);
+    expect(canSplit(groups, "a")).toBe(false);
+    expect(addToGroup(groups, "c3", "x", "g")).toBeNull();
+    expect(canSplit(groups, "lonely")).toBe(true);
+    expect(canSplit(groups, null)).toBe(false);
   });
 });
 
-describe("closePane / neighbourAfterClose", () => {
-  it("removes the pane; one left means not split", () => {
-    expect(closePane(["a", "b", "c"], "b")).toEqual(["a", "c"]);
-    expect(closePane(["a", "b"], "a")).toEqual([]);
+describe("removeFromGroups / neighbourAfterClose", () => {
+  it("removes the terminal; a group of one dissolves", () => {
+    const groups: SplitGroup[] = [{ id: "g1", keys: ["a", "b", "c"] }, { id: "g2", keys: ["d", "e"] }];
+    expect(removeFromGroups(groups, "b")).toEqual([{ id: "g1", keys: ["a", "c"] }, { id: "g2", keys: ["d", "e"] }]);
+    expect(removeFromGroups(groups, "d")).toEqual([{ id: "g1", keys: ["a", "b", "c"] }]);
   });
   it("focuses the right neighbour, else the left", () => {
     expect(neighbourAfterClose(["a", "b", "c"], "b")).toBe("c");
@@ -49,31 +54,32 @@ describe("closePane / neighbourAfterClose", () => {
   });
 });
 
-describe("placeAgent", () => {
-  it("fills the focused empty pane", () => {
-    expect(placeAgent(["a", "empty:1"], "empty:1", "c")).toEqual(["a", "c"]);
+describe("groupOf / resolveGroups", () => {
+  it("finds a terminal's group", () => {
+    const groups: SplitGroup[] = [{ id: "g1", keys: ["a", "b"] }];
+    expect(groupOf(groups, "b")?.id).toBe("g1");
+    expect(groupOf(groups, "z")).toBeNull();
   });
-  it("replaces the agent in the focused pane", () => {
-    expect(placeAgent(["a", "b"], "b", "c")).toEqual(["a", "c"]);
+  it("drops closed tabs, keys claimed twice, and groups left with one", () => {
+    const groups: SplitGroup[] = [
+      { id: "g1", keys: ["a", "gone", "b"] },
+      { id: "g2", keys: ["b", "c"] },
+      { id: "g3", keys: ["d", "e"] },
+    ];
+    expect(resolveGroups(groups, new Set(["a", "b", "c", "d", "e"]))).toEqual([
+      { id: "g1", keys: ["a", "b"] },
+      { id: "g3", keys: ["d", "e"] },
+    ]);
   });
-  it("leaves panes alone when the agent is already shown", () => {
-    expect(placeAgent(["a", "b"], "a", "b")).toEqual(["a", "b"]);
+  it("caps a group at the limit", () => {
+    const keys = Array.from({ length: 12 }, (_, i) => `k${i}`);
+    expect(resolveGroups([{ id: "g", keys }], new Set(keys))[0].keys).toHaveLength(MAX_SPLIT);
   });
 });
 
-describe("resolvePanes", () => {
-  it("drops closed agents and duplicates, keeps placeholders", () => {
-    expect(resolvePanes(["a", "gone", "empty:1", "a", "b"], new Set(["a", "b"]))).toEqual(["a", "empty:1", "b"]);
-  });
-  it("one survivor means not split", () => {
-    expect(resolvePanes(["a", "gone"], new Set(["a"]))).toEqual([]);
-  });
-  it("caps at the limit", () => {
-    const keys = Array.from({ length: 12 }, (_, i) => `k${i}`);
-    expect(resolvePanes(keys, new Set(keys))).toHaveLength(MAX_SPLIT);
-  });
-  it("recognises placeholders", () => {
-    expect(isEmptyPane("empty:3")).toBe(true);
-    expect(isEmptyPane("claude-1")).toBe(false);
+describe("asSplitGroups", () => {
+  it("keeps well-formed groups only", () => {
+    expect(asSplitGroups([{ id: "g", keys: ["a", 1, "b"] }, { id: 2 }, null, "x"])).toEqual([{ id: "g", keys: ["a", "b"] }]);
+    expect(asSplitGroups("nope")).toBeNull();
   });
 });

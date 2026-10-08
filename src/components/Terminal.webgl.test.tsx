@@ -111,11 +111,20 @@ describe("Terminal: WebGL lease follows visibility", () => {
   });
 
   it("focuses synchronously on show, before the renderer swap", () => {
+    const { rerender } = render(<Terminal active={false} focusToken={1} />);
+    focus.mockClear();
+    rerender(<Terminal active focusToken={1} />);
+    // No frame awaited: keys typed right after a switch must already land.
+    expect(focus).toHaveBeenCalled();
+  });
+
+  // Split / grid show several terminals at once: only the selected one (it holds a
+  // focusToken) takes the keyboard, or it ends up in whichever pane ran last.
+  it("a terminal shown next to the selected one does not take the keyboard", () => {
     const { rerender } = render(<Terminal active={false} />);
     focus.mockClear();
     rerender(<Terminal active />);
-    // No frame awaited: keys typed right after a switch must already land.
-    expect(focus).toHaveBeenCalled();
+    expect(focus).not.toHaveBeenCalled();
   });
 
   // Grid mode keeps every grid terminal `active`, so picking one in the sessions list

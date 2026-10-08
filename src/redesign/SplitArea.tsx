@@ -5,13 +5,13 @@
 // [data-terminal-slot=<key>] box — the orchestrator adopts the agent's real terminal
 // into it, exactly like the single-terminal slot. Presentational only.
 
-import { useEffect, useRef, type CSSProperties } from "react";
+import { useEffect, useRef } from "react";
 import { splitLayout } from "../lib/controlSplit";
 import type { AgentVM } from "./types";
 
 export interface SplitPaneVM {
   key: string;
-  /** null = an empty pane waiting for the operator to pick an agent. */
+  /** null only for the moment a fresh clone has no agent row yet. */
   agent: AgentVM | null;
 }
 
@@ -20,8 +20,6 @@ export interface SplitAreaProps {
   focusedKey: string | null;
   onFocusPane: (key: string) => void;
   onClosePane: (key: string) => void;
-  onNewTerminal?: () => void;
-  onNewAgent: () => void;
 }
 
 function dotColor(agent: AgentVM): string {
@@ -30,17 +28,7 @@ function dotColor(agent: AgentVM): string {
   return "var(--text-faint)";
 }
 
-const smallBtn: CSSProperties = {
-  height: 28,
-  padding: "0 10px",
-  borderRadius: 7,
-  border: "1px solid var(--border-control)",
-  background: "var(--bg-control)",
-  color: "var(--text)",
-  fontSize: 12,
-};
-
-export function SplitArea({ panes, focusedKey, onFocusPane, onClosePane, onNewTerminal, onNewAgent }: SplitAreaProps) {
+export function SplitArea({ panes, focusedKey, onFocusPane, onClosePane }: SplitAreaProps) {
   const { cols, rows } = splitLayout(panes.length);
   // A click inside a pane makes it the focused one. Native listener, not React's
   // onMouseDown: each terminal is a portal of the app root that is only *moved* into its
@@ -81,7 +69,7 @@ export function SplitArea({ panes, focusedKey, onFocusPane, onClosePane, onNewTe
         return (
           <section
             key={key}
-            aria-label={agent ? agent.name : "Empty pane"}
+            aria-label={agent ? agent.name : "Starting"}
             data-split-pane={key}
             style={{
               display: "flex",
@@ -113,7 +101,7 @@ export function SplitArea({ panes, focusedKey, onFocusPane, onClosePane, onNewTe
                 title={agent?.name}
                 style={{ minWidth: 0, flexGrow: 1, fontWeight: focused ? 600 : 500, color: agent ? "var(--text)" : "var(--text-muted)" }}
               >
-                {agent ? agent.name : "Empty pane"}
+                {agent ? agent.name : "Starting…"}
               </span>
               <button
                 type="button"
@@ -134,19 +122,7 @@ export function SplitArea({ panes, focusedKey, onFocusPane, onClosePane, onNewTe
             {agent ? (
               <div data-terminal-slot={key} data-terminal-pad="10px 14px" data-diff-mask style={{ flexGrow: 1, minHeight: 0, overflow: "hidden" }} />
             ) : (
-              <div style={{ flexGrow: 1, minHeight: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, color: "var(--text-muted)", fontSize: 12, padding: 12, textAlign: "center" }}>
-                <span style={{ whiteSpace: "normal", maxWidth: "100%" }}>Pick an agent in the list</span>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center" }}>
-                  {onNewTerminal && (
-                    <button type="button" onClick={onNewTerminal} className="rd-btn2" style={smallBtn}>
-                      New terminal
-                    </button>
-                  )}
-                  <button type="button" onClick={onNewAgent} className="rd-btn2" style={smallBtn}>
-                    New agent
-                  </button>
-                </div>
-              </div>
+              <div style={{ flexGrow: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", fontSize: 12 }}>Starting…</div>
             )}
           </section>
         );

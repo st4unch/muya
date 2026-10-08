@@ -4,6 +4,8 @@
 // terminal — otherwise the next ⌘W would kill a running Claude session (L19).
 // Only when no tab of the same kind remains do we fall back to whatever's left.
 
+import { AGENT_BASE_COMMAND, isSafeSessionId, tabAgent, type AgentKind } from "./agent";
+
 export interface TabLike {
   key: string;
   kind: "terminal" | "editor" | "mdview" | "imgview" | "pdfview";
@@ -125,4 +127,49 @@ export function reopenSpec(t: ClosedTab, quote: (s: string) => string, now: numb
     };
   }
   return { ...base, key: `reopen-${now}`, initialCommand: t.initialCommand };
+}
+
+/** What the Split button opens next to a terminal (lib/controlSplit). */
+export interface SplitClone {
+  key: string;
+  name: string;
+  cwd?: string;
+  initialCommand?: string;
+  sshServerId?: string;
+  agent?: AgentKind;
+  isClaude?: boolean;
+}
+
+/**
+ * Split clones the terminal on screen into a new tab (operator, 2026-10-08):
+ * - a running Claude with a conversation → a FORK of that conversation
+ *   (`claude --resume <id> --fork-session`), from the folder it runs in;
+ * - a running Claude with no conversation yet, or opencode → a fresh one in that folder;
+ * - an SSH tab → a new connection to the same server;
+ * - anything else (a plain shell, or an agent that has exited) → a new shell in the
+ *   shell's live folder.
+ */
+export function splitClone(
+  t: { name: string; cwd?: string; sessionId?: string; sessionCwd?: string; sshServerId?: string; agent?: AgentKind; isClaude?: boolean },
+  /** `id`: unique per call — two splits in the same millisecond must not share a key. */
+  opts: { liveCwd?: string; agentRunning: boolean; id: string },
+  quote: (s: string) => string,
+): SplitClone {
+  const cwd = opts.liveCwd ?? t.cwd;
+  if (t.sshServerId) return { key: `ssh:${t.sshServerId}:${opts.id}`, name: t.name, cwd, sshServerId: t.sshServerId };
+  const key = `split-${opts.id}`;
+  const agent = opts.agentRunning ? tabAgent(t) : null;
+  if (agent === "claude" && t.sessionId && isSafeSessionId(t.sessionId)) {
+    const fork = `claude --resume ${quote(t.sessionId)} --fork-session --dangerously-skip-permissions`;
+    return {
+      key,
+      name: `${t.name} (fork)`,
+      cwd,
+      initialCommand: t.sessionCwd ? `cd ${quote(t.sessionCwd)} && ${fork}` : fork,
+      agent,
+      isClaude: true,
+    };
+  }
+  if (agent) return { key, name: t.name, cwd, initialCommand: AGENT_BASE_COMMAND[agent], agent, isClaude: agent === "claude" };
+  return { key, name: t.name, cwd };
 }

@@ -5,6 +5,7 @@ started: 2026-10-08
 ---
 
 ## Phase Outputs
+- 2026-10-08 v4.0.15 rework: clone + groups. Native WKWebView: split ×2 → group "muya-all · 3 panes", fork command written to the NEW PTY only (original untouched); ungrouped pick → single view; group row → split back with keyboard on the selected pane; collapse hides members; closing panes 3→2→group dissolves; file/⌘F keyboard fix and Grid focus re-checked. Found + fixed: clone keys colliding within one ms (now random suffix). Frontend 401 ✅.
 - 2026-10-08 phases 1–3: pure helpers + tests (`lib/controlSplit.ts`, 21 tests), visibility layer `inSplit`,
   `SplitArea`, header Split button (wide + collapsed), ⌘⇧D, list pick → focused pane, persistence `muya.splitKeys`.
   Live in a native WKWebView (real mouse/key events, mock backend): 8 panes → button disabled (AC1);
@@ -24,6 +25,9 @@ started: 2026-10-08
 | 2026-10-08 | src/App.tsx | split state, handlers, ⌘⇧D, active-tab gated on pane membership | AC1–AC9 |
 
 ## Decisions
+- 2026-10-08 operator (after v4.0.14): Split must CLONE the terminal on screen, not bring in other agents — shell → new shell same folder, Claude → fork of the conversation (`--resume <id> --fork-session`), SSH → same server. (L61)
+- 2026-10-08 operator: a split is a GROUP shown as one expand/collapse row in the agent list; picking a grouped terminal shows its group, an ungrouped one shows alone. Model: `muya.splitGroups` [{id, keys}], collapsed ids in `muya.splitGroupsCollapsed`. Empty panes and "list pick fills the focused pane" removed.
+- Only the selected terminal (has a focusToken) takes the keyboard when it becomes visible — several panes showing at once raced for focus.
 - Shortcut ⌘⇧D, not ⌘D: ⌘D already sends Ctrl+D (EOF) to the terminal (`Terminal.tsx` cmdMap).
 - Picking an agent already in a pane just focuses it (no swap) — simpler and expected.
 - Selected tab counts as visible in split mode only once it is in a pane (else focus fires while it is still pooled).

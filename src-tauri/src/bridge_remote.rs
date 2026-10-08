@@ -479,18 +479,38 @@ pub fn bridge_data_dir() -> Result<PathBuf, String> {
 // Address validation (AC-2-2 guard)
 // ---------------------------------------------------------------------------
 
-/// Returns an error if `addr` is a wildcard (0.0.0.0 / ::).
-/// SECURITY ASSERTION — remote listener MUST NEVER bind a wildcard address.
-pub fn assert_not_wildcard(addr: &str) -> Result<(), String> {
-    let sa = SocketAddr::from_str(addr).map_err(|_| format!("invalid address: {addr:?}"))?;
-    let ip = sa.ip();
+/// The ONLY way to turn a user/agent-supplied listen address into something a
+/// listener may bind. SECURITY — the bridge must never listen on every interface:
+/// rejects the wildcards 0.0.0.0 / :: in every spelling (including the IPv4-mapped
+/// `[::ffff:0.0.0.0]`, which `is_unspecified()` alone does not catch), plus broadcast
+/// and multicast. Only a literal IP:port is accepted — no hostnames, so nothing is
+/// resolved behind this check. Bind the returned `SocketAddr`, never the string.
+pub fn listen_socket_addr(addr: &str) -> Result<SocketAddr, String> {
+    let sa = SocketAddr::from_str(addr.trim()).map_err(|_| format!("invalid address: {addr:?}"))?;
+    let ip = sa.ip().to_canonical();
+    let refuse = |what: &str| {
+        Err(format!(
+            "SECURITY: the bridge must listen on one specific interface address, \
+             not {what} ({addr}). Refusing to start."
+        ))
+    };
     if ip.is_unspecified() {
-        return Err(format!(
-            "SECURITY: remote listener MUST bind a specific interface address, \
-             not a wildcard ({addr}). Refusing to start."
-        ));
+        return refuse("a wildcard");
     }
-    Ok(())
+    if ip.is_multicast() {
+        return refuse("a multicast address");
+    }
+    if let std::net::IpAddr::V4(v4) = ip {
+        if v4.is_broadcast() {
+            return refuse("the broadcast address");
+        }
+    }
+    Ok(SocketAddr::new(ip, sa.port()))
+}
+
+/// Returns an error if `addr` may not be listened on (see `listen_socket_addr`).
+pub fn assert_not_wildcard(addr: &str) -> Result<(), String> {
+    listen_socket_addr(addr).map(|_| ())
 }
 
 // ---------------------------------------------------------------------------
@@ -737,8 +757,8 @@ pub async fn remote_listen_impl(
         return Ok(()); // already listening
     }
 
-    // AC-2-2 assertion: NEVER bind wildcard.
-    assert_not_wildcard(iface)?;
+    // AC-2-2 assertion: NEVER bind wildcard. Bind the validated address only.
+    let bind_addr = listen_socket_addr(iface)?;
 
     let (identity, registry) = state.ensure_initialized().await?;
 
@@ -756,7 +776,7 @@ pub async fn remote_listen_impl(
     let server_config = server_config_with_verifier(&identity, verifier)?;
     let acceptor = TlsAcceptor::from(Arc::new(server_config));
 
-    let listener = TcpListener::bind(iface)
+    let listener = TcpListener::bind(bind_addr)
         .await
         .map_err(|e| format!("bind remote listener {iface}: {e}"))?;
     let listener = Arc::new(listener);
@@ -1113,7 +1133,14 @@ pub async fn bridge_check_port(
 /// into user-facing guidance. Extracted from `bridge_check_port` so it can be
 /// unit-tested without a Tauri `State`.
 fn probe_port_bindable(addr: &str) -> PortCheck {
-    match std::net::TcpListener::bind(addr) {
+    // Re-validated here too: a probe is a real bind, so it obeys the same rule.
+    let bind_addr = match listen_socket_addr(addr) {
+        Ok(a) => a,
+        Err(e) => {
+            return PortCheck { ok: false, listening: false, addr: addr.to_string(), detail: format!("Invalid address: {e}") }
+        }
+    };
+    match std::net::TcpListener::bind(bind_addr) {
         Ok(l) => {
             drop(l);
             PortCheck {
@@ -1177,8 +1204,8 @@ pub async fn pair_start_listener_impl(
     pairing_iface: String,
     app: AppHandle,
 ) -> Result<(), String> {
-    // Reject wildcard addresses.
-    assert_not_wildcard(&pairing_iface)?;
+    // Reject wildcard addresses; bind the validated address only.
+    let pairing_bind = listen_socket_addr(&pairing_iface)?;
 
     // Refuse to open a second pairing listener.
     {
@@ -1194,7 +1221,7 @@ pub async fn pair_start_listener_impl(
     let pairing_server_config = build_pairing_server_config(&identity)?;
     let acceptor = TlsAcceptor::from(Arc::new(pairing_server_config));
 
-    let listener = TcpListener::bind(&pairing_iface)
+    let listener = TcpListener::bind(pairing_bind)
         .await
         .map_err(|e| format!("bind pairing listener {pairing_iface}: {e}"))?;
     let listener = Arc::new(listener);
@@ -2191,6 +2218,19 @@ mod tests {
             err.contains("wildcard") || err.contains("SECURITY"),
             "expected security error, got: {err}"
         );
+    }
+
+    #[test]
+    fn wildcard_in_every_spelling_and_non_unicast_rejected() {
+        for bad in ["0.0.0.0:9876", "[::]:9876", "[::ffff:0.0.0.0]:9876", "[0:0:0:0:0:0:0:0]:1", " 0.0.0.0:1 ", "255.255.255.255:9876", "224.0.0.1:9876", "[ff02::1]:9876"] {
+            assert!(listen_socket_addr(bad).is_err(), "{bad} must be refused");
+            assert!(probe_port_bindable(bad).ok == false, "{bad} must not be probed");
+        }
+        for bad in ["localhost:9876", "0:9876", "example.com:1", "9876"] {
+            assert!(listen_socket_addr(bad).is_err(), "{bad}: only literal IP:port");
+        }
+        assert_eq!(listen_socket_addr("[::ffff:192.168.1.5]:9876").unwrap().to_string(), "192.168.1.5:9876");
+        assert_eq!(listen_socket_addr("127.0.0.1:9876").unwrap().to_string(), "127.0.0.1:9876");
     }
 
     #[test]

@@ -7,6 +7,7 @@
 import { AgentKindIcon } from "./AgentKindIcon";
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { InlineRename } from "./InlineRename";
+import { ChevronDownIcon, SplitPaneIcon } from "./icons";
 import type { AgentStatus, AgentVM } from "./types";
 
 export type AgentFilter = "all" | "waiting" | "working";
@@ -34,6 +35,11 @@ export interface AgentListProps {
   /** The expanded Files section fills the panel: the list takes only the height its
    *  rows need (scrolling past half the panel), Files gets everything else. */
   filesFill?: boolean;
+  /** Split groups (lib/controlSplit): each shows as one collapsible row whose terminals
+   *  are listed under it instead of in the status sections. */
+  splitGroups?: { id: string; keys: string[]; collapsed: boolean }[];
+  onToggleGroup?: (id: string) => void;
+  onSelectGroup?: (id: string) => void;
 }
 
 const GROUPS: { status: AgentStatus; label: string; color: string }[] = [
@@ -42,20 +48,27 @@ const GROUPS: { status: AgentStatus; label: string; color: string }[] = [
   { status: "idle", label: "IDLE", color: "var(--text-muted)" },
 ];
 
-export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelectAgent, onNewAgent, onReorder, width, resizeHandle, filesSection, filesFill = false, onRenameAgent, onAgentContextMenu, pinnedKeys }: AgentListProps) {
+export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelectAgent, onNewAgent, onReorder, width, resizeHandle, filesSection, filesFill = false, onRenameAgent, onAgentContextMenu, pinnedKeys, splitGroups = [], onToggleGroup, onSelectGroup }: AgentListProps) {
   const dragKeyRef = useRef<string | null>(null);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
 
   const waitingCount = agents.filter((a) => a.status === "waiting").length;
   const workingCount = agents.filter((a) => a.status === "working").length;
 
-  const filtered = agents.filter((a) => filter === "all" || a.status === filter);
+  const matches = (a: AgentVM) => filter === "all" || a.status === filter;
+  // Grouped terminals are listed under their group, not again in a status section.
+  const grouped = new Set(splitGroups.flatMap((g) => g.keys));
+  const byKey = new Map(agents.map((a) => [a.key, a]));
+  const groupsShown = splitGroups
+    .map((g) => ({ ...g, members: g.keys.map((k) => byKey.get(k)).filter((a): a is AgentVM => !!a) }))
+    .filter((g) => g.members.length > 0 && g.members.some(matches));
+  const filtered = agents.filter((a) => matches(a) && !grouped.has(a.key));
   const isPinned = (a: AgentVM) => pinnedKeys?.has(a.key) ?? false;
   const sections = [
     { id: "pinned", label: "PINNED", color: "var(--text-strong)", members: filtered.filter(isPinned) },
     ...GROUPS.map((g) => ({ id: g.status, label: g.label, color: g.color, members: filtered.filter((a) => a.status === g.status && !isPinned(a)) })),
   ];
-  const onScreen = sections.flatMap((sec) => sec.members);
+  const onScreen = [...groupsShown.flatMap((g) => (g.collapsed ? [] : g.members)), ...sections.flatMap((sec) => sec.members)];
 
   // ⌘1–9 jumps to the Nth agent as listed on screen (pinned first).
   useEffect(() => {
@@ -113,6 +126,35 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
       },
     };
   }
+
+  const renderRow = (agent: AgentVM) =>
+                agent.key === renamingKey && onRenameAgent ? (
+                  <div
+                    key={agent.key}
+                    style={{ display: "flex", alignItems: "center", gap: 8, padding: agent.status === "idle" ? "8px 12px" : "12px 12px", borderRadius: agent.status === "idle" ? 8 : 10, border: "1px solid var(--border-selected)", background: "var(--bg-selected)" }}
+                  >
+                    <span style={{ width: 8, height: 8, borderRadius: 4, background: agent.status === "idle" ? "transparent" : agent.status === "waiting" ? "var(--warning)" : "var(--success)", border: agent.status === "idle" ? "1.5px solid var(--text-faint)" : "none", boxSizing: "border-box", flexShrink: 0 }} />
+                    <InlineRename
+                      initial={agent.name}
+                      onCommit={(name) => {
+                        setRenamingKey(null);
+                        onRenameAgent(agent.key, name);
+                      }}
+                      onCancel={() => setRenamingKey(null)}
+                    />
+                  </div>
+                ) : agent.status === "idle" ? (
+                  <IdleRow key={agent.key} agent={agent} onSelect={() => onSelectAgent(agent.key)} dragOver={dragOverKey === agent.key} dragProps={{ ...dragProps(agent.key), ...rowExtras(agent.key) }} />
+                ) : (
+                  <AgentCard
+                    key={agent.key}
+                    agent={agent}
+                    selected={agent.key === selectedKey}
+                    onSelect={() => onSelectAgent(agent.key)}
+                    dragOver={dragOverKey === agent.key}
+                    dragProps={{ ...dragProps(agent.key), ...rowExtras(agent.key) }}
+                  />
+                  );
 
   return (
     <aside
@@ -197,6 +239,27 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
           minHeight: filesSection && !filesFill ? 120 : 0,
         }}
       >
+        {groupsShown.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ padding: "6px 6px 4px", fontSize: 11, fontWeight: 600, letterSpacing: "0.06em", color: "var(--text-strong)" }}>SPLITS</div>
+            {groupsShown.map((g) => (
+              <div key={g.id} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <GroupRow
+                  members={g.members}
+                  collapsed={g.collapsed}
+                  selected={!!selectedKey && g.keys.includes(selectedKey)}
+                  onToggle={() => onToggleGroup?.(g.id)}
+                  onSelect={() => onSelectGroup?.(g.id)}
+                />
+                {!g.collapsed && (
+                  <div role="group" aria-label={`${g.members[0].name} split`} style={{ display: "flex", flexDirection: "column", gap: 4, paddingLeft: 14, marginLeft: 10, borderLeft: "1px solid var(--border)" }}>
+                    {g.members.map((agent) => renderRow(agent))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
         {(() => {
           let visibleGroupIndex = -1;
           return sections.map(({ id, label, color, members }) => {
@@ -206,35 +269,7 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
             return (
               <div key={id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <div style={{ padding: `${headTop}px 6px 4px`, fontSize: 11, fontWeight: 600, letterSpacing: "0.06em", color }}>{label}</div>
-              {members.map((agent) =>
-                agent.key === renamingKey && onRenameAgent ? (
-                  <div
-                    key={agent.key}
-                    style={{ display: "flex", alignItems: "center", gap: 8, padding: agent.status === "idle" ? "8px 12px" : "12px 12px", borderRadius: agent.status === "idle" ? 8 : 10, border: "1px solid var(--border-selected)", background: "var(--bg-selected)" }}
-                  >
-                    <span style={{ width: 8, height: 8, borderRadius: 4, background: agent.status === "idle" ? "transparent" : agent.status === "waiting" ? "var(--warning)" : "var(--success)", border: agent.status === "idle" ? "1.5px solid var(--text-faint)" : "none", boxSizing: "border-box", flexShrink: 0 }} />
-                    <InlineRename
-                      initial={agent.name}
-                      onCommit={(name) => {
-                        setRenamingKey(null);
-                        onRenameAgent(agent.key, name);
-                      }}
-                      onCancel={() => setRenamingKey(null)}
-                    />
-                  </div>
-                ) : agent.status === "idle" ? (
-                  <IdleRow key={agent.key} agent={agent} onSelect={() => onSelectAgent(agent.key)} dragOver={dragOverKey === agent.key} dragProps={{ ...dragProps(agent.key), ...rowExtras(agent.key) }} />
-                ) : (
-                  <AgentCard
-                    key={agent.key}
-                    agent={agent}
-                    selected={agent.key === selectedKey}
-                    onSelect={() => onSelectAgent(agent.key)}
-                    dragOver={dragOverKey === agent.key}
-                    dragProps={{ ...dragProps(agent.key), ...rowExtras(agent.key) }}
-                  />
-                  ),
-                )}
+              {members.map((agent) => renderRow(agent))}
               </div>
             );
           });
@@ -338,5 +373,54 @@ function IdleRow({ agent, onSelect, dragOver, dragProps }: { agent: AgentVM; onS
         {agent.path}
       </span>
     </button>
+  );
+}
+
+/** One split group in the list: chevron (expand / collapse), the split icon, the first
+ *  terminal's name and the pane count; its dot is the most urgent member status. */
+function GroupRow({ members, collapsed, selected, onToggle, onSelect }: { members: AgentVM[]; collapsed: boolean; selected: boolean; onToggle: () => void; onSelect: () => void }) {
+  const waiting = members.some((a) => a.status === "waiting");
+  const working = members.some((a) => a.status === "working");
+  const dot = waiting ? "var(--warning)" : working ? "var(--success)" : "var(--text-faint)";
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        borderRadius: 8,
+        border: selected ? "1px solid var(--border-selected)" : "1px solid transparent",
+        background: selected ? "var(--bg-selected)" : "transparent",
+      }}
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={!collapsed}
+        aria-label={collapsed ? "Expand split" : "Collapse split"}
+        className="rd-icon-btn"
+        style={{ width: 24, height: 30, border: "none", background: "transparent", color: "var(--text-muted)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+      >
+        <span style={{ display: "flex", transform: collapsed ? "rotate(-90deg)" : undefined, transition: "transform 120ms" }}>
+          <ChevronDownIcon size={12} />
+        </span>
+      </button>
+      <button
+        type="button"
+        onClick={onSelect}
+        title="Show this split"
+        className="rd-idle-row"
+        style={{ flexGrow: 1, minWidth: 0, textAlign: "left", padding: "7px 8px 7px 0", border: "none", background: "transparent", color: "var(--text)", display: "flex", alignItems: "center", gap: 8 }}
+      >
+        <span style={{ width: 8, height: 8, borderRadius: 4, background: dot, flexShrink: 0 }} />
+        <span style={{ display: "flex", color: "var(--text-muted)", flexShrink: 0 }}>
+          <SplitPaneIcon size={13} />
+        </span>
+        <span className="rd-ellipsis" style={{ fontSize: 13, fontWeight: 600, minWidth: 0 }}>
+          {members[0]?.name ?? "Split"}
+        </span>
+        <span style={{ fontSize: 11, color: "var(--text-muted)", flexShrink: 0 }}>· {members.length} panes</span>
+      </button>
+    </div>
   );
 }
