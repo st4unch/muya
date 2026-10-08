@@ -12,6 +12,7 @@ import { stepTerminalFont, useTerminalPrefs } from "../lib/terminalPrefs";
 import { parseClaudeScreen, readScreenLines, type ScreenState } from "../lib/screenState";
 import { isMuyaChannelWarning } from "../lib/channelPrompt";
 import { applyLaunchFlags } from "../lib/statusline";
+import { appModalOpen } from "../lib/modalOpen";
 
 // Output bytes arrive as a raw ArrayBuffer (binary fetch path — no JSON byte
 // bloat); process-exit arrives as a small JSON object. See src-tauri/src/pty.rs.
@@ -389,7 +390,7 @@ function Terminal({
       // preventDefault, so the event still bubbles to the modal's own handler
       // (e.g. Esc closes it). Without this, Esc typed at an open modal went into
       // the terminal and interrupted the running Claude session. (L19)
-      if (document.querySelector('[role="dialog"], .fixed.inset-0.z-50')) {
+      if (appModalOpen()) {
         return false;
       }
       // AC-0-2: Shift+Enter → \n (newline, not submit). Always preserved.

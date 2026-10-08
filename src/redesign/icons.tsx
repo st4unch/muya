@@ -312,6 +312,16 @@ export function GridSplitIcon({ size = 15, ...p }: IconProps) {
   );
 }
 
+/** Split the terminal area: a window with a vertical divider. */
+export function SplitPaneIcon({ size = 15, ...p }: IconProps) {
+  return (
+    <svg {...base(size, 1.8, p)}>
+      <rect width="18" height="16" x="3" y="4" rx="2" />
+      <path d="M12 4v16" />
+    </svg>
+  );
+}
+
 export function PlusIcon({ size = 14, ...p }: IconProps) {
   return (
     <svg {...base(size, 2, p)}>

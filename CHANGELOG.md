@@ -6,6 +6,23 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.0.14] - 2026-10-08
+
+### Added
+- **Split the Control terminal in place — up to 8 panes.** A new Split button in the session
+  header (or ⌘⇧D) adds a pane next to the current terminal without leaving for the Grid
+  screen; the agent list, header, chat box and inspector stay. Each new pane shows the next
+  agent that isn't on screen (or an empty pane to fill from the agent list). Click a pane to
+  work in it; picking an agent in the list puts it in the selected pane; × closes a pane and
+  the agent keeps running. Layout adapts: 2 side by side, 4 as 2×2, up to 4×2 for 8. The
+  split is remembered across restarts. ⌘D still sends Ctrl+D to the terminal.
+
+### Fixed
+- **Terminals stopped taking keys after searching in an open file.** Pressing ⌘F in a file
+  left the editor's search box in the page, and Muya mistook it for an open dialog: back in
+  Control, no terminal accepted typing — not even after clicking it — until the file was
+  closed. Only Muya's own windows that are actually on screen now hold the keyboard.
+
 ## [4.0.13] - 2026-10-07
 
 ### Changed

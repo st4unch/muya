@@ -50,4 +50,11 @@ describe("terminalIsVisible", () => {
       terminalIsVisible({ controlPageVisible: true, inGrid: false, isActiveTab: true, filesShown: false }),
     ).toBe(true);
   });
+
+  // Split Control: every pane is on screen, not just the selected tab.
+  it("a terminal in a split pane is visible; the page and the Files rail still hide it", () => {
+    expect(terminalIsVisible({ controlPageVisible: true, inGrid: false, isActiveTab: false, inSplit: true })).toBe(true);
+    expect(terminalIsVisible({ controlPageVisible: false, inGrid: false, isActiveTab: false, inSplit: true })).toBe(false);
+    expect(terminalIsVisible({ controlPageVisible: true, inGrid: false, isActiveTab: false, inSplit: true, filesShown: true })).toBe(false);
+  });
 });

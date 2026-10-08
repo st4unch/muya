@@ -8,7 +8,7 @@ import { AgentKindIcon, agentGlyphLabel } from "./AgentKindIcon";
 import type { CSSProperties, MouseEvent } from "react";
 import type { AgentVM } from "./types";
 import { useLayoutEffect, useRef, useState } from "react";
-import { BypassWarningIcon, ChevronDownIcon, CompactIcon, GridSplitIcon } from "./icons";
+import { BypassWarningIcon, ChevronDownIcon, CompactIcon, GridSplitIcon, SplitPaneIcon } from "./icons";
 import { asBool, usePersistentState } from "./usePersistentState";
 import { InlineRename } from "./InlineRename";
 import { withDetail } from "./text";
@@ -17,6 +17,10 @@ export interface SessionHeaderProps {
   agent: AgentVM;
   onCompact: () => void;
   onSplitToGrid: () => void;
+  /** Add a pane to the Control terminal area (split in place). Omitted = no button. */
+  onSplit?: () => void;
+  /** At the pane limit: the Split button shows but is disabled. */
+  splitDisabled?: boolean;
   onStop: () => void;
   /** Receives the click so the caller can anchor the actions menu under the button. */
   onMore: (e: MouseEvent<HTMLElement>) => void;
@@ -134,7 +138,8 @@ function CollapseToggle({ collapsed, onToggle }: { collapsed: boolean; onToggle:
   );
 }
 
-export function SessionHeader({ agent, onCompact, onSplitToGrid, onStop, onMore, onRename }: SessionHeaderProps) {
+export function SessionHeader({ agent, onCompact, onSplitToGrid, onSplit, splitDisabled, onStop, onMore, onRename }: SessionHeaderProps) {
+  const splitTitle = splitDisabled ? "Up to 8 panes" : "Split (⌘⇧D)";
   const [renaming, setRenaming] = useState(false);
   // One setting for every agent: the operator wants the terminal taller, not this agent's bar hidden.
   const [collapsed, setCollapsed] = usePersistentState<boolean>("muya.sessionHeaderCollapsed", false, asBool);
@@ -186,6 +191,11 @@ export function SessionHeader({ agent, onCompact, onSplitToGrid, onStop, onMore,
           >
             <CompactIcon size={14} />
           </button>
+          {onSplit && (
+            <button type="button" onClick={onSplit} disabled={splitDisabled} title={splitTitle} aria-label="Split" className="rd-icon-btn" style={slimBtn}>
+              <SplitPaneIcon size={14} />
+            </button>
+          )}
           <button type="button" onClick={onSplitToGrid} title="Split to grid" aria-label="Split to grid" className="rd-icon-btn" style={slimBtn}>
             <GridSplitIcon size={14} />
           </button>
@@ -278,6 +288,12 @@ export function SessionHeader({ agent, onCompact, onSplitToGrid, onStop, onMore,
         <CompactIcon className="rd-sess-icon" />
         <span className="rd-sess-label">Compact</span>
       </button>
+      {onSplit && (
+        <button type="button" onClick={onSplit} disabled={splitDisabled} title={splitTitle} aria-label="Split" className="rd-btn2 rd-sess-btn" style={secondaryBtn}>
+          <SplitPaneIcon className="rd-sess-icon" />
+          <span className="rd-sess-label">Split</span>
+        </button>
+      )}
       <button type="button" onClick={onSplitToGrid} title="Split to grid" aria-label="Split to grid" className="rd-btn2 rd-sess-btn" style={secondaryBtn}>
         <GridSplitIcon className="rd-sess-icon" />
         <span className="rd-sess-label">Split to grid</span>

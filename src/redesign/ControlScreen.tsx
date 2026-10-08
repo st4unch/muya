@@ -19,6 +19,7 @@ import { Inspector, type InspectorTab } from "./Inspector";
 import { FilesSection } from "./FilesSection";
 import { OpenFilesList } from "./OpenFilesList";
 import { ResizeHandle } from "./ResizeHandle";
+import { SplitArea, type SplitPaneVM } from "./SplitArea";
 import { AGENTS_W, INSPECTOR_W, usePanelLayout } from "./usePanelLayout";
 import type { AgentVM, FileVM, FooterVM, HeaderVM, InspectorVM, OpenFileVM, PermissionMode, RailItem, ThemePreference } from "./types";
 
@@ -100,6 +101,14 @@ export interface ControlScreenProps {
   selectedFileKey?: string | null;
   onSelectFile?: (key: string) => void;
   onCloseOpenFile?: (key: string) => void;
+  /** Split Control (2–8 panes). Omitted or fewer than two = the single terminal. */
+  splitPanes?: SplitPaneVM[];
+  splitFocusKey?: string | null;
+  onFocusPane?: (key: string) => void;
+  onClosePane?: (key: string) => void;
+  /** Header "Split" button. */
+  onSplit?: () => void;
+  splitDisabled?: boolean;
 }
 
 export function ControlScreen(props: ControlScreenProps) {
@@ -111,6 +120,7 @@ export function ControlScreen(props: ControlScreenProps) {
   // selected agent's terminal.
   const file = filesMode || props.mode === undefined ? props.openFile : null;
   const agent = filesMode ? null : selected;
+  const split = !filesMode && (props.splitPanes?.length ?? 0) > 1;
   const filesSection = (
     <FilesSection
       open={layout.filesOpen}
@@ -188,7 +198,7 @@ export function ControlScreen(props: ControlScreenProps) {
         {file ? (
           <FileHeader file={file} onClose={props.onCloseFile} />
         ) : agent ? (
-          <SessionHeader agent={agent} onRename={props.onRenameAgent ? (name) => props.onRenameAgent!(agent.key, name) : undefined} onCompact={props.onCompact} onSplitToGrid={props.onSplitToGrid} onStop={props.onStop} onMore={props.onMoreActions} />
+          <SessionHeader agent={agent} onSplit={props.onSplit} splitDisabled={props.splitDisabled} onRename={props.onRenameAgent ? (name) => props.onRenameAgent!(agent.key, name) : undefined} onCompact={props.onCompact} onSplitToGrid={props.onSplitToGrid} onStop={props.onStop} onMore={props.onMoreActions} />
         ) : null}
 
         {/* The real xterm instance is adopted into this slot by the orchestrator — it
@@ -204,6 +214,15 @@ export function ControlScreen(props: ControlScreenProps) {
             <span>Pick a file in the tree on the left, or search with ⌘K.</span>
             <span>Images and PDFs open here too.</span>
           </div>
+        ) : split ? (
+          <SplitArea
+            panes={props.splitPanes!}
+            focusedKey={props.splitFocusKey ?? null}
+            onFocusPane={(k) => props.onFocusPane?.(k)}
+            onClosePane={(k) => props.onClosePane?.(k)}
+            onNewTerminal={props.onNewTerminal}
+            onNewAgent={props.onNewAgent}
+          />
         ) : agent ? (
           <div
             data-terminal-slot={agent.key}

@@ -295,7 +295,6 @@ const EMPTY_ARRAY = new Set([
   "cyberark_list_accounts",
   "fetch_skill_marketplace",
   "get_startup_files",
-  "list_dir",
   "list_session_history",
   "scan_prd_docs",
   "search_session_contents",
@@ -311,7 +310,6 @@ const EMPTY_STRING = new Set([
   "export_session_markdown",
   "install_muya_plugin",
   "kill_session",
-  "read_file",
   "read_head_file",
   "read_session_transcript",
   "remove_worktree",
@@ -340,6 +338,13 @@ function handleInvoke(cmd: string, rawPayload?: unknown): unknown {
   if (EMPTY_STRING.has(cmd)) return "";
 
   switch (cmd) {
+    // --- files: one small source file in every folder, so the Files rail can open a
+    // real Monaco editor ("Open in Muya" flows) ---------------------------------
+    case "list_dir":
+      return [{ name: "notes.ts", path: `${String(payload.path ?? "/mock")}/notes.ts`, isDirectory: false, is_directory: false }];
+    case "read_file":
+      return "const answer = 42;\nexport default answer;\n";
+
     // --- agents / sessions -------------------------------------------------
     case "list_agent_sessions":
       return MOCK_AGENTS;

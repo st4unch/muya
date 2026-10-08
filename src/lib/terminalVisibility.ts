@@ -8,6 +8,9 @@ export interface TerminalPlacement {
   controlPageVisible: boolean;
   /** Grid mode, and this terminal holds one of the 2×2 slots. */
   inGrid: boolean;
+  /** Control is split and this terminal holds one of its panes (lib/controlSplit). Like
+   *  the selected tab, the Files rail covers the split area. */
+  inSplit?: boolean;
   /** Tabs mode, and this terminal is the selected tab. */
   isActiveTab: boolean;
   /** The Files rail is showing: its pane (a file, or "No file open") replaces the
@@ -33,5 +36,5 @@ export interface TerminalPlacement {
  * belongs here too.
  */
 export function terminalIsVisible(p: TerminalPlacement): boolean {
-  return p.controlPageVisible && (p.inGrid || (p.isActiveTab && !p.filesShown));
+  return p.controlPageVisible && (p.inGrid || ((p.isActiveTab || !!p.inSplit) && !p.filesShown));
 }
