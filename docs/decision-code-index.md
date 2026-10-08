@@ -1,5 +1,8 @@
 # Decision — Code index for Muya agents (after the T5 lab)
 
+**Status 2026-10-09: parked.** Haiku agent A/B on this repo missed the gate (progress file, round 3).
+The one open test is the same A/B on a 500k+ line repo; reopen only if that is wanted.
+
 Input: `docs/exp-code-index.md` and its progress file (lab on this repo, 39 blind questions),
 plus one extra lab row added 2026-10-08 (Gb', below) and outside research (§4).
 
