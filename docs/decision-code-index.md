@@ -39,12 +39,24 @@ Gb' is consistent with "ranking matters" (B' beats it 8–0 on File@5) but does 
    **Gate:** ≥ 20% fewer turns or tokens, no fewer right answers, and the tool chosen in
    ≥ 50% of runs. Add a second repo (another language) if step 1 passes.
 2. **Build `code_search` in muya-mcp.** One tool with a short description.
-   - No stored index. A per-file cache keyed on (mtime, size) is checked on every query,
-     so it cannot go stale after a checkout.
-   - Respects .gitignore, the workspace roots, and the same path exclusions as file access.
-     Kept in RAM only, never written to disk.
-   - Languages without a grammar fall back to line windows. Above a size cap the tool says
-     "use grep" instead of returning a wrong "not found".
+   The index is incremental and persistent; only changed files are re-indexed.
+   - **Stored:** one index per workspace root in the app data folder, with a manifest of
+     path → (content hash, mtime, size). Tantivy (on-disk segments, per-document
+     add/delete) or the lab BM25 serialised. Readable by the user only. Deleted when the
+     workspace is removed.
+   - **While Muya runs:** `watcher.rs` (notify/FSEvents) already sees every change under a
+     root. Its paths feed the indexer, which drops that file's old blocks and adds its
+     new ones. Nothing else is read.
+   - **Changes made while Muya was closed:** in a git repo, take
+     `git diff --name-only <saved HEAD>..HEAD` plus `git status` (uncommitted and new
+     files). Elsewhere, compare the manifest's mtime/size against a directory listing,
+     which reads no file contents, then hash only the files that differ.
+     Only those files are re-indexed.
+   - **Full build:** only the first time a workspace is opened, or when the index format
+     or version changes.
+   - Respects .gitignore, the workspace roots, and the same path exclusions as file
+     access. Languages without a grammar fall back to line windows. Above a size cap the
+     tool says "use grep".
 3. **Off by default, then on.** It is turned on for everyone after a week of own use.
    Kill switch in Settings.
 
