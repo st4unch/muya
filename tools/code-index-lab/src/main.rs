@@ -303,6 +303,7 @@ struct EvalOpts {
     rerankers: Vec<String>,
     rewrite: Option<PathBuf>,
     apple: bool,
+    summaries: Option<PathBuf>,
 }
 
 fn cmd_eval(o: EvalOpts) -> Result<()> {
@@ -398,6 +399,32 @@ fn cmd_eval(o: EvalOpts) -> Result<()> {
     });
     record("B+S", s, l, &mut table);
 
+    // Column weights and LLM-written per-file summaries (setup-time enrichment).
+    let extra: Option<HashMap<String, String>> = match &o.summaries {
+        Some(p) => {
+            let v: HashMap<String, serde_json::Value> = serde_json::from_slice(&std::fs::read(p)?)?;
+            Some(v.into_iter().map(|(k, x)| {
+                let kw = x["keywords"].as_array().map(|a| a.iter().filter_map(|w| w.as_str()).collect::<Vec<_>>().join(" ")).unwrap_or_default();
+                (k, format!("{} {}", x["summary"].as_str().unwrap_or(""), kw))
+            }).collect())
+        }
+        None => None,
+    };
+    if let Some(e) = &extra {
+        println!("summaries for {} of {} files", indexed.iter().filter(|f| e.contains_key(**f)).count(), indexed.len());
+    }
+    let bw = lexical::Bm25::build_with(&chunks, 3, 2, None);
+    let (s, l, _) = run_lists(&|q| timed(&|| bw.search(&q.q)));
+    record("Bw bm25 weighted", s, l, &mut table);
+    let bs = extra.as_ref().map(|e| lexical::Bm25::build_with(&chunks, 1, 1, Some(e)));
+    let bsw = extra.as_ref().map(|e| lexical::Bm25::build_with(&chunks, 3, 2, Some(e)));
+    if let (Some(bs), Some(bsw)) = (&bs, &bsw) {
+        let (s, l, _) = run_lists(&|q| timed(&|| bs.search(&q.q)));
+        record("Bs bm25+summary", s, l, &mut table);
+        let (s, l, _) = run_lists(&|q| timed(&|| bsw.search(&q.q)));
+        record("Bsw bm25+summary weighted", s, l, &mut table);
+    }
+
     // Same lexical methods fed the rewritten keyword query (what an agent would type).
     if !rewrite.is_empty() {
         let rq = |q: &Question| rewrite.get(&q.id).cloned().unwrap_or_else(|| q.q.clone());
@@ -414,6 +441,26 @@ fn cmd_eval(o: EvalOpts) -> Result<()> {
         record("B' bm25 rewritten", s, l, &mut table);
         let (s, l, _) = run_lists(&|q| timed(&|| lexical::grep_chunks(&chunks, &rq(q))));
         record("Gb' grep blocks rewritten", s, l, &mut table);
+        let (s, l, _) = run_lists(&|q| timed(&|| bw.search(&rq(q))));
+        record("Bw' weighted rewritten", s, l, &mut table);
+        if let (Some(bs), Some(bsw)) = (&bs, &bsw) {
+            let (s, l, _) = run_lists(&|q| timed(&|| bs.search(&rq(q))));
+            record("Bs' +summary rewritten", s, l, &mut table);
+            let (s, l, _) = run_lists(&|q| timed(&|| bsw.search(&rq(q))));
+            record("Bsw' +summary weighted rewritten", s, l, &mut table);
+        }
+        // Token cost: what the agent reads. Cards = top-5 blocks; vs reading the gold file whole.
+        let tok = |t: &str| t.len() as f64 / 4.0;
+        let mut card = vec![];
+        let mut whole = vec![];
+        for q in &qs {
+            let r = bm.search(&rq(q));
+            card.push(r.iter().take(5).map(|(i, _)| tok(&chunks[*i].text)).sum::<f64>());
+            let gp = &q.gold.iter().find(|g| g.primary).unwrap().path;
+            whole.push(file_text.iter().find(|(p, _)| p == gp).map(|(_, t)| tok(t)).unwrap_or(0.0));
+        }
+        let med = |mut v: Vec<f64>| { v.sort_by(|a, b| a.total_cmp(b)); v[v.len() / 2] };
+        println!("TOKENS median: top-5 cards {:.0} | gold file read whole {:.0}", med(card), med(whole));
         let (s, l, _) = run_lists(&|q| {
             let qq = rq(q);
             timed(&|| {
@@ -662,7 +709,7 @@ fn main() -> Result<()> {
         Some("chunk") => cmd_chunk(),
         Some("embed") => cmd_embed(a.get(1).context("embed <model>")?),
         Some("eval") => {
-            let mut o = EvalOpts { embeds: vec![], rerankers: vec![], rewrite: None, apple: false };
+            let mut o = EvalOpts { embeds: vec![], rerankers: vec![], rewrite: None, apple: false, summaries: None };
             let mut it = a[1..].iter();
             while let Some(f) = it.next() {
                 match f.as_str() {
@@ -670,6 +717,7 @@ fn main() -> Result<()> {
                     "--rerank" => o.rerankers = it.next().context("--rerank a,b")?.split(',').map(String::from).collect(),
                     "--rewrite" => o.rewrite = Some(PathBuf::from(it.next().context("--rewrite file")?)),
                     "--apple" => o.apple = true,
+                    "--summaries" => o.summaries = Some(PathBuf::from(it.next().context("--summaries file")?)),
                     x => bail!("unknown flag {x}"),
                 }
             }

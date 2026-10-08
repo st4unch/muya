@@ -44,3 +44,18 @@ started: 2026-10-06
 
 ## Lessons
 - Limits: 39 questions, one repo; questions and rewrites are LLM-written; gold judged by one agent.
+
+## Round 2 (2026-10-08): column weights, Haiku summaries, token cost
+- Bw = symbol ×3, path ×2. Bs = each file's Haiku-written one-line summary + 6–12 en/tr keywords added to its blocks
+  (183 files, 4 parallel Haiku agents, ~1 min, ~690k tokens).
+
+| Method | File@5 raw | File@5 rewritten | Chunk@5 rewritten |
+|---|---|---|---|
+| B bm25 | 0.67 | 0.97 | 0.72 |
+| Bw weighted | 0.69 | 0.97 | 0.77 |
+| Bs + Haiku summary | **0.79** (tr 0.60→0.80) | 0.97 | 0.67 |
+
+- Summaries help only plain-language questions. Once the query is code keywords, which is what Claude writes,
+  they add nothing and slightly blur the block ranking. Decision: no Haiku step in setup.
+- Weights: noise-level (+0.05 Chunk@5). Keep symbol/path weighting, it is free.
+- Token cost (median per question): top-5 result cards 1,043 tokens vs reading the gold file whole 8,590 (~8×).

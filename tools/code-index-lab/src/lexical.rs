@@ -141,12 +141,29 @@ pub struct Bm25 {
 
 impl Bm25 {
     pub fn build(chunks: &[Chunk]) -> Self {
+        Self::build_with(chunks, 1, 1, None)
+    }
+
+    /// `sym_w` / `path_w`: how many times the symbol name and path count (a cheap column
+    /// weight). `extra`: per-file text (an LLM-written summary + keywords) added to every
+    /// chunk of that file.
+    pub fn build_with(
+        chunks: &[Chunk],
+        sym_w: usize,
+        path_w: usize,
+        extra: Option<&HashMap<String, String>>,
+    ) -> Self {
         let mut docs = Vec::new();
         let mut len = Vec::new();
         let mut df: HashMap<String, f32> = HashMap::new();
         for c in chunks {
             // path and symbol words count too: "credstore.rs" says a lot about the chunk
-            let toks = tokenize(&format!("{} {} {}", c.path, c.symbol, c.text));
+            let mut doc = String::new();
+            for _ in 0..path_w { doc.push_str(&c.path); doc.push(' '); }
+            for _ in 0..sym_w { doc.push_str(&c.symbol); doc.push(' '); }
+            doc.push_str(&c.text);
+            if let Some(e) = extra.and_then(|m| m.get(&c.path)) { doc.push(' '); doc.push_str(e); }
+            let toks = tokenize(&doc);
             let mut tf: HashMap<String, f32> = HashMap::new();
             for t in &toks {
                 *tf.entry(t.clone()).or_default() += 1.0;
