@@ -249,6 +249,34 @@ pub fn grep_files(files: &[(String, String)], q: &str) -> Vec<String> {
     scored.into_iter().map(|s| s.0).collect()
 }
 
+/// Grep at block level, no index: every chunk (tree-sitter definition) ranked by how
+/// many distinct query words it contains, then total hits. Stands in for "rg the
+/// keywords, show each hit's enclosing function" — the no-index alternative to BM25.
+pub fn grep_chunks(chunks: &[crate::chunk::Chunk], q: &str) -> Vec<(usize, f32)> {
+    let words: Vec<String> = q
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .map(|w| w.to_lowercase())
+        .filter(|w| w.chars().count() >= 3 && !STOP.contains(&w.as_str()))
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let mut v: Vec<(usize, f32)> = chunks
+        .iter()
+        .enumerate()
+        .filter_map(|(i, c)| {
+            let lower = c.text.to_lowercase();
+            let (mut d, mut t) = (0usize, 0usize);
+            for w in &words {
+                let n = lower.matches(w.as_str()).count();
+                if n > 0 { d += 1; t += n; }
+            }
+            (d > 0).then(|| (i, d as f32 * 1000.0 + t.min(999) as f32))
+        })
+        .collect();
+    v.sort_by(|a, b| b.1.total_cmp(&a.1));
+    v
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

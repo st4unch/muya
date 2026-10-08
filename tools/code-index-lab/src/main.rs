@@ -412,6 +412,8 @@ fn cmd_eval(o: EvalOpts) -> Result<()> {
         record("G' grep rewritten", sc, lat, &mut table);
         let (s, l, _) = run_lists(&|q| timed(&|| bm.search(&rq(q))));
         record("B' bm25 rewritten", s, l, &mut table);
+        let (s, l, _) = run_lists(&|q| timed(&|| lexical::grep_chunks(&chunks, &rq(q))));
+        record("Gb' grep blocks rewritten", s, l, &mut table);
         let (s, l, _) = run_lists(&|q| {
             let qq = rq(q);
             timed(&|| {
