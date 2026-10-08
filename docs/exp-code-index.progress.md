@@ -59,3 +59,18 @@ started: 2026-10-06
   they add nothing and slightly blur the block ranking. Decision: no Haiku step in setup.
 - Weights: noise-level (+0.05 Chunk@5). Keep symbol/path weighting, it is free.
 - Token cost (median per question): top-5 result cards 1,043 tokens vs reading the gold file whole 8,590 (~8×).
+
+## Round 3 (2026-10-09): agent A/B with Haiku subagents
+10 plain-language English questions (q13–16, 21–25, 29), one Haiku agent per question per arm.
+A = Bash rg/grep + Read. B = the lab `search` command (top-5 cards, weighted BM25) first, then rg/Read.
+
+| | A grep | B code_search | Δ |
+|---|---|---|---|
+| Tool calls (mean) | 5.0 | 4.3 | −14% |
+| Wall time (mean) | 16.7 s | 12.9 s | −23% |
+| Tokens per agent (mean, incl. ~60k fixed prompt) | 67.3k | 64.5k | −4% (≈ −38% of the search work) |
+| Right place | 10/10 | 8/10 + 2 half (q14 and q15: found the backend or frontend half, not the gold half) | B slightly worse |
+
+- Gate (≥20% fewer turns/tokens, no accuracy loss) **not met** on this 52k-line repo; grep is already strong here.
+- B was told to use the tool first, so "would Claude pick it" is not measured.
+- First A run was void: Grep/Glob tools are not available to subagents here; rerun with Bash rg.

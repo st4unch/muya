@@ -707,6 +707,22 @@ fn main() -> Result<()> {
     let a: Vec<String> = std::env::args().skip(1).collect();
     match a.first().map(|s| s.as_str()) {
         Some("chunk") => cmd_chunk(),
+        Some("search") => {
+            // What a code_search tool would return: top-5 blocks as short cards.
+            let q = a[1..].join(" ");
+            let chunks = load_chunks()?;
+            let bm = lexical::Bm25::build_with(&chunks, 3, 2, None);
+            let hits = bm.search(&q);
+            println!("{} matching blocks; top 5:", hits.len());
+            for (i, _) in hits.iter().take(5) {
+                let c = &chunks[*i];
+                println!("\n== {}:{}-{}  {}", c.path, c.start, c.end, c.symbol);
+                let lines: Vec<&str> = c.text.lines().collect();
+                for l in lines.iter().take(15) { println!("{l}"); }
+                if lines.len() > 15 { println!("… ({} more lines)", lines.len() - 15); }
+            }
+            Ok(())
+        }
         Some("embed") => cmd_embed(a.get(1).context("embed <model>")?),
         Some("eval") => {
             let mut o = EvalOpts { embeds: vec![], rerankers: vec![], rewrite: None, apple: false, summaries: None };
