@@ -6,6 +6,8 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.0.17] - 2026-10-12
+
 ### Added
 - **Sessions → Terminal History tab.** Next to Agent Sessions, a second tab lists what you typed in your terminals, grouped by day (Today, Yesterday, dates) with the time of each command. Expand a terminal to view all of that day's commands, download its whole history as a .txt file, reopen the terminal with its history, or delete it. Search works on terminal names, folders and commands.
 
