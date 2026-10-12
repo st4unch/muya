@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 // The modal imports the dialog plugin at module load; stub it.
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
+// The installed Claude CLI supports channels (claude_channels_supported).
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async (cmd: string) => cmd === "claude_channels_supported") }));
 
 import NewAgentModal, { baseCommand } from "./NewAgentModal";
 
@@ -71,6 +73,22 @@ describe("NewAgentModal", () => {
     await user.click(screen.getByRole("button", { name: "Known workspaces" }));
     await user.click(screen.getByRole("option", { name: "/w/other" }));
     expect(screen.getByPlaceholderText("/path/to/project")).toHaveValue("/w/other");
+  });
+
+  it("adds Muya's channel flag only when its box is ticked (off by default)", async () => {
+    expect(baseCommand("claude", "bypass", true, false, true)).toBe(
+      "claude --dangerously-load-development-channels server:muya-mcp --dangerously-skip-permissions",
+    );
+    const user = userEvent.setup();
+    const { onLaunch } = setup();
+    const box = await screen.findByRole("checkbox", { name: "Load Muya channel" });
+    await waitFor(() => expect(box).toBeEnabled());
+    expect(box).not.toBeChecked();
+    await user.click(box);
+    await user.click(screen.getByRole("button", { name: "Launch agent" }));
+    expect(onLaunch).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "claude --dangerously-load-development-channels server:muya-mcp --dangerously-skip-permissions" }),
+    );
   });
 
   it("maps every Claude permission mode to its real flag", async () => {

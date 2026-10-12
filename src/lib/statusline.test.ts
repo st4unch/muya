@@ -104,3 +104,16 @@ describe("withChannel", () => {
     expect(withChannel(withStatusline("claude -c", "/s.json"), true)).toBe(`claude ${CHANNEL_FLAG} --settings '/s.json' -c`);
   });
 });
+
+describe("applyLaunchFlags", () => {
+  it("adds the channel flag only when asked, and asks for the settings path every launch", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const m = invoke as unknown as ReturnType<typeof vi.fn>;
+    m.mockImplementation(async (cmd: string) => (cmd === "statusline_settings_path" ? "/s.json" : cmd === "claude_channels_supported"));
+    const { applyLaunchFlags } = await import("./statusline");
+    expect(await applyLaunchFlags("claude -c")).toBe("claude --settings '/s.json' -c");
+    expect(await applyLaunchFlags("claude -c", true)).toBe(`claude ${CHANNEL_FLAG} --settings '/s.json' -c`);
+    const asked = m.mock.calls.filter(([c]) => c === "statusline_settings_path").length;
+    expect(asked).toBe(2);
+  });
+});

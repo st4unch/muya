@@ -22,7 +22,9 @@ use std::sync::OnceLock;
 const DIR_PREFIX: &str = "muya-status-";
 const MAX_JSON_BYTES: u64 = 256 * 1024;
 
-static DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
+static DIR: OnceLock<PathBuf> = OnceLock::new();
+/// Serialises `ensure` so two launches never rebuild the dir at the same time.
+static ENSURE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 const TAP_SH: &str = r#"#!/bin/sh
 # Muya status-line tap: keep Claude's status JSON for Muya's footer, then show the
@@ -37,9 +39,10 @@ fi
 exit 0
 "#;
 
-/// This instance's status dir (created by `init`); None if it couldn't be created.
+/// This instance's status dir (set by `init`). It may not exist on disk: macOS clears
+/// old files from the temp folder while the app keeps running — see `ensure`.
 pub(crate) fn dir() -> Option<&'static Path> {
-    DIR.get().and_then(|d| d.as_deref())
+    DIR.get().map(PathBuf::as_path)
 }
 
 /// `MUYA_STATUS_FILE` for a PTY, when capture is set up.
@@ -88,7 +91,10 @@ fn write_files(dir: &Path, home: Option<&Path>) -> std::io::Result<()> {
     if fs::symlink_metadata(dir).is_ok() {
         fs::remove_dir_all(dir)?;
     }
-    fs::DirBuilder::new().recursive(false).mode(0o700).create(dir)?;
+    fs::DirBuilder::new()
+        .recursive(false)
+        .mode(0o700)
+        .create(dir)?;
     fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
     write_private(&dir.join("tap.sh"), TAP_SH.as_bytes())?;
     let user = home.and_then(user_statusline);
@@ -115,7 +121,11 @@ fn write_files(dir: &Path, home: Option<&Path>) -> std::io::Result<()> {
 fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
-    let mut f = fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(path)?;
+    let mut f = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)?;
     f.write_all(bytes)
 }
 
@@ -145,8 +155,18 @@ pub(crate) fn init() {
     sweep_stale(&base, crate::ssh::process_alive);
     let dir = base.join(format!("{DIR_PREFIX}{}", std::process::id()));
     let home = dirs_next::home_dir();
-    let ok = write_files(&dir, home.as_deref()).is_ok();
-    let _ = DIR.set(ok.then_some(dir));
+    let _ = write_files(&dir, home.as_deref());
+    let _ = DIR.set(dir);
+}
+
+/// Make sure `dir` still holds settings.json and tap.sh, rebuilding it when they're
+/// gone. Muya can run for days, and macOS removes old files from the temp folder in
+/// the meantime; `claude --settings <missing file>` then refuses to start at all.
+fn ensure(dir: &Path, home: Option<&Path>) -> bool {
+    let intact = fs::symlink_metadata(dir).is_ok_and(|m| m.is_dir())
+        && dir.join("settings.json").is_file()
+        && dir.join("tap.sh").is_file();
+    intact || write_files(dir, home).is_ok()
 }
 
 /// Quit: drop this instance's dir.
@@ -173,10 +193,15 @@ fn read_status(dir: &Path, pty_id: &str) -> Option<Value> {
     serde_json::from_slice(&fs::read(path).ok()?).ok()
 }
 
-/// Absolute path of the settings file to pass as `claude --settings`.
+/// Absolute path of the settings file to pass as `claude --settings`, checked (and
+/// rebuilt if needed) right before each launch. None when it can't be made: the
+/// session then starts without the status tap rather than not at all.
 #[tauri::command]
 pub fn statusline_settings_path() -> Option<String> {
-    dir().map(|d| d.join("settings.json").to_string_lossy().into_owned())
+    let d = dir()?;
+    let _guard = ENSURE.lock().unwrap_or_else(|e| e.into_inner());
+    ensure(d, dirs_next::home_dir().as_deref())
+        .then(|| d.join("settings.json").to_string_lossy().into_owned())
 }
 
 /// The latest status JSON Claude produced in this PTY, or None.
@@ -194,6 +219,26 @@ mod tests {
     fn quotes_paths_with_spaces_and_quotes() {
         assert_eq!(sh_quote("/a b/c"), "'/a b/c'");
         assert_eq!(sh_quote("/it's"), r"'/it'\''s'");
+    }
+
+    #[test]
+    fn ensure_rebuilds_files_the_os_cleared() {
+        let home = tempfile::tempdir().unwrap();
+        let dir = home.path().join("s");
+        // Nothing there yet, then only the dir left, then one file missing.
+        assert!(ensure(&dir, Some(home.path())));
+        assert!(dir.join("settings.json").is_file() && dir.join("tap.sh").is_file());
+        fs::remove_file(dir.join("settings.json")).unwrap();
+        fs::remove_file(dir.join("tap.sh")).unwrap();
+        assert!(ensure(&dir, Some(home.path())));
+        assert!(dir.join("settings.json").is_file() && dir.join("tap.sh").is_file());
+        fs::remove_dir_all(&dir).unwrap();
+        assert!(ensure(&dir, Some(home.path())));
+        assert!(dir.join("settings.json").is_file());
+        // An intact dir is left alone (a running session's status file survives).
+        fs::write(dir.join("pty-3.json"), "{}").unwrap();
+        assert!(ensure(&dir, Some(home.path())));
+        assert!(dir.join("pty-3.json").exists());
     }
 
     #[test]
@@ -292,8 +337,14 @@ mod tests {
         let link = home.path().join("link");
         std::os::unix::fs::symlink(&target, &link).unwrap();
         write_files(&link, Some(home.path())).unwrap();
-        assert!(!target.join("tap.sh").exists(), "never writes through the link");
-        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_dir(), "a fresh real dir replaced it");
+        assert!(
+            !target.join("tap.sh").exists(),
+            "never writes through the link"
+        );
+        assert!(
+            fs::symlink_metadata(&link).unwrap().file_type().is_dir(),
+            "a fresh real dir replaced it"
+        );
         assert_eq!(mode(&link), 0o700);
     }
 

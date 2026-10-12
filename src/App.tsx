@@ -28,7 +28,7 @@ import PrdBoard from "./components/PrdBoard";
 import ScheduledPromptModal, { type ScheduledPrompt } from "./components/ScheduledPromptModal";
 import SettingsModal from "./components/SettingsModal";
 import { useStatusFields, useStatusData } from "./redesign/useStatusFields";
-import { applyLaunchFlags } from "./lib/statusline";
+import { applyLaunchFlags, hasChannelFlag, withChannel } from "./lib/statusline";
 import { buildAgentCommand, singleQuote, detectAgent, AGENT_BASE_COMMAND, type AgentKind } from "./lib/agent";
 import { invoke } from "@tauri-apps/api/core";
 import { copyToClipboard } from "./lib/clipboard";
@@ -107,6 +107,9 @@ interface OpenTerminal {
   sessionCwd?: string;
   /** Restored tab whose Claude session hasn't been resumed yet — resume on click. */
   needsResume?: boolean;
+  /** Launched with Muya's channel flag (New Agent's checkbox): resuming or
+   *  duplicating it keeps the flag. Persisted with the tab. */
+  channels?: boolean;
   /** The operator renamed this tab by hand — never overwrite it with the
    *  Claude session's own name. */
   userRenamed?: boolean;
@@ -729,7 +732,7 @@ export default function App() {
     setOpenTerminals((prev) =>
       prev.map((t) => (t.key === key ? { ...t, needsResume: false } : t))
     );
-    void applyLaunchFlags(resumeCommand({ sessionId: tab.sessionId, sessionCwd: tab.sessionCwd }, singleQuote))
+    void applyLaunchFlags(resumeCommand({ sessionId: tab.sessionId, sessionCwd: tab.sessionCwd }, singleQuote), tab.channels)
       .then((cmd) => invoke("pty_write", { id: ptyId, data: `${cmd}\r` }))
       .catch(() => {});
   };
@@ -747,7 +750,7 @@ export default function App() {
     // Same rule as the restore gate above: `sessionId` alone decides, not the
     // volatile `isClaude` (which is false for exactly the tabs that need resuming).
     if (!initialCommand && t.sessionId)
-      initialCommand = resumeCommand({ sessionId: t.sessionId, sessionCwd: t.sessionCwd }, singleQuote);
+      initialCommand = withChannel(resumeCommand({ sessionId: t.sessionId, sessionCwd: t.sessionCwd }, singleQuote), Boolean(t.channels));
     const newKey = t.sshServerId ? `ssh:${t.sshServerId}:${ts}` : `term-copy-${ts}`;
     openTerminal({
       key: newKey,
@@ -757,6 +760,7 @@ export default function App() {
       initialCommand,
       sshServerId: t.sshServerId,
       isClaude: t.isClaude,
+      channels: t.channels,
     });
   };
 
@@ -1515,6 +1519,7 @@ export default function App() {
       kind: "terminal",
       cwd,
       initialCommand,
+      channels: hasChannelFlag(initialCommand) || undefined,
     });
     showControl();
   };

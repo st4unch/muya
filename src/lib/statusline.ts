@@ -21,21 +21,17 @@ export function withStatusline(cmd: string, settingsPath: string | null | undefi
   });
 }
 
-let settingsPathPromise: Promise<string | null> | null = null;
-
-/** Settings file Muya's status tap lives in (fetched once). Null when unavailable. */
+/** Settings file Muya's status tap lives in. Asked fresh on every launch: the backend
+ *  rebuilds it if the OS cleared it from the temp folder, so a long-running Muya never
+ *  hands Claude a path that no longer exists. Null when unavailable. */
 export function statuslineSettingsPath(): Promise<string | null> {
-  if (!settingsPathPromise) {
-    settingsPathPromise = invoke<string | null>("statusline_settings_path")
-      .then((p) => (typeof p === "string" && p ? p : null))
-      .catch(() => null);
-  }
-  return settingsPathPromise;
+  return invoke<string | null>("statusline_settings_path")
+    .then((p) => (typeof p === "string" && p ? p : null))
+    .catch(() => null);
 }
 
-/** Test hook: forget the cached settings path and channel support. */
+/** Test hook: forget the cached channel support. */
 export function resetStatuslineCache(): void {
-  settingsPathPromise = null;
   channelsPromise = null;
 }
 
@@ -67,12 +63,18 @@ export function channelsSupported(): Promise<boolean> {
   return channelsPromise;
 }
 
-/** `cmd` with Muya's launch flags on every claude launch: the status tap and the
- *  channel flag (each left out when unavailable). */
-export async function applyLaunchFlags(cmd: string): Promise<string> {
+/** Does `cmd` already load Muya's channel? */
+export function hasChannelFlag(cmd: string | undefined): boolean {
+  return Boolean(cmd && /(^|\s)--dangerously-load-development-channels(\s|=)/.test(cmd));
+}
+
+/** `cmd` with Muya's launch flags on every claude launch: the status tap always (when
+ *  available), the channel flag only when `channels` is asked for — it is opt-in per
+ *  agent (New Agent's checkbox) — and the CLI supports it. */
+export async function applyLaunchFlags(cmd: string, channels = false): Promise<string> {
   if (!/claude/.test(cmd)) return cmd;
-  const [settings, channels] = await Promise.all([statuslineSettingsPath(), channelsSupported()]);
-  return withChannel(withStatusline(cmd, settings), channels);
+  const [settings, supported] = await Promise.all([statuslineSettingsPath(), channels ? channelsSupported() : false]);
+  return withChannel(withStatusline(cmd, settings), channels && supported);
 }
 
 // ── Formatters ────────────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useId, type CSSProperties, type KeyboardEv
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { X, Plus, FileText, FolderSearch, ChevronDown, ChevronRight, RotateCcw } from "lucide-react";
 import { AGENT_BASE_COMMAND, buildAgentCommand } from "../lib/agent";
+import { CHANNEL_FLAG, channelsSupported } from "../lib/statusline";
 
 export interface NewAgentSpec {
   type: "claude" | "opencode" | "terminal";
@@ -34,14 +35,15 @@ export const CLAUDE_MODES: { value: ClaudeMode; label: string; hint: string; fla
   { value: "bypass", label: "Bypass permissions", hint: "Skip every permission check", flag: "--dangerously-skip-permissions" },
 ];
 
-/** The base command (no prompt/files) for a type + option. */
-export function baseCommand(type: AgentType, mode: ClaudeMode, autoApprove: boolean, agentsManager = false): string {
+/** The base command (no prompt/files) for a type + option. `channels` adds Muya's
+ *  channel flag to a Claude session (opt-in, off by default). */
+export function baseCommand(type: AgentType, mode: ClaudeMode, autoApprove: boolean, agentsManager = false, channels = false): string {
   if (type === "terminal") return "";
   if (type === "opencode") return autoApprove ? AGENT_BASE_COMMAND.opencode : "opencode";
   // The pre-v0.4 "claude agents" preset: Claude's own agent manager instead of a session.
   if (agentsManager) return "claude agents";
   const flag = CLAUDE_MODES.find((m) => m.value === mode)!.flag;
-  return `claude ${flag}`;
+  return channels ? `claude ${CHANNEL_FLAG} ${flag}` : `claude ${flag}`;
 }
 
 const fieldStyle: CSSProperties = {
@@ -109,6 +111,9 @@ export default function NewAgentModal({
   const [mode, setMode] = useState<ClaudeMode>("bypass");
   const [autoApprove, setAutoApprove] = useState(true);
   const [agentsManager, setAgentsManager] = useState(false);
+  const [channels, setChannels] = useState(false);
+  /** null while checking; false when the installed Claude CLI lacks the channel flag. */
+  const [channelsOk, setChannelsOk] = useState<boolean | null>(null);
   const [workspace, setWorkspace] = useState(defaultWs);
   const [wsOpen, setWsOpen] = useState(false);
   const [title, setTitle] = useState("");
@@ -131,8 +136,17 @@ export default function NewAgentModal({
     setWsError("");
     setError("");
     setWsOpen(false);
+    let live = true;
+    void channelsSupported().then((ok) => {
+      if (!live) return;
+      setChannelsOk(ok);
+      if (!ok) setChannels(false);
+    });
     const t = setTimeout(() => wsRef.current?.focus(), 0);
-    return () => clearTimeout(t);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, defaultWorkspace]);
 
@@ -153,7 +167,7 @@ export default function NewAgentModal({
 
   const isTerminal = type === "terminal";
   const activeWorkspace = workspace.trim();
-  const base = baseCommand(type, mode, autoApprove, agentsManager);
+  const base = baseCommand(type, mode, autoApprove, agentsManager, channels && channelsOk === true);
   // The agents manager is an interactive picker — a prompt/files would be meaningless there.
   const takesInput = !isTerminal && !(type === "claude" && agentsManager);
   const generated = isTerminal ? "" : buildAgentCommand({ command: base, prompt: takesInput ? prompt : "", files: takesInput ? files : [] });
@@ -446,6 +460,28 @@ export default function NewAgentModal({
                 Open the agents manager instead
                 <span style={{ ...monoStyle, color: "var(--text-faint)" }}>claude agents</span>
               </label>
+              {!agentsManager && (
+                <>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: channelsOk === false ? "var(--text-faint)" : "var(--text)", cursor: channelsOk ? "pointer" : "default", whiteSpace: "nowrap", marginTop: 2 }}>
+                    <input
+                      type="checkbox"
+                      checked={channels && channelsOk === true}
+                      disabled={channelsOk !== true}
+                      onChange={(e) => {
+                        setChannels(e.target.checked);
+                        setCmdEdit(null);
+                      }}
+                      style={{ width: 15, height: 15, margin: 0, accentColor: "var(--accent)" }}
+                    />
+                    Load Muya channel
+                  </label>
+                  <div style={helperStyle}>
+                    {channelsOk === false
+                      ? "Your Claude Code version does not support channels"
+                      : "Messages from other sessions and paired Macs arrive inside the chat instead of being typed into the terminal"}
+                  </div>
+                </>
+              )}
             </div>
           )}
           {type === "opencode" && (
