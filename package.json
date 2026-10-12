@@ -1,7 +1,7 @@
 {
   "name": "muya",
   "private": true,
-  "version": "4.0.15",
+  "version": "4.0.16",
   "type": "module",
   "scripts": {
     "dev": "vite",

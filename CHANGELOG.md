@@ -6,6 +6,13 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.0.16] - 2026-10-12
+
+### Added
+- **Auto-allow permission prompts.** Settings → Startup → "Auto-allow permission prompts" (off by default). When on, a Claude permission prompt you don't answer within 2 seconds is approved for you, in every session; the Allow button fills up over those 2 seconds. While it is off, a new prompt shows a 5-second suggestion to turn it on — close it with X, "Not now" or Esc (Esc no longer reaches the terminal there, and doesn't take Muya out of full screen).
+- **Each terminal tab keeps its own command history.** ↑ in a terminal shows only that tab's commands, also after Muya restarts and restores the tab. Your own zsh setup still runs as before. Claude, OpenCode and SSH tabs keep the shared history.
+- **Sessions → Terminals.** Each terminal's history is listed with its folder, last use and recent commands; expand a row for all of them, open the terminal again with its history, or delete it.
+
 ## [4.0.15] - 2026-10-08
 
 ### Changed
