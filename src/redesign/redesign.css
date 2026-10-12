@@ -313,3 +313,18 @@
     display: none;
   }
 }
+
+/* Auto-allow on: the Allow button fills up over the 2 s before Muya clicks it. The
+   animation restarts with each prompt because the button mounts with the prompt. */
+:root[data-auto-allow="1"] .rd-allow-btn:not(:disabled) {
+  background-image: linear-gradient(rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.35));
+  background-repeat: no-repeat;
+  background-size: 0% 100%;
+  animation: rd-auto-allow 2s linear forwards;
+}
+@keyframes rd-auto-allow {
+  to { background-size: 100% 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-auto-allow="1"] .rd-allow-btn:not(:disabled) { animation: none; background-size: 100% 100%; }
+}

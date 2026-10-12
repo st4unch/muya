@@ -166,7 +166,7 @@ export function GridPanel({
 
       {waiting && (
         <div style={{ height: BAR_HEIGHT, boxSizing: "border-box", display: "flex", alignItems: "center", gap: 8, padding: "0 14px", borderTop: "1px solid var(--border)", background: "var(--bg-chrome)" }}>
-          <button type="button" disabled={agent.approval?.actionable === false} onClick={onApprove} style={{ height: 34, padding: "0 16px", borderRadius: 7, border: "none", background: "var(--warning-btn-bg)", color: "var(--warning-btn-fg)", fontSize: 13, fontWeight: 600 }}>
+          <button type="button" disabled={agent.approval?.actionable === false} onClick={onApprove} className="rd-allow-btn" style={{ height: 34, padding: "0 16px", borderRadius: 7, border: "none", backgroundColor: "var(--warning-btn-bg)", color: "var(--warning-btn-fg)", fontSize: 13, fontWeight: 600 }}>
             Allow <span style={{ fontFamily: "var(--font-mono)", fontWeight: 400, fontSize: 11 }}>Y</span>
           </button>
           <button type="button" disabled={agent.approval?.actionable === false} onClick={onDeny} className="rd-btn2" style={{ height: 34, padding: "0 16px", borderRadius: 7, border: "1px solid var(--warning-border)", background: "transparent", color: "var(--warning-text)", fontSize: 13 }}>

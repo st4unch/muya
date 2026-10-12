@@ -4,6 +4,7 @@ import { Check, X } from "lucide-react";
 import type { ThemePreference } from "../theme/theme";
 import { ThemeMonitorIcon, ThemeMoonIcon, ThemeSunIcon } from "../redesign/icons";
 import { loadResumeOnLaunch, saveResumeOnLaunch } from "../lib/startup";
+import { loadAutoApprove, saveAutoApprove } from "../lib/autoApprove";
 
 const DEFAULT_LOG_PATH = "~/.claude/muya-debug.log";
 
@@ -70,6 +71,7 @@ export default function SettingsModal({
   const [saved, setSaved] = useState(false);
   const [loginItem, setLoginItem] = useState(false);
   const [resumeOnLaunch, setResumeOnLaunch] = useState(false);
+  const [autoApprove, setAutoApprove] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
 
   // Load current settings whenever the modal opens.
@@ -77,6 +79,7 @@ export default function SettingsModal({
     if (!open) return;
     setError("");
     setResumeOnLaunch(loadResumeOnLaunch());
+    setAutoApprove(loadAutoApprove());
     invoke<boolean>("login_item_get")
       .then((v) => setLoginItem(!!v))
       .catch(() => setLoginItem(false));
@@ -279,6 +282,22 @@ export default function SettingsModal({
                   onChange={(v) => {
                     saveResumeOnLaunch(v);
                     setResumeOnLaunch(v);
+                  }}
+                />
+              </div>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 14px", borderTop: "1px solid var(--border)" }}>
+                <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span id={id("autoallow")} style={{ fontSize: 13, fontWeight: 600 }}>Auto-allow permission prompts</span>
+                  <span style={helperStyle}>
+                    If you don't answer a Claude permission prompt within 2 seconds, Muya clicks Allow for you. Applies to every session, including ones you can't see.
+                  </span>
+                </div>
+                <Switch
+                  checked={autoApprove}
+                  labelledBy={id("autoallow")}
+                  onChange={(v) => {
+                    saveAutoApprove(v);
+                    setAutoApprove(v);
                   }}
                 />
               </div>

@@ -61,6 +61,8 @@ import type { AgentFilter } from "./redesign/AgentList";
 import type { InspectorTab } from "./redesign/Inspector";
 import { shouldExitGridOnEscape } from "./redesign/gridKeys";
 import { deliveryWrites, SUBMIT_DELAY_MS, type RemoteSender } from "./lib/remoteMessage";
+import { approvableKeys, AUTO_APPROVE_EVENT, AUTO_APPROVE_MS, loadAutoApprove, saveAutoApprove } from "./lib/autoApprove";
+import { AutoAllowSuggest } from "./redesign/AutoAllowSuggest";
 
 // Types matching the user's workflow model
 interface AgentSession {
@@ -424,6 +426,8 @@ export default function App() {
 
   // Track fullscreen state in a ref so the ESC handler can check it synchronously.
   const isFullscreenRef = useRef(false);
+  // The Auto-allow suggestion is open: its Esc closes it, like a modal's (see below).
+  const autoAllowSuggestOpenRef = useRef(false);
   useEffect(() => {
     const win = getCurrentWindow();
     void win.isFullscreen().then((fs) => { isFullscreenRef.current = fs; });
@@ -446,7 +450,7 @@ export default function App() {
       // Detect BOTH the semantic marker (role="dialog") and the app-wide modal
       // backdrop convention (a full-screen `fixed inset-0 z-50` overlay), so
       // every modal is covered without tagging each one.
-      if (appModalOpen()) {
+      if (appModalOpen() || autoAllowSuggestOpenRef.current) {
         void win.setFullscreen(true);
         lastEscMs = 0;
         return;
@@ -1674,6 +1678,68 @@ export default function App() {
     if (writePty(key, option.key)) modelRef.current.markAnswered(key);
   }, [writePty]);
 
+  // Settings → "Auto-allow permission prompts": a prompt nobody answers within
+  // AUTO_APPROVE_MS is approved, in every session (visible or not). While it is off,
+  // a new prompt pops a short suggestion to turn it on.
+  const [autoApprove, setAutoApprove] = useState(loadAutoApprove);
+  useEffect(() => {
+    const onChange = (e: Event) => setAutoApprove(!!(e as CustomEvent<boolean>).detail);
+    window.addEventListener(AUTO_APPROVE_EVENT, onChange);
+    return () => window.removeEventListener(AUTO_APPROVE_EVENT, onChange);
+  }, []);
+  // Drives the Allow buttons' 2 s fill (redesign.css, .rd-allow-btn).
+  useEffect(() => {
+    if (autoApprove) document.documentElement.dataset.autoAllow = "1";
+    else delete document.documentElement.dataset.autoAllow;
+  }, [autoApprove]);
+  // Joined so the effects below re-run only when the set of waiting prompts changes.
+  const approvable = approvableKeys(agentVMs).join("\n");
+  const autoTimersRef = useRef(new Map<string, number>());
+  useEffect(() => {
+    const timers = autoTimersRef.current;
+    const keys = new Set(autoApprove && approvable ? approvable.split("\n") : []);
+    for (const [k, t] of timers) if (!keys.has(k)) { clearTimeout(t); timers.delete(k); }
+    for (const k of keys) {
+      if (timers.has(k)) continue;
+      timers.set(k, window.setTimeout(() => {
+        timers.delete(k);
+        // Re-check at fire time: the user may have answered it meanwhile.
+        if (approvableKeys(agentVMsRef.current).includes(k)) respond(k, "approve");
+      }, AUTO_APPROVE_MS));
+    }
+  }, [autoApprove, approvable, respond]);
+  useEffect(() => () => { for (const t of autoTimersRef.current.values()) clearTimeout(t); }, []);
+
+  const [autoAllowSuggest, setAutoAllowSuggest] = useState<string | null>(null);
+  const prevApprovableRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const now = new Set(approvable ? approvable.split("\n") : []);
+    const fresh = [...now].find((k) => !prevApprovableRef.current.has(k));
+    prevApprovableRef.current = now;
+    if (!fresh || autoApprove) return;
+    const mode = agentVMsRef.current.find((a) => a.key === fresh)?.mode;
+    if (mode === "auto" || mode === "bypass") return;
+    setAutoAllowSuggest(fresh);
+  }, [approvable, autoApprove]);
+  useEffect(() => {
+    autoAllowSuggestOpenRef.current = !!autoAllowSuggest;
+    if (!autoAllowSuggest) return;
+    const t = setTimeout(() => setAutoAllowSuggest(null), 5000);
+    // Esc closes it. Capture phase on window runs before the terminal, so the key
+    // does not also reach Claude (where Esc would reject the prompt).
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      setAutoAllowSuggest(null);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("keydown", onKey, true);
+    };
+  }, [autoAllowSuggest]);
+
   const modeOf = (key: string): PermissionMode | undefined => agentVMsRef.current.find((a) => a.key === key)?.mode;
 
   /** Shift+Tab until Claude reports `target` (max 4 tries; stop as soon as a press
@@ -2596,6 +2662,13 @@ export default function App() {
             item={notificationItem(toastNotification)}
             onOpen={() => { setToastNotification(null); openFromNotification(toastNotification.key); }}
             onDismiss={() => setToastNotification(null)}
+          />
+        )}
+        {autoAllowSuggest && (
+          <AutoAllowSuggest
+            agentName={agentVMs.find((a) => a.key === autoAllowSuggest)?.name ?? "A session"}
+            onEnable={() => { saveAutoApprove(true); setAutoAllowSuggest(null); }}
+            onDismiss={() => setAutoAllowSuggest(null)}
           />
         )}
         {menu?.kind === "mode" && selectedAgentKey && (

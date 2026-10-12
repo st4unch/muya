@@ -54,7 +54,7 @@ export function Inspector({ waitingAgents, onApprove, onDeny, onOpen, activeTab,
                 </div>
               )}
               <div style={{ display: "flex", gap: 8 }}>
-                <button type="button" disabled={agent.approval?.actionable === false} onClick={() => onApprove(agent.key)} style={{ flexGrow: 1, height: 32, borderRadius: 7, border: "none", background: "var(--warning-btn-bg)", color: "var(--warning-btn-fg)", fontSize: 13, fontWeight: 600 }}>
+                <button type="button" disabled={agent.approval?.actionable === false} onClick={() => onApprove(agent.key)} className="rd-allow-btn" style={{ flexGrow: 1, height: 32, borderRadius: 7, border: "none", backgroundColor: "var(--warning-btn-bg)", color: "var(--warning-btn-fg)", fontSize: 13, fontWeight: 600 }}>
                   Allow
                 </button>
                 <button type="button" disabled={agent.approval?.actionable === false} onClick={() => onDeny(agent.key)} className="rd-btn2" style={{ flexGrow: 1, height: 32, borderRadius: 7, border: "1px solid var(--warning-border)", background: "transparent", color: "var(--warning-text)", fontSize: 13 }}>
