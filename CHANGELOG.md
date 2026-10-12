@@ -6,27 +6,18 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [4.0.17] - 2026-10-12
-
-### Added
-- **Sessions → Terminal History tab.** Next to Agent Sessions, a second tab lists what you typed in your terminals, grouped by day (Today, Yesterday, dates) with the time of each command. Expand a terminal to view all of that day's commands, download its whole history as a .txt file, reopen the terminal with its history, or delete it. Search works on terminal names, folders and commands.
-
-### Fixed
-- **Terminal commands are saved as you type them,** with the time. macOS zsh otherwise saved them only when the terminal closed, so the history stayed empty while tabs were open (and was lost if a tab was killed).
-
-### Changed
-- **Settings switches apply on Save.** Open at login, Resume Claude sessions and Auto-allow now light up Save when you change them and take effect when you press it, like the log settings.
-- **The Auto-allow suggestion stays 30 seconds** (was 5).
-
-### Fixed
-- **The third approval button says what it really does.** It used to read "Always allow this session" even when Claude's option saves a rule for the whole project (e.g. "don't ask again for: curl *"). It now reads "Don't ask again (this project)" or "Allow all this session" to match Claude's option, with the full text on hover, and is hidden when the prompt has no such option.
-
 ## [4.0.16] - 2026-10-12
 
 ### Added
-- **Auto-allow permission prompts.** Settings → Startup → "Auto-allow permission prompts" (off by default). When on, a Claude permission prompt you don't answer within 2 seconds is approved for you, in every session; the Allow button fills up over those 2 seconds. While it is off, a new prompt shows a 5-second suggestion to turn it on — close it with X, "Not now" or Esc (Esc no longer reaches the terminal there, and doesn't take Muya out of full screen).
-- **Each terminal tab keeps its own command history.** ↑ in a terminal shows only that tab's commands, also after Muya restarts and restores the tab. Your own zsh setup still runs as before. Claude, OpenCode and SSH tabs keep the shared history.
-- **Sessions → Terminals.** Each terminal's history is listed with its folder, last use and recent commands; expand a row for all of them, open the terminal again with its history, or delete it.
+- **Auto-allow permission prompts.** Settings → Startup → "Auto-allow permission prompts" (off by default). When on, a Claude permission prompt you don't answer within 2 seconds is approved for you, in every session and every layout (tabs, grid, split); the Allow button fills up over those 2 seconds. While it is off, a new prompt shows a suggestion at the top right for 30 seconds — close it with X, "Not now" or Esc (Esc doesn't reach the terminal there, and doesn't take Muya out of full screen). Its "Turn on Auto-allow" button is deliberately plain and far from Allow, so it can't be clicked by mistake.
+- **Each terminal tab keeps its own command history.** ↑ in a terminal shows only that tab's commands, also after Muya restarts and restores the tab. Commands are saved as you type them, with the time. Your own zsh setup still runs as before. Claude, OpenCode and SSH tabs keep the shared history.
+- **Sessions → Terminal History tab.** Next to Agent Sessions, a second tab lists what you typed in your terminals, grouped by day (Today, Yesterday, dates) with the time of each command. Expand a terminal to view all of that day's commands, download its whole history as a .txt file, reopen the terminal with its history, or delete it. Search works on terminal names, folders and commands.
+
+### Changed
+- **Settings switches apply on Save.** Open at login, Resume Claude sessions and Auto-allow now light up Save when you change them and take effect when you press it, like the log settings.
+
+### Fixed
+- **The third approval button says what it really does.** It used to read "Always allow this session" even when Claude's option saves a rule for the whole project (e.g. "don't ask again for: curl *"). It now reads "Don't ask again (this project)" or "Allow all this session" to match Claude's option, with the full text on hover, and is hidden when the prompt has no such option.
 
 ## [4.0.15] - 2026-10-08
 
