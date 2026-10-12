@@ -1,6 +1,6 @@
 // Created by Claude — Classification: INTERNAL
 //
-// Shown for a few seconds when a permission prompt appears while Auto-allow is off:
+// Shown for 30 seconds when a permission prompt appears while Auto-allow is off:
 // offers to turn it on. Closed by its X, by Esc (App handles the key so it neither
 // reaches the terminal nor takes Muya out of fullscreen), or by timing out.
 import { X } from "lucide-react";

@@ -23,6 +23,10 @@ export interface PendingApproval {
   summary: string;
   /** false = the dialog's options could not be parsed, so Allow/Deny are disabled. */
   actionable?: boolean;
+  /** Claude's own text for its "allow always" option, e.g. "Yes, and don't ask again
+   *  for: curl *" (kept for this project) or "Yes, allow all edits during this session".
+   *  Absent when the prompt has no such option. */
+  alwaysLabel?: string;
 }
 
 export interface AgentVM {

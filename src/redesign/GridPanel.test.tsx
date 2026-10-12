@@ -1,6 +1,6 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { GridPanel } from "./GridPanel";
+import { alwaysAllowText, GridPanel } from "./GridPanel";
 import { previewAgents } from "./previewFixture";
 
 const waitingAgent = previewAgents[0]; // documents-44
@@ -63,5 +63,14 @@ describe("GridPanel", () => {
     renderPanel(workingAgent, { composerValue: "hi", onSendMessage });
     fireEvent.keyDown(screen.getByLabelText("Message muya-all"), { key: "Enter" });
     expect(onSendMessage).toHaveBeenCalledWith("hi");
+  });
+});
+
+
+describe("alwaysAllowText", () => {
+  it("says whether the rule is kept for the project or the session", () => {
+    expect(alwaysAllowText("Yes, and don't ask again for: curl *")).toBe("Don't ask again (this project)");
+    expect(alwaysAllowText("Yes, allow all edits during this session")).toBe("Allow all this session");
+    expect(alwaysAllowText("Yes, always")).toBe("Always allow");
   });
 });

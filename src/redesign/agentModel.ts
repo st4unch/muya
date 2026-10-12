@@ -146,6 +146,7 @@ export function buildAgents(input: AgentModelInput): AgentVM[] {
           target: p?.target,
           summary: approvalSummary(p?.tool),
           actionable: Boolean(p && p.options.length > 0),
+          alwaysLabel: p?.options.find((o) => o.kind === "approveAlways")?.label,
         };
         activityLine = `Needs permission: ${p?.tool ?? "permission prompt"}`;
         since = stamp?.status === "waiting" ? formatSince(input.now - stamp.at) : undefined;

@@ -6,6 +6,13 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **Settings switches apply on Save.** Open at login, Resume Claude sessions and Auto-allow now light up Save when you change them and take effect when you press it, like the log settings.
+- **The Auto-allow suggestion stays 30 seconds** (was 5).
+
+### Fixed
+- **The third approval button says what it really does.** It used to read "Always allow this session" even when Claude's option saves a rule for the whole project (e.g. "don't ask again for: curl *"). It now reads "Don't ask again (this project)" or "Allow all this session" to match Claude's option, with the full text on hover, and is hidden when the prompt has no such option.
+
 ## [4.0.16] - 2026-10-12
 
 ### Added

@@ -172,9 +172,11 @@ export function GridPanel({
           <button type="button" disabled={agent.approval?.actionable === false} onClick={onDeny} className="rd-btn2" style={{ height: 34, padding: "0 16px", borderRadius: 7, border: "1px solid var(--warning-border)", background: "transparent", color: "var(--warning-text)", fontSize: 13 }}>
             Deny <span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>N</span>
           </button>
-          <button type="button" disabled={agent.approval?.actionable === false} onClick={onAlwaysAllow} className="rd-btn2" style={{ height: 34, padding: "0 16px", borderRadius: 7, border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-tertiary)", fontSize: 13 }}>
-            Always allow this session
-          </button>
+          {agent.approval?.alwaysLabel && (
+            <button type="button" disabled={agent.approval.actionable === false} onClick={onAlwaysAllow} title={agent.approval.alwaysLabel} className="rd-btn2" style={{ height: 34, padding: "0 16px", borderRadius: 7, border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-tertiary)", fontSize: 13 }}>
+              {alwaysAllowText(agent.approval.alwaysLabel)}
+            </button>
+          )}
         </div>
       )}
 
@@ -225,4 +227,13 @@ export function EmptyGridPanel({ onAssignFromQueue, onPickAgent }: { onAssignFro
       </div>
     </section>
   );
+}
+
+/** Short button text for Claude's "allow always" option, honest about how long it
+ *  lasts: Bash rules are saved to the project ("don't ask again"), edit approvals end
+ *  with the session. The full option text is the button's tooltip. */
+export function alwaysAllowText(label: string): string {
+  if (/don'?t ask again/i.test(label)) return "Don't ask again (this project)";
+  if (/session/i.test(label)) return "Allow all this session";
+  return "Always allow";
 }

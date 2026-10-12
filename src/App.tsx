@@ -1725,7 +1725,7 @@ export default function App() {
   useEffect(() => {
     autoAllowSuggestOpenRef.current = !!autoAllowSuggest;
     if (!autoAllowSuggest) return;
-    const t = setTimeout(() => setAutoAllowSuggest(null), 5000);
+    const t = setTimeout(() => setAutoAllowSuggest(null), 30_000);
     // Esc closes it. Capture phase on window runs before the terminal, so the key
     // does not also reach Claude (where Esc would reject the prompt).
     const onKey = (e: KeyboardEvent) => {

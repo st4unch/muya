@@ -34,7 +34,7 @@ describe("SettingsModal", () => {
     expect(save).toBeDisabled();
   });
 
-  it("Open at login shows the real state and toggles the login item", async () => {
+  it("Open at login shows the real state and changes the login item on Save", async () => {
     let on = true;
     invoke.mockImplementation(async (cmd: string, args?: { enabled: boolean }) => {
       if (cmd === "debug_log_get") return { enabled: false, path: "~/.claude/muya-debug.log" };
@@ -43,22 +43,38 @@ describe("SettingsModal", () => {
     });
     render(<SettingsModal open onClose={() => {}} />);
     const sw = screen.getByRole("switch", { name: "Open Muya at login" });
+    const save = screen.getByRole("button", { name: "Save" });
     await waitFor(() => expect(sw).toHaveAttribute("aria-checked", "true"));
+    expect(save).toBeDisabled();
     fireEvent.click(sw);
+    expect(sw).toHaveAttribute("aria-checked", "false");
+    expect(invoke).not.toHaveBeenCalledWith("login_item_set", expect.anything());
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(save);
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("login_item_set", { enabled: false }));
-    await waitFor(() => expect(sw).toHaveAttribute("aria-checked", "false"));
+    await waitFor(() => expect(save).toBeDisabled());
   });
 
-  it("Resume on launch is remembered immediately", () => {
+  it("Resume on launch and Auto-allow enable Save and are stored only on Save", async () => {
     localStorage.removeItem("muya.resumeOnLaunch");
+    localStorage.removeItem("muya.autoApprove");
     render(<SettingsModal open onClose={() => {}} />);
-    const sw = screen.getByRole("switch", { name: "Resume Claude sessions on launch" });
-    expect(sw).toHaveAttribute("aria-checked", "false");
-    fireEvent.click(sw);
-    expect(sw).toHaveAttribute("aria-checked", "true");
-    expect(localStorage.getItem("muya.resumeOnLaunch")).toBe("1");
-    fireEvent.click(sw);
+    const resume = screen.getByRole("switch", { name: "Resume Claude sessions on launch" });
+    const auto = screen.getByRole("switch", { name: "Auto-allow permission prompts" });
+    const save = screen.getByRole("button", { name: "Save" });
+    await waitFor(() => expect(save).toBeDisabled());
+    fireEvent.click(resume);
+    fireEvent.click(auto);
     expect(localStorage.getItem("muya.resumeOnLaunch")).toBeNull();
+    expect(localStorage.getItem("muya.autoApprove")).toBeNull();
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+    await waitFor(() => expect(localStorage.getItem("muya.resumeOnLaunch")).toBe("1"));
+    expect(localStorage.getItem("muya.autoApprove")).toBe("1");
+    await waitFor(() => expect(save).toBeDisabled());
+    // Switching back is a change again.
+    fireEvent.click(auto);
+    expect(save).toBeEnabled();
   });
 
   it("Open-source licenses opens the bundled notices", async () => {

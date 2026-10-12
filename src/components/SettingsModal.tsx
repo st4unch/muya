@@ -72,17 +72,26 @@ export default function SettingsModal({
   const [loginItem, setLoginItem] = useState(false);
   const [resumeOnLaunch, setResumeOnLaunch] = useState(false);
   const [autoApprove, setAutoApprove] = useState(false);
+  // Startup switches as stored when the modal opened: like the log settings, a change
+  // is pending until Save (null = login item state still loading).
+  const [startupStored, setStartupStored] = useState<{ login: boolean; resume: boolean; auto: boolean } | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
 
   // Load current settings whenever the modal opens.
   useEffect(() => {
     if (!open) return;
     setError("");
-    setResumeOnLaunch(loadResumeOnLaunch());
-    setAutoApprove(loadAutoApprove());
+    const resume = loadResumeOnLaunch();
+    const auto = loadAutoApprove();
+    setResumeOnLaunch(resume);
+    setAutoApprove(auto);
+    setStartupStored(null);
     invoke<boolean>("login_item_get")
-      .then((v) => setLoginItem(!!v))
-      .catch(() => setLoginItem(false));
+      .catch(() => false)
+      .then((v) => {
+        setLoginItem(!!v);
+        setStartupStored({ login: !!v, resume, auto });
+      });
     setSaved(false);
     setStored(null);
     invoke<{ enabled: boolean; path: string }>("debug_log_get")
@@ -112,7 +121,11 @@ export default function SettingsModal({
   if (!open) return null;
 
   const cleanPath = path.trim() || DEFAULT_LOG_PATH;
-  const dirty = stored !== null && (stored.enabled !== enabled || stored.path !== cleanPath);
+  const logDirty = stored !== null && (stored.enabled !== enabled || stored.path !== cleanPath);
+  const startupDirty =
+    startupStored !== null &&
+    (startupStored.login !== loginItem || startupStored.resume !== resumeOnLaunch || startupStored.auto !== autoApprove);
+  const dirty = logDirty || startupDirty;
 
   const save = async () => {
     if (!dirty || busy) return;
@@ -120,9 +133,18 @@ export default function SettingsModal({
     setError("");
     setSaved(false);
     try {
-      await invoke("debug_log_set", { enabled, path: cleanPath });
-      setStored({ enabled, path: cleanPath });
-      setPath(cleanPath);
+      if (startupStored && startupDirty) {
+        const login = startupStored.login !== loginItem ? !!(await invoke<boolean>("login_item_set", { enabled: loginItem })) : loginItem;
+        setLoginItem(login);
+        saveResumeOnLaunch(resumeOnLaunch);
+        saveAutoApprove(autoApprove);
+        setStartupStored({ login, resume: resumeOnLaunch, auto: autoApprove });
+      }
+      if (logDirty) {
+        await invoke("debug_log_set", { enabled, path: cleanPath });
+        setStored({ enabled, path: cleanPath });
+        setPath(cleanPath);
+      }
       setSaved(true);
     } catch (e) {
       setError(String(e));
@@ -262,10 +284,8 @@ export default function SettingsModal({
                   checked={loginItem}
                   labelledBy={id("login")}
                   onChange={(v) => {
-                    setError("");
-                    invoke<boolean>("login_item_set", { enabled: v })
-                      .then(setLoginItem)
-                      .catch((e) => setError(String(e)));
+                    setLoginItem(v);
+                    edit();
                   }}
                 />
               </div>
@@ -280,8 +300,8 @@ export default function SettingsModal({
                   checked={resumeOnLaunch}
                   labelledBy={id("resume")}
                   onChange={(v) => {
-                    saveResumeOnLaunch(v);
                     setResumeOnLaunch(v);
+                    edit();
                   }}
                 />
               </div>
@@ -296,8 +316,8 @@ export default function SettingsModal({
                   checked={autoApprove}
                   labelledBy={id("autoallow")}
                   onChange={(v) => {
-                    saveAutoApprove(v);
                     setAutoApprove(v);
+                    edit();
                   }}
                 />
               </div>
@@ -382,7 +402,7 @@ export default function SettingsModal({
             ) : dirty ? (
               "Unsaved changes · ⌘ Enter to save"
             ) : (
-              "Theme changes apply right away"
+              "Theme changes apply right away · switches apply on Save"
             )}
           </span>
           <div style={{ display: "flex", gap: 8 }}>
