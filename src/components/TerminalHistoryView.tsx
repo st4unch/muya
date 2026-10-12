@@ -12,6 +12,8 @@ import { groupByDay, historyText, localTime, type TermEntries } from "../lib/ter
 
 /** Commands shown per terminal per day before "show all". */
 const PREVIEW = 5;
+/** Must match MAX_TERMINALS in src-tauri/src/term_history.rs. */
+const MAX_TERMINALS = 100;
 
 const btn =
   "flex items-center gap-1 text-[11px] font-mono px-2 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-[var(--bg-control)] text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer transition-colors";
@@ -51,8 +53,26 @@ export default function TerminalHistoryView({
     return groupByDay(filtered);
   }, [terms, q]);
 
-  const download = async (t: TermEntries) => {
+  // The list holds only each terminal's newest commands; "View all" and download read
+  // that one terminal in full, once.
+  const full = async (key: string): Promise<TermEntries | undefined> => {
+    const have = terms.find((x) => x.key === key);
+    if (have && have.entries.length >= have.total) return have;
+    const t = await invoke<TermEntries | null>("term_history_full", { key }).catch(() => null);
+    if (!t) return have;
+    setTerms((prev) => prev.map((x) => (x.key === key ? t : x)));
+    return t;
+  };
+
+  const expand = (id: string, key: string) => {
+    setExpanded((prev) => new Set(prev).add(id));
+    void full(key);
+  };
+
+  const download = async (key: string) => {
     try {
+      const t = await full(key);
+      if (!t) return;
       const { save } = await import("@tauri-apps/plugin-dialog");
       const dest = (await save({
         title: "Download terminal history",
@@ -90,13 +110,12 @@ export default function TerminalHistoryView({
               const id = `${g.day}/${t.key}`;
               const open = expanded.has(id);
               const lines = open ? t.entries : t.entries.slice(0, PREVIEW);
-              const full = terms.find((x) => x.key === t.key);
               return (
                 <div key={id} className="bg-[var(--bg-control)] border border-neutral-200 dark:border-neutral-700 rounded-lg p-3 shadow-sm">
                   <div className="flex items-center justify-between gap-3">
                     <button
                       type="button"
-                      onClick={() => setExpanded((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; })}
+                      onClick={() => (open ? setExpanded((prev) => { const n = new Set(prev); n.delete(id); return n; }) : expand(id, t.key))}
                       className="min-w-0 text-left cursor-pointer"
                       title={open ? "Show fewer" : "View all commands of this day"}
                     >
@@ -112,11 +131,9 @@ export default function TerminalHistoryView({
                       <button type="button" className={btn} title="Delete this terminal's whole history" onClick={() => void remove(t.key)}>
                         <Trash2 className="h-3 w-3" />
                       </button>
-                      {full && (
-                        <button type="button" className={btn} title="Download this terminal's whole history (.txt)" onClick={() => void download(full)}>
-                          <Download className="h-3 w-3" /> .txt
-                        </button>
-                      )}
+                      <button type="button" className={btn} title="Download this terminal's whole history (.txt)" onClick={() => void download(t.key)}>
+                        <Download className="h-3 w-3" /> .txt
+                      </button>
                       <button
                         type="button"
                         className={`${btn} font-semibold`}
@@ -139,7 +156,7 @@ export default function TerminalHistoryView({
                     {!open && t.entries.length > PREVIEW && (
                       <button
                         type="button"
-                        onClick={() => setExpanded((prev) => new Set(prev).add(id))}
+                        onClick={() => expand(id, t.key)}
                         className="text-[10px] font-mono text-indigo-600 dark:text-indigo-400 cursor-pointer"
                       >
                         View all {t.entries.length}
@@ -152,6 +169,11 @@ export default function TerminalHistoryView({
           </div>
         </section>
       ))}
+      {terms.length >= MAX_TERMINALS && (
+        <div className="text-[10px] font-mono text-neutral-400 dark:text-neutral-500">
+          Showing the {MAX_TERMINALS} most recently used terminals, with each one's latest commands. View all or .txt loads a terminal in full.
+        </div>
+      )}
     </div>
   );
 }

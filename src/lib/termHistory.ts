@@ -32,7 +32,9 @@ export interface TermEntries {
   name: string;
   cwd: string;
   updatedMs: number;
-  /** Oldest first. */
+  /** Commands the backend read for this terminal; more than `entries` when the list was capped. */
+  total: number;
+  /** Oldest first; only the newest ones when capped (term_history_full has all). */
   entries: HistoryEntry[];
 }
 

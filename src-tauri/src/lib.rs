@@ -37,9 +37,9 @@ fn release_agent_session(name: String) {
 }
 
 mod agent_ops;
-mod app_location;
 mod agent_ssh;
 mod agents;
+mod app_location;
 mod askpass;
 mod bridge;
 mod bridge_exec;
@@ -63,9 +63,9 @@ mod spotlight;
 mod ssh;
 mod statusline;
 mod term_history;
-mod titlebar;
 #[cfg(test)]
 mod testutil;
+mod titlebar;
 mod validate;
 mod vault;
 mod watcher;
@@ -349,6 +349,7 @@ pub fn run() {
             pty::pty_spawn,
             term_history::term_history_delete,
             term_history::term_history_entries,
+            term_history::term_history_full,
             term_history::term_history_export,
             pty::pty_write,
             pty::pty_resize,

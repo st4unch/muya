@@ -27,8 +27,8 @@ describe("groupByDay", () => {
   it("groups by day, newest day and terminal first, undated last", () => {
     const groups = groupByDay(
       [
-        { key: "a", name: "api", cwd: "/w", updatedMs: 0, entries: [{ ts: null, cmd: "old" }, { ts: at(11, 9), cmd: "ls" }, { ts: at(12, 10), cmd: "git pull" }, { ts: at(12, 11), cmd: "make" }] },
-        { key: "b", name: "web", cwd: "/x", updatedMs: 0, entries: [{ ts: at(12, 17), cmd: "npm test" }] },
+        { key: "a", name: "api", cwd: "/w", updatedMs: 0, total: 4, entries: [{ ts: null, cmd: "old" }, { ts: at(11, 9), cmd: "ls" }, { ts: at(12, 10), cmd: "git pull" }, { ts: at(12, 11), cmd: "make" }] },
+        { key: "b", name: "web", cwd: "/x", updatedMs: 0, total: 1, entries: [{ ts: at(12, 17), cmd: "npm test" }] },
       ],
       now,
     );

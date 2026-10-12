@@ -21,9 +21,13 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-/// Only the end of a history file is read: enough for the list and a count.
+/// Only the end of a history file is read (about the last few thousand commands).
 const TAIL_BYTES: u64 = 512 * 1024;
-const RECENT: usize = 5;
+/// The Sessions page lists at most this many terminals (most recently used)…
+const MAX_TERMINALS: usize = 100;
+/// …with this many of each one's newest commands; "View all" and download fetch
+/// one terminal in full.
+const PREVIEW_ENTRIES: usize = 200;
 
 const STARTUP_FILES: [&str; 4] = [".zshenv", ".zprofile", ".zshrc", ".zlogin"];
 
@@ -177,12 +181,6 @@ fn unmetafy(raw: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Commands in a zsh history file, oldest first. Handles EXTENDED_HISTORY lines
-/// (`: <time>:<dur>;cmd`) and multi-line commands (lines ending in `\`).
-pub(crate) fn parse_history(raw: &[u8]) -> Vec<String> {
-    parse_entries(raw).into_iter().map(|e| e.cmd).collect()
-}
-
 /// One command and, with EXTENDED_HISTORY, when it started (seconds since epoch).
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct Entry {
@@ -190,7 +188,9 @@ pub struct Entry {
     pub cmd: String,
 }
 
-/// Like [`parse_history`], keeping each command's timestamp when the file has one.
+/// Commands in a zsh history file, oldest first, with each one's timestamp when the
+/// file has it. Handles EXTENDED_HISTORY lines (`: <time>:<dur>;cmd`) and multi-line
+/// commands (lines ending in `\`).
 pub(crate) fn parse_entries(raw: &[u8]) -> Vec<Entry> {
     let text = String::from_utf8_lossy(&unmetafy(raw)).into_owned();
     let mut out: Vec<Entry> = Vec::new();
@@ -208,11 +208,20 @@ pub(crate) fn parse_entries(raw: &[u8]) -> Vec<Entry> {
                 p
             }
             None => match line.strip_prefix(": ").and_then(|r| r.split_once(';')) {
-                Some((stamp, cmd)) if stamp.split(':').all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit())) => Entry {
-                    ts: stamp.split(':').next().and_then(|t| t.parse().ok()),
-                    cmd: cmd.to_string(),
+                Some((stamp, cmd))
+                    if stamp
+                        .split(':')
+                        .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit())) =>
+                {
+                    Entry {
+                        ts: stamp.split(':').next().and_then(|t| t.parse().ok()),
+                        cmd: cmd.to_string(),
+                    }
+                }
+                _ => Entry {
+                    ts: None,
+                    cmd: line.to_string(),
                 },
-                _ => Entry { ts: None, cmd: line.to_string() },
             },
         };
         if let Some(cont) = entry.cmd.strip_suffix('\\') {
@@ -244,95 +253,124 @@ fn read_tail(path: &Path) -> std::io::Result<Vec<u8>> {
     Ok(buf)
 }
 
-#[derive(Serialize, Debug, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TermHistory {
-    pub key: String,
-    pub name: String,
-    pub cwd: String,
-    /// Last write, ms since epoch.
-    pub updated_ms: u64,
-    /// Commands in the part of the file that was read.
-    pub count: usize,
-    /// Newest first.
-    pub recent: Vec<String>,
-}
-
-fn list_in(base: &Path) -> Vec<TermHistory> {
-    let Ok(rd) = fs::read_dir(base) else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for e in rd.flatten() {
-        let path = e.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("hist") {
-            continue;
-        }
-        let Some(key) = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .map(str::to_string)
-        else {
-            continue;
-        };
-        if !valid_key(&key) {
-            continue;
-        }
-        let Ok(raw) = read_tail(&path) else { continue };
-        let cmds = parse_history(&raw);
-        if cmds.is_empty() {
-            continue;
-        }
-        let updated_ms = e
-            .metadata()
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map_or(0, |d| d.as_millis() as u64);
-        let meta: Meta = fs::read_to_string(base.join(format!("{key}.json")))
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default();
-        out.push(TermHistory {
-            key,
-            name: meta.name,
-            cwd: meta.cwd,
-            updated_ms,
-            count: cmds.len(),
-            recent: cmds.iter().rev().take(RECENT).cloned().collect(),
-        });
-    }
-    out.sort_by(|a, b| b.updated_ms.cmp(&a.updated_ms));
-    out
-}
-
-/// Every terminal's commands with timestamps (tail of each file), for the date view.
+/// One terminal's commands with timestamps, for the Sessions page's date view.
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct TermEntries {
     pub key: String,
     pub name: String,
     pub cwd: String,
+    /// Last write, ms since epoch.
     pub updated_ms: u64,
-    /// Oldest first.
+    /// Commands in the part of the file that was read (may exceed `entries.len()`).
+    pub total: usize,
+    /// Oldest first; only the newest ones when the list was capped.
     pub entries: Vec<Entry>,
 }
 
-fn entries_in(base: &Path) -> Vec<TermEntries> {
-    list_in(base)
-        .into_iter()
-        .filter_map(|h| {
-            let raw = read_tail(&base.join(format!("{}.hist", h.key))).ok()?;
-            Some(TermEntries { key: h.key, name: h.name, cwd: h.cwd, updated_ms: h.updated_ms, entries: parse_entries(&raw) })
+/// `<key>.hist` files, most recently written first. Only metadata is read here, so
+/// terminals beyond the cap are never opened.
+fn hist_files(base: &Path) -> Vec<(String, PathBuf, u64)> {
+    let Ok(rd) = fs::read_dir(base) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(String, PathBuf, u64)> = rd
+        .flatten()
+        .filter_map(|e| {
+            let path = e.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("hist") {
+                return None;
+            }
+            let key = path.file_stem()?.to_str()?.to_string();
+            if !valid_key(&key) {
+                return None;
+            }
+            let mtime = e
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_millis() as u64);
+            Some((key, path, mtime))
         })
+        .collect();
+    out.sort_by(|a, b| b.2.cmp(&a.2));
+    out
+}
+
+/// Read and parse one history file (its tail), keeping the newest `limit` commands.
+/// `None` when it can't be read or holds no commands.
+fn load(
+    base: &Path,
+    key: String,
+    path: &Path,
+    updated_ms: u64,
+    limit: Option<usize>,
+) -> Option<TermEntries> {
+    let mut entries = parse_entries(&read_tail(path).ok()?);
+    if entries.is_empty() {
+        return None;
+    }
+    let total = entries.len();
+    if let Some(n) = limit {
+        entries.drain(..total.saturating_sub(n));
+    }
+    let meta: Meta = fs::read_to_string(base.join(format!("{key}.json")))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    Some(TermEntries {
+        key,
+        name: meta.name,
+        cwd: meta.cwd,
+        updated_ms,
+        total,
+        entries,
+    })
+}
+
+/// The `max_terms` most recently used terminals with at least one command, each with
+/// its newest `per_term` commands.
+fn entries_in(base: &Path, max_terms: usize, per_term: usize) -> Vec<TermEntries> {
+    hist_files(base)
+        .into_iter()
+        .filter_map(|(key, path, mtime)| load(base, key, &path, mtime, Some(per_term)))
+        .take(max_terms)
         .collect()
 }
 
+/// One terminal's whole (tail-read) history, for "View all" and download.
+fn full_in(base: &Path, key: &str) -> Option<TermEntries> {
+    let path = base.join(format!("{key}.hist"));
+    let mtime = fs::metadata(&path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_millis() as u64);
+    load(base, key.to_string(), &path, mtime, None)
+}
+
+/// The Sessions page's list: capped so that months of terminals stay cheap to send.
 #[tauri::command]
 pub async fn term_history_entries() -> Vec<TermEntries> {
-    tokio::task::spawn_blocking(|| base_dir().map(|b| entries_in(&b)).unwrap_or_default())
+    tokio::task::spawn_blocking(|| {
+        base_dir()
+            .map(|b| entries_in(&b, MAX_TERMINALS, PREVIEW_ENTRIES))
+            .unwrap_or_default()
+    })
+    .await
+    .unwrap_or_default()
+}
+
+/// One terminal in full ("View all", download).
+#[tauri::command]
+pub async fn term_history_full(key: String) -> Result<Option<TermEntries>, String> {
+    if !valid_key(&key) {
+        return Err("invalid terminal key".into());
+    }
+    tokio::task::spawn_blocking(move || base_dir().and_then(|b| full_in(&b, &key)))
         .await
-        .unwrap_or_default()
+        .map_err(|e| e.to_string())
 }
 
 /// Save text the page built (a terminal's commands) to a file the user picked.
@@ -375,9 +413,18 @@ mod tests {
         assert_eq!(
             parse_entries(raw),
             vec![
-                Entry { ts: Some(1_700_000_000), cmd: "git status".into() },
-                Entry { ts: None, cmd: "ls".into() },
-                Entry { ts: Some(1_700_000_100), cmd: "echo a \nb".into() },
+                Entry {
+                    ts: Some(1_700_000_000),
+                    cmd: "git status".into()
+                },
+                Entry {
+                    ts: None,
+                    cmd: "ls".into()
+                },
+                Entry {
+                    ts: Some(1_700_000_100),
+                    cmd: "echo a \nb".into()
+                },
             ]
         );
     }
@@ -396,10 +443,8 @@ mod tests {
         let mut raw = b"ls -la\n: 1700000000:0;git status\necho one \\\ntwo\n\n".to_vec();
         // "é" is 0xC3 0xA9; zsh writes 0x83 before bytes it metafies (here 0xA9 as 0x89).
         raw.extend_from_slice(&[b'c', b'd', b' ', 0xC3, 0x83, 0x89, b'\n']);
-        assert_eq!(
-            parse_history(&raw),
-            vec!["ls -la", "git status", "echo one \ntwo", "cd é"]
-        );
+        let cmds: Vec<String> = parse_entries(&raw).into_iter().map(|e| e.cmd).collect();
+        assert_eq!(cmds, vec!["ls -la", "git status", "echo one \ntwo", "cd é"]);
     }
 
     #[test]
@@ -432,7 +477,7 @@ mod tests {
     }
 
     #[test]
-    fn list_skips_empty_and_orders_newest_first() {
+    fn list_skips_empty_orders_newest_first_and_caps() {
         let dir = tempfile::tempdir().unwrap();
         let b = dir.path();
         fs::write(b.join("old.hist"), "a\nb\n").unwrap();
@@ -445,13 +490,58 @@ mod tests {
             .unwrap();
         old.set_modified(UNIX_EPOCH + std::time::Duration::from_secs(1_000))
             .unwrap();
-        let list = list_in(b);
+        let keys = |l: &[TermEntries]| l.iter().map(|t| t.key.clone()).collect::<Vec<_>>();
+        let cmds = |t: &TermEntries| t.entries.iter().map(|e| e.cmd.clone()).collect::<Vec<_>>();
+
+        let list = entries_in(b, 10, 10);
+        assert_eq!(keys(&list), vec!["new", "old"]);
+        assert_eq!((list[0].name.as_str(), list[0].total), ("api", 3));
+
+        // Capped: only the newest terminal, only its newest 2 commands, total kept.
+        let capped = entries_in(b, 1, 2);
+        assert_eq!(keys(&capped), vec!["new"]);
         assert_eq!(
-            list.iter().map(|h| h.key.as_str()).collect::<Vec<_>>(),
-            vec!["new", "old"]
+            (cmds(&capped[0]), capped[0].total),
+            (vec!["y".to_string(), "z".to_string()], 3)
         );
-        assert_eq!(list[0].recent, vec!["z", "y", "x"]);
-        assert_eq!((list[0].name.as_str(), list[0].count), ("api", 3));
+
+        // Full read of one terminal is not capped.
+        assert_eq!(cmds(&full_in(b, "new").unwrap()), vec!["x", "y", "z"]);
+        assert!(full_in(b, "missing").is_none());
+    }
+
+    /// Cost of opening the Terminal History tab after months of use:
+    /// `cargo test --release --lib term_history::tests::bench_many -- --ignored --nocapture`
+    #[test]
+    #[ignore = "benchmark"]
+    fn bench_many() {
+        let dir = tempfile::tempdir().unwrap();
+        let b = dir.path();
+        let mut line = String::new();
+        for i in 0..3000 {
+            line.push_str(&format!(
+                ": {}:0;git commit -m \"change number {i}\" && cargo test --lib\n",
+                1_700_000_000 + i * 60
+            ));
+        }
+        for t in 0..300 {
+            fs::write(b.join(format!("terminal-{t}.hist")), &line).unwrap();
+            fs::write(
+                b.join(format!("terminal-{t}.json")),
+                r#"{"name":"t","cwd":"/w"}"#,
+            )
+            .unwrap();
+        }
+        let t0 = std::time::Instant::now();
+        let all = entries_in(b, MAX_TERMINALS, PREVIEW_ENTRIES);
+        let took = t0.elapsed();
+        let json = serde_json::to_vec(&all).unwrap();
+        let n: usize = all.iter().map(|t| t.entries.len()).sum();
+        println!(
+            "BENCH terminals={} commands={n} time={took:?} json={} KB",
+            all.len(),
+            json.len() / 1024
+        );
     }
 
     /// The wrappers in a real zsh: the user's .zshrc still runs, history goes to the
