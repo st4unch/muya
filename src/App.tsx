@@ -63,6 +63,7 @@ import { shouldExitGridOnEscape } from "./redesign/gridKeys";
 import { deliveryWrites, SUBMIT_DELAY_MS, type RemoteSender } from "./lib/remoteMessage";
 import { approvableKeys, AUTO_APPROVE_EVENT, AUTO_APPROVE_MS, loadAutoApprove, saveAutoApprove } from "./lib/autoApprove";
 import { AutoAllowSuggest } from "./redesign/AutoAllowSuggest";
+import { historyKeyOf } from "./lib/termHistory";
 
 // Types matching the user's workflow model
 interface AgentSession {
@@ -2348,6 +2349,8 @@ export default function App() {
             <AgentTerminal
               cwd={tm.cwd}
               initialCommand={tm.initialCommand}
+              historyKey={historyKeyOf(tm)}
+              historyName={tm.name}
               sshServerId={tm.sshServerId}
               autoAcceptTrust={tm.autoAcceptTrust}
               theme={effectiveTheme}

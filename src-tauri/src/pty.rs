@@ -82,11 +82,18 @@ pub fn pty_spawn(
     shell: Option<String>,
     cols: Option<u16>,
     rows: Option<u16>,
+    history_key: Option<String>,
+    history_name: Option<String>,
 ) -> Result<String, String> {
     let shell = shell.unwrap_or_else(default_shell);
+    // The tab's own command history (term_history.rs); empty for non-zsh shells.
+    let env = history_key
+        .as_deref()
+        .map(|k| crate::term_history::spawn_env(k, history_name.as_deref(), cwd.as_deref(), &shell))
+        .unwrap_or_default();
     // Login shell so the user's full PATH (incl. ~/.local/bin) is available — `claude`
     // resolves inside the terminal. macOS GUI apps otherwise inherit a minimal PATH.
-    spawn_process(
+    spawn_process_env(
         &state,
         on_event,
         &shell,
@@ -95,6 +102,7 @@ pub fn pty_spawn(
         cols,
         rows,
         None,
+        &env,
     )
 }
 
@@ -114,6 +122,22 @@ pub fn spawn_process(
     rows: Option<u16>,
     inject_secret: Option<Zeroizing<String>>,
 ) -> Result<String, String> {
+    spawn_process_env(manager, on_event, program, args, cwd, cols, rows, inject_secret, &[])
+}
+
+/// [`spawn_process`] with extra environment variables for the child.
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_process_env(
+    manager: &PtyManager,
+    on_event: Channel<InvokeResponseBody>,
+    program: &str,
+    args: &[String],
+    cwd: Option<&str>,
+    cols: Option<u16>,
+    rows: Option<u16>,
+    inject_secret: Option<Zeroizing<String>>,
+    extra_env: &[(String, String)],
+) -> Result<String, String> {
     let pty_system = native_pty_system();
     let size = PtySize {
         rows: rows.unwrap_or(24),
@@ -132,6 +156,9 @@ pub fn spawn_process(
     cmd.env("TERM", "xterm-256color");
     // xterm.js renders 24-bit color; without this, TUIs fall back to 256 colors.
     cmd.env("COLORTERM", "truecolor");
+    for (k, v) in extra_env {
+        cmd.env(k, v);
+    }
     // The control plane may itself be launched from inside a Claude Code session
     // (notably during dev), which leaks CLAUDE* env vars. Those mark the new process
     // as a *child* session and disable session persistence — so a `claude` started in

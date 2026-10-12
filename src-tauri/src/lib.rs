@@ -62,6 +62,7 @@ mod slash_commands;
 mod spotlight;
 mod ssh;
 mod statusline;
+mod term_history;
 mod titlebar;
 #[cfg(test)]
 mod testutil;
@@ -346,6 +347,9 @@ pub fn run() {
             watcher::start_watching,
             watcher::set_watched_files,
             pty::pty_spawn,
+            term_history::term_history_list,
+            term_history::term_history_get,
+            term_history::term_history_delete,
             pty::pty_write,
             pty::pty_resize,
             pty::pty_kill,

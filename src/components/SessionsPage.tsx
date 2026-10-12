@@ -3,7 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { copyToClipboard } from "../lib/clipboard";
 import { relTime, shortCwd } from "../lib/format";
 import { contentTerms, describeQuery, isEmptyQuery, parseSessionQuery, sessionMatches } from "../lib/sessionQuery";
-import { RefreshCw, Play, Plug, FolderGit2, Clock, Square, Search, X, MessageSquare, User, Bot, Copy, Check, Download } from "lucide-react";
+import { RefreshCw, Play, Plug, FolderGit2, Clock, Square, Search, X, MessageSquare, User, Bot, Copy, Check, Download, SquareTerminal, Trash2, ChevronDown, ChevronRight } from "lucide-react";
+import type { TermHistory } from "../lib/termHistory";
 import { buildResumeCommand, isSafeSessionId, singleQuote, type AgentKind } from "../lib/agent";
 
 /// The command that opens a session row in a terminal.
@@ -80,6 +81,9 @@ export default function SessionsPage({
 }) {
   const [live, setLive] = useState<AgentSession[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  // Plain terminals' own command histories (lib/termHistory); expanded rows hold the full list.
+  const [terms, setTerms] = useState<TermHistory[]>([]);
+  const [termFull, setTermFull] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
   // sessionId -> snippet, for sessions whose TRANSCRIPT CONTENT matches `query`
@@ -114,6 +118,7 @@ export default function SessionsPage({
       ]);
       setLive(l);
       setHistory(h);
+      setTerms(await invoke<TermHistory[]>("term_history_list").catch(() => []));
     } catch (e) {
       console.warn("[apex] sessions refresh failed:", e);
     } finally {
@@ -356,6 +361,88 @@ export default function SessionsPage({
           })}
         </div>
       </section>
+
+      {/* TERMINALS — plain terminals, each with its own command history */}
+      {(() => {
+        const tq = query.trim().toLowerCase();
+        const shown = tq
+          ? terms.filter((t) => [t.name, t.cwd, ...t.recent].some((x) => x.toLowerCase().includes(tq)))
+          : terms;
+        const toggle = async (key: string) => {
+          if (termFull[key]) {
+            setTermFull(({ [key]: _, ...rest }) => rest);
+            return;
+          }
+          const all = await invoke<string[]>("term_history_get", { key }).catch(() => []);
+          setTermFull((prev) => ({ ...prev, [key]: all }));
+        };
+        const remove = async (key: string) => {
+          await invoke("term_history_delete", { key }).catch((e) => console.warn("[muya] term history delete failed:", e));
+          setTerms((prev) => prev.filter((t) => t.key !== key));
+          setTermFull(({ [key]: _, ...rest }) => rest);
+        };
+        return (
+          <section>
+            <h2 className="text-[10px] font-mono uppercase tracking-widest font-bold text-neutral-500 dark:text-neutral-400 mb-2">
+              Terminals ({shown.length}{tq && terms.length !== shown.length ? `/${terms.length}` : ""})
+            </h2>
+            <div className="space-y-1.5">
+              {shown.length === 0 && (
+                <div className="text-[11px] font-mono text-neutral-400 dark:text-neutral-500 py-2">
+                  {tq ? "No matching terminals." : "No terminal history yet. Commands typed in a terminal tab show up here."}
+                </div>
+              )}
+              {shown.map((t) => {
+                const full = termFull[t.key];
+                const lines = full ?? t.recent;
+                return (
+                  <div key={t.key} className="bg-[var(--bg-control)] border border-neutral-200 dark:border-neutral-700 rounded-lg p-3 shadow-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <button type="button" onClick={() => void toggle(t.key)} className="min-w-0 text-left cursor-pointer" title={full ? "Show recent commands only" : "Show all commands"}>
+                        <div className="flex items-center gap-2">
+                          {full ? <ChevronDown className="h-3 w-3 text-neutral-400" /> : <ChevronRight className="h-3 w-3 text-neutral-400" />}
+                          <SquareTerminal className="h-3.5 w-3.5 text-neutral-500 dark:text-neutral-400" />
+                          <span className="font-mono text-xs font-semibold text-neutral-800 dark:text-neutral-200 truncate max-w-[240px]">{t.name || "Terminal"}</span>
+                          <span className="text-[9px] font-mono text-neutral-400 dark:text-neutral-500">{t.count} commands</span>
+                        </div>
+                        <div className="flex items-center gap-3 mt-1 text-[10px] font-mono text-neutral-500 dark:text-neutral-400">
+                          {t.cwd && <span className="truncate max-w-[300px]">{shortCwd(t.cwd)}</span>}
+                          <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {relTime(t.updatedMs)}</span>
+                        </div>
+                      </button>
+                      <div className="shrink-0 flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => void remove(t.key)}
+                          className="flex items-center gap-1 text-[11px] font-mono px-2 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-[var(--bg-control)] text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer transition-colors"
+                          title="Delete this terminal's history"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onOpen({ key: t.key, name: t.name || "Terminal", cwd: t.cwd.startsWith("/") ? t.cwd : undefined })}
+                          className="flex items-center gap-1.5 text-[11px] font-mono font-semibold px-2.5 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-[var(--bg-control)] text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer transition-colors"
+                          title="Open this terminal with its history (↑ shows its commands)"
+                        >
+                          <Play className="h-3 w-3" /> Open
+                        </button>
+                      </div>
+                    </div>
+                    <div className={`mt-2 space-y-0.5 ${full ? "max-h-72 overflow-y-auto" : ""}`}>
+                      {lines.map((c, i) => (
+                        <div key={i} className="font-mono text-[10px] text-neutral-600 dark:text-neutral-300 truncate select-text" title={c}>
+                          <span className="text-neutral-400 dark:text-neutral-500">$ </span>{c}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        );
+      })()}
 
       {/* HISTORY */}
       <section>

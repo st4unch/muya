@@ -64,8 +64,14 @@ function Terminal({
   onPromptSubmit,
   onPathMenu,
   onScreen,
+  historyKey,
+  historyName,
 }: {
   cwd?: string;
+  /** Plain terminal: its own command history file, keyed by the tab (lib/termHistory).
+   *  Read at spawn only, like initialCommand. */
+  historyKey?: string;
+  historyName?: string;
   initialCommand?: string;
   /** When set, spawn the `ssh` process directly via `ssh_pty_connect` (Rust
    *  builds the command and injects the stored/CyberArk password into the PTY —
@@ -551,6 +557,8 @@ function Terminal({
           cwd,
           cols: term.cols,
           rows: term.rows,
+          historyKey,
+          historyName,
         });
     spawn
       .then((id) => {

@@ -1,0 +1,445 @@
+//! Per-terminal command history.
+//!
+//! Every terminal tab keeps its own zsh history, so ↑ in a tab shows that tab's
+//! commands (also after Muya restarts and restores the tab), and the Sessions page
+//! lists each terminal's history.
+//!
+//! macOS `/etc/zshrc` sets `HISTFILE=${ZDOTDIR:-$HOME}/.zsh_history` on every start,
+//! so an env var alone can't move the history. Instead the shell starts with
+//! `ZDOTDIR=<base>/zdotdir`, whose four startup files each run the user's own file
+//! (with `ZDOTDIR` pointing at the user's folder while it runs, the way VS Code's shell
+//! integration does it), then point `HISTFILE` at `MUYA_HISTFILE`. `.zlogin` gives the
+//! user their `ZDOTDIR` back, so nested shells behave as usual.
+//!
+//! Files: `<data dir>/com.staunch.muya/term-history/<key>.hist` (+ `<key>.json`:
+//! name and folder at the last spawn). Directory 0700, files written by zsh/us.
+//! Only zsh is covered; other shells keep their normal shared history.
+
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::io::{Read, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
+
+/// Only the end of a history file is read: enough for the list and a count.
+const TAIL_BYTES: u64 = 512 * 1024;
+const RECENT: usize = 5;
+
+const STARTUP_FILES: [&str; 4] = [".zshenv", ".zprofile", ".zshrc", ".zlogin"];
+
+fn base_dir() -> Option<PathBuf> {
+    dirs_next::data_dir().map(|d| d.join("com.staunch.muya").join("term-history"))
+}
+
+/// A tab key safe to use as a file name.
+pub(crate) fn valid_key(key: &str) -> bool {
+    !key.is_empty()
+        && key.len() <= 128
+        && !key.starts_with('.')
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
+fn startup_file(name: &str) -> String {
+    let mut s = format!(
+        "# Written by Muya: run your own {name}, then keep this terminal's history separate.\n\
+         MUYA_WRAP_ZDOTDIR=$ZDOTDIR\n\
+         ZDOTDIR=${{MUYA_USER_ZDOTDIR:-$HOME}}\n\
+         [[ -r $ZDOTDIR/{name} ]] && . $ZDOTDIR/{name}\n\
+         MUYA_USER_ZDOTDIR=$ZDOTDIR\n\
+         ZDOTDIR=$MUYA_WRAP_ZDOTDIR\n"
+    );
+    if name == ".zshrc" || name == ".zlogin" {
+        // zsh reads the history file right after .zshrc, so setting it here is what
+        // loads this tab's past commands; .zlogin repeats it in case the user's own
+        // .zlogin moved it.
+        s.push_str("[[ -n $MUYA_HISTFILE ]] && HISTFILE=$MUYA_HISTFILE\n");
+    }
+    if name == ".zlogin" {
+        s.push_str(
+            "if [[ $MUYA_USER_ZDOTDIR == $HOME ]]; then unset ZDOTDIR; else export ZDOTDIR=$MUYA_USER_ZDOTDIR; fi\n\
+             unset MUYA_WRAP_ZDOTDIR MUYA_USER_ZDOTDIR\n",
+        );
+    }
+    s
+}
+
+fn write_private(path: &Path, body: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let tmp = path.with_extension("tmp");
+    let mut f = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&tmp)?;
+    f.write_all(body.as_bytes())?;
+    fs::rename(tmp, path)
+}
+
+fn ensure_dir(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::create_dir_all(dir)?;
+    fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
+}
+
+/// Write the zsh startup wrappers into `<base>/zdotdir`. Returns that folder.
+fn ensure_wrappers(base: &Path) -> std::io::Result<PathBuf> {
+    ensure_dir(base)?;
+    let wrap = base.join("zdotdir");
+    ensure_dir(&wrap)?;
+    for name in STARTUP_FILES {
+        let body = startup_file(name);
+        let path = wrap.join(name);
+        if fs::read_to_string(&path).ok().as_deref() != Some(body.as_str()) {
+            write_private(&path, &body)?;
+        }
+    }
+    Ok(wrap)
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct Meta {
+    name: String,
+    cwd: String,
+}
+
+/// Env vars that give a zsh started for tab `key` its own history. Empty for other
+/// shells, an invalid key, or when the folder can't be prepared (history then stays
+/// shared, as before).
+pub(crate) fn spawn_env(
+    key: &str,
+    name: Option<&str>,
+    cwd: Option<&str>,
+    shell: &str,
+) -> Vec<(String, String)> {
+    if !valid_key(key) || Path::new(shell).file_name().and_then(|s| s.to_str()) != Some("zsh") {
+        return Vec::new();
+    }
+    let Some(base) = base_dir() else {
+        return Vec::new();
+    };
+    spawn_env_in(&base, key, name, cwd)
+}
+
+fn spawn_env_in(
+    base: &Path,
+    key: &str,
+    name: Option<&str>,
+    cwd: Option<&str>,
+) -> Vec<(String, String)> {
+    let Ok(wrap) = ensure_wrappers(base) else {
+        return Vec::new();
+    };
+    let meta = Meta {
+        name: name.unwrap_or_default().to_string(),
+        cwd: cwd.unwrap_or_default().to_string(),
+    };
+    if let Ok(json) = serde_json::to_string(&meta) {
+        let _ = write_private(&base.join(format!("{key}.json")), &json);
+    }
+    let mut env = vec![
+        ("ZDOTDIR".to_string(), wrap.to_string_lossy().into_owned()),
+        (
+            "MUYA_HISTFILE".to_string(),
+            base.join(format!("{key}.hist"))
+                .to_string_lossy()
+                .into_owned(),
+        ),
+    ];
+    // Muya itself started with a ZDOTDIR: the wrappers must read the user's files there.
+    if let Ok(user) = std::env::var("ZDOTDIR") {
+        if !user.is_empty() {
+            env.push(("MUYA_USER_ZDOTDIR".to_string(), user));
+        }
+    }
+    env
+}
+
+/// zsh "metafies" some bytes in its history file: 0x83 followed by (byte ^ 32).
+fn unmetafy(raw: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(raw.len());
+    let mut it = raw.iter();
+    while let Some(&b) = it.next() {
+        if b == 0x83 {
+            if let Some(&n) = it.next() {
+                out.push(n ^ 32);
+            }
+        } else {
+            out.push(b);
+        }
+    }
+    out
+}
+
+/// Commands in a zsh history file, oldest first. Handles EXTENDED_HISTORY lines
+/// (`: <time>:<dur>;cmd`) and multi-line commands (lines ending in `\`).
+pub(crate) fn parse_history(raw: &[u8]) -> Vec<String> {
+    let text = String::from_utf8_lossy(&unmetafy(raw)).into_owned();
+    let mut out: Vec<String> = Vec::new();
+    let mut pending: Option<String> = None;
+    for line in text.lines() {
+        let line = match pending.take() {
+            Some(mut p) => {
+                p.push('\n');
+                p.push_str(line);
+                p
+            }
+            None => match line.strip_prefix(": ").and_then(|r| r.split_once(';')) {
+                Some((stamp, cmd))
+                    if stamp
+                        .split(':')
+                        .all(|p| p.chars().all(|c| c.is_ascii_digit())) =>
+                {
+                    cmd.to_string()
+                }
+                _ => line.to_string(),
+            },
+        };
+        if let Some(cont) = line.strip_suffix('\\') {
+            pending = Some(cont.to_string());
+            continue;
+        }
+        if !line.trim().is_empty() {
+            out.push(line);
+        }
+    }
+    if let Some(p) = pending {
+        if !p.trim().is_empty() {
+            out.push(p);
+        }
+    }
+    out
+}
+
+fn read_tail(path: &Path) -> std::io::Result<Vec<u8>> {
+    let mut f = fs::File::open(path)?;
+    let len = f.metadata()?.len();
+    let start = len.saturating_sub(TAIL_BYTES);
+    f.seek(SeekFrom::Start(start))?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf)?;
+    if start > 0 {
+        // Started mid-file: drop the partial first line.
+        if let Some(i) = buf.iter().position(|&b| b == b'\n') {
+            buf.drain(..=i);
+        }
+    }
+    Ok(buf)
+}
+
+#[derive(Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TermHistory {
+    pub key: String,
+    pub name: String,
+    pub cwd: String,
+    /// Last write, ms since epoch.
+    pub updated_ms: u64,
+    /// Commands in the part of the file that was read.
+    pub count: usize,
+    /// Newest first.
+    pub recent: Vec<String>,
+}
+
+fn list_in(base: &Path) -> Vec<TermHistory> {
+    let Ok(rd) = fs::read_dir(base) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for e in rd.flatten() {
+        let path = e.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("hist") {
+            continue;
+        }
+        let Some(key) = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        if !valid_key(&key) {
+            continue;
+        }
+        let Ok(raw) = read_tail(&path) else { continue };
+        let cmds = parse_history(&raw);
+        if cmds.is_empty() {
+            continue;
+        }
+        let updated_ms = e
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_millis() as u64);
+        let meta: Meta = fs::read_to_string(base.join(format!("{key}.json")))
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        out.push(TermHistory {
+            key,
+            name: meta.name,
+            cwd: meta.cwd,
+            updated_ms,
+            count: cmds.len(),
+            recent: cmds.iter().rev().take(RECENT).cloned().collect(),
+        });
+    }
+    out.sort_by(|a, b| b.updated_ms.cmp(&a.updated_ms));
+    out
+}
+
+/// Every terminal that has history, newest first.
+#[tauri::command]
+pub async fn term_history_list() -> Vec<TermHistory> {
+    tokio::task::spawn_blocking(|| base_dir().map(|b| list_in(&b)).unwrap_or_default())
+        .await
+        .unwrap_or_default()
+}
+
+/// One terminal's full history (tail of the file), newest first.
+#[tauri::command]
+pub async fn term_history_get(key: String) -> Result<Vec<String>, String> {
+    if !valid_key(&key) {
+        return Err("invalid terminal key".into());
+    }
+    let base = base_dir().ok_or("no data folder")?;
+    tokio::task::spawn_blocking(move || match read_tail(&base.join(format!("{key}.hist"))) {
+        Ok(raw) => Ok(parse_history(&raw).into_iter().rev().collect()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(e.to_string()),
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Delete one terminal's history.
+#[tauri::command]
+pub fn term_history_delete(key: String) -> Result<(), String> {
+    if !valid_key(&key) {
+        return Err("invalid terminal key".into());
+    }
+    let base = base_dir().ok_or("no data folder")?;
+    for ext in ["hist", "json"] {
+        match fs::remove_file(base.join(format!("{key}.{ext}"))) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keys_must_be_plain_file_names() {
+        assert!(valid_key("term-1712345678901"));
+        assert!(valid_key("claude-17.a_b"));
+        for bad in ["", "../x", "a/b", ".hidden", "a b", &"x".repeat(129)] {
+            assert!(!valid_key(bad), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn parses_plain_extended_multiline_and_metafied() {
+        let mut raw = b"ls -la\n: 1700000000:0;git status\necho one \\\ntwo\n\n".to_vec();
+        // "é" is 0xC3 0xA9; zsh writes 0x83 before bytes it metafies (here 0xA9 as 0x89).
+        raw.extend_from_slice(&[b'c', b'd', b' ', 0xC3, 0x83, 0x89, b'\n']);
+        assert_eq!(
+            parse_history(&raw),
+            vec!["ls -la", "git status", "echo one \ntwo", "cd é"]
+        );
+    }
+
+    #[test]
+    fn spawn_env_writes_wrappers_meta_and_points_at_the_tab_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("th");
+        let env = spawn_env_in(&base, "term-1", Some("api"), Some("/w"));
+        let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+        assert_eq!(
+            get("ZDOTDIR").unwrap(),
+            base.join("zdotdir").to_string_lossy()
+        );
+        assert_eq!(
+            get("MUYA_HISTFILE").unwrap(),
+            base.join("term-1.hist").to_string_lossy()
+        );
+        for f in STARTUP_FILES {
+            assert!(base.join("zdotdir").join(f).is_file(), "{f}");
+        }
+        let zlogin = fs::read_to_string(base.join("zdotdir/.zlogin")).unwrap();
+        assert!(zlogin.contains("HISTFILE=$MUYA_HISTFILE") && zlogin.contains("unset ZDOTDIR"));
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(&base).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        let meta: Meta =
+            serde_json::from_str(&fs::read_to_string(base.join("term-1.json")).unwrap()).unwrap();
+        assert_eq!((meta.name.as_str(), meta.cwd.as_str()), ("api", "/w"));
+    }
+
+    #[test]
+    fn list_skips_empty_and_orders_newest_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let b = dir.path();
+        fs::write(b.join("old.hist"), "a\nb\n").unwrap();
+        fs::write(b.join("empty.hist"), "\n").unwrap();
+        fs::write(b.join("new.hist"), "x\ny\nz\n").unwrap();
+        fs::write(b.join("new.json"), r#"{"name":"api","cwd":"/w"}"#).unwrap();
+        let old = fs::File::options()
+            .write(true)
+            .open(b.join("old.hist"))
+            .unwrap();
+        old.set_modified(UNIX_EPOCH + std::time::Duration::from_secs(1_000))
+            .unwrap();
+        let list = list_in(b);
+        assert_eq!(
+            list.iter().map(|h| h.key.as_str()).collect::<Vec<_>>(),
+            vec!["new", "old"]
+        );
+        assert_eq!(list[0].recent, vec!["z", "y", "x"]);
+        assert_eq!((list[0].name.as_str(), list[0].count), ("api", 3));
+    }
+
+    /// The wrappers in a real zsh: the user's .zshrc still runs, history goes to the
+    /// tab file (not ~/.zsh_history), and ZDOTDIR is handed back.
+    #[test]
+    fn real_zsh_uses_the_tab_file() {
+        if !Path::new("/bin/zsh").exists() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        fs::write(
+            home.join(".zshrc"),
+            "export FROMRC=yes\nHISTFILE=$HOME/.zsh_history\n",
+        )
+        .unwrap();
+        let env = spawn_env_in(&dir.path().join("th"), "t1", None, None);
+        let out = std::process::Command::new("/bin/zsh")
+            .args([
+                "-l",
+                "-i",
+                "-c",
+                "print -r -- \"$FROMRC|$HISTFILE|${ZDOTDIR-unset}\"",
+            ])
+            .env_clear()
+            .env("HOME", &home)
+            .env("PATH", "/usr/bin:/bin")
+            .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+            .output()
+            .unwrap();
+        let s = String::from_utf8_lossy(&out.stdout);
+        let hist = dir.path().join("th/t1.hist");
+        assert!(s.contains(&format!("yes|{}|unset", hist.display())), "{s}");
+    }
+}
