@@ -54,7 +54,10 @@ fn startup_file(name: &str) -> String {
         // zsh reads the history file right after .zshrc, so setting it here is what
         // loads this tab's past commands; .zlogin repeats it in case the user's own
         // .zlogin moved it.
-        s.push_str("[[ -n $MUYA_HISTFILE ]] && HISTFILE=$MUYA_HISTFILE\n");
+        // INC_APPEND: write each command as it runs (macOS zsh otherwise saves only
+        // when the shell exits, so a terminal killed with its tab never saved).
+        // EXTENDED: a timestamp per command, for the Sessions page's date view.
+        s.push_str("[[ -n $MUYA_HISTFILE ]] && { HISTFILE=$MUYA_HISTFILE; setopt INC_APPEND_HISTORY EXTENDED_HISTORY; }\n");
     }
     if name == ".zlogin" {
         s.push_str(
@@ -177,39 +180,50 @@ fn unmetafy(raw: &[u8]) -> Vec<u8> {
 /// Commands in a zsh history file, oldest first. Handles EXTENDED_HISTORY lines
 /// (`: <time>:<dur>;cmd`) and multi-line commands (lines ending in `\`).
 pub(crate) fn parse_history(raw: &[u8]) -> Vec<String> {
+    parse_entries(raw).into_iter().map(|e| e.cmd).collect()
+}
+
+/// One command and, with EXTENDED_HISTORY, when it started (seconds since epoch).
+#[derive(Serialize, Debug, PartialEq, Clone)]
+pub struct Entry {
+    pub ts: Option<u64>,
+    pub cmd: String,
+}
+
+/// Like [`parse_history`], keeping each command's timestamp when the file has one.
+pub(crate) fn parse_entries(raw: &[u8]) -> Vec<Entry> {
     let text = String::from_utf8_lossy(&unmetafy(raw)).into_owned();
-    let mut out: Vec<String> = Vec::new();
-    let mut pending: Option<String> = None;
+    let mut out: Vec<Entry> = Vec::new();
+    let mut pending: Option<Entry> = None;
+    let mut push = |e: Entry| {
+        if !e.cmd.trim().is_empty() {
+            out.push(e);
+        }
+    };
     for line in text.lines() {
-        let line = match pending.take() {
+        let mut entry = match pending.take() {
             Some(mut p) => {
-                p.push('\n');
-                p.push_str(line);
+                p.cmd.push('\n');
+                p.cmd.push_str(line);
                 p
             }
             None => match line.strip_prefix(": ").and_then(|r| r.split_once(';')) {
-                Some((stamp, cmd))
-                    if stamp
-                        .split(':')
-                        .all(|p| p.chars().all(|c| c.is_ascii_digit())) =>
-                {
-                    cmd.to_string()
-                }
-                _ => line.to_string(),
+                Some((stamp, cmd)) if stamp.split(':').all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit())) => Entry {
+                    ts: stamp.split(':').next().and_then(|t| t.parse().ok()),
+                    cmd: cmd.to_string(),
+                },
+                _ => Entry { ts: None, cmd: line.to_string() },
             },
         };
-        if let Some(cont) = line.strip_suffix('\\') {
-            pending = Some(cont.to_string());
+        if let Some(cont) = entry.cmd.strip_suffix('\\') {
+            entry.cmd = cont.to_string();
+            pending = Some(entry);
             continue;
         }
-        if !line.trim().is_empty() {
-            out.push(line);
-        }
+        push(entry);
     }
     if let Some(p) = pending {
-        if !p.trim().is_empty() {
-            out.push(p);
-        }
+        push(p);
     }
     out
 }
@@ -292,28 +306,46 @@ fn list_in(base: &Path) -> Vec<TermHistory> {
     out
 }
 
-/// Every terminal that has history, newest first.
+/// Every terminal's commands with timestamps (tail of each file), for the date view.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct TermEntries {
+    pub key: String,
+    pub name: String,
+    pub cwd: String,
+    pub updated_ms: u64,
+    /// Oldest first.
+    pub entries: Vec<Entry>,
+}
+
+fn entries_in(base: &Path) -> Vec<TermEntries> {
+    list_in(base)
+        .into_iter()
+        .filter_map(|h| {
+            let raw = read_tail(&base.join(format!("{}.hist", h.key))).ok()?;
+            Some(TermEntries { key: h.key, name: h.name, cwd: h.cwd, updated_ms: h.updated_ms, entries: parse_entries(&raw) })
+        })
+        .collect()
+}
+
 #[tauri::command]
-pub async fn term_history_list() -> Vec<TermHistory> {
-    tokio::task::spawn_blocking(|| base_dir().map(|b| list_in(&b)).unwrap_or_default())
+pub async fn term_history_entries() -> Vec<TermEntries> {
+    tokio::task::spawn_blocking(|| base_dir().map(|b| entries_in(&b)).unwrap_or_default())
         .await
         .unwrap_or_default()
 }
 
-/// One terminal's full history (tail of the file), newest first.
+/// Save text the page built (a terminal's commands) to a file the user picked.
 #[tauri::command]
-pub async fn term_history_get(key: String) -> Result<Vec<String>, String> {
-    if !valid_key(&key) {
-        return Err("invalid terminal key".into());
+pub fn term_history_export(dest: String, text: String) -> Result<(), String> {
+    let dest = PathBuf::from(dest);
+    if !dest.is_absolute() {
+        return Err("destination must be an absolute path".into());
     }
-    let base = base_dir().ok_or("no data folder")?;
-    tokio::task::spawn_blocking(move || match read_tail(&base.join(format!("{key}.hist"))) {
-        Ok(raw) => Ok(parse_history(&raw).into_iter().rev().collect()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-        Err(e) => Err(e.to_string()),
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    if base_dir().is_some_and(|b| dest.starts_with(b)) {
+        return Err("refusing to write inside Muya's history folder".into());
+    }
+    fs::write(&dest, text).map_err(|e| e.to_string())
 }
 
 /// Delete one terminal's history.
@@ -336,6 +368,19 @@ pub fn term_history_delete(key: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn entries_keep_timestamps() {
+        let raw = b": 1700000000:0;git status\nls\n: 1700000100:3;echo a \\\nb\n";
+        assert_eq!(
+            parse_entries(raw),
+            vec![
+                Entry { ts: Some(1_700_000_000), cmd: "git status".into() },
+                Entry { ts: None, cmd: "ls".into() },
+                Entry { ts: Some(1_700_000_100), cmd: "echo a \nb".into() },
+            ]
+        );
+    }
 
     #[test]
     fn keys_must_be_plain_file_names() {

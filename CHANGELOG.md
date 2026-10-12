@@ -6,6 +6,12 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Sessions → Terminal History tab.** Next to Agent Sessions, a second tab lists what you typed in your terminals, grouped by day (Today, Yesterday, dates) with the time of each command. Expand a terminal to view all of that day's commands, download its whole history as a .txt file, reopen the terminal with its history, or delete it. Search works on terminal names, folders and commands.
+
+### Fixed
+- **Terminal commands are saved as you type them,** with the time. macOS zsh otherwise saved them only when the terminal closed, so the history stayed empty while tabs were open (and was lost if a tab was killed).
+
 ### Changed
 - **Settings switches apply on Save.** Open at login, Resume Claude sessions and Auto-allow now light up Save when you change them and take effect when you press it, like the log settings.
 - **The Auto-allow suggestion stays 30 seconds** (was 5).
