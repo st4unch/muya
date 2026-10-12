@@ -30,11 +30,26 @@ export function saveAutoApprove(on: boolean): void {
 interface WaitingAgent {
   key: string;
   status: string;
-  approval?: { actionable?: boolean };
+  approval?: { actionable?: boolean; tool?: string; target?: string; summary?: string };
+}
+
+const SEP = "\u0001";
+
+/** One id per prompt on screen: the session key plus what the prompt asks for. A
+ *  different prompt in the same session gets a new id (and a fresh 2 s wait). */
+export function approvableIds(agents: readonly WaitingAgent[]): string[] {
+  return agents
+    .filter((a) => a.status === "waiting" && a.approval && a.approval.actionable !== false)
+    .map((a) => [a.key, a.approval?.tool ?? "", a.approval?.target ?? "", a.approval?.summary ?? ""].join(SEP));
+}
+
+/** The session key an id from {@link approvableIds} belongs to. */
+export function keyOfApprovableId(id: string): string {
+  return id.split(SEP)[0];
 }
 
 /** Keys whose prompt can be auto-approved right now: waiting on a prompt whose
  *  Allow option was read from the screen. */
 export function approvableKeys(agents: readonly WaitingAgent[]): string[] {
-  return agents.filter((a) => a.status === "waiting" && a.approval && a.approval.actionable !== false).map((a) => a.key);
+  return approvableIds(agents).map(keyOfApprovableId);
 }

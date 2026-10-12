@@ -373,17 +373,70 @@ pub async fn term_history_full(key: String) -> Result<Option<TermEntries>, Strin
         .map_err(|e| e.to_string())
 }
 
-/// Save text the page built (a terminal's commands) to a file the user picked.
-#[tauri::command]
-pub fn term_history_export(dest: String, text: String) -> Result<(), String> {
-    let dest = PathBuf::from(dest);
+/// Largest download accepted (a terminal's tail is at most TAIL_BYTES of history).
+const MAX_EXPORT_BYTES: usize = 8 * 1024 * 1024;
+
+/// Checks for a download destination: a plain `.txt` file (new, or an existing regular
+/// file — never a symlink) in an existing folder outside Muya's history folder. The
+/// folder is resolved to its real path first, so `..` or a symlinked parent can't
+/// smuggle the write into the history folder (whose wrapper files zsh runs).
+fn export_target(dest: &Path, base: Option<&Path>) -> Result<PathBuf, String> {
     if !dest.is_absolute() {
         return Err("destination must be an absolute path".into());
     }
-    if base_dir().is_some_and(|b| dest.starts_with(b)) {
-        return Err("refusing to write inside Muya's history folder".into());
+    if dest
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+        != Some("txt")
+    {
+        return Err("destination must be a .txt file".into());
     }
-    fs::write(&dest, text).map_err(|e| e.to_string())
+    let name = dest.file_name().ok_or("destination has no file name")?;
+    let parent = dest
+        .parent()
+        .ok_or("destination has no folder")?
+        .canonicalize()
+        .map_err(|e| format!("destination folder: {e}"))?;
+    if let Some(base) = base {
+        let base = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
+        if parent.starts_with(&base) {
+            return Err("refusing to write inside Muya's history folder".into());
+        }
+    }
+    let target = parent.join(name);
+    if let Ok(m) = fs::symlink_metadata(&target) {
+        if !m.file_type().is_file() {
+            return Err("destination exists and is not a regular file".into());
+        }
+    }
+    Ok(target)
+}
+
+/// Save text the page built (a terminal's commands) to a .txt file the user picked
+/// in the save dialog. Readable by the owner only, like the history itself.
+#[tauri::command]
+pub async fn term_history_export(dest: String, text: String) -> Result<(), String> {
+    if text.len() > MAX_EXPORT_BYTES {
+        return Err("history too large to export".into());
+    }
+    tokio::task::spawn_blocking(move || {
+        let base = base_dir();
+        let target = export_target(Path::new(&dest), base.as_deref())?;
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&target)
+            .map_err(|e| e.to_string())?;
+        f.write_all(text.as_bytes()).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Delete one terminal's history.
@@ -508,6 +561,29 @@ mod tests {
         // Full read of one terminal is not capped.
         assert_eq!(cmds(&full_in(b, "new").unwrap()), vec!["x", "y", "z"]);
         assert!(full_in(b, "missing").is_none());
+    }
+
+    #[test]
+    fn export_target_rejects_unsafe_destinations() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let base = root.join("th");
+        fs::create_dir_all(base.join("zdotdir")).unwrap();
+        let out = root.join("out");
+        fs::create_dir_all(&out).unwrap();
+        let ok = export_target(&out.join("h.txt"), Some(&base)).unwrap();
+        assert_eq!(ok, out.join("h.txt"));
+        // Relative, not .txt, the history folder (also via ..), a missing folder.
+        assert!(export_target(Path::new("h.txt"), Some(&base)).is_err());
+        assert!(export_target(&out.join(".zshrc"), Some(&base)).is_err());
+        assert!(export_target(&base.join("zdotdir/x.txt"), Some(&base)).is_err());
+        assert!(export_target(&out.join("../th/zdotdir/x.txt"), Some(&base)).is_err());
+        assert!(export_target(&root.join("nope/x.txt"), Some(&base)).is_err());
+        // A symlinked folder pointing into the history folder, and a symlinked file.
+        std::os::unix::fs::symlink(base.join("zdotdir"), out.join("link")).unwrap();
+        assert!(export_target(&out.join("link/x.txt"), Some(&base)).is_err());
+        std::os::unix::fs::symlink(root.join("elsewhere.txt"), out.join("s.txt")).unwrap();
+        assert!(export_target(&out.join("s.txt"), Some(&base)).is_err());
     }
 
     /// Cost of opening the Terminal History tab after months of use:

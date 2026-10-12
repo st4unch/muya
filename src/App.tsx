@@ -61,7 +61,7 @@ import type { AgentFilter } from "./redesign/AgentList";
 import type { InspectorTab } from "./redesign/Inspector";
 import { shouldExitGridOnEscape } from "./redesign/gridKeys";
 import { deliveryWrites, SUBMIT_DELAY_MS, type RemoteSender } from "./lib/remoteMessage";
-import { approvableKeys, AUTO_APPROVE_EVENT, AUTO_APPROVE_MS, loadAutoApprove, saveAutoApprove } from "./lib/autoApprove";
+import { approvableIds, AUTO_APPROVE_EVENT, keyOfApprovableId, AUTO_APPROVE_MS, loadAutoApprove, saveAutoApprove } from "./lib/autoApprove";
 import { AutoAllowSuggest } from "./redesign/AutoAllowSuggest";
 import { historyKeyOf } from "./lib/termHistory";
 
@@ -1693,19 +1693,21 @@ export default function App() {
     if (autoApprove) document.documentElement.dataset.autoAllow = "1";
     else delete document.documentElement.dataset.autoAllow;
   }, [autoApprove]);
-  // Joined so the effects below re-run only when the set of waiting prompts changes.
-  const approvable = approvableKeys(agentVMs).join("\n");
+  // One id per prompt on screen (session + what it asks), joined so the effects below
+  // re-run only when the set of waiting prompts changes. \u0002: commands may hold \n.
+  const approvable = approvableIds(agentVMs).join("\u0002");
   const autoTimersRef = useRef(new Map<string, number>());
   useEffect(() => {
     const timers = autoTimersRef.current;
-    const keys = new Set(autoApprove && approvable ? approvable.split("\n") : []);
+    const keys = new Set(autoApprove && approvable ? approvable.split("\u0002") : []);
     for (const [k, t] of timers) if (!keys.has(k)) { clearTimeout(t); timers.delete(k); }
     for (const k of keys) {
       if (timers.has(k)) continue;
       timers.set(k, window.setTimeout(() => {
         timers.delete(k);
-        // Re-check at fire time: the user may have answered it meanwhile.
-        if (approvableKeys(agentVMsRef.current).includes(k)) respond(k, "approve");
+        // Re-check at fire time that this same prompt is still on screen (the user
+        // may have answered it, or a different prompt may have replaced it).
+        if (approvableIds(agentVMsRef.current).includes(k)) respond(keyOfApprovableId(k), "approve");
       }, AUTO_APPROVE_MS));
     }
   }, [autoApprove, approvable, respond]);
@@ -1714,8 +1716,9 @@ export default function App() {
   const [autoAllowSuggest, setAutoAllowSuggest] = useState<string | null>(null);
   const prevApprovableRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    const now = new Set(approvable ? approvable.split("\n") : []);
-    const fresh = [...now].find((k) => !prevApprovableRef.current.has(k));
+    const now = new Set(approvable ? approvable.split("\u0002") : []);
+    const freshId = [...now].find((k) => !prevApprovableRef.current.has(k));
+    const fresh = freshId && keyOfApprovableId(freshId);
     prevApprovableRef.current = now;
     if (!fresh || autoApprove) return;
     const mode = agentVMsRef.current.find((a) => a.key === fresh)?.mode;

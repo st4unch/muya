@@ -77,6 +77,7 @@ export default function TerminalHistoryView({
       const dest = (await save({
         title: "Download terminal history",
         defaultPath: `${(t.name || t.key).replace(/[^\w.-]+/g, "-")}-history.txt`,
+        filters: [{ name: "Text", extensions: ["txt"] }],
       })) as string | null;
       if (!dest) return;
       await invoke("term_history_export", { dest, text: historyText(t.name, t.cwd, t.entries) });
