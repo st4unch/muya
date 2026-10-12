@@ -1,6 +1,6 @@
 // Created by Claude — Classification: INTERNAL
 //
-// Shown for 30 seconds when a permission prompt appears while Auto-allow is off:
+// Shown (top-right, neutral buttons) for 30 seconds when a permission prompt appears while Auto-allow is off:
 // offers to turn it on. Closed by its X, by Esc (App handles the key so it neither
 // reaches the terminal nor takes Muya out of fullscreen), or by timing out.
 import { X } from "lucide-react";
@@ -12,8 +12,10 @@ export function AutoAllowSuggest({ agentName, onEnable, onDismiss }: { agentName
       role="status"
       aria-live="polite"
       style={{
+        // Top-right, away from the permission bar's Allow button (bottom), so a click
+        // meant for Allow cannot land on "Turn on".
         position: "fixed",
-        bottom: 72,
+        top: 56,
         right: 16,
         width: 340,
         zIndex: 140,
@@ -43,8 +45,9 @@ export function AutoAllowSuggest({ agentName, onEnable, onDismiss }: { agentName
         <button type="button" onClick={onDismiss} className="rd-btn2" style={{ height: 28, padding: "0 12px", borderRadius: 7, border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-tertiary)", fontSize: 12 }}>
           Not now
         </button>
-        <button type="button" onClick={onEnable} style={{ height: 28, padding: "0 12px", borderRadius: 7, border: "none", background: "var(--warning-btn-bg)", color: "var(--warning-btn-fg)", fontSize: 12, fontWeight: 600 }}>
-          Turn on
+        {/* Deliberately not orange: it must not look like the Allow button it sits near. */}
+        <button type="button" onClick={onEnable} className="rd-btn2" style={{ height: 28, padding: "0 12px", borderRadius: 7, border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-strong)", fontSize: 12, fontWeight: 600 }}>
+          Turn on Auto-allow
         </button>
       </div>
     </div>
