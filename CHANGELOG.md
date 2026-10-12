@@ -6,6 +6,11 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.0.17] - 2026-10-13
+
+### Fixed
+- **"Open Muya at login" is listed as Muya.** System Settings → General → Login Items showed the item under the developer's name instead of Muya, because Muya added it as a background script. On macOS 13 and later Muya now adds itself the way regular apps do, so it appears as "Muya" with its icon under "Open at Login". If you had the setting on, Muya moves it over the first time it starts; nothing to do. If you had switched Muya off in Login Items before, turning the setting on opens that page so you can allow it.
+
 ## [4.0.16] - 2026-10-12
 
 ### Added

@@ -1,6 +1,6 @@
 [package]
 name = "muya"
-version = "4.0.16"
+version = "4.0.17"
 description = "Muya — control plane for parallel Claude Code agents"
 authors = ["staunch"]
 edition = "2021"
@@ -91,6 +91,8 @@ security-framework = { version = "3.7.0", features = ["OSX_10_15"] }
 # (SecTranslocateCreateOriginalPathForURL takes/returns CFURLs). Already in the tree
 # via security-framework — no new crate is downloaded.
 core-foundation = "0.10"
+objc2-service-management = "0.3.2"
+objc2 = "0.6"
 
 [dev-dependencies]
 tempfile = "3.27.0"
