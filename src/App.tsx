@@ -60,6 +60,7 @@ import type { AgentVM, ChangeVM, FileVM, GridLayout, OpenFileVM, InspectorVM, Pe
 import type { AgentFilter } from "./redesign/AgentList";
 import type { InspectorTab } from "./redesign/Inspector";
 import { assignGridCell, shouldExitGridOnEscape } from "./redesign/gridKeys";
+import { kanbanRoots } from "./lib/kanbanRoots";
 import { deliveryWrites, SUBMIT_DELAY_MS, type RemoteSender } from "./lib/remoteMessage";
 import { approvableIds, AUTO_APPROVE_EVENT, keyOfApprovableId, AUTO_APPROVE_MS, loadAutoApprove, saveAutoApprove } from "./lib/autoApprove";
 import { AutoAllowSuggest } from "./redesign/AutoAllowSuggest";
@@ -2465,15 +2466,9 @@ export default function App() {
             <div className={pageClass("prd")}>
               {mountedViews.has("prd") && (
                 <PrdBoard
-                  // Scan every known project root, not just user-added `workspaces`: agents
-                  // run in git WORKTREES and drop their PRDs in the worktree's docs/, so a
-                  // PRD created by an agent was invisible in the Kanban unless that worktree
-                  // happened to be a workspace. Union in worktrees + live agent cwds.
-                  workspaces={[...new Set([
-                    ...workspaces,
-                    ...worktrees,
-                    ...agents.map((a) => a.worktree).filter(Boolean),
-                  ])].filter((w) => w.startsWith("/")).sort()}
+                  // Muya's own roots only (lib/kanbanRoots): workspaces, worktrees and
+                  // the folders of terminals open here — not every Claude session on the Mac.
+                  workspaces={kanbanRoots(workspaces, worktrees, openTerminals, liveCwds)}
                   onRegisterRefresh={registerPrdRefresh}
                   onOpenFile={(path) => openEditor(path)}
                 />

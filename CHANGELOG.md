@@ -6,6 +6,11 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.0.19] - 2026-10-13
+
+### Fixed
+- Kanban was not empty on a first install: it showed plans from every project Claude Code had ever worked in on that Mac. It now shows only the folders you added to Muya, the worktrees Muya made, and the folders of terminals open in Muya.
+
 ## [4.0.18] - 2026-10-13
 
 ### Added
