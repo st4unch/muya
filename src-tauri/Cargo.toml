@@ -1,6 +1,6 @@
 [package]
 name = "muya"
-version = "4.0.19"
+version = "4.1.0"
 description = "Muya — control plane for parallel Claude Code agents"
 authors = ["staunch"]
 edition = "2021"
@@ -74,6 +74,8 @@ tauri-plugin-clipboard-manager = "2"
 # machine can be diagnosed from the log.
 tauri-plugin-log = "2"
 log = "0.4"
+# Schedules: local wall-clock next-run math (daily / weekly, DST-aware).
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 # Faz 3: sandbox TempDir for task execution cwd isolation
 tempfile = "3.27.0"
 # SSH/CyberArk credential store (PRD ssh-cyberark, Faz 0):

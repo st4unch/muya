@@ -2905,10 +2905,11 @@ dependencies = [
 
 [[package]]
 name = "muya"
-version = "4.0.19"
+version = "4.1.0"
 dependencies = [
  "aes-gcm",
  "argon2",
+ "chrono",
  "core-foundation",
  "dirs-next",
  "hkdf 0.13.0",

@@ -292,6 +292,14 @@ struct BrokerReq {
     remote_path: Option<String>,
     #[serde(default)]
     recursive: Option<bool>,
+    /// Schedules (docs/prd-schedules.md): the schedule's id or name, the create /
+    /// update fields, the on/off value and the history length.
+    #[serde(default)]
+    schedule: Option<String>,
+    #[serde(default)]
+    fields: Option<serde_json::Value>,
+    #[serde(default)]
+    enabled: Option<bool>,
     /// Agent-supplied extra scp flags, policed by `enforce_scp_arg_policy` before
     /// they ever reach `ssh::build_scp_command`.
     #[serde(rename = "extraArgs", default)]
@@ -803,6 +811,19 @@ async fn handle_request(app: &AppHandle, line: &str) -> String {
             Err(e) => err_resp(e),
         },
         "run_operation" => handle_run_operation(app, &req).await,
+        op if op.starts_with("schedule") => {
+            let (app, op) = (app.clone(), op.to_string());
+            let (key, fields, enabled, limit) = (req.schedule.clone(), req.fields.clone(), req.enabled, req.limit.map(|n| n as usize));
+            let res = tauri::async_runtime::spawn_blocking(move || {
+                crate::schedules::agent_op(&app, &op, key.as_deref(), fields.as_ref(), enabled, limit)
+            })
+            .await
+            .unwrap_or_else(|e| Err(e.to_string()));
+            match res {
+                Ok(v) => json!({"ok": true, "result": v}).to_string(),
+                Err(e) => err_resp(e),
+            }
+        }
         other => err_resp(format!("unknown op '{other}'")),
     }
 }

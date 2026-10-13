@@ -86,11 +86,11 @@ export function MenuSeparator() {
 }
 
 /** Modal shell: `role="dialog"` so the terminal key-guard stops forwarding keys to the PTY. */
-function DialogShell({ label, onClose, children, width }: { label: string; onClose: () => void; children: ReactNode; width: number }) {
+export function DialogShell({ label, onClose, children, width, top = "18vh" }: { label: string; onClose: () => void; children: ReactNode; width: number; top?: string }) {
   useEscape(onClose);
   return (
-    <div className="rd-root fixed inset-0 z-50" style={{ position: "fixed", inset: 0, zIndex: 160, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: "18vh" }} onMouseDown={onClose}>
-      <div role="dialog" aria-modal="true" aria-label={label} onMouseDown={(e) => e.stopPropagation()} style={{ ...PANEL, width, padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+    <div className="rd-root fixed inset-0 z-50" style={{ position: "fixed", inset: 0, zIndex: 160, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: top }} onMouseDown={onClose}>
+      <div role="dialog" aria-modal="true" aria-label={label} onMouseDown={(e) => e.stopPropagation()} style={{ ...PANEL, width, maxWidth: "calc(100vw - 32px)", maxHeight: `calc(100vh - 2 * ${top})`, overflow: "auto", boxSizing: "border-box", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
         {children}
       </div>
     </div>

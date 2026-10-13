@@ -22,6 +22,7 @@
 // Both checks must pass before `maybeInstallMock()` touches anything.
 
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
+import { handleSchedules } from "./schedulesMock";
 import {
   MOCK_AGENTS,
   MOCK_APP_METRICS,
@@ -333,6 +334,9 @@ function handleInvoke(cmd: string, rawPayload?: unknown): unknown {
   // --- plugin:* commands (app/window/updater/dialog/opener/process/clipboard) ---
   if (cmd.startsWith("plugin:")) return handlePlugin(cmd, payload);
 
+  const sched = handleSchedules(cmd, payload);
+  if (sched.handled) return sched.value;
+
   if (NULL_OK.has(cmd)) return null;
   if (EMPTY_ARRAY.has(cmd)) return [];
   if (EMPTY_STRING.has(cmd)) return "";
@@ -522,6 +526,8 @@ function handlePlugin(cmd: string, payload: Record<string, unknown>): unknown {
     case "plugin:window|theme":
       return "dark";
     case "plugin:dialog|open":
+      // A folder pick (Schedules' Choose…) gets a folder; file opens get nothing.
+      return (payload.options as { directory?: boolean } | undefined)?.directory ? "/Users/someone/Projects/picked" : null;
     case "plugin:dialog|save":
       return null;
     case "plugin:dialog|message":

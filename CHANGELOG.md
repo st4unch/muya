@@ -6,6 +6,19 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-10-14
+
+### Added
+- **Schedules** (new page in the left rail, under SSH): run a Claude prompt on its own — every few minutes, every day at a time, or on chosen weekdays — in a folder you pick. It runs headless with your Claude settings, MCP servers and skills, while Muya is open (a run missed while Muya was closed is skipped).
+  - Each schedule is a small card: on/off switch, Run now, History, Edit and Delete, with its last result, how many runs succeeded or failed, and when it runs next.
+  - A report row on top: number of schedules, total runs, success rate and the last failure.
+  - History shows every run (time, success / failed / timed out, duration, cost, scheduled or Run now) with its output. The last 100 runs per schedule are kept.
+  - Per schedule: a timeout (the run and everything it started is stopped) and whether permission prompts are skipped. At most three schedules run at once; the rest wait their turn.
+- The same Schedules features as muya-mcp tools, so a Claude session can manage them: `schedules_list`, `schedule_create`, `schedule_update`, `schedule_set_enabled`, `schedule_delete`, `schedule_run_now`, `schedule_history`.
+
+### Changed
+- Settings and the new Schedules dialogs share one set of modal parts (title bar, labels, switches, buttons), so they look the same.
+
 ## [4.0.19] - 2026-10-13
 
 ### Fixed

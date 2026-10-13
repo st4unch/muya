@@ -1,6 +1,6 @@
 ---
 name: muya-mcp
-description: How to use the `muya-mcp` MCP server's tools well — SSH (ssh_open/ssh_run/ssh_scp/ssh_session_*/ssh_add_server/ssh_update_server/ssh_list_psmp_profiles), cross-session messaging (list_sessions/read_session/send_to_session), opening/closing local sessions (open_session/close_session), secrets (add_secret/get_secret/update_secret/list_secrets), operator-pinned operations (list_operations/run_operation), and Kanban tracking (track_plan). Use whenever the muya-mcp server is connected and the task involves SSH, another running Claude session, spinning up a parallel session, a stored credential, or an operator-approved operation — or when unsure which muya-mcp tool fits.
+description: How to use the `muya-mcp` MCP server's tools well — SSH (ssh_open/ssh_run/ssh_scp/ssh_session_*/ssh_add_server/ssh_update_server/ssh_list_psmp_profiles), cross-session messaging (list_sessions/read_session/send_to_session), opening/closing local sessions (open_session/close_session), secrets (add_secret/get_secret/update_secret/list_secrets), operator-pinned operations (list_operations/run_operation), Kanban tracking (track_plan), and scheduled headless Claude prompts (schedules_list/schedule_create/schedule_update/schedule_set_enabled/schedule_delete/schedule_run_now/schedule_history). Use whenever the muya-mcp server is connected and the task involves SSH, another running Claude session, spinning up a parallel session, a stored credential, or an operator-approved operation — or when unsure which muya-mcp tool fits.
 ---
 
 # muya-mcp — Muya's agent tool surface
@@ -36,6 +36,7 @@ a group** — you need real names/aliases, and guessing is never allowed (see be
 | Store/read/rotate a credential | `add_secret` / `get_secret` / `update_secret` / `list_secrets` |
 | Run an operator-pinned command (aws/kubectl/git...) that uses a secret I never see | `list_operations` → `run_operation` |
 | Put a plan/PRD on the operator's Kanban board | `track_plan` |
+| Run a Claude prompt on a timer (daily / weekdays / every N min), or check how a scheduled one went | `schedules_list` → `schedule_create` / `schedule_history` |
 
 ## SSH group
 
@@ -132,6 +133,22 @@ server** — read this before running anything:
 Publishes/updates a PRD card on Muya's Kanban board (writes `docs/prd-<slug>.md` +
 progress file in **your current project directory**). Call once with `status: "active"`
 when you start a plan, again with the same `title` and `status: "done"` when finished.
+
+## Schedules group
+
+Muya's Schedules page: Claude prompts that run headless (`claude -p`) in a folder on a
+timer, with the user's settings, MCP servers and skills — while Muya is open.
+
+- Address a schedule by its `id` or exact name (`schedule_ref`); duplicate names need the id.
+- `schedule_create` needs `name`, `prompt`, `folder` (absolute, existing) and `schedule`:
+  `{"kind":"interval","minutes":30}` (≥5), `{"kind":"daily","time":"09:00"}`, or
+  `{"kind":"weekly","days":[0,1,2,3,4],"time":"09:00"}` (0 = Monday). Defaults: on,
+  30 min timeout, `bypass: true` (permission prompts skipped).
+- **Only create or turn on a schedule when the user asked for it.** With bypass on it runs
+  any command, unattended, until turned off. Say what you created (name, timing, folder).
+- `schedule_update` takes only the fields to change. `schedule_run_now` returns at once;
+  read the result with `schedule_history` (newest first, output capped at 8000 chars).
+- `schedule_delete` also deletes the run history and cannot be undone — confirm first.
 
 ## General principles across all of this
 

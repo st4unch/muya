@@ -5,6 +5,7 @@ import type { ThemePreference } from "../theme/theme";
 import { ThemeMonitorIcon, ThemeMoonIcon, ThemeSunIcon } from "../redesign/icons";
 import { loadResumeOnLaunch, saveResumeOnLaunch } from "../lib/startup";
 import { loadAutoApprove, saveAutoApprove } from "../lib/autoApprove";
+import { Switch, ghostBtn, groupStyle, helperStyle, labelStyle } from "./modalKit";
 
 const DEFAULT_LOG_PATH = "~/.claude/muya-debug.log";
 
@@ -13,28 +14,6 @@ const THEMES: { value: ThemePreference; label: string; Icon: typeof ThemeSunIcon
   { value: "light", label: "Light", Icon: ThemeSunIcon },
   { value: "dark", label: "Dark", Icon: ThemeMoonIcon },
 ];
-
-const labelStyle: CSSProperties = {
-  fontSize: 11,
-  fontWeight: 600,
-  letterSpacing: ".06em",
-  textTransform: "uppercase",
-  color: "var(--text-muted)",
-  whiteSpace: "nowrap",
-};
-const helperStyle: CSSProperties = { fontSize: 12, color: "var(--text-faint)", lineHeight: 1.45 };
-const groupStyle: CSSProperties = { display: "flex", flexDirection: "column", gap: 8, minWidth: 0 };
-const ghostBtn: CSSProperties = {
-  height: 32,
-  padding: "0 12px",
-  borderRadius: 7,
-  border: "1px solid var(--border-control)",
-  background: "var(--bg-control)",
-  color: "var(--text)",
-  fontSize: 13,
-  whiteSpace: "nowrap",
-  cursor: "pointer",
-};
 
 const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
@@ -421,46 +400,5 @@ export default function SettingsModal({
         </div>
       </div>
     </div>
-  );
-}
-
-/** A 32×18 on/off switch (role="switch"), accent track when on. */
-function Switch({ checked, onChange, labelledBy }: { checked: boolean; onChange: (v: boolean) => void; labelledBy: string }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-labelledby={labelledBy}
-      onClick={() => onChange(!checked)}
-      style={{
-        position: "relative",
-        width: 32,
-        height: 18,
-        flexShrink: 0,
-        marginTop: 1,
-        padding: 0,
-        borderRadius: 9,
-        border: "none",
-        background: checked ? "var(--accent)" : "var(--border-control)",
-        transition: "background-color 120ms",
-        cursor: "pointer",
-      }}
-    >
-      <span
-        style={{
-          position: "absolute",
-          top: 2,
-          left: checked ? 16 : 2,
-          width: 14,
-          height: 14,
-          borderRadius: 7,
-          // Off: a muted knob reads on both themes' grey track; on: panel colour on the accent.
-          background: checked ? "var(--bg-panel)" : "var(--text-muted)",
-          boxShadow: "var(--shadow-segment-active)",
-          transition: "left 120ms, background-color 120ms",
-        }}
-      />
-    </button>
   );
 }

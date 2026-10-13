@@ -163,6 +163,15 @@ export function SshRailIcon({ size = 18, ...p }: IconProps) {
   );
 }
 
+export function SchedulesRailIcon({ size = 18, ...p }: IconProps) {
+  return (
+    <svg {...base(size, 1.8, p)}>
+      <circle cx="12" cy="13" r="8" />
+      <path d="M12 9v4l2.5 2.5M9 2h6" />
+    </svg>
+  );
+}
+
 export function ChatRailIcon({ size = 18, ...p }: IconProps) {
   return (
     <svg {...base(size, 1.8, p)}>

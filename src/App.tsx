@@ -24,6 +24,7 @@ import NewAgentModal, { type NewAgentSpec } from "./components/NewAgentModal";
 import QueuePage from "./components/QueuePage";
 import ResourcesPage from "./components/ResourcesPage";
 import SshPage from "./components/SshPage";
+import SchedulesPage from "./components/SchedulesPage";
 import PrdBoard from "./components/PrdBoard";
 import ScheduledPromptModal, { type ScheduledPrompt } from "./components/ScheduledPromptModal";
 import SettingsModal from "./components/SettingsModal";
@@ -138,7 +139,7 @@ interface GitBranchState {
   parent?: string; // real lineage: branch this forked from
 }
 
-type View = "control" | "sessions" | "queue" | "tools" | "prd" | "ssh" | "branches";
+type View = "control" | "sessions" | "queue" | "tools" | "prd" | "ssh" | "schedules" | "branches";
 type Screen = "control" | "grid";
 
 const isFileTab = (t: { kind: OpenTerminal["kind"] }) => t.kind !== "terminal";
@@ -234,6 +235,7 @@ const PALETTE_COMMANDS = [
   { id: "kanban", label: "Kanban" },
   { id: "resources", label: "Resources" },
   { id: "ssh", label: "SSH" },
+  { id: "schedules", label: "Schedules" },
   { id: "settings", label: "Settings" },
   { id: "theme", label: "Cycle theme (system, light, dark)" },
   { id: "schedule", label: "Schedule prompt" },
@@ -1878,7 +1880,7 @@ export default function App() {
       : gridPanels[0]?.key ?? null;
 
   const railActive: RailItem | null =
-    view === "control" ? (controlMode === "files" ? "files" : "control") : view === "sessions" ? "sessions" : view === "queue" ? "queue" : view === "prd" ? "kanban" : view === "tools" ? "resources" : view === "ssh" ? "ssh" : null;
+    view === "control" ? (controlMode === "files" ? "files" : "control") : view === "sessions" ? "sessions" : view === "queue" ? "queue" : view === "prd" ? "kanban" : view === "tools" ? "resources" : view === "ssh" ? "ssh" : view === "schedules" ? "schedules" : null;
 
   const navigateRail = (item: RailItem) => {
     if (item === "settings") return setSettingsOpen(true);
@@ -2057,6 +2059,7 @@ export default function App() {
       case "kanban": return setView("prd");
       case "resources": return setView("tools");
       case "ssh": return setView("ssh");
+      case "schedules": return setView("schedules");
       case "settings": return setSettingsOpen(true);
       case "theme": return cycleTheme();
       case "schedule": return setScheduleOpen(true);
@@ -2479,6 +2482,9 @@ export default function App() {
                 navigation. Deferred off startup so its load doesn't contend (L32). */}
             <div className={pageClass("ssh")}>
               {mountedViews.has("ssh") && <SshPage onConnect={openSshServer} />}
+            </div>
+            <div className={pageClass("schedules")}>
+              {mountedViews.has("schedules") && <SchedulesPage visible={view === "schedules"} />}
             </div>
             <div className={pageClass("branches")}>
               {mountedViews.has("branches") && (

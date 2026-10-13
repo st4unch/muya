@@ -13,6 +13,7 @@ import {
   SessionsRailIcon,
   SettingsRailIcon,
   SshRailIcon,
+  SchedulesRailIcon,
 } from "./icons";
 
 export interface RailProps {
@@ -29,6 +30,7 @@ const ITEMS: { item: RailItem; label: string; Icon: typeof ControlRailIcon }[] =
   { item: "kanban", label: "Kanban", Icon: KanbanRailIcon },
   { item: "resources", label: "Resources", Icon: ResourcesRailIcon },
   { item: "ssh", label: "SSH", Icon: SshRailIcon },
+  { item: "schedules", label: "Schedules", Icon: SchedulesRailIcon },
 ];
 
 export function Rail({ active, onNavigate }: RailProps) {

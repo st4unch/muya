@@ -67,6 +67,7 @@ mod term_history;
 mod testutil;
 mod titlebar;
 mod validate;
+mod schedules;
 mod vault;
 mod watcher;
 mod workspace_roots;
@@ -265,6 +266,9 @@ pub fn run() {
                 });
             }
 
+            // Scheduled headless Claude prompts (docs/prd-schedules.md).
+            schedules::start(app.handle());
+
             Ok(())
         })
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -318,10 +322,17 @@ pub fn run() {
         .manage(bridge_exec::ExecState::default())
         .manage(broker::BrokerState::default())
         .manage(agent_ssh::AgentSshStore::default())
+        .manage(schedules::ScheduleState::default())
         .manage(credstore::CredStore::default())
         .manage(cyberark::CyberarkState::default())
         .invoke_handler(tauri::generate_handler![
             agents::list_agent_sessions,
+            schedules::schedules_list,
+            schedules::schedule_save,
+            schedules::schedule_set_enabled,
+            schedules::schedule_delete,
+            schedules::schedule_run_now,
+            schedules::schedule_runs,
             agents::claude_channels_supported,
             agents::stop_agent,
             agents::kill_session,

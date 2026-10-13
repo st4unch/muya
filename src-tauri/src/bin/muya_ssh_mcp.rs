@@ -13,6 +13,9 @@
 //! Tools exposed: `ssh_list_servers`, `ssh_open` (Faz 1) and `ssh_run` (Faz 2 —
 //! one remote command, stdout captured, password injected app-side).
 
+// The tools/list literal is one large json! macro; 37 tools outgrow the default 128.
+#![recursion_limit = "512"]
+
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
@@ -470,6 +473,111 @@ fn tools_list() -> Value {
                         }
                     },
                     "required": ["operation"],
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "schedules_list",
+                "description": "List Muya's scheduled Claude prompts (the Schedules page): each schedule's id, name, prompt, folder, timing, on/off, permission mode, next run, whether it is running, and its run counts (runs / ok / failed) with the last run's status. Schedules run headless (claude -p) with the user's settings, MCP servers and skills, while Muya is open.",
+                "inputSchema": { "type": "object", "additionalProperties": false }
+            },
+            {
+                "name": "schedule_create",
+                "description": "Create a scheduled Claude prompt in Muya. It runs headless in `folder` on the given timing while Muya is open. Only create one when the user asked for it: with bypass on (the default) the prompt runs any command without asking, unattended, until it is turned off.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string", "description": "Short name shown on the card." },
+                        "prompt": { "type": "string", "description": "The Claude prompt to run (claude -p)." },
+                        "folder": { "type": "string", "description": "Absolute path of an existing folder to run in." },
+                        "schedule": {
+                    "type": "object",
+                    "description": "When it runs. One of: {\"kind\":\"interval\",\"minutes\":N} (N >= 5), {\"kind\":\"daily\",\"time\":\"HH:MM\"}, {\"kind\":\"weekly\",\"days\":[0..6],\"time\":\"HH:MM\"} with 0 = Monday … 6 = Sunday. Local time.",
+                    "properties": {
+                        "kind": { "type": "string", "enum": ["interval", "daily", "weekly"] },
+                        "minutes": { "type": "integer", "minimum": 5 },
+                        "time": { "type": "string", "pattern": "^\\d{2}:\\d{2}$" },
+                        "days": { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 6 } }
+                    },
+                    "required": ["kind"]
+                },
+                        "enabled": { "type": "boolean", "description": "On (runs on its timer) or off (only Run now). Default true." },
+                        "timeoutMin": { "type": "integer", "minimum": 1, "maximum": 1440, "description": "Stop a run after this many minutes. Default 30." },
+                        "bypass": { "type": "boolean", "description": "Skip permission prompts (--dangerously-skip-permissions). Default true; false = acceptEdits, so steps needing approval fail the run." }
+                    },
+                    "required": ["name", "prompt", "folder", "schedule"],
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "schedule_update",
+                "description": "Change a schedule. Give only the fields to change; the rest stay as they are.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "schedule_ref": { "type": "string", "description": "The schedule's id or its exact name (case-insensitive), from schedules_list." },
+                        "name": { "type": "string", "description": "Short name shown on the card." },
+                        "prompt": { "type": "string", "description": "The Claude prompt to run (claude -p)." },
+                        "folder": { "type": "string", "description": "Absolute path of an existing folder to run in." },
+                        "schedule": {
+                    "type": "object",
+                    "description": "When it runs. One of: {\"kind\":\"interval\",\"minutes\":N} (N >= 5), {\"kind\":\"daily\",\"time\":\"HH:MM\"}, {\"kind\":\"weekly\",\"days\":[0..6],\"time\":\"HH:MM\"} with 0 = Monday … 6 = Sunday. Local time.",
+                    "properties": {
+                        "kind": { "type": "string", "enum": ["interval", "daily", "weekly"] },
+                        "minutes": { "type": "integer", "minimum": 5 },
+                        "time": { "type": "string", "pattern": "^\\d{2}:\\d{2}$" },
+                        "days": { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 6 } }
+                    },
+                    "required": ["kind"]
+                },
+                        "enabled": { "type": "boolean", "description": "On (runs on its timer) or off (only Run now). Default true." },
+                        "timeoutMin": { "type": "integer", "minimum": 1, "maximum": 1440, "description": "Stop a run after this many minutes. Default 30." },
+                        "bypass": { "type": "boolean", "description": "Skip permission prompts (--dangerously-skip-permissions). Default true; false = acceptEdits, so steps needing approval fail the run." }
+                    },
+                    "required": ["schedule_ref"],
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "schedule_set_enabled",
+                "description": "Turn a schedule on (runs on its timer) or off (kept; runs only with schedule_run_now).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": { "schedule_ref": { "type": "string", "description": "The schedule's id or its exact name (case-insensitive), from schedules_list." }, "enabled": { "type": "boolean" } },
+                    "required": ["schedule_ref", "enabled"],
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "schedule_delete",
+                "description": "Delete a schedule and its saved run history. Cannot be undone; refused while it is running.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": { "schedule_ref": { "type": "string", "description": "The schedule's id or its exact name (case-insensitive), from schedules_list." } },
+                    "required": ["schedule_ref"],
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "schedule_run_now",
+                "description": "Start one run of a schedule now (works even when it is off). Returns at once; the run continues in the background — check its result with schedule_history.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": { "schedule_ref": { "type": "string", "description": "The schedule's id or its exact name (case-insensitive), from schedules_list." } },
+                    "required": ["schedule_ref"],
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "schedule_history",
+                "description": "A schedule's past runs, newest first: start/end time, duration, status (success | failed | timeout), exit code, cost, whether it was scheduled or Run now, and the output (capped at 8000 characters each). Also says whether a run is going on now.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "schedule_ref": { "type": "string", "description": "The schedule's id or its exact name (case-insensitive), from schedules_list." },
+                        "limit": { "type": "integer", "minimum": 1, "maximum": 100, "description": "How many runs to return. Default 5." }
+                    },
+                    "required": ["schedule_ref"],
                     "additionalProperties": false
                 }
             }
@@ -1395,6 +1503,39 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                         .unwrap_or("run_operation failed")
                         .to_string(),
                 ))
+            }
+        }
+        "schedules_list" | "schedule_create" | "schedule_update" | "schedule_set_enabled" | "schedule_delete"
+        | "schedule_run_now" | "schedule_history" => {
+            // Every schedule tool is one broker op with the same name; the app does the
+            // validation, so a bad field comes back as a readable tool error.
+            let mut req = json!({ "op": name });
+            if let Some(r) = args.get("schedule_ref").and_then(Value::as_str) {
+                req["schedule"] = json!(r);
+            }
+            if let Some(e) = args.get("enabled").and_then(Value::as_bool) {
+                req["enabled"] = json!(e);
+            }
+            if let Some(n) = args.get("limit").and_then(Value::as_u64) {
+                req["limit"] = json!(n);
+            }
+            if name == "schedule_create" || name == "schedule_update" {
+                let mut fields = serde_json::Map::new();
+                for k in ["name", "prompt", "folder", "schedule", "enabled", "timeoutMin", "bypass"] {
+                    if let Some(v) = args.get(k) {
+                        fields.insert(k.to_string(), v.clone());
+                    }
+                }
+                req["fields"] = Value::Object(fields);
+            }
+            let resp = app_call(&req).map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                let result = resp.get("result").cloned().unwrap_or(Value::Null);
+                let text = serde_json::to_string_pretty(&result).unwrap_or_default();
+                let structured = if result.is_object() { Some(result) } else { None };
+                Ok(tool_ok(text, structured))
+            } else {
+                Ok(tool_error(resp.get("error").and_then(Value::as_str).unwrap_or("schedule request failed").to_string()))
             }
         }
         other => Ok(tool_error(format!("unknown tool: {other}"))),
