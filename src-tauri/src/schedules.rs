@@ -56,6 +56,11 @@ pub struct Job {
     /// Run with `--dangerously-skip-permissions` (nothing can answer a permission
     /// prompt headless). Off: `--permission-mode acceptEdits`.
     pub bypass: bool,
+    /// Load Claude in Chrome (`--chrome`). Interactive sessions get it from the
+    /// user's setting; `claude -p` only with the flag. Missing in jobs saved by
+    /// 4.1.0 → on, so they see the same tools as the user's own sessions.
+    #[serde(default = "yes")]
+    pub chrome: bool,
     pub created: i64,
     pub updated: i64,
 }
@@ -121,6 +126,12 @@ pub struct JobInput {
     pub enabled: bool,
     pub timeout_min: u32,
     pub bypass: bool,
+    #[serde(default = "yes")]
+    pub chrome: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 // ── Pure helpers (tested) ─────────────────────────────────────────────────────────
@@ -206,8 +217,11 @@ fn validate(input: &JobInput) -> Result<String, String> {
 }
 
 /// The argv after the claude binary. The prompt goes last, after `--`.
-pub fn claude_args(prompt: &str, bypass: bool) -> Vec<String> {
+pub fn claude_args(prompt: &str, bypass: bool, chrome: bool) -> Vec<String> {
     let mut a: Vec<String> = vec!["-p".into(), "--output-format".into(), "json".into()];
+    if chrome {
+        a.push("--chrome".into());
+    }
     if bypass {
         a.push("--dangerously-skip-permissions".into());
     } else {
@@ -658,7 +672,7 @@ fn launch(
             .map(|e| e.clone())
             .unwrap_or_default();
         let bin = crate::agents::claude_bin().to_string();
-        let args = claude_args(&job.prompt, job.bypass);
+        let args = claude_args(&job.prompt, job.bypass, job.chrome);
         let timeout = std::time::Duration::from_secs(u64::from(job.timeout_min) * 60);
         let (status, exit_code, cost, output) =
             match spawn_run(&bin, &args, &job.folder, &env, timeout).await {
@@ -787,6 +801,7 @@ fn upsert(inner: &mut Inner, input: JobInput) -> Result<Job, String> {
             j.enabled = input.enabled;
             j.timeout_min = input.timeout_min;
             j.bypass = input.bypass;
+            j.chrome = input.chrome;
             j.updated = now;
             j.clone()
         }
@@ -801,6 +816,7 @@ fn upsert(inner: &mut Inner, input: JobInput) -> Result<Job, String> {
                 enabled: input.enabled,
                 timeout_min: input.timeout_min,
                 bypass: input.bypass,
+                chrome: input.chrome,
                 created: now,
                 updated: now,
             };
@@ -977,9 +993,9 @@ fn input_from(base: Option<&Job>, patch: &serde_json::Value) -> Result<JobInput,
     let mut v = match base {
         Some(j) => serde_json::json!({
             "id": j.id, "name": j.name, "prompt": j.prompt, "folder": j.folder, "schedule": j.schedule,
-            "enabled": j.enabled, "timeoutMin": j.timeout_min, "bypass": j.bypass,
+            "enabled": j.enabled, "timeoutMin": j.timeout_min, "bypass": j.bypass, "chrome": j.chrome,
         }),
-        None => serde_json::json!({ "enabled": true, "timeoutMin": 30, "bypass": true }),
+        None => serde_json::json!({ "enabled": true, "timeoutMin": 30, "bypass": true, "chrome": true }),
     };
     let obj = patch
         .as_object()
@@ -992,6 +1008,7 @@ fn input_from(base: Option<&Job>, patch: &serde_json::Value) -> Result<JobInput,
         "enabled",
         "timeoutMin",
         "bypass",
+        "chrome",
     ] {
         if let Some(x) = obj.get(k).filter(|x| !x.is_null()) {
             v[k] = x.clone();
@@ -1271,15 +1288,29 @@ mod tests {
 
     #[test]
     fn prompt_is_one_argv_element_after_double_dash() {
-        let a = claude_args("-rf; rm -rf ~ && echo $(whoami)", true);
+        let a = claude_args("-rf; rm -rf ~ && echo $(whoami)", true, false);
         assert_eq!(a[a.len() - 2], "--");
         assert_eq!(a.last().unwrap(), "-rf; rm -rf ~ && echo $(whoami)");
         assert!(a.contains(&"--dangerously-skip-permissions".to_string()));
-        let safe = claude_args("x", false);
+        let safe = claude_args("x", false, false);
         assert!(safe
             .windows(2)
             .any(|w| w[0] == "--permission-mode" && w[1] == "acceptEdits"));
         assert!(!safe.contains(&"--dangerously-skip-permissions".to_string()));
+        assert!(!safe.contains(&"--chrome".to_string()));
+        let c = claude_args("x", true, true);
+        assert!(c.contains(&"--chrome".to_string()));
+        assert_eq!(c[c.len() - 2], "--", "the prompt still comes last");
+    }
+
+    #[test]
+    fn chrome_defaults_on_for_new_and_older_jobs() {
+        let old = r#"{"id":"s1","name":"n","prompt":"p","folder":"/tmp","schedule":{"kind":"daily","time":"09:00"},"enabled":true,"timeoutMin":30,"bypass":true,"created":1,"updated":1}"#;
+        assert!(serde_json::from_str::<Job>(old).unwrap().chrome, "a 4.1.0 job gets the browser");
+        let off = input_from(None, &serde_json::json!({ "name": "a", "prompt": "b", "folder": "/tmp", "schedule": { "kind": "daily", "time": "09:00" }, "chrome": false })).unwrap();
+        assert!(!off.chrome);
+        let new = input_from(None, &serde_json::json!({ "name": "a", "prompt": "b", "folder": "/tmp", "schedule": { "kind": "daily", "time": "09:00" } })).unwrap();
+        assert!(new.chrome);
     }
 
     #[test]
@@ -1314,6 +1345,7 @@ mod tests {
             enabled: true,
             timeout_min: 30,
             bypass: true,
+            chrome: true,
         }
     }
 
@@ -1442,7 +1474,7 @@ mod tests {
         .unwrap();
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
-        let args = claude_args("hi; touch PWNED", true);
+        let args = claude_args("hi; touch PWNED", true, false);
         let s = spawn_run(
             script.to_str().unwrap(),
             &args,
@@ -1507,7 +1539,7 @@ mod live {
             .unwrap()
             .clone();
         let bin = crate::agents::claude_bin().to_string();
-        let args = claude_args("List the names of the MCP servers whose tools you can call, comma separated, nothing else.", true);
+        let args = claude_args("List the names of the MCP servers whose tools you can call, comma separated, nothing else.", true, true);
         let s = spawn_run(
             &bin,
             &args,

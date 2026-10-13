@@ -20,17 +20,17 @@ function seed() {
   jobs = [
   {
     id: "s1", name: "Nightly dependency audit", prompt: "Run npm audit and cargo audit; summarize anything high or critical into docs/audit.md.",
-    folder: "/Users/someone/Projects/muya", schedule: { kind: "daily", time: "02:30" }, enabled: true, timeoutMin: 30, bypass: true,
+    folder: "/Users/someone/Projects/muya", schedule: { kind: "daily", time: "02:30" }, enabled: true, timeoutMin: 30, bypass: true, chrome: true,
     created: now - 30 * 24 * H, updated: now - 2 * 24 * H, nextRun: now + 5 * H, running: false, queued: false, runs: 0, ok: 0, failed: 0, last: null,
   },
   {
     id: "s2", name: "Standup summary", prompt: "Summarize yesterday's commits and open PRs, then write it to docs/standup.md",
-    folder: "/Users/someone/Projects/api-gateway", schedule: { kind: "weekly", days: [0, 1, 2, 3, 4], time: "09:00" }, enabled: true, timeoutMin: 15, bypass: false,
+    folder: "/Users/someone/Projects/api-gateway", schedule: { kind: "weekly", days: [0, 1, 2, 3, 4], time: "09:00" }, enabled: true, timeoutMin: 15, bypass: false, chrome: false,
     created: now - 10 * 24 * H, updated: now - 10 * 24 * H, nextRun: now + 9 * H, running: false, queued: false, runs: 0, ok: 0, failed: 0, last: null,
   },
   {
     id: "s3", name: "Inbox triage", prompt: "Check new GitHub issues and label them.", folder: "/Users/someone/Projects/website",
-    schedule: { kind: "interval", minutes: 120 }, enabled: false, timeoutMin: 10, bypass: true,
+    schedule: { kind: "interval", minutes: 120 }, enabled: false, timeoutMin: 10, bypass: true, chrome: true,
     created: now - 3 * 24 * H, updated: now - H, nextRun: null, running: false, queued: false, runs: 0, ok: 0, failed: 0, last: null,
   },
 ];

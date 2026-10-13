@@ -11,7 +11,7 @@ import type { JobView, Run } from "../lib/schedules";
 
 const base: JobView = {
   id: "s1", name: "Nightly report", prompt: "write the report", folder: "/w/proj", schedule: { kind: "daily", time: "09:00" },
-  enabled: true, timeoutMin: 30, bypass: true, created: 1, updated: 1, nextRun: Date.now() + 3_600_000, running: false, queued: false,
+  enabled: true, timeoutMin: 30, bypass: true, chrome: true, created: 1, updated: 1, nextRun: Date.now() + 3_600_000, running: false, queued: false,
   runs: 3, ok: 2, failed: 1, last: { started: Date.now() - 120_000, ended: Date.now() - 60_000, status: "failed" },
 };
 const runs: Run[] = [
@@ -98,6 +98,9 @@ describe("SchedulesPage", () => {
     await act(async () => fireEvent.click(within(dlg).getByRole("button", { name: /Choose/ })));
     expect(within(dlg).getByLabelText("Folder")).toHaveValue("/Users/someone/project");
     fireEvent.click(within(dlg).getByRole("switch", { name: "Skip permission prompts" }));
+    const browser = within(dlg).getByRole("switch", { name: "Browser (Claude in Chrome)" });
+    expect(browser).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(browser);
     expect(within(dlg).getByRole("note").textContent).toMatch(/fail the run/);
     expect(within(dlg).getByText("Runs: Mon, Tue, Wed, Thu at 18:30")).toBeInTheDocument();
     fireEvent.click(within(dlg).getByRole("button", { name: "Create" }));
@@ -105,7 +108,7 @@ describe("SchedulesPage", () => {
     const saves = invoke.mock.calls.filter(([c]) => c === "schedule_save");
     const saved = saves[saves.length - 1][1].job;
     expect(saved).toMatchObject({
-      name: "Weekly audit", prompt: "audit deps", folder: "/Users/someone/project", bypass: false, id: null,
+      name: "Weekly audit", prompt: "audit deps", folder: "/Users/someone/project", bypass: false, chrome: false, id: null,
       schedule: { kind: "weekly", days: [0, 1, 2, 3], time: "18:30" },
     });
     expect(await screen.findByRole("region", { name: "Weekly audit" })).toBeInTheDocument();

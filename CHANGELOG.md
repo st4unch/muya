@@ -6,6 +6,14 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.1.1] - 2026-10-14
+
+### Fixed
+- Schedules: a scheduled prompt that needs the browser now works. Headless runs did not load Claude in Chrome, so a browser task reported success without doing anything. Each schedule now has a **Browser (Claude in Chrome)** option, on by default (also for schedules made in 4.1.0), so a scheduled run gets the same tools as your own sessions. Chrome must be open with the Claude extension connected when it runs.
+
+### Added
+- muya-mcp: `schedule_create` and `schedule_update` take the same `chrome` option.
+
 ## [4.1.0] - 2026-10-14
 
 ### Added

@@ -143,7 +143,8 @@ timer, with the user's settings, MCP servers and skills — while Muya is open.
 - `schedule_create` needs `name`, `prompt`, `folder` (absolute, existing) and `schedule`:
   `{"kind":"interval","minutes":30}` (≥5), `{"kind":"daily","time":"09:00"}`, or
   `{"kind":"weekly","days":[0,1,2,3,4],"time":"09:00"}` (0 = Monday). Defaults: on,
-  30 min timeout, `bypass: true` (permission prompts skipped).
+  30 min timeout, `bypass: true` (permission prompts skipped), `chrome: true` (Claude in
+  Chrome loaded, so a browser task works like in the user's own sessions).
 - **Only create or turn on a schedule when the user asked for it.** With bypass on it runs
   any command, unattended, until turned off. Say what you created (name, timing, folder).
 - `schedule_update` takes only the fields to change. `schedule_run_now` returns at once;

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { describeSchedule, emptyInput, initialMemory, rememberSchedule, fmtClock, fmtDurationMs, jobState, relTime, summarize, withKind, type JobView } from "./schedules";
 
 const job = (p: Partial<JobView>): JobView => ({
-  id: "a", name: "A", prompt: "p", folder: "/w", schedule: { kind: "daily", time: "09:00" }, enabled: true, timeoutMin: 30, bypass: true,
+  id: "a", name: "A", prompt: "p", folder: "/w", schedule: { kind: "daily", time: "09:00" }, enabled: true, timeoutMin: 30, bypass: true, chrome: true,
   created: 0, updated: 0, nextRun: null, running: false, queued: false, runs: 0, ok: 0, failed: 0, last: null, ...p,
 });
 

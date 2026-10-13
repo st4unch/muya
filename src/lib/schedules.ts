@@ -19,6 +19,8 @@ export interface Job {
   enabled: boolean;
   timeoutMin: number;
   bypass: boolean;
+  /** Load Claude in Chrome (`--chrome`). */
+  chrome: boolean;
   created: number;
   updated: number;
 }
@@ -53,6 +55,7 @@ export interface JobInput {
   enabled: boolean;
   timeoutMin: number;
   bypass: boolean;
+  chrome: boolean;
 }
 
 /** Monday first, matching the Rust side (0 = Monday … 6 = Sunday). */
@@ -141,7 +144,7 @@ export function jobState(j: JobView): { label: string; tone: "running" | "succes
 }
 
 export function emptyInput(): JobInput {
-  return { name: "", prompt: "", folder: "", schedule: { kind: "daily", time: "09:00" }, enabled: true, timeoutMin: 30, bypass: true };
+  return { name: "", prompt: "", folder: "", schedule: { kind: "daily", time: "09:00" }, enabled: true, timeoutMin: 30, bypass: true, chrome: true };
 }
 
 /** What the form remembers across kind switches, so a detour through "Every few

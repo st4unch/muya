@@ -157,7 +157,7 @@ export default function SchedulesPage({ visible = true }: { visible?: boolean })
                 onToggle={(on) => act(() => invoke("schedule_set_enabled", { id: j.id, enabled: on }))}
                 onRun={() => act(() => invoke("schedule_run_now", { id: j.id }))}
                 onHistory={() => setHistoryId(j.id)}
-                onEdit={() => setEditing({ id: j.id, name: j.name, prompt: j.prompt, folder: j.folder, schedule: j.schedule, enabled: j.enabled, timeoutMin: j.timeoutMin, bypass: j.bypass })}
+                onEdit={() => setEditing({ id: j.id, name: j.name, prompt: j.prompt, folder: j.folder, schedule: j.schedule, enabled: j.enabled, timeoutMin: j.timeoutMin, bypass: j.bypass, chrome: j.chrome })}
                 onDelete={() => setDeleting(j)}
               />
             ))}
@@ -471,6 +471,13 @@ export function EditDialog({ initial, onClose, onSaved }: { initial: JobInput; o
               <span style={helperStyle}>Nobody is there to answer them. Off: Claude may edit files, but a shell command or MCP tool that needs approval stops the run.</span>
             </div>
             <Switch checked={v.bypass} onChange={(on) => set({ bypass: on })} labelledBy={id("bypass")} />
+          </div>
+          <div style={{ ...rowStyle, borderTop: "1px solid var(--border)" }}>
+            <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+              <span id={id("chrome")} style={{ fontSize: 13, fontWeight: 600 }}>Browser (Claude in Chrome)</span>
+              <span style={helperStyle}>Lets the prompt use your Chrome, as your own sessions do. Chrome must be open with the Claude extension connected when it runs.</span>
+            </div>
+            <Switch checked={v.chrome} onChange={(on) => set({ chrome: on })} labelledBy={id("chrome")} />
           </div>
           <div style={{ ...rowStyle, alignItems: "center", borderTop: "1px solid var(--border)" }}>
             <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>

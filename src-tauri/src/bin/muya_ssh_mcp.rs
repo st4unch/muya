@@ -503,7 +503,8 @@ fn tools_list() -> Value {
                 },
                         "enabled": { "type": "boolean", "description": "On (runs on its timer) or off (only Run now). Default true." },
                         "timeoutMin": { "type": "integer", "minimum": 1, "maximum": 1440, "description": "Stop a run after this many minutes. Default 30." },
-                        "bypass": { "type": "boolean", "description": "Skip permission prompts (--dangerously-skip-permissions). Default true; false = acceptEdits, so steps needing approval fail the run." }
+                        "bypass": { "type": "boolean", "description": "Skip permission prompts (--dangerously-skip-permissions). Default true; false = acceptEdits, so steps needing approval fail the run." },
+                        "chrome": { "type": "boolean", "description": "Load Claude in Chrome (--chrome) so the prompt can drive the user's browser, like their own sessions. Default true." }
                     },
                     "required": ["name", "prompt", "folder", "schedule"],
                     "additionalProperties": false
@@ -532,7 +533,8 @@ fn tools_list() -> Value {
                 },
                         "enabled": { "type": "boolean", "description": "On (runs on its timer) or off (only Run now). Default true." },
                         "timeoutMin": { "type": "integer", "minimum": 1, "maximum": 1440, "description": "Stop a run after this many minutes. Default 30." },
-                        "bypass": { "type": "boolean", "description": "Skip permission prompts (--dangerously-skip-permissions). Default true; false = acceptEdits, so steps needing approval fail the run." }
+                        "bypass": { "type": "boolean", "description": "Skip permission prompts (--dangerously-skip-permissions). Default true; false = acceptEdits, so steps needing approval fail the run." },
+                        "chrome": { "type": "boolean", "description": "Load Claude in Chrome (--chrome) so the prompt can drive the user's browser, like their own sessions. Default true." }
                     },
                     "required": ["schedule_ref"],
                     "additionalProperties": false
@@ -1521,7 +1523,7 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
             }
             if name == "schedule_create" || name == "schedule_update" {
                 let mut fields = serde_json::Map::new();
-                for k in ["name", "prompt", "folder", "schedule", "enabled", "timeoutMin", "bypass"] {
+                for k in ["name", "prompt", "folder", "schedule", "enabled", "timeoutMin", "bypass", "chrome"] {
                     if let Some(v) = args.get(k) {
                         fields.insert(k.to_string(), v.clone());
                     }
