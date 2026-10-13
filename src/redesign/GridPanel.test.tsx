@@ -15,7 +15,7 @@ function renderPanel(agent = waitingAgent, overrides: Partial<React.ComponentPro
       agent={agent}
       focused
       onFocus={vi.fn()}
-      onMaximize={vi.fn()}
+      onFullscreen={vi.fn()}
       onApprove={onApprove}
       onDeny={onDeny}
       onAlwaysAllow={vi.fn()}
@@ -63,6 +63,37 @@ describe("GridPanel", () => {
     renderPanel(workingAgent, { composerValue: "hi", onSendMessage });
     fireEvent.keyDown(screen.getByLabelText("Message muya-all"), { key: "Enter" });
     expect(onSendMessage).toHaveBeenCalledWith("hi");
+  });
+
+  it("every panel has a Full screen button", () => {
+    for (const agent of [waitingAgent, workingAgent, idleAgent]) {
+      const onFullscreen = vi.fn();
+      const { unmount } = render(
+        <GridPanel agent={agent} focused={false} onFocus={vi.fn()} onFullscreen={onFullscreen} onApprove={vi.fn()} onDeny={vi.fn()} onAlwaysAllow={vi.fn()} composerValue="" onComposerChange={vi.fn()} onSendMessage={vi.fn()} />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
+      expect(onFullscreen).toHaveBeenCalledTimes(1);
+      unmount();
+    }
+  });
+
+  it("hides the message box when chat is off, but keeps the approval row", () => {
+    renderPanel(workingAgent, { composerOpen: false });
+    expect(screen.queryByLabelText("Message muya-all")).not.toBeInTheDocument();
+    document.body.innerHTML = "";
+    renderPanel(waitingAgent, { composerOpen: false });
+    expect(screen.getByRole("button", { name: /Allow/ })).toBeInTheDocument();
+  });
+
+  it("the session menu lists every session and picks one for this cell", () => {
+    const onPick = vi.fn();
+    renderPanel(workingAgent, { choices: previewAgents, onPick });
+    fireEvent.click(screen.getByRole("button", { name: "Choose session for this panel" }));
+    const menu = screen.getByRole("menu", { name: "Sessions" });
+    expect(menu.querySelectorAll('[role="menuitem"]').length).toBe(previewAgents.length);
+    fireEvent.click(screen.getByRole("menuitem", { name: new RegExp(idleAgent.name) }));
+    expect(onPick).toHaveBeenCalledWith(idleAgent.key);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
 });
 

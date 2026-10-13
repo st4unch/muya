@@ -159,7 +159,7 @@ export function Footer({ workspaceCount, agents, working, waiting, collisions, v
         >
           <TextSizeIcon size={14} />
         </button>
-        {composer && variant !== "grid" && (
+        {composer && (
           <button
             type="button"
             aria-label={composer.open ? "Hide message box" : "Show message box"}

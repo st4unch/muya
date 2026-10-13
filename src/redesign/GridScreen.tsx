@@ -29,6 +29,13 @@ export interface GridScreenProps {
   focusedKey: string | null;
   onFocusPanel: (key: string) => void;
   onMaximizePanel: (key: string) => void;
+  /** Leave the grid with this session alone on the Control screen. */
+  onFullscreenPanel: (key: string) => void;
+  /** Every open session, for each panel's "choose session" menu. */
+  choices?: AgentVM[];
+  onPickPanel?: (target: string, key: string) => void;
+  /** The footer's chat toggle (false hides each panel's message box). */
+  composerOpen?: boolean;
 
   onApprove: (key: string) => void;
   onDeny: (key: string) => void;
@@ -112,7 +119,10 @@ export function GridScreen(props: GridScreenProps) {
               agent={agent}
               focused={agent.key === props.focusedKey}
               onFocus={() => props.onFocusPanel(agent.key)}
-              onMaximize={() => props.onMaximizePanel(agent.key)}
+              onFullscreen={() => props.onFullscreenPanel(agent.key)}
+              choices={props.choices}
+              onPick={props.onPickPanel ? (key) => props.onPickPanel!(agent.key, key) : undefined}
+              composerOpen={props.composerOpen}
               onApprove={() => props.onApprove(agent.key)}
               onDeny={() => props.onDeny(agent.key)}
               onAlwaysAllow={() => props.onAlwaysAllow(agent.key)}

@@ -6,6 +6,15 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.0.18] - 2026-10-13
+
+### Added
+- Grid: each panel's header has a menu (the arrow next to its name) for choosing which session or terminal that panel shows. Nothing is closed: a session you swap out keeps running and can be picked again. A session already in another panel trades places.
+- Grid: every panel has a Full screen button. It opens that session alone on the Control screen, where it carries on as before; "Split to grid" brings you back with every panel where it was.
+
+### Fixed
+- Grid: the chat toggle now shows in the grid footer too, and turning chat off hides the message box under every grid panel. Permission buttons still show when a panel needs an answer.
+
 ## [4.0.17] - 2026-10-13
 
 ### Fixed

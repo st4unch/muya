@@ -59,7 +59,7 @@ import { adoptHosts, createHost, POOL_STYLE } from "./redesign/terminalHosts";
 import type { AgentVM, ChangeVM, FileVM, GridLayout, OpenFileVM, InspectorVM, PermissionMode, RailItem } from "./redesign/types";
 import type { AgentFilter } from "./redesign/AgentList";
 import type { InspectorTab } from "./redesign/Inspector";
-import { shouldExitGridOnEscape } from "./redesign/gridKeys";
+import { assignGridCell, shouldExitGridOnEscape } from "./redesign/gridKeys";
 import { deliveryWrites, SUBMIT_DELAY_MS, type RemoteSender } from "./lib/remoteMessage";
 import { approvableIds, AUTO_APPROVE_EVENT, keyOfApprovableId, AUTO_APPROVE_MS, loadAutoApprove, saveAutoApprove } from "./lib/autoApprove";
 import { AutoAllowSuggest } from "./redesign/AutoAllowSuggest";
@@ -1931,9 +1931,28 @@ export default function App() {
   };
 
   const splitToGrid = () => {
-    if (selectedAgentKey) setGridKeys((prev) => [selectedAgentKey, ...prev.filter((k) => k !== selectedAgentKey)]);
+    // A session already in the grid (back from a panel's Full screen) keeps its cell,
+    // so every panel returns where it was; any other one takes the first cell.
+    if (selectedAgentKey && !gridPanels.some((p) => p.key === selectedAgentKey)) {
+      setGridKeys((prev) => [selectedAgentKey, ...prev.filter((k) => k !== selectedAgentKey)]);
+    }
     if (selectedAgentKey) setGridFocusedKey(selectedAgentKey);
     setScreen("grid");
+  };
+
+  // A panel's Full screen: that session alone on Control, still running; the grid
+  // keeps its cells for "Split to grid".
+  const fullscreenPanel = (key: string) => {
+    setGridFocusedKey(key);
+    activateTerminal(key);
+    setScreen("control");
+  };
+
+  // A panel's session menu: show `key` in the cell holding `target`.
+  const pickPanel = (target: string, key: string) => {
+    setGridKeys(assignGridCell(gridPanels.map((p) => p.key), target, key));
+    resumeTab(key);
+    setGridFocusedKey(key);
   };
 
   // ── Split Control (lib/controlSplit): split groups of 2–8 panes ──────────────
@@ -2579,6 +2598,10 @@ export default function App() {
           focusedKey={focusedPanelKey}
           onFocusPanel={setGridFocusedKey}
           onMaximizePanel={maximizePanel}
+          onFullscreenPanel={fullscreenPanel}
+          choices={scopedAgentVMs}
+          onPickPanel={pickPanel}
+          composerOpen={composerOpen}
           onApprove={(key) => respond(key, "approve")}
           onDeny={(key) => respond(key, "deny")}
           onAlwaysAllow={(key) => respond(key, "approveAlways")}

@@ -11,14 +11,21 @@ import { AgentKindIcon } from "./AgentKindIcon";
 import { useState, type KeyboardEvent } from "react";
 import { InlineRename } from "./InlineRename";
 import type { AgentVM } from "./types";
-import { MaximizeIcon } from "./icons";
+import { ChevronDownIcon, MaximizeIcon } from "./icons";
+import { MenuItem, MenuPopover, anchorFromRect, type Anchor } from "./Menus";
 import { messageHint, withDetail } from "./text";
 
 export interface GridPanelProps {
   agent: AgentVM;
   focused: boolean;
   onFocus: () => void;
-  onMaximize: () => void;
+  /** Leave the grid and show this session alone on the Control screen. */
+  onFullscreen: () => void;
+  /** Sessions the header menu offers for this cell, and the pick. */
+  choices?: AgentVM[];
+  onPick?: (key: string) => void;
+  /** The footer's chat toggle: false hides the message box (the approval row stays). */
+  composerOpen?: boolean;
   onApprove: () => void;
   onDeny: () => void;
   onAlwaysAllow: () => void;
@@ -36,7 +43,10 @@ export function GridPanel({
   agent,
   focused,
   onFocus,
-  onMaximize,
+  onFullscreen,
+  choices,
+  onPick,
+  composerOpen = true,
   onApprove,
   onDeny,
   onAlwaysAllow,
@@ -46,6 +56,7 @@ export function GridPanel({
   onRename,
 }: GridPanelProps) {
   const [renaming, setRenaming] = useState(false);
+  const [menuAt, setMenuAt] = useState<Anchor | null>(null);
   const waiting = agent.status === "waiting";
   const idle = agent.status === "idle";
   const working = agent.status === "working";
@@ -64,6 +75,8 @@ export function GridPanel({
   );
 
   function handleKeyDown(e: KeyboardEvent<HTMLElement>) {
+    // The session menu renders inside this panel's React tree; its keys aren't answers.
+    if ((e.target as HTMLElement).closest?.('[role="menu"]')) return;
     if (e.key === "y" || e.key === "Y") {
       if (waiting) {
         e.preventDefault();
@@ -129,22 +142,42 @@ export function GridPanel({
             {agent.name}
           </span>
         )}
+        {choices && onPick && (
+          <button
+            type="button"
+            aria-label="Choose session for this panel"
+            title="Choose session for this panel"
+            aria-haspopup="menu"
+            aria-expanded={menuAt !== null}
+            onClick={(e) => setMenuAt(anchorFromRect(e.currentTarget.getBoundingClientRect(), "left"))}
+            className="rd-icon-btn"
+            style={{ width: 22, height: 22, borderRadius: 5, border: "none", background: "transparent", color: "var(--text-muted)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginLeft: -6 }}
+          >
+            <ChevronDownIcon size={13} />
+          </button>
+        )}
+        {menuAt && choices && onPick && (
+          <MenuPopover anchor={menuAt} width={280} label="Sessions" onClose={() => setMenuAt(null)}>
+            {choices.map((c) => (
+              <MenuItem
+                key={c.key}
+                label={c.name}
+                hint={c.status === "waiting" ? "needs permission" : c.status === "working" ? "working" : undefined}
+                checked={c.key === agent.key}
+                onSelect={() => {
+                  setMenuAt(null);
+                  onPick(c.key);
+                }}
+              />
+            ))}
+          </MenuPopover>
+        )}
         <span style={{ fontSize: 12, color: statusColor, flexShrink: 0 }}>{statusText}</span>
         {agent.mode === "bypass" && !idle && (
           <span style={{ fontSize: 11, padding: "2px 7px", borderRadius: 9, background: "var(--danger-pill-bg)", color: "var(--danger-text)", flexShrink: 0 }}>bypass</span>
         )}
         <div style={{ flexGrow: 1 }} />
-        {waiting ? (
-          <button
-            type="button"
-            aria-label="Maximize"
-            onClick={onMaximize}
-            className="rd-icon-btn"
-            style={{ width: 28, height: 28, borderRadius: 6, border: "none", background: "transparent", color: "var(--warning-text)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
-          >
-            <MaximizeIcon size={14} />
-          </button>
-        ) : agent.progress?.tokens ? (
+        {waiting ? null : agent.progress?.tokens ? (
           <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-muted)", flexShrink: 0 }}>
             {agent.progress.tokens.replace(/\s*tokens?$/i, "")} tok
           </span>
@@ -153,6 +186,16 @@ export function GridPanel({
             {agent.path}
           </span>
         ) : null}
+        <button
+          type="button"
+          aria-label="Full screen"
+          title="Full screen (back with Split to grid)"
+          onClick={onFullscreen}
+          className="rd-icon-btn"
+          style={{ width: 28, height: 28, borderRadius: 6, border: "none", background: "transparent", color: waiting ? "var(--warning-text)" : "var(--text-muted)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+        >
+          <MaximizeIcon size={14} />
+        </button>
       </div>
 
       {/* Every agent panel shows its REAL terminal — idle included. An idle Claude
@@ -180,7 +223,7 @@ export function GridPanel({
         </div>
       )}
 
-      {!waiting && (
+      {!waiting && composerOpen && (
         <div style={{ height: BAR_HEIGHT, boxSizing: "border-box", display: "flex", alignItems: "center", padding: "0 14px", borderTop: "1px solid var(--border)", background: "var(--bg-chrome)" }}>
           <input
             aria-label={`Message ${agent.name}`}

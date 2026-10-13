@@ -230,7 +230,7 @@ describe("leaving the grid", () => {
       <GridScreen
         railActive="control" onRailNavigate={vi.fn()} footer={{ ...previewFooter, variant: "grid" }} panels={previewAgents.slice(0, 2)}
         layout="1x2" onLayoutChange={vi.fn()} onWaitingFirst={vi.fn()} onBroadcastOpen={vi.fn()} onExitGrid={onExitGrid}
-        focusedKey="muya-all" onFocusPanel={vi.fn()} onMaximizePanel={vi.fn()} onApprove={vi.fn()} onDeny={vi.fn()}
+        focusedKey="muya-all" onFocusPanel={vi.fn()} onMaximizePanel={vi.fn()} onFullscreenPanel={vi.fn()} onApprove={vi.fn()} onDeny={vi.fn()}
         onAlwaysAllow={vi.fn()} composerValues={{}} onComposerChange={vi.fn()} onSendMessage={vi.fn()}
         onAssignFromQueue={vi.fn()} onReplacePanel={vi.fn()}
       />,

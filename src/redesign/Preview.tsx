@@ -61,6 +61,7 @@ export function Preview({ screen, theme: initialTheme, stress = false }: Preview
         focusedKey={focusedKey}
         onFocusPanel={setFocusedKey}
         onMaximizePanel={() => {}}
+        onFullscreenPanel={() => {}}
         onApprove={() => {}}
         onDeny={() => {}}
         onAlwaysAllow={() => {}}

@@ -16,6 +16,7 @@ function baseProps(): React.ComponentProps<typeof GridScreen> {
     focusedKey: "documents-44",
     onFocusPanel: vi.fn(),
     onMaximizePanel: vi.fn(),
+    onFullscreenPanel: vi.fn(),
     onApprove: vi.fn(),
     onDeny: vi.fn(),
     onAlwaysAllow: vi.fn(),
@@ -28,6 +29,15 @@ function baseProps(): React.ComponentProps<typeof GridScreen> {
 }
 
 describe("GridScreen", () => {
+  it("shows the chat toggle in the grid footer, and chat off hides every message box", () => {
+    const onToggle = vi.fn();
+    const props = baseProps();
+    render(<GridScreen {...props} footer={{ ...props.footer, composer: { open: false, onToggle } }} composerOpen={false} />);
+    screen.getByRole("button", { name: "Show message box" }).click();
+    expect(onToggle).toHaveBeenCalled();
+    expect(screen.queryByLabelText(/^Message /)).not.toBeInTheDocument();
+  });
+
   it("renders one panel per agent, the rail (incl. Settings) and the grid footer hint", () => {
     render(<GridScreen {...baseProps()} />);
     expect(screen.getByRole("region", { name: "documents-44" })).toBeInTheDocument();
