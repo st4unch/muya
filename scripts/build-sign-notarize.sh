@@ -50,6 +50,8 @@ fi
 
 VERSION="$(node -p "require('$ROOT/src-tauri/tauri.conf.json').version")"
 [ -n "$VERSION" ] || die "could not read version from tauri.conf.json"
+# Patch step above the last release unless MUYA_VERSION_BUMP says otherwise.
+bash "$ROOT/scripts/check-version.sh" || die "fix the version first (scripts/check-version.sh)"
 PRODUCT="$(node -p "require('$ROOT/src-tauri/tauri.conf.json').productName")"
 [ -n "$PRODUCT" ] || die "could not read productName from tauri.conf.json"
 ARCH="$(uname -m)"   # arm64 on Apple Silicon

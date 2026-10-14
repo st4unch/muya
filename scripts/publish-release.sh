@@ -31,6 +31,7 @@ gh auth status >/dev/null 2>&1 || die "gh not authenticated — run: gh auth log
 
 VERSION="$(node -p "require('$ROOT/src-tauri/tauri.conf.json').version")"
 [ -n "$VERSION" ] || die "could not read version from tauri.conf.json"
+bash "$ROOT/scripts/check-version.sh" || die "fix the version first (scripts/check-version.sh)"
 ARCH="$(uname -m)"
 TAG="v${VERSION}"
 ZIP="$ROOT/Muya-${VERSION}-${ARCH}.zip"

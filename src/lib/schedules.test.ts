@@ -79,8 +79,8 @@ describe("serviceLine", () => {
     expect(serviceLine({ state: "off", running: false, version: null }).tone).toBe("muted");
     expect(serviceLine({ state: "approval", running: false, version: null }).tone).toBe("warning");
     expect(serviceLine({ state: "on", running: false, version: null }).text).toBe("On, starting…");
-    expect(serviceLine({ state: "on", running: true, version: "4.2.0" }, "4.2.0").text).toMatch(/even after you quit/);
-    expect(serviceLine({ state: "on", running: true, version: "4.1.1" }, "4.2.0").text).toMatch(/moves to 4.2.0/);
+    expect(serviceLine({ state: "on", running: true, version: "4.1.2" }, "4.1.2").text).toMatch(/even after you quit/);
+    expect(serviceLine({ state: "on", running: true, version: "4.1.1" }, "4.1.2").text).toMatch(/moves to 4.1.2/);
     expect(serviceLine({ state: "unavailable", running: false, version: null }).text).toMatch(/installed Muya app/);
   });
 });

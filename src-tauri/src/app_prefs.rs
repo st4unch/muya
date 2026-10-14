@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct AppPrefs {
     /// The red close button hides the window and Muya keeps running (sessions and
-    /// schedules stay alive). Off: closing the window quits, as before 4.2.
+    /// schedules stay alive). Off: closing the window quits, as before 4.1.2.
     #[serde(default = "yes")]
     pub keep_running_in_background: bool,
 }

@@ -14,6 +14,7 @@
 - Check full suites before a release: `cargo test --lib` (in src-tauri), `npx tsc --noEmit`, `npm test -- --run`.
 
 ## Release
+- **Version = one patch step above the last release** (4.1.1 → 4.1.2), even for big features. Minor/major only when the operator asks (`MUYA_VERSION_BUMP=minor|major`). Run the `release-version-check` agent or `bash scripts/check-version.sh` before bumping and building. The release scripts and the project hook (`.claude/hooks/release-version-guard.sh`) refuse a wrong number (L67).
 - Bump the version in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and `package.json`, and add a `CHANGELOG.md` entry.
 - Bump `claude-plugin/muya-mcp/.claude-plugin/plugin.json` when the skill docs change.
 - Then run `bash scripts/build-sign-notarize.sh` and `bash scripts/publish-release.sh` (on main).
