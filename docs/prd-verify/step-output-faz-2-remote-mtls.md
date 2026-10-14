@@ -221,7 +221,7 @@ cd src-tauri && cargo build && cargo test
 #       third identity's SPKI to B's real address; dialer rejects at TLS
 #       handshake; server-side handshake also fails/aborts, never succeeds.
 
-cd /Users/staunch/Documents/claude-control-plane && npx tsc --noEmit && npm test
+cd ~/Documents/claude-control-plane && npx tsc --noEmit && npm test
 # → tsc: no output (clean)
 # → vitest: Test Files 9 passed (9); Tests 55 passed (55)
 ```

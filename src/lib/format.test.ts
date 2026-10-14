@@ -17,7 +17,7 @@ describe("relTime", () => {
 
 describe("shortCwd", () => {
   it("collapses home prefix", () => {
-    expect(shortCwd("/Users/staunch/Documents/x")).toBe("~/Documents/x");
+    expect(shortCwd("/Users/alice/Documents/x")).toBe("~/Documents/x");
   });
   it("leaves other paths untouched", () => {
     expect(shortCwd("/opt/data")).toBe("/opt/data");

@@ -172,7 +172,7 @@ ve dar kapsamlı, PRD'nin AC3 amacını (workspace-root confinement) değiştirm
   hepsi tek tek + değerli-form), `ac4_allowed_scp_flags_pass` (-r/-p/-C/-l bare
   ve `-l800`), `ac4_unknown_flag_rejected`, `ac4_bare_positional_rejected`.
 - AC5: PASS ✅ — `ssh::tests::ac5_psmp_scp_dest_uses_only_at_delim_plus_scp_options`
-  (dest string tam olarak `ferhat@oracle@10.0.0.5@bastion.corp:/remote/file.txt`,
+  (dest string tam olarak `alice@oracle@10.0.0.5@bastion.corp:/remote/file.txt`,
   `#` YOK, scpOptions token'ları `-o LogLevel=ERROR`'dan sonra sırayla),
   `ac5_psmp_scp_non_standard_port_uses_dash_p_not_dest_embed` (`-P 2222` argv'de,
   dest string'de `#` yok).

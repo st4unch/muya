@@ -2165,7 +2165,7 @@ mod tests {
         assert!(is_stale_master(
             "Failed to receive an allowed pid message. Error code [2]."
         ));
-        assert!(is_stale_master("Shared connection to 10.185.30.67 closed."));
+        assert!(is_stale_master("Shared connection to 10.0.0.67 closed."));
         assert!(!is_stale_master("bash: command not found"));
         assert!(!is_stale_master(""));
     }

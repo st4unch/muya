@@ -101,7 +101,7 @@ Test durumu: `cargo test --lib` → **299 passed / 0 failed / 13 ignored**. Uygu
 
 ### 10. Build / CI / capability / config
 
-- **ORTA · doğrulandı** — `scripts/build-sign-notarize.sh:25-27` ve `scripts/build-pkg.sh:45-47`: `NOTARY_KEY_ID` (M87Y6CK4GH) ve `NOTARY_ISSUER` (27d976c7-7a94-40cb-a24c-a4fb49c82be8) binary'de **default**; anahtar dosyası `~/Downloads/AuthKey_M87Y6CK4GH.p8` sayılıyor. Secret `.p8` repo'da yok (iyi), ama aynı kullanıcının herhangi bir okuma erişimi bu ID/Issuer ile notary çağrısı yapabilir; anahtarın `~/Downloads`'ta düşme riski.
+- **ORTA · doğrulandı** — `scripts/build-sign-notarize.sh:25-27` ve `scripts/build-pkg.sh:45-47`: `NOTARY_KEY_ID` (<KEY_ID>) ve `NOTARY_ISSUER` (<ISSUER_ID>) binary'de **default**; anahtar dosyası `~/Downloads/AuthKey_<KEY_ID>.p8` sayılıyor. Secret `.p8` repo'da yok (iyi), ama aynı kullanıcının herhangi bir okuma erişimi bu ID/Issuer ile notary çağrısı yapabilir; anahtarın `~/Downloads`'ta düşme riski.
 - **ORTA · doğrulandı** — `build-sign-notarize.sh:91-118`: staple edilen ZIP hiç işlenmiyor, notarize submit **geçici ZIP** üzerinde → dağıtılan artefakt `spctl`'den geçmiyor olabilir (dağıtım yolu kontrol edilmedi → kısmi).
 - **ORTA** — `scripts/publish-release.sh`: `GITHUB_TOKEN` env okunuyor; token'ın çağrı yüzeyi daraltılmış mı görülmedi (`doğrulanmadı`).
 - **DÜŞÜK · doğrulandı** — `capabilities/default.json`: `opener:default` (keyboard/os uygulama açma), `process:allow-restart` — webview'den tetiklenebilir; `tauri.conf.json` `assetProtocol.enable: true` scope ayarı görünmüyor.

@@ -42,9 +42,9 @@ ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT"
 
 PROFILE="apex-notary"
-NOTARY_KEY="${NOTARY_KEY:-$HOME/Downloads/AuthKey_M87Y6CK4GH.p8}"
-NOTARY_KEY_ID="${NOTARY_KEY_ID:-M87Y6CK4GH}"
-NOTARY_ISSUER="${NOTARY_ISSUER:-27d976c7-7a94-40cb-a24c-a4fb49c82be8}"
+NOTARY_KEY="${NOTARY_KEY:-}"
+NOTARY_KEY_ID="${NOTARY_KEY_ID:-}"
+NOTARY_ISSUER="${NOTARY_ISSUER:-}"
 
 say()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m  ✓\033[0m %s\n' "$*"; }

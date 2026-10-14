@@ -118,7 +118,7 @@ Muya today (`SYSTEM.md §9`) has **no at-rest secret storage**: config is plain 
 
 ## 4.5 Use Cases — Concrete Scenarios
 
-**UC1 — Ferhat (sysadmin) connects through PSMP:** Has a bastion (PSMP). Adds server `prod-db` (address `10.0.0.5`, target user `oracle`, type PSMP, PSMP profile `bastion1`, vault user `ferhat`). Clicks Connect → terminal opens `ssh ferhat@oracle@10.0.0.5@bastion1` → PSMP injects the Vault credential → he's in. No password ever touched Muya.
+**UC1 — Alice (sysadmin) connects through PSMP:** Has a bastion (PSMP). Adds server `prod-db` (address `10.0.0.5`, target user `oracle`, type PSMP, PSMP profile `bastion1`, vault user `alice`). Clicks Connect → terminal opens `ssh alice@oracle@10.0.0.5@bastion1` → PSMP injects the Vault credential → he's in. No password ever touched Muya.
 
 **UC2 — Selin pulls a one-off password from CyberArk:** Needs the local `root` on a jump-less host. Configures CyberArk, tests connection (green), searches accounts for `web-01`, clicks "Use for this server" (reason: "incident INC-4412"). Connect → Muya retrieves the secret, injects into the direct SSH session, zeroizes. Retrieval is logged in CyberArk's audit with her reason.
 
@@ -155,7 +155,7 @@ Muya today (`SYSTEM.md §9`) has **no at-rest secret storage**: config is plain 
     "lastConnectedAt": "ISO8601|null", "tags": ["..."]
   }],
   "psmpProfiles": [{ "id":"uuid","label":"bastion1","psmpAddress":"bastion.corp",
-                     "vaultUser":"ferhat","userDelim":"@","paramDelim":"#" }],
+                     "vaultUser":"alice","userDelim":"@","paramDelim":"#" }],
   "cyberark": { "baseUrl":"https://pvwa.corp","authMethod":"Cyberark|LDAP|RADIUS|Windows",
                 "tlsVerify":true, "caCertPath":"string|null" }
 }
@@ -251,7 +251,7 @@ On-disk format: `magic || version || salt || nonce || AES-256-GCM(ciphertext+tag
 - AC1.5: changing the master password re-encrypts the blob atomically (backup kept until success); after change, old password fails and new password unlocks; a simulated crash mid-rekey leaves the original blob intact (PM4). **The Keychain-cached derived-key item is updated/invalidated in the same operation** so Touch-ID unlock never uses a stale key (architect note).
 
 **Faz 2**
-- AC2.1: for a PSMP server, `ssh_build_connect_cmd` returns args `["ferhat@oracle@10.0.0.5@bastion1"]` (no secret anywhere).
+- AC2.1: for a PSMP server, `ssh_build_connect_cmd` returns args `["alice@oracle@10.0.0.5@bastion1"]` (no secret anywhere).
 - AC2.2: Connect opens a new terminal tab running the ssh command (observed live).
 - AC2.3: for a direct server with local-store **password** source, the secret is injected via PTY stdin (verified: not present in `ps` args nor terminal scrollback).
 - AC2.4: for a server with **key** source, **no plaintext key file is ever created on disk** (fs-watch over the temp dir + home during connect shows zero key writes); the key is delivered only via `SSH_AUTH_SOCK` (ephemeral in-process ssh-agent); the identity is removed from the agent after the session and the in-memory copy zeroized (ARCH-RG1).

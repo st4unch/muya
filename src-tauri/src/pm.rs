@@ -425,7 +425,7 @@ mod tests {
     #[test]
     #[ignore = "machine-specific: needs a real local repo"]
     fn pm_status_smoke() {
-        let repo = "/Users/staunch/Documents/mcp-context-forge";
+        let repo = concat!(env!("HOME"), "/Documents/mcp-context-forge");
         if !Path::new(repo).exists() {
             return;
         }

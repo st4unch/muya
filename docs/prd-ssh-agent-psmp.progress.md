@@ -8,8 +8,8 @@ started: 2026-10-07
 - Unit tests: 7 new in `ssh.rs` (AC1–AC8), all 362 lib tests + sidecar test green.
 - Live (AC9): rebuilt sidecar against a dev app on an isolated socket + fake HOME. `tools/list` shows
   `ssh_update_server`, `ssh_list_psmp_profiles`, `psmpProfile`. Calls: profile list (no vault user) ✅;
-  `@` in username refused ✅; PSMP add by name and case-insensitive name ✅ (`gokay#corp.local` accepted);
-  unknown profile → "Available: corp-psmp" ✅; direct opencti → updated to PSMP + target `gatar` ✅;
+  `@` in username refused ✅; PSMP add by name and case-insensitive name ✅ (`svc#corp.local` accepted);
+  unknown profile → "Available: corp-psmp" ✅; direct webapp → updated to PSMP + target `deploy` ✅;
   operator server update refused ✅; config file shows psmp/profile id/agentAdded/agentAccess/sshOptions None ✅.
 - Not live-tested: an actual connection through a real PSMP (no PSMP here); the connect string is covered by
   `agent_add_psmp_server_by_profile_name` (same builder as operator servers).

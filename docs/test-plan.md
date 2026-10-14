@@ -19,7 +19,7 @@
         └───────────────────────────┘
 ```
 
-**Kök ilke (agnostic):** Mevcut smoke testler `/Users/staunch/...` ve canlı `claude`
+**Kök ilke (agnostic):** Mevcut smoke testler `~/...` ve canlı `claude`
 oturumlarına bağlı — başka makinede çalışmaz. Bunları **kendi içinde temp git repo
 kuran** hermetik testlerle değiştir. Hiçbir test makineye/oturuma bağlı olmamalı.
 

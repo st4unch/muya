@@ -1,8 +1,10 @@
 # Muya
 
-A native macOS desktop control plane for running, watching, and steering **multiple parallel [Claude Code](https://claude.com/claude-code) agents** from a single window — with an encrypted credential vault, SSH/CyberArk access, and an MCP server that lets those agents drive Muya itself.
+A native macOS desktop control plane for running, watching, and steering **multiple parallel [Claude Code](https://claude.com/claude-code) agents** (and [opencode](https://opencode.ai)) from a single window — with scheduled prompts that keep running in the background, an encrypted credential vault, SSH/CyberArk access, and an MCP server that lets those agents drive Muya itself.
 
-Built with **Tauri v2** (Rust core) + **React 19** — ~12 MB, starts instantly, signed & notarized.
+Built with **Tauri v2** (Rust core) + **React 19** — ~17 MB, starts instantly, signed & notarized.
+
+> The screenshots below predate the 4.0 redesign; the screens are the same, the look has changed.
 
 ---
 
@@ -68,47 +70,68 @@ Two things worth knowing straight away:
 | Rename a tab | Double-click its title |
 | Find which agent said something | **Sessions** → search — it greps the actual conversation text, not just names |
 | Resume a session after restarting Muya | Click its tab — Muya reconnects it to the same conversation |
-| Send the same prompt to several agents later | **Scheduled Prompt** — pick the terminals, pick a time |
+| Run a prompt on a timer (daily report, nightly check) | **Schedules** — pick a folder, a prompt and a time; results land in History |
+| Split a terminal in place | **⌘⇧D** — up to 8 panes; a running Claude session is forked into the new pane |
 | Check nobody is editing the same file twice | **Queue** — collisions are flagged automatically |
 | Push or merge an agent's work | **Queue** — shows ahead/behind, trial-merges first, cleans up the worktree after |
 
 ### 4. Keep an eye on the whole fleet
 
-**Sessions** lists every Claude session on the machine — live and past — with what each one is doing
-and whether it's *working* or *waiting for input*. From there you can attach, stop, resume, or export
-a conversation to Markdown.
+**Control** groups your agents into *waiting*, *working* and *idle*, so the ones that need you are on
+top; a bell tells you when an agent finishes or asks something. **Sessions** lists every Claude
+session on the machine — live and past — and from there you can attach, stop, resume, or export a
+conversation to Markdown.
+
+### 5. Close the window, keep working
+
+Closing the window with the red button only hides it — your sessions and schedules keep running.
+Click Muya in the Dock to bring it back, ⌘Q to quit. (Settings → **Keep running when the window is
+closed** turns this off.)
 
 ---
 
 ## Features
 
-Muya is organised as seven screens.
+The left rail has nine screens: Control, Files, Sessions, Branches, Queue, Kanban, Resources, SSH and Schedules. Light and dark themes.
 
-### Control — terminals, files, branches
+### Control — agents and terminals
 
 | | |
 |---|---|
-| **Real terminals** | PTY-backed (`portable-pty` + xterm.js). One persistent tab per session — survives tab switches and grid/tab mode changes. Shift+Enter inserts a literal newline without submitting. |
-| **Grid view** | Up to 4 terminals in a resizable 2×2 grid; drag & drop to reorder. Side panels auto-hide for focus. |
-| **Tab bar** | Scrolls when tabs overflow, drag to reorder, double-click to rename. Claude tabs are marked and resume their *own* conversation when clicked. |
-| **New agent** | Launch a fresh agent into an isolated `git worktree` (auto-created, `.env` copied). |
-| **Scheduled prompts** | Send a prompt to one or more terminals at a chosen date/time; pending and fired prompts are tracked. |
-| **Editor + diff** | Monaco with HEAD-vs-working-tree diff, bundled locally (no CDN). Unsaved tabs show a dot; closing asks first. |
-| **Viewers** | Images and PDFs open in their own tabs; other binaries offer "Open in default app". |
-| **File tree** | Lazy real tree over the workspaces you add; live-refreshes on filesystem changes; right-click actions. |
-| **Branch topology** | Real lineage DAG — parent computed from the closest divergence point. Branches checked out in a worktree count as active work. |
+| **Agents list** | Every agent grouped as *waiting* / *working* / *idle*, with pinned agents on top and a SPLITS group for split panes. Double-click a name to rename it. Workspaces scope the list, the grid, ⌘K and notifications. |
+| **Real terminals** | PTY-backed (`portable-pty` + xterm.js, 24-bit color). One persistent terminal per session — survives switching screens and layouts. Shift+Enter inserts a newline without submitting. |
+| **Claude and opencode** | New Agent starts Claude Code or opencode. Optionally give the agent its own `git worktree` (auto-created, `.env` copied). |
+| **Split and Grid** | ⌘⇧D splits a terminal in place (up to 8 panes; a running Claude session is forked). **Grid** shows several sessions side by side, each panel with its own session picker and a full-screen button. |
+| **Session header + message box** | See what the agent is doing, send it a message, pick a slash command or skill from **/ Commands**. |
+| **Terminal look** | Font size (⌘+ / ⌘− / ⌘0), 9 color schemes, line and letter spacing (the **Aa** button). |
+| **Notifications** | A bell when an agent finishes or waits for input; kept across restarts. |
+| **Resume after restart** | Settings → Startup: open Muya at login and reopen your Claude sessions. ⌘⇧T reopens a closed tab. |
+| **Status line** | The footer can show any Claude Code status-line field (model, cost, context…) — pick them with the **+** next to the version. |
 
-### Sessions — every Claude session, live and past
+### Files — editor and viewers
 
-Reads `claude agents --json`. Attach, stop, or resume any session. Full-text search across live sessions **and transcript history** (it greps the actual conversations, not just names). Export a conversation to Markdown.
+Up to 30 open files, restored after a restart. Monaco with HEAD-vs-working-tree diff, bundled locally (no CDN); unsaved files show a dot and closing asks first. PDFs (with zoom) and images (Fit / 100%) open in their own viewers; other binaries offer "Open in default app". The file tree follows the workspaces you add and refreshes on its own. ⌘K also searches files **on this Mac** (Spotlight), ⌘O opens one.
 
-### Queue — ship the work
+### Sessions — every session, live and past
 
-Per-project git status (ahead/behind/dirty), trial-merge conflict checks, operator-confirmed push/merge with automatic worktree cleanup, and **collision detection** that flags the same file being edited in two worktrees at once.
+Attach, stop, or resume any Claude or opencode session. Full-text search across live sessions **and transcript history** (it greps the actual conversations), with filters like `branch=`, `path=` and `id=`. Export a conversation to Markdown. A **Terminal History** tab keeps each terminal's output by day, to read again, download as `.txt`, or reopen.
+
+### Branches and Queue — ship the work
+
+**Branches** draws the real lineage DAG across your worktrees. **Queue** shows per-project git status (ahead/behind/dirty), trial-merges before push/merge, cleans up the worktree afterwards, and flags the same file being edited in two worktrees at once.
 
 ### Kanban — plans on a board
 
-PRDs written as `docs/prd-<name>.md` show up as cards with their status. Agents can publish and update their own plans here through the `track_plan` MCP tool.
+PRDs written as `docs/prd-<name>.md` in your added folders show up as cards with their status. Agents can publish and update their own plans here through the `track_plan` MCP tool.
+
+### Schedules — prompts on a timer
+
+| | |
+|---|---|
+| **Scheduled prompts** | Run a prompt in a chosen folder once, every day, on weekdays or on a custom repeat. Each run is a headless Claude session; its result and full report are kept in **History** (last 100 runs). |
+| **Same tools as your sessions** | A schedule can use Claude in Chrome (on by default) and your MCP servers. A timeout and a limit of 3 runs at once keep things under control. |
+| **Keeps running** | Closing the window doesn't stop schedules. Optionally, **Run when Muya is closed** starts a small background service (a macOS Login Item called "Muya") that runs them even after you quit Muya or restart the Mac. Off by default. |
+| **Agents can manage them** | `schedule_create`, `schedule_update`, `schedule_run_now` and friends in `muya-mcp`. |
 
 ### Resources — skills, agents, hooks, MCPs
 
@@ -123,20 +146,26 @@ Browse what's installed locally, discover community skills in the marketplace, a
 | **File transfer** | `scp` to/from a server, confined to your workspace roots. |
 | **Groups, search, import/export** | Organise credentials, search by label/host/tag, import a password, token, API key or SSH key from a file. |
 
-### Chat — Claude ↔ Claude
+### Bridge — Claude ↔ Claude across Macs
 
-A local bridge lets a terminal Claude talk to Muya's own Claude. Pairing with another machine uses SPAKE2 + certificate (SPKI) pinning with a short verification code.
+Claude sessions on two Macs can message each other through the `bridge_*` MCP tools. Pairing uses a one-time 8-digit PIN (SPAKE2) plus a 6-character confirm code, then mutual TLS with pinned certificates. Messages are text only (4 KB, 10 per minute) — they can't run commands or send files, and the receiving Claude treats them as untrusted. On the same Mac, sessions talk with `send_to_session`.
+
+### Settings
+
+Theme, terminal look, open at login, resume Claude sessions on start, keep running when the window is closed, auto-allow permission prompts (off by default), opt-in debug log, and the open-source licenses. Muya updates itself from signed releases.
 
 ---
 
 ## For agents — the `muya-mcp` server
 
-Muya ships an MCP server so a Claude Code agent can drive it: **21 tools** across five groups.
+Muya ships an MCP server so a Claude Code (or opencode) agent can drive it: **37 tools** across seven groups.
 
 | Group | Tools |
 |---|---|
 | **Remote exec** | `ssh_list_servers`, `ssh_run`, `ssh_open`, `ssh_send`, `ssh_session_open/exec/close`, `ssh_scp`, `ssh_add_server`, `ssh_update_server`, `ssh_list_psmp_profiles` |
 | **Sessions** | `list_sessions`, `read_session`, `send_to_session`, `open_session`, `close_session` |
+| **Schedules** | `schedules_list`, `schedule_create`, `schedule_update`, `schedule_set_enabled`, `schedule_delete`, `schedule_run_now`, `schedule_history` |
+| **Bridge** | `bridge_listen`, `bridge_invite`, `bridge_connect`, `bridge_confirm`, `bridge_peers`, `bridge_send`, `bridge_revoke` |
 | **Secrets** | `list_secrets`, `add_secret`, `get_secret`, `update_secret` |
 | **Operations** | `list_operations`, `run_operation` — operator-pinned commands that use a secret the agent never sees |
 | **Planning** | `track_plan` |
@@ -257,9 +286,9 @@ npm run tauri build    # → src-tauri/target/release/bundle/macos/Muya.app
 ## Testing
 
 ```bash
-cd src-tauri && cargo test --lib       # 263 tests
+cd src-tauri && cargo test --lib       # ~390 tests
 cd .. && npx tsc --noEmit              # types
-npm test -- --run                      # 116 tests
+npm test -- --run                      # ~440 tests
 npm run build                          # production bundle
 ```
 
@@ -277,14 +306,25 @@ cd src-tauri && cargo test --lib -- --ignored
 ## Project structure
 
 ```
-src/                     React frontend (32 components)
+src/                     React frontend
   components/            Terminal, TerminalGrid, FileTree, FileEditor, SshPage,
-                         SessionsPage, QueuePage, ResourcesPage, BranchDAG, …
-  lib/                   pure, unit-tested helpers (tabs, format, agent command)
+                         SessionsPage, QueuePage, ResourcesPage, SchedulesPage,
+                         modalKit (shared dialog parts), …
+  lib/                   pure, unit-tested helpers (tabs, format, schedules, …)
+  mock/                  browser mock of the backend (`?mock=1`) for UI work
 src-tauri/src/
+  main.rs / lib.rs       entry points; `muya --scheduler` runs the background service
   pty.rs                 PTY-backed terminals + password injection
   agents.rs              `claude agents --json` reader, CLI resolution
-  sessions.rs            transcript reading, search, export
+  opencode.rs            opencode integration
+  sessions.rs / history.rs  transcript reading, search, export
+  term_history.rs        per-terminal output history
+  schedules.rs           schedule engine: timers, runs, history, one runner at a time
+  bg_service.rs          "Run when Muya is closed" (SMAppService login item)
+  app_prefs.rs           app-wide preferences (~/.claude/muya-app.json)
+  statusline.rs          Claude status-line fields for the footer
+  spotlight.rs           ⌘K "On this Mac" search
+  agent_ops.rs           operator-pinned operations
   fs.rs                  file tree, git worktrees, branch topology
   pm.rs                  project status, trial-merge, push/merge, collisions
   broker.rs              MCP broker (Unix socket, peer-uid gated)
@@ -293,8 +333,9 @@ src-tauri/src/
   ssh.rs / askpass.rs    connection assembly, credential injection
   cyberark.rs            CyberArk PVWA REST (password retrieval)
   credstore.rs           encrypted vault, Keychain / Touch ID
-  bridge*.rs             Claude↔Claude chat, paired remote bridge
+  bridge*.rs             paired Mac-to-Mac bridge (mTLS + SPAKE2)
   watcher.rs             filesystem watching (notify)
+  validate.rs            input checks at the webview → backend boundary
 claude-plugin/           the muya-mcp Claude Code plugin shipped from this repo
 docs/                    SYSTEM.md, PRDs, research, screenshots
 ```
@@ -313,7 +354,7 @@ docs/                    SYSTEM.md, PRDs, research, screenshots
 
 ## Status
 
-v0.2.44 — actively developed. macOS / Apple Silicon only.
+v4.1.2 — actively developed. macOS / Apple Silicon only. See [CHANGELOG.md](CHANGELOG.md) for what changed in each release.
 
 ## License
 

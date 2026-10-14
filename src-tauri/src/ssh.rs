@@ -1387,7 +1387,7 @@ mod tests {
         assert!(!psmp_cmd.args.iter().any(|a| a == "ControlMaster=auto"));
         assert_eq!(
             psmp_cmd.args.last().unwrap(),
-            "ferhat@oracle@10.0.0.5@bastion.corp"
+            "alice@oracle@10.0.0.5@bastion.corp"
         );
     }
 
@@ -1534,7 +1534,7 @@ mod tests {
              "agentAccess":true,"sshOptions":"-o PubkeyAuthentication=no",
              "lastConnectedAt":null,"tags":["prod"],"agentAdded":false}
           ],
-          "psmpProfiles": [{"id":"p1","label":"corp","vaultUser":"ferhat","psmpAddress":"bastion.corp",
+          "psmpProfiles": [{"id":"p1","label":"corp","vaultUser":"alice","psmpAddress":"bastion.corp",
              "userDelim":"@","paramDelim":"#","scpOptions":null}]
         }"##;
         let cfg: SshConfig = serde_json::from_str(old).expect("old config must still parse");
@@ -1581,7 +1581,7 @@ mod tests {
             id: "p1".into(),
             label: "bastion".into(),
             psmp_address: "bastion.corp".into(),
-            vault_user: "ferhat".into(),
+            vault_user: "alice".into(),
             user_delim: "@".into(),
             param_delim: "#".into(),
             scp_options: None,
@@ -1598,7 +1598,7 @@ mod tests {
         assert_eq!(cmd.program, "ssh");
         assert_eq!(
             without_cm(&cmd.args),
-            vec!["--", "ferhat@oracle@10.0.0.5@bastion.corp"]
+            vec!["--", "alice@oracle@10.0.0.5@bastion.corp"]
         );
         assert!(!cmd.needs_password_injection);
     }
@@ -1612,7 +1612,7 @@ mod tests {
         let cmd = build_connect_command(&s, Some(&psmp())).unwrap();
         assert_eq!(
             without_cm(&cmd.args),
-            vec!["--", "ferhat@oracle@10.0.0.5#2222@bastion.corp"]
+            vec!["--", "alice@oracle@10.0.0.5#2222@bastion.corp"]
         );
     }
 
@@ -1879,7 +1879,7 @@ mod tests {
 
     fn cfg_with_psmp() -> SshConfig {
         let mut cfg = SshConfig::default();
-        cfg.psmp_profiles.push(psmp()); // id p1, label "bastion", vault user "ferhat"
+        cfg.psmp_profiles.push(psmp()); // id p1, label "bastion", vault user "alice"
         cfg
     }
 
@@ -1890,15 +1890,15 @@ mod tests {
         let mut cfg = cfg_with_psmp();
         let alias = agent_add_server_in(
             &mut cfg,
-            "cribl",
-            "10.185.27.136",
-            "gatar",
+            "logs",
+            "10.0.0.7",
+            "deploy",
             None,
             None,
             Some("Bastion"),
         )
         .unwrap();
-        assert_eq!(alias, "cribl");
+        assert_eq!(alias, "logs");
         let s = &cfg.servers[0];
         assert_eq!(s.connection_type, "psmp");
         assert_eq!(s.psmp_profile_id.as_deref(), Some("p1"));
@@ -1906,14 +1906,14 @@ mod tests {
         let cmd = build_connect_command(s, Some(&psmp())).unwrap();
         assert_eq!(
             cmd.args.last().map(String::as_str),
-            Some("ferhat@gatar@10.185.27.136@bastion.corp")
+            Some("alice@deploy@10.0.0.7@bastion.corp")
         );
         // by id works too
         agent_add_server_in(
             &mut cfg,
             "",
-            "10.185.27.189",
-            "gatar",
+            "10.0.0.9",
+            "deploy",
             None,
             None,
             Some("p1"),
@@ -1953,14 +1953,14 @@ mod tests {
             &mut cfg,
             "a",
             "svmsecsfwprd001",
-            "gokay#corp.local",
+            "svc#corp.local",
             None,
             None,
             p,
         )
         .unwrap();
         for (host, user) in [
-            ("h", "gatar@gokay#corp.local"), // the whole PSMP string in the username
+            ("h", "deploy@svc#corp.local"), // the whole PSMP string in the username
             ("h#2222", "u"),                 // port smuggled through the param delimiter
             ("h@evil", "u"),
             ("h", "-oProxyCommand=id"),
@@ -1984,9 +1984,9 @@ mod tests {
         let mut cfg = cfg_with_psmp();
         agent_add_server_in(
             &mut cfg,
-            "opencti",
-            "10.185.27.10",
-            "gokay",
+            "webapp",
+            "10.0.0.10",
+            "svc",
             None,
             None,
             None,
@@ -1998,18 +1998,18 @@ mod tests {
             &mut cfg,
             &id,
             AgentServerEdit {
-                username: Some("gatar".into()),
+                username: Some("deploy".into()),
                 psmp_profile: Some("bastion".into()),
                 ..Default::default()
             },
         )
         .unwrap();
-        assert_eq!(alias, "opencti");
+        assert_eq!(alias, "webapp");
         let s = &cfg.servers[0];
         assert_eq!(s.id, id);
         assert_eq!(
             (s.host.as_str(), s.username.as_str()),
-            ("10.185.27.10", "gatar")
+            ("10.0.0.10", "deploy")
         );
         assert_eq!(s.connection_type, "psmp");
         assert_eq!(s.psmp_profile_id.as_deref(), Some("p1"));
@@ -2079,7 +2079,7 @@ mod tests {
                 psmp_address: "bastion.corp".into()
             }]
         );
-        assert!(!serde_json::to_string(&list).unwrap().contains("ferhat"));
+        assert!(!serde_json::to_string(&list).unwrap().contains("alice"));
     }
 
     // ---- build_scp_command (PRD ssh-scp) ----------------------------------
@@ -2151,7 +2151,7 @@ mod tests {
                 "ServerAliveInterval=30",
                 "--",
                 "/local/file.txt",
-                "ferhat@oracle@10.0.0.5@bastion.corp:/remote/file.txt",
+                "alice@oracle@10.0.0.5@bastion.corp:/remote/file.txt",
             ]
         );
         // Never a `#` delimiter (illegal as an SCP host-spec separator).
@@ -2184,7 +2184,7 @@ mod tests {
             .iter()
             .find(|a| a.contains("bastion.corp"))
             .unwrap();
-        assert_eq!(dest, "ferhat@oracle@10.0.0.5@bastion.corp:/remote/in.txt");
+        assert_eq!(dest, "alice@oracle@10.0.0.5@bastion.corp:/remote/in.txt");
         assert!(!dest.contains('#'), "no #port embed: {dest}");
     }
 
@@ -2325,7 +2325,7 @@ mod tests {
     #[test]
     fn psmp_profile_scp_options_defaults_none() {
         let legacy = r#"{
-            "id":"p1","label":"bastion","psmpAddress":"bastion.corp","vaultUser":"ferhat"
+            "id":"p1","label":"bastion","psmpAddress":"bastion.corp","vaultUser":"alice"
         }"#;
         let p: PsmpProfile = serde_json::from_str(legacy).unwrap();
         assert!(p.scp_options.is_none());

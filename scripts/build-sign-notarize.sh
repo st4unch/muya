@@ -22,9 +22,9 @@ PROFILE="apex-notary"   # xcrun notarytool store-credentials apex-notary
 
 # Direct App Store Connect API key — used when the keychain profile isn't
 # accessible (e.g. login keychain locked). Overridable via env.
-NOTARY_KEY="${NOTARY_KEY:-$HOME/Downloads/AuthKey_M87Y6CK4GH.p8}"
-NOTARY_KEY_ID="${NOTARY_KEY_ID:-M87Y6CK4GH}"
-NOTARY_ISSUER="${NOTARY_ISSUER:-27d976c7-7a94-40cb-a24c-a4fb49c82be8}"
+NOTARY_KEY="${NOTARY_KEY:-}"
+NOTARY_KEY_ID="${NOTARY_KEY_ID:-}"
+NOTARY_ISSUER="${NOTARY_ISSUER:-}"
 
 say()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m  ✓\033[0m %s\n' "$*"; }
@@ -45,7 +45,7 @@ elif [ -f "$NOTARY_KEY" ]; then
   NOTARY_ARGS=(--key "$NOTARY_KEY" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER")
   ok "notary auth: API key $NOTARY_KEY_ID (profile unavailable)"
 else
-  die "no notary auth — store profile '$PROFILE' or place key at $NOTARY_KEY"
+  die "no notary auth — store profile '$PROFILE' or set NOTARY_KEY (.p8 path), NOTARY_KEY_ID and NOTARY_ISSUER"
 fi
 
 VERSION="$(node -p "require('$ROOT/src-tauri/tauri.conf.json').version")"
