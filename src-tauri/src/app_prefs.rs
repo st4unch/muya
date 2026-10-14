@@ -63,6 +63,11 @@ pub fn load() {
     KEEP_RUNNING.store(prefs.keep_running_in_background, Ordering::Relaxed);
 }
 
+#[cfg(test)]
+pub fn set_keep_running_for_test(on: bool) {
+    KEEP_RUNNING.store(on, Ordering::Relaxed);
+}
+
 pub fn keep_running_in_background() -> bool {
     KEEP_RUNNING.load(Ordering::Relaxed)
 }

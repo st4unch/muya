@@ -6,6 +6,11 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.2.1] - 2026-10-14
+
+### Changed
+- Closing the window is now handled where macOS hands the close over to Muya, before anything else acts on it. An automated test checks both cases: with **Keep running when the window is closed** on, Muya keeps running; with it off, closing the window quits as before. No visible change.
+
 ## [4.2.0] - 2026-10-14
 
 ### Added

@@ -85,6 +85,27 @@ fn frontend_log(level: String, message: String) {
     }
 }
 
+/// Red close button: hide instead of quit while "Keep running when the window is
+/// closed" is on, so sessions and schedules keep running
+/// (docs/prd-schedules-background.md). Called from the run loop, where Tauri hands
+/// the user's close request over before acting on it; ⌘Q and the updater's relaunch
+/// go through app.exit/restart and never reach here.
+fn hide_on_close<R: tauri::Runtime>(app: &tauri::AppHandle<R>, event: &tauri::RunEvent) {
+    if let tauri::RunEvent::WindowEvent {
+        label,
+        event: tauri::WindowEvent::CloseRequested { api, .. },
+        ..
+    } = event
+    {
+        if app_prefs::keep_running_in_background() {
+            api.prevent_close();
+            if let Some(w) = app.get_webview_window(label) {
+                let _ = w.hide();
+            }
+        }
+    }
+}
+
 /// `muya --scheduler`: the background schedules service, no window
 /// (docs/prd-schedules-background.md).
 pub fn run_scheduler() {
@@ -479,20 +500,10 @@ pub fn run() {
             debuglog::debug_log_get,
             frontend_log
         ])
-        // Red close button: hide instead of quit, so sessions and schedules keep
-        // running (docs/prd-schedules-background.md). Only the user's close is
-        // caught here; ⌘Q and the updater's relaunch go through app.exit/restart.
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if app_prefs::keep_running_in_background() {
-                    api.prevent_close();
-                    let _ = window.hide();
-                }
-            }
-        })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
+            hide_on_close(app_handle, &event);
             // Dock click while the window is hidden: bring it back.
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen {
@@ -527,4 +538,47 @@ pub fn run() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod window_close_tests {
+    use tauri::Manager;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    /// The red close button sends CloseRequested. The mock runtime then removes the
+    /// window and, with none left, stops the app — unless the handler prevented the
+    /// close. Queue a close, a marker task, then a destroy (so the test ends either
+    /// way): the marker only runs if the app survived the close.
+    fn survives_close(keep: bool) -> bool {
+        crate::app_prefs::set_keep_running_for_test(keep);
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+        let survived = Arc::new(AtomicBool::new(false));
+        let s = survived.clone();
+        // The mock only routes these through the event loop once it runs.
+        app.run(move |h, e| {
+            super::hide_on_close(h, &e);
+            if matches!(e, tauri::RunEvent::Ready) {
+                let w = h.get_webview_window("main").unwrap();
+                w.close().unwrap();
+                let s = s.clone();
+                h.run_on_main_thread(move || s.store(true, Ordering::SeqCst))
+                    .unwrap();
+                w.destroy().unwrap();
+            }
+        });
+        survived.load(Ordering::SeqCst)
+    }
+
+    #[test]
+    fn close_hides_while_keep_running_is_on_and_quits_when_off() {
+        assert!(survives_close(true), "on: the window hides, Muya keeps running");
+        assert!(!survives_close(false), "off: closing the window quits, as before");
+        crate::app_prefs::set_keep_running_for_test(true);
+    }
 }

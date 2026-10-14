@@ -1,6 +1,6 @@
 [package]
 name = "muya"
-version = "4.2.0"
+version = "4.2.1"
 description = "Muya — control plane for parallel Claude Code agents"
 authors = ["staunch"]
 edition = "2021"
@@ -100,6 +100,8 @@ objc2 = "0.6"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString"] }
 
 [dev-dependencies]
+# MockRuntime for the window-close test (lib.rs window_close_tests).
+tauri = { version = "2", features = ["test", "protocol-asset"] }
 tempfile = "3.27.0"
 wiremock = "0.6"
 
