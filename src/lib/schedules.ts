@@ -143,6 +143,34 @@ export function jobState(j: JobView): { label: string; tone: "running" | "succes
   return { label: j.last.status === "timeout" ? "Timed out" : "Failed", tone: "failed" };
 }
 
+/** Who fires the timers (schedules_list `runner`). */
+export type Runner = "here" | "service" | "other" | "none";
+
+/** The background service ("Run when Muya is closed"), from bg_service_status. */
+export interface ServiceStatus {
+  state: "off" | "on" | "approval" | "unavailable";
+  /** Its heartbeat is fresh: it is running now. */
+  running: boolean;
+  version: string | null;
+}
+
+/** The line under the "Run when Muya is closed" switch. */
+export function serviceLine(s: ServiceStatus | null, appVersion?: string): { text: string; tone: "success" | "warning" | "muted" } {
+  if (!s) return { text: "Checking…", tone: "muted" };
+  switch (s.state) {
+    case "unavailable":
+      return { text: "Available in the installed Muya app on macOS 13 or later.", tone: "muted" };
+    case "approval":
+      return { text: "macOS is waiting for your OK: turn Muya on under Allow in the Background in Login Items.", tone: "warning" };
+    case "off":
+      return { text: "Off. Schedules run while Muya is open.", tone: "muted" };
+    case "on":
+      if (!s.running) return { text: "On, starting…", tone: "warning" };
+      if (appVersion && s.version && s.version !== appVersion) return { text: `On and running (Muya ${s.version}); it moves to ${appVersion} once its runs finish.`, tone: "success" };
+      return { text: "On and running. Schedules run even after you quit Muya.", tone: "success" };
+  }
+}
+
 export function emptyInput(): JobInput {
   return { name: "", prompt: "", folder: "", schedule: { kind: "daily", time: "09:00" }, enabled: true, timeoutMin: 30, bypass: true, chrome: true };
 }

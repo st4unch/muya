@@ -8,8 +8,9 @@
 
 import { useCallback, useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
-import { AlertTriangle, CalendarClock, ChevronDown, ChevronRight, FolderOpen, History, Pencil, Play, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, CalendarClock, Moon, ChevronDown, ChevronRight, FolderOpen, History, Pencil, Play, Plus, Trash2 } from "lucide-react";
 import { ModalCss, ModalShell, Segmented, Switch, dangerBtn, ghostBtn, groupStyle, helperStyle, inputStyle, labelStyle, primaryBtn, rowStyle, rowsBox } from "./modalKit";
 import {
   WEEKDAYS,
@@ -21,12 +22,15 @@ import {
   fmtDurationMs,
   jobState,
   relTime,
+  serviceLine,
   summarize,
   withKind,
   type JobInput,
   type JobView,
   type Run,
+  type Runner,
   type Schedule,
+  type ServiceStatus,
 } from "../lib/schedules";
 
 type Tone = ReturnType<typeof jobState>["tone"];
@@ -52,7 +56,10 @@ const iconBtn: CSSProperties = { width: 28, height: 28, borderRadius: 7, border:
 
 export default function SchedulesPage({ visible = true }: { visible?: boolean }) {
   const [jobs, setJobs] = useState<JobView[]>([]);
-  const [active, setActive] = useState(true);
+  const [runner, setRunner] = useState<Runner>("here");
+  const [service, setService] = useState<ServiceStatus | null>(null);
+  const [serviceBusy, setServiceBusy] = useState(false);
+  const [appVersion, setAppVersion] = useState<string>();
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [editing, setEditing] = useState<JobInput | null>(null);
@@ -62,9 +69,13 @@ export default function SchedulesPage({ visible = true }: { visible?: boolean })
 
   const refresh = useCallback(async () => {
     try {
-      const r = await invoke<{ jobs: JobView[]; active: boolean }>("schedules_list");
+      const [r, svc] = await Promise.all([
+        invoke<{ jobs: JobView[]; active: boolean; runner?: Runner }>("schedules_list"),
+        invoke<ServiceStatus>("bg_service_status").catch(() => null),
+      ]);
       setJobs(r.jobs);
-      setActive(r.active);
+      setRunner(r.runner ?? (r.active ? "here" : "other"));
+      setService(svc);
       setNow(Date.now());
     } catch (e) {
       setError(String(e));
@@ -72,6 +83,23 @@ export default function SchedulesPage({ visible = true }: { visible?: boolean })
       setLoaded(true);
     }
   }, []);
+
+  useEffect(() => {
+    void getVersion().then(setAppVersion).catch(() => undefined);
+  }, []);
+
+  const setBackground = async (on: boolean) => {
+    setServiceBusy(true);
+    setError("");
+    try {
+      setService(await invoke<ServiceStatus>("bg_service_set", { enabled: on }));
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setServiceBusy(false);
+    }
+  };
 
   useEffect(() => {
     if (!visible) return;
@@ -116,10 +144,12 @@ export default function SchedulesPage({ visible = true }: { visible?: boolean })
           </button>
         </div>
         <p style={{ ...helperStyle, fontSize: 13, color: "var(--text-muted)", margin: "-8px 0 0" }}>
-          Claude prompts that run on their own in a folder — headless, with your settings, MCP servers and skills. They run while Muya is open; a run missed while it was closed is skipped.
+          Claude prompts that run on their own in a folder — headless, with your settings, MCP servers and skills. Closing the window keeps Muya running; a run missed while Muya was quit or the Mac was asleep is skipped.
         </p>
 
-        {!active && (
+        <BackgroundRow status={service} appVersion={appVersion} busy={serviceBusy} onChange={(on) => void setBackground(on)} />
+
+        {runner === "other" && (
           <div role="status" style={{ fontSize: 13, padding: "8px 12px", borderRadius: 8, background: "var(--warning-card-bg)", color: "var(--warning-text)", border: "1px solid var(--warning-border)" }}>
             Another Muya window is running these schedules, so timers are paused here. Run now still works.
           </div>
@@ -210,6 +240,34 @@ export default function SchedulesPage({ visible = true }: { visible?: boolean })
           </div>
         </ModalShell>
       )}
+    </div>
+  );
+}
+
+/** "Run when Muya is closed": the background service switch (bg_service.rs). */
+function BackgroundRow({ status, appVersion, busy, onChange }: { status: ServiceStatus | null; appVersion?: string; busy: boolean; onChange: (on: boolean) => void }) {
+  const uid = useId();
+  const line = serviceLine(status, appVersion);
+  const on = status?.state === "on" || status?.state === "approval";
+  const color = line.tone === "success" ? "var(--success-text)" : line.tone === "warning" ? "var(--warning-text)" : "var(--text-muted)";
+  return (
+    <div style={{ ...card, display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 14px" }}>
+      <Moon size={16} color="var(--text-muted)" style={{ marginTop: 2, flexShrink: 0 }} />
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+        <span id={`${uid}-bg`} style={{ fontSize: 13, fontWeight: 600 }}>Run when Muya is closed</span>
+        <span style={helperStyle}>
+          A background service named Muya runs your schedules even after you quit Muya or restart the Mac. macOS asks you to allow it once. Not needed if you keep Muya open.
+        </span>
+        <span role="status" style={{ fontSize: 12, color, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {line.text}
+          {status?.state === "approval" && (
+            <button type="button" className="st-btn" style={smallGhost} onClick={() => void invoke("bg_service_open_settings")}>
+              Open Login Items
+            </button>
+          )}
+        </span>
+      </div>
+      <Switch checked={on} disabled={busy || !status || status.state === "unavailable"} onChange={onChange} labelledBy={`${uid}-bg`} />
     </div>
   );
 }

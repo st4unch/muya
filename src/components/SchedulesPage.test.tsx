@@ -20,12 +20,19 @@ const runs: Run[] = [
 ];
 
 let jobs: JobView[];
+let service: { state: string; running: boolean; version: string | null };
 beforeEach(() => {
   jobs = [base];
+  service = { state: "off", running: false, version: null };
   invoke.mockReset();
   invoke.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
     switch (cmd) {
-      case "schedules_list": return { jobs, active: true };
+      case "schedules_list": return { jobs, active: service.state !== "on", runner: service.state === "on" ? "service" : "here" };
+      case "bg_service_status": return service;
+      case "bg_service_set":
+        service = args!.enabled ? { state: "approval", running: false, version: null } : { state: "off", running: false, version: null };
+        return service;
+      case "bg_service_open_settings": return null;
       case "schedule_runs": return runs;
       case "schedule_set_enabled": jobs = jobs.map((j) => ({ ...j, enabled: args!.enabled as boolean })); return null;
       case "schedule_delete": jobs = []; return null;
@@ -41,6 +48,27 @@ beforeEach(() => {
 });
 
 describe("SchedulesPage", () => {
+  it("Run when Muya is closed turns the background service on and asks for approval", async () => {
+    render(<SchedulesPage />);
+    const sw = await screen.findByRole("switch", { name: "Run when Muya is closed" });
+    await waitFor(() => expect(sw).toBeEnabled());
+    expect(sw).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByText("Off. Schedules run while Muya is open.")).toBeInTheDocument();
+    fireEvent.click(sw);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("bg_service_set", { enabled: true }));
+    await screen.findByText(/macOS is waiting for your OK/);
+    fireEvent.click(screen.getByRole("button", { name: "Open Login Items" }));
+    expect(invoke).toHaveBeenCalledWith("bg_service_open_settings");
+    expect(sw).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("the switch is disabled where the service can't run", async () => {
+    service = { state: "unavailable", running: false, version: null };
+    render(<SchedulesPage />);
+    await screen.findByText(/Available in the installed Muya app/);
+    expect(screen.getByRole("switch", { name: "Run when Muya is closed" })).toBeDisabled();
+  });
+
   it("shows the report and a card per schedule", async () => {
     render(<SchedulesPage />);
     const card = await screen.findByRole("region", { name: "Nightly report" });

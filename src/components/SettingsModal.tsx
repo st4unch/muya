@@ -51,9 +51,10 @@ export default function SettingsModal({
   const [loginItem, setLoginItem] = useState(false);
   const [resumeOnLaunch, setResumeOnLaunch] = useState(false);
   const [autoApprove, setAutoApprove] = useState(false);
+  const [keepRunning, setKeepRunning] = useState(true);
   // Startup switches as stored when the modal opened: like the log settings, a change
   // is pending until Save (null = login item state still loading).
-  const [startupStored, setStartupStored] = useState<{ login: boolean; resume: boolean; auto: boolean } | null>(null);
+  const [startupStored, setStartupStored] = useState<{ login: boolean; resume: boolean; auto: boolean; keep: boolean } | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
 
   // Load current settings whenever the modal opens.
@@ -65,12 +66,15 @@ export default function SettingsModal({
     setResumeOnLaunch(resume);
     setAutoApprove(auto);
     setStartupStored(null);
-    invoke<boolean>("login_item_get")
-      .catch(() => false)
-      .then((v) => {
-        setLoginItem(!!v);
-        setStartupStored({ login: !!v, resume, auto });
-      });
+    Promise.all([
+      invoke<boolean>("login_item_get").catch(() => false),
+      invoke<{ keepRunningInBackground?: boolean }>("app_prefs_get").catch(() => null),
+    ]).then(([v, prefs]) => {
+      const keep = prefs?.keepRunningInBackground !== false;
+      setLoginItem(!!v);
+      setKeepRunning(keep);
+      setStartupStored({ login: !!v, resume, auto, keep });
+    });
     setSaved(false);
     setStored(null);
     invoke<{ enabled: boolean; path: string }>("debug_log_get")
@@ -103,7 +107,7 @@ export default function SettingsModal({
   const logDirty = stored !== null && (stored.enabled !== enabled || stored.path !== cleanPath);
   const startupDirty =
     startupStored !== null &&
-    (startupStored.login !== loginItem || startupStored.resume !== resumeOnLaunch || startupStored.auto !== autoApprove);
+    (startupStored.login !== loginItem || startupStored.resume !== resumeOnLaunch || startupStored.auto !== autoApprove || startupStored.keep !== keepRunning);
   const dirty = logDirty || startupDirty;
 
   const save = async () => {
@@ -117,7 +121,8 @@ export default function SettingsModal({
         setLoginItem(login);
         saveResumeOnLaunch(resumeOnLaunch);
         saveAutoApprove(autoApprove);
-        setStartupStored({ login, resume: resumeOnLaunch, auto: autoApprove });
+        if (startupStored.keep !== keepRunning) await invoke("app_prefs_set", { prefs: { keepRunningInBackground: keepRunning } });
+        setStartupStored({ login, resume: resumeOnLaunch, auto: autoApprove, keep: keepRunning });
       }
       if (logDirty) {
         await invoke("debug_log_set", { enabled, path: cleanPath });
@@ -264,6 +269,22 @@ export default function SettingsModal({
                   labelledBy={id("login")}
                   onChange={(v) => {
                     setLoginItem(v);
+                    edit();
+                  }}
+                />
+              </div>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 14px", borderTop: "1px solid var(--border)" }}>
+                <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span id={id("keep")} style={{ fontSize: 13, fontWeight: 600 }}>Keep running when the window is closed</span>
+                  <span style={helperStyle}>
+                    The red close button hides the window; sessions and schedules keep running. Click Muya in the Dock to bring it back, ⌘Q to quit.
+                  </span>
+                </div>
+                <Switch
+                  checked={keepRunning}
+                  labelledBy={id("keep")}
+                  onChange={(v) => {
+                    setKeepRunning(v);
                     edit();
                   }}
                 />

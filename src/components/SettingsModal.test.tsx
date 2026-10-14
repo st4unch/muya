@@ -55,6 +55,23 @@ describe("SettingsModal", () => {
     await waitFor(() => expect(save).toBeDisabled());
   });
 
+  it("Keep running when the window is closed is read and saved through app prefs", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "debug_log_get") return { enabled: false, path: "~/.claude/muya-debug.log" };
+      if (cmd === "login_item_get") return false;
+      if (cmd === "app_prefs_get") return { keepRunningInBackground: true };
+    });
+    render(<SettingsModal open onClose={() => {}} />);
+    const sw = screen.getByRole("switch", { name: "Keep running when the window is closed" });
+    const save = screen.getByRole("button", { name: "Save" });
+    await waitFor(() => expect(sw).toHaveAttribute("aria-checked", "true"));
+    await waitFor(() => expect(save).toBeDisabled());
+    fireEvent.click(sw);
+    fireEvent.click(save);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("app_prefs_set", { prefs: { keepRunningInBackground: false } }));
+    await waitFor(() => expect(save).toBeDisabled());
+  });
+
   it("Resume on launch and Auto-allow enable Save and are stored only on Save", async () => {
     localStorage.removeItem("muya.resumeOnLaunch");
     localStorage.removeItem("muya.autoApprove");

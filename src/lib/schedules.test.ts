@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeSchedule, emptyInput, initialMemory, rememberSchedule, fmtClock, fmtDurationMs, jobState, relTime, summarize, withKind, type JobView } from "./schedules";
+import { describeSchedule, emptyInput, initialMemory, rememberSchedule, fmtClock, fmtDurationMs, jobState, relTime, serviceLine, summarize, withKind, type JobView } from "./schedules";
 
 const job = (p: Partial<JobView>): JobView => ({
   id: "a", name: "A", prompt: "p", folder: "/w", schedule: { kind: "daily", time: "09:00" }, enabled: true, timeoutMin: 30, bypass: true, chrome: true,
@@ -70,5 +70,17 @@ describe("withKind", () => {
     expect(withKind({ ...viaInterval, minutes: 30 } as never, "weekly", mem)).toEqual({ kind: "weekly", days: [5], time: "17:45" });
     mem = rememberSchedule({ kind: "interval", minutes: 30 }, mem);
     expect(withKind({ kind: "weekly", days: [5], time: "17:45" }, "interval", mem)).toEqual({ kind: "interval", minutes: 30 });
+  });
+});
+
+describe("serviceLine", () => {
+  it("says what the background service is doing", () => {
+    expect(serviceLine(null).text).toBe("Checking…");
+    expect(serviceLine({ state: "off", running: false, version: null }).tone).toBe("muted");
+    expect(serviceLine({ state: "approval", running: false, version: null }).tone).toBe("warning");
+    expect(serviceLine({ state: "on", running: false, version: null }).text).toBe("On, starting…");
+    expect(serviceLine({ state: "on", running: true, version: "4.2.0" }, "4.2.0").text).toMatch(/even after you quit/);
+    expect(serviceLine({ state: "on", running: true, version: "4.1.1" }, "4.2.0").text).toMatch(/moves to 4.2.0/);
+    expect(serviceLine({ state: "unavailable", running: false, version: null }).text).toMatch(/installed Muya app/);
   });
 });

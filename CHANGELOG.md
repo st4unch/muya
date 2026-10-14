@@ -6,6 +6,15 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.2.0] - 2026-10-14
+
+### Added
+- **Run when Muya is closed** (Schedules page): an optional background service that runs your schedules even after you quit Muya or restart the Mac. It is off by default; turn it on only if you need it. macOS asks you once to allow it, and it shows up as "Muya" under System Settings → General → Login Items → Allow in the Background. While it runs, an open Muya window leaves the timers to it and still shows every schedule, runs Run now through it and keeps History up to date. Schedules don't run while the Mac is asleep, and the muya-mcp tools need Muya itself to be open.
+
+### Changed
+- Closing the window with the red button no longer quits Muya: the window hides, and your sessions and schedules keep running. Click Muya in the Dock to bring it back, ⌘Q to quit. Turn this off in Settings → **Keep running when the window is closed**.
+- Schedules: a schedule added, changed or turned off in one Muya window (or by a Claude session) now reaches whichever Muya runs the timers within 15 seconds, and if that Muya quits, another open window takes the timers over.
+
 ## [4.1.1] - 2026-10-14
 
 ### Fixed

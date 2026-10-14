@@ -137,7 +137,10 @@ when you start a plan, again with the same `title` and `status: "done"` when fin
 ## Schedules group
 
 Muya's Schedules page: Claude prompts that run headless (`claude -p`) in a folder on a
-timer, with the user's settings, MCP servers and skills — while Muya is open.
+timer, with the user's settings, MCP servers and skills — while Muya runs (closing its
+window keeps it running), or always when the user turned on "Run when Muya is closed" (a
+background service). `schedules_list` says who fires the timers in `runner`: `here`,
+`service` (the background service), `other` (another Muya window) or `none`.
 
 - Address a schedule by its `id` or exact name (`schedule_ref`); duplicate names need the id.
 - `schedule_create` needs `name`, `prompt`, `folder` (absolute, existing) and `schedule`:
@@ -147,8 +150,9 @@ timer, with the user's settings, MCP servers and skills — while Muya is open.
   Chrome loaded, so a browser task works like in the user's own sessions).
 - **Only create or turn on a schedule when the user asked for it.** With bypass on it runs
   any command, unattended, until turned off. Say what you created (name, timing, folder).
-- `schedule_update` takes only the fields to change. `schedule_run_now` returns at once;
-  read the result with `schedule_history` (newest first, output capped at 8000 chars).
+- `schedule_update` takes only the fields to change. `schedule_run_now` returns at once
+  (when the background service runs the timers it starts within ~15 s); read the result
+  with `schedule_history` (newest first, output capped at 8000 chars).
 - `schedule_delete` also deletes the run history and cannot be undone — confirm first.
 
 ## General principles across all of this

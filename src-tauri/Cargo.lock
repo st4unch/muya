@@ -2905,7 +2905,7 @@ dependencies = [
 
 [[package]]
 name = "muya"
-version = "4.1.1"
+version = "4.2.0"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -2917,6 +2917,7 @@ dependencies = [
  "log",
  "notify",
  "objc2",
+ "objc2-foundation",
  "objc2-service-management",
  "portable-pty",
  "rand 0.9.4",

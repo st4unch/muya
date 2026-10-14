@@ -40,7 +40,9 @@ mod agent_ops;
 mod agent_ssh;
 mod agents;
 mod app_location;
+mod app_prefs;
 mod askpass;
+mod bg_service;
 mod bridge;
 mod bridge_exec;
 mod bridge_mcp;
@@ -81,6 +83,15 @@ fn frontend_log(level: String, message: String) {
         "warn" => log::warn!("[frontend] {message}"),
         _ => log::info!("[frontend] {message}"),
     }
+}
+
+/// `muya --scheduler`: the background schedules service, no window
+/// (docs/prd-schedules-background.md).
+pub fn run_scheduler() {
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("PANIC: {info}");
+    }));
+    bg_service::run()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -186,6 +197,7 @@ pub fn run() {
             // Apply persisted debug-logging settings (~/.claude/muya-settings.json)
             // so CyberArk/SSH step logs start flowing immediately if enabled.
             debuglog::load_and_apply();
+            app_prefs::load();
             // AC-1-7: Spawn vault MCP subprocess + warmup at startup.
             // warmup_vault runs asynchronously so it never blocks the setup hook.
             let vault_arc = app.state::<vault::VaultMcpManager>().0.clone();
@@ -458,13 +470,41 @@ pub fn run() {
             debuglog::debug_log_set,
             login_item::login_item_get,
             login_item::login_item_set,
+            app_prefs::app_prefs_get,
+            app_prefs::app_prefs_set,
+            bg_service::bg_service_status,
+            bg_service::bg_service_set,
+            bg_service::bg_service_open_settings,
             spotlight::spotlight_search,
             debuglog::debug_log_get,
             frontend_log
         ])
+        // Red close button: hide instead of quit, so sessions and schedules keep
+        // running (docs/prd-schedules-background.md). Only the user's close is
+        // caught here; ⌘Q and the updater's relaunch go through app.exit/restart.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if app_prefs::keep_running_in_background() {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
+            // Dock click while the window is hidden: bring it back.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen {
+                has_visible_windows: false,
+                ..
+            } = &event
+            {
+                if let Some(w) = app_handle.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+            }
             #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
             if let tauri::RunEvent::Opened { urls } = event {
                 let paths: Vec<String> = urls
@@ -475,6 +515,11 @@ pub fn run() {
                 // Store for get_startup_files (startup case, before JS listener is ready).
                 if let Ok(mut pending) = STARTUP_FILES.lock() {
                     pending.extend(paths.clone());
+                }
+                // A file opened from Finder while the window is hidden shows it again.
+                if let Some(w) = app_handle.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.set_focus();
                 }
                 // Also emit for the already-running case.
                 for path in paths {

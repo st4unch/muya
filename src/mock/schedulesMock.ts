@@ -4,7 +4,7 @@
 // few schedules with history so the page, cards, report and dialogs can be checked
 // in a real browser in both themes.
 
-import type { JobInput, JobView, Run } from "../lib/schedules";
+import type { JobInput, JobView, Run, ServiceStatus } from "../lib/schedules";
 
 const H = 3_600_000;
 let seq = 3;
@@ -55,11 +55,21 @@ function view(j: JobView): JobView {
   return { ...j, nextRun: j.enabled ? j.nextRun ?? Date.now() + H : null, runs: r.length, ok, failed: r.length - ok, last: last ? { started: last.started, ended: last.ended, status: last.status } : null };
 }
 
+// The background service switch: off until turned on, then running.
+let service: ServiceStatus = { state: "off", running: false, version: null };
+
 export function handleSchedules(cmd: string, p: Record<string, unknown>): { handled: boolean; value?: unknown } {
   if (cmd.startsWith("schedule")) seed();
   switch (cmd) {
+    case "bg_service_status":
+      return { handled: true, value: service };
+    case "bg_service_set":
+      service = p.enabled ? { state: "on", running: true, version: null } : { state: "off", running: false, version: null };
+      return { handled: true, value: service };
+    case "bg_service_open_settings":
+      return { handled: true, value: null };
     case "schedules_list":
-      return { handled: true, value: { jobs: jobs.map(view), active: true } };
+      return { handled: true, value: { jobs: jobs.map(view), active: !service.running, runner: service.running ? "service" : "here" } };
     case "schedule_runs":
       return { handled: true, value: runs[String(p.id)] ?? [] };
     case "schedule_set_enabled": {

@@ -291,6 +291,9 @@ struct Paths {
     jobs: PathBuf,
     runs: PathBuf,
     lock: PathBuf,
+    status: PathBuf,
+    heartbeat: PathBuf,
+    requests: PathBuf,
 }
 
 impl Paths {
@@ -299,6 +302,9 @@ impl Paths {
             jobs: claude_dir.join("muya-schedules.json"),
             runs: claude_dir.join("muya-schedule-runs"),
             lock: claude_dir.join("muya-schedules.lock"),
+            status: claude_dir.join("muya-schedules.status.json"),
+            heartbeat: claude_dir.join("muya-scheduler.heartbeat.json"),
+            requests: claude_dir.join("muya-schedule-requests"),
         }
     }
     fn runs_file(&self, id: &str) -> PathBuf {
@@ -530,67 +536,541 @@ fn kill_group(pgid: i32, sig: i32) {
 }
 
 // ── State + timer ─────────────────────────────────────────────────────────────────
+//
+// One process at a time fires the timers: whoever holds the lock file. That is the
+// Muya window, or the background service (`muya --scheduler`, docs/
+// prd-schedules-background.md) when the user turned it on. The window hands the
+// lock over while the service's heartbeat is fresh and takes it back once it stops.
+// Every process re-reads the jobs file when it changes, the active one writes a
+// status file the others show, and "Run now" from a passive one leaves a request
+// file the active one picks up on its next tick.
+
+/// The Muya window, or the headless background service.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Role {
+    App,
+    Service,
+}
+
+/// A service heartbeat older than this means the service is gone.
+const HEARTBEAT_FRESH_MS: i64 = 45_000;
+/// A status file older than this is ignored (its writer stopped).
+const STATUS_FRESH_MS: i64 = 60_000;
+
+/// What the active process is doing, for the others to show.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Status {
+    pid: u32,
+    /// Which ScheduleState wrote it (a pid alone can't tell two in one process apart).
+    #[serde(default)]
+    token: String,
+    ts: i64,
+    running: Vec<String>,
+    queued: Vec<String>,
+    due: HashMap<String, i64>,
+}
+
+/// Written by the background service on every tick, active or not.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Heartbeat {
+    pub pid: u32,
+    pub version: String,
+    pub ts: i64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Request {
+    id: String,
+}
 
 struct Inner {
     paths: Paths,
+    role: Role,
+    /// Tells this state's status file from another's.
+    token: String,
     jobs: Vec<Job>,
+    /// The jobs file's mtime as last read or written here.
+    jobs_seen: Option<std::time::SystemTime>,
     due: HashMap<String, i64>,
     running: HashSet<String>,
     queued: HashSet<String>,
-    /// This instance holds the lock and fires timers.
+    /// This process holds the lock and fires timers.
     active: bool,
+    lock: Option<fs::File>,
 }
 
+type Sink = Box<dyn Fn() + Send + Sync>;
+
+#[derive(Clone)]
 pub struct ScheduleState {
     inner: Arc<Mutex<Inner>>,
     slots: Arc<tokio::sync::Semaphore>,
-    _lock: Mutex<Option<fs::File>>,
+    /// Told whenever something the page shows changed (the window emits an event).
+    sink: Arc<OnceLock<Sink>>,
+}
+
+fn claude_dir() -> PathBuf {
+    dirs_next::home_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join(".claude")
 }
 
 impl Default for ScheduleState {
     fn default() -> Self {
-        let claude_dir = dirs_next::home_dir()
-            .unwrap_or_else(std::env::temp_dir)
-            .join(".claude");
-        Self::at(&claude_dir)
+        Self::at(&claude_dir())
+    }
+}
+
+fn mtime(path: &Path) -> Option<std::time::SystemTime> {
+    fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
+    fs::read(path)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+}
+
+fn write_json<T: Serialize>(path: &Path, v: &T) {
+    if let Ok(b) = serde_json::to_vec(v) {
+        if let Err(e) = atomic_write(path, &b) {
+            log::warn!("schedules: could not write {}: {e}", path.display());
+        }
+    }
+}
+
+/// The background service's heartbeat, when it is fresh.
+pub fn service_heartbeat() -> Option<Heartbeat> {
+    heartbeat_at(&Paths::under(&claude_dir()), now_ms())
+}
+
+fn heartbeat_at(p: &Paths, now: i64) -> Option<Heartbeat> {
+    read_json::<Heartbeat>(&p.heartbeat).filter(|h| now - h.ts < HEARTBEAT_FRESH_MS)
+}
+
+/// Forget the service's heartbeat (it was just turned off), so the window takes the
+/// timers back on its next tick instead of after HEARTBEAT_FRESH_MS.
+pub fn clear_service_heartbeat() {
+    let _ = fs::remove_file(Paths::under(&claude_dir()).heartbeat);
+}
+
+fn other_status(p: &Paths, token: &str, now: i64) -> Option<Status> {
+    read_json::<Status>(&p.status).filter(|s| s.token != token && now - s.ts < STATUS_FRESH_MS)
+}
+
+/// Ids with a "Run now" request waiting for the active process.
+fn pending_requests(p: &Paths) -> HashSet<String> {
+    fs::read_dir(&p.requests)
+        .map(|d| {
+            d.flatten()
+                .filter_map(|e| {
+                    let name = e.file_name().to_string_lossy().into_owned();
+                    name.strip_suffix(".json")
+                        .and_then(|n| n.split('-').next().map(String::from))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Read and remove every waiting request.
+fn take_requests(p: &Paths) -> Vec<String> {
+    let mut ids = Vec::new();
+    let Ok(dir) = fs::read_dir(&p.requests) else {
+        return ids;
+    };
+    for e in dir.flatten() {
+        let path = e.path();
+        if path.extension().is_none_or(|x| x != "json") {
+            continue;
+        }
+        let req = read_json::<Request>(&path);
+        let _ = fs::remove_file(&path);
+        if let Some(r) = req {
+            if !ids.contains(&r.id) {
+                ids.push(r.id);
+            }
+        }
+    }
+    ids
+}
+
+fn try_lock_file(path: &Path) -> Option<fs::File> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).ok()?;
+    }
+    fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)
+        .ok()
+        .filter(|f| f.try_lock().is_ok())
+}
+
+impl Inner {
+    /// Pick up a jobs file another process wrote. Due times of unchanged jobs stay.
+    fn refresh(&mut self) -> bool {
+        let seen = mtime(&self.paths.jobs);
+        if seen == self.jobs_seen {
+            return false;
+        }
+        let old: HashMap<String, Schedule> = self
+            .jobs
+            .iter()
+            .map(|j| (j.id.clone(), j.schedule.clone()))
+            .collect();
+        self.jobs = load_jobs(&self.paths);
+        self.jobs_seen = seen;
+        let now = Local::now();
+        let mut due = HashMap::new();
+        for j in &self.jobs {
+            let kept = (old.get(&j.id) == Some(&j.schedule))
+                .then(|| self.due.get(&j.id).copied())
+                .flatten();
+            if let Some(t) =
+                kept.or_else(|| next_after(&j.schedule, now).map(|t| t.timestamp_millis()))
+            {
+                due.insert(j.id.clone(), t);
+            }
+        }
+        self.due = due;
+        true
+    }
+
+    fn persist(&mut self) -> Result<(), String> {
+        save_jobs(&self.paths, &self.jobs)?;
+        self.jobs_seen = mtime(&self.paths.jobs);
+        Ok(())
+    }
+
+    /// Take or hand over the lock. Returns true when `active` changed.
+    fn coordinate(&mut self, now: i64) -> bool {
+        let yield_to_service = self.role == Role::App && heartbeat_at(&self.paths, now).is_some();
+        if self.active && yield_to_service {
+            self.lock = None;
+            self.active = false;
+            log::info!("schedules: the background service runs the timers now");
+            return true;
+        }
+        if !self.active && !yield_to_service {
+            if let Some(f) = try_lock_file(&self.paths.lock) {
+                self.lock = Some(f);
+                self.active = true;
+                // Fresh from now: slots missed while another process ran (or none
+                // did) are skipped, as at startup.
+                self.jobs_seen = None;
+                self.refresh();
+                let now = Local::now();
+                self.due = self
+                    .jobs
+                    .iter()
+                    .filter_map(|j| {
+                        next_after(&j.schedule, now).map(|t| (j.id.clone(), t.timestamp_millis()))
+                    })
+                    .collect();
+                return true;
+            }
+        }
+        false
+    }
+
+    fn write_status(&self) {
+        if !self.active {
+            return;
+        }
+        let mut running: Vec<String> = self.running.iter().cloned().collect();
+        let mut queued: Vec<String> = self.queued.iter().cloned().collect();
+        running.sort();
+        queued.sort();
+        write_json(
+            &self.paths.status,
+            &Status {
+                pid: std::process::id(),
+                token: self.token.clone(),
+                ts: now_ms(),
+                running,
+                queued,
+                due: self.due.clone(),
+            },
+        );
+    }
+
+    /// Running or waiting here or, for a passive process, in the active one.
+    fn busy(&self, id: &str) -> bool {
+        if self.running.contains(id) || self.queued.contains(id) {
+            return true;
+        }
+        if self.active {
+            return false;
+        }
+        other_status(&self.paths, &self.token, now_ms())
+            .is_some_and(|s| s.running.iter().chain(&s.queued).any(|x| x == id))
+            || pending_requests(&self.paths).contains(id)
     }
 }
 
 impl ScheduleState {
     fn at(claude_dir: &Path) -> Self {
+        Self::at_role(claude_dir, Role::App)
+    }
+
+    /// The state the background service runs with.
+    pub fn service() -> Self {
+        Self::at_role(&claude_dir(), Role::Service)
+    }
+
+    fn at_role(claude_dir: &Path, role: Role) -> Self {
         let paths = Paths::under(claude_dir);
-        let jobs = load_jobs(&paths);
-        let lock = fs::create_dir_all(claude_dir)
-            .ok()
-            .and_then(|_| {
-                fs::OpenOptions::new()
-                    .create(true)
-                    .truncate(false)
-                    .write(true)
-                    .open(&paths.lock)
-                    .ok()
-            })
-            .filter(|f| f.try_lock().is_ok());
-        let now = Local::now();
-        let due = jobs
-            .iter()
-            .filter_map(|j| {
-                next_after(&j.schedule, now).map(|t| (j.id.clone(), t.timestamp_millis()))
-            })
-            .collect();
+        let mut inner = Inner {
+            jobs: Vec::new(),
+            jobs_seen: None,
+            due: HashMap::new(),
+            running: HashSet::new(),
+            queued: HashSet::new(),
+            active: false,
+            lock: None,
+            paths,
+            role,
+            token: format!("{}-{:x}{:04x}", std::process::id(), now_ms(), rand_u16()),
+        };
+        inner.refresh();
+        inner.coordinate(now_ms());
         ScheduleState {
-            inner: Arc::new(Mutex::new(Inner {
-                paths,
-                jobs,
-                due,
-                running: HashSet::new(),
-                queued: HashSet::new(),
-                active: lock.is_some(),
-            })),
+            inner: Arc::new(Mutex::new(inner)),
             slots: Arc::new(tokio::sync::Semaphore::new(MAX_PARALLEL)),
-            _lock: Mutex::new(lock),
+            sink: Arc::new(OnceLock::new()),
         }
     }
+
+    pub fn set_sink(&self, f: impl Fn() + Send + Sync + 'static) {
+        let _ = self.sink.set(Box::new(f));
+    }
+
+    /// Something the page shows changed: refresh the status file, tell the sink.
+    fn changed(&self) {
+        if let Ok(g) = self.inner.lock() {
+            g.write_status();
+        }
+        if let Some(f) = self.sink.get() {
+            f();
+        }
+    }
+
+    /// Run `id` now: here when this process fires the timers, else through a
+    /// request file the active process picks up on its next tick.
+    fn run_now(&self, id: &str) -> Result<(), String> {
+        {
+            let mut g = self.inner.lock().map_err(|_| "busy")?;
+            g.refresh();
+            if !g.jobs.iter().any(|j| j.id == id) {
+                return Err("Schedule not found.".into());
+            }
+            if !g.active {
+                if g.busy(id) {
+                    return Err("This schedule is already running.".into());
+                }
+                let dir = &g.paths.requests;
+                fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = fs::set_permissions(dir, fs::Permissions::from_mode(0o700));
+                }
+                let file = dir.join(format!("{id}-{:x}{:04x}.json", now_ms(), rand_u16()));
+                let bytes = serde_json::to_vec(&Request { id: id.to_string() })
+                    .map_err(|e| e.to_string())?;
+                atomic_write(&file, &bytes)?;
+                drop(g);
+                self.changed();
+                return Ok(());
+            }
+        }
+        self.launch(id, "manual")
+    }
+
+    /// Start one run of `id` unless it is already running or waiting. Returns at
+    /// once; the run waits for a free slot.
+    fn launch(&self, id: &str, trigger: &str) -> Result<(), String> {
+        let job = {
+            let mut g = self.inner.lock().map_err(|_| "busy")?;
+            if g.running.contains(id) || g.queued.contains(id) {
+                return Err("This schedule is already running.".into());
+            }
+            let job = g
+                .jobs
+                .iter()
+                .find(|j| j.id == id)
+                .cloned()
+                .ok_or("Schedule not found.")?;
+            g.queued.insert(id.to_string());
+            job
+        };
+        self.changed();
+        let (state, trigger) = (self.clone(), trigger.to_string());
+        tauri::async_runtime::spawn(async move {
+            let _permit = state.slots.clone().acquire_owned().await;
+            if let Ok(mut g) = state.inner.lock() {
+                g.queued.remove(&job.id);
+                g.running.insert(job.id.clone());
+            }
+            state.changed();
+            let started = now_ms();
+            let env = tauri::async_runtime::spawn_blocking(login_env)
+                .await
+                .map(|e| e.clone())
+                .unwrap_or_default();
+            let bin = crate::agents::claude_bin().to_string();
+            let args = claude_args(&job.prompt, job.bypass, job.chrome);
+            let timeout = std::time::Duration::from_secs(u64::from(job.timeout_min) * 60);
+            let (status, exit_code, cost, output) =
+                match spawn_run(&bin, &args, &job.folder, &env, timeout).await {
+                    Ok(s) if s.timed_out => {
+                        let (_, cost, text) = classify(s.exit_code, &s.stdout, &s.stderr);
+                        (
+                            RunStatus::Timeout,
+                            None,
+                            cost,
+                            format!("Stopped after {} min.\n\n{text}", job.timeout_min)
+                                .trim()
+                                .to_string(),
+                        )
+                    }
+                    Ok(s) => {
+                        let (st, cost, text) = classify(s.exit_code, &s.stdout, &s.stderr);
+                        (st, s.exit_code, cost, text)
+                    }
+                    Err(e) => (RunStatus::Failed, None, None, e),
+                };
+            let run = Run {
+                job_id: job.id.clone(),
+                started,
+                ended: now_ms(),
+                status,
+                exit_code,
+                cost_usd: cost,
+                trigger,
+                output,
+            };
+            let paths = state.inner.lock().map(|g| g.paths.clone()).ok();
+            if let Some(p) = paths {
+                if let Err(e) = append_run(&p, &run) {
+                    log::warn!("schedules: could not save run of {}: {e}", job.id);
+                }
+            }
+            if let Ok(mut g) = state.inner.lock() {
+                g.running.remove(&job.id);
+            }
+            state.changed();
+        });
+        Ok(())
+    }
+
+    /// One timer tick: heartbeat, lock hand-over, reload, then what to start now as
+    /// (id, trigger). The bool says the page should refresh.
+    fn tick(&self, now: DateTime<Local>) -> (Vec<(String, &'static str)>, bool) {
+        let Ok(mut g) = self.inner.lock() else {
+            return (Vec::new(), false);
+        };
+        let now_ms = now.timestamp_millis();
+        if g.role == Role::Service {
+            write_json(
+                &g.paths.heartbeat,
+                &Heartbeat {
+                    pid: std::process::id(),
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                    ts: now_ms,
+                },
+            );
+        }
+        let flipped = g.coordinate(now_ms);
+        let reloaded = g.refresh();
+        if !g.active {
+            // Passive: the active process's status changes without telling us.
+            return (Vec::new(), true);
+        }
+        let mut fire: Vec<(String, &'static str)> = take_requests(&g.paths)
+            .into_iter()
+            .map(|id| (id, "manual"))
+            .collect();
+        let due_now: Vec<(String, Schedule)> = g
+            .jobs
+            .iter()
+            .filter(|j| j.enabled && g.due.get(&j.id).is_some_and(|d| *d <= now_ms))
+            .map(|j| (j.id.clone(), j.schedule.clone()))
+            .collect();
+        for (id, s) in due_now {
+            // From now, not from the missed time: a Mac that slept through several
+            // slots runs once, not once per slot.
+            match next_after(&s, now) {
+                Some(t) => g.due.insert(id.clone(), t.timestamp_millis()),
+                None => g.due.remove(&id),
+            };
+            if !fire.iter().any(|(x, _)| *x == id) {
+                fire.push((id, "schedule"));
+            }
+        }
+        g.write_status();
+        (fire, flipped || reloaded)
+    }
+
+    fn idle(&self) -> bool {
+        self.inner
+            .lock()
+            .map(|g| g.running.is_empty() && g.queued.is_empty())
+            .unwrap_or(false)
+    }
+}
+
+/// The timer loop, for the window and the background service alike.
+pub async fn run_timer(state: ScheduleState) {
+    // The service runs from the app bundle: after an update replaced it, exit once
+    // idle so launchd starts the new version (KeepAlive restarts a failed exit).
+    let exe_id = |p: &Path| {
+        use std::os::unix::fs::MetadataExt;
+        fs::metadata(p).ok().map(|m| (m.dev(), m.ino()))
+    };
+    let exe = std::env::current_exe().ok();
+    let exe_at_start = exe.as_deref().and_then(exe_id);
+    let service = state
+        .inner
+        .lock()
+        .map(|g| g.role == Role::Service)
+        .unwrap_or(false);
+    let mut tick = tokio::time::interval(std::time::Duration::from_secs(TICK_SECS));
+    loop {
+        tick.tick().await;
+        let (fire, refresh) = state.tick(Local::now());
+        for (id, trigger) in fire {
+            if let Err(e) = state.launch(&id, trigger) {
+                log::info!("schedules: {id} not started: {e}");
+            }
+        }
+        if refresh {
+            if let Some(f) = state.sink.get() {
+                f();
+            }
+        }
+        if service
+            && exe_at_start.is_some()
+            && exe.as_deref().and_then(exe_id) != exe_at_start
+            && state.idle()
+        {
+            log::info!("schedules: Muya was updated; restarting the background service");
+            std::process::exit(75);
+        }
+    }
+}
+
+/// The window's timer. Started once from setup.
+pub fn start(app: &AppHandle) {
+    let state = app.state::<ScheduleState>().inner().clone();
+    let h = app.clone();
+    state.set_sink(move || {
+        let _ = h.emit(CHANGED_EVENT, ());
+    });
+    tauri::async_runtime::spawn(run_timer(state));
 }
 
 fn now_ms() -> i64 {
@@ -598,6 +1078,20 @@ fn now_ms() -> i64 {
 }
 
 fn view(inner: &Inner) -> Vec<JobView> {
+    let now = now_ms();
+    let other = (!inner.active)
+        .then(|| other_status(&inner.paths, &inner.token, now))
+        .flatten();
+    let pending = if inner.active {
+        HashSet::new()
+    } else {
+        pending_requests(&inner.paths)
+    };
+    let in_other = |list: fn(&Status) -> &Vec<String>, id: &str| {
+        other
+            .as_ref()
+            .is_some_and(|s| list(s).iter().any(|x| x == id))
+    };
     inner
         .jobs
         .iter()
@@ -607,15 +1101,20 @@ fn view(inner: &Inner) -> Vec<JobView> {
                 .iter()
                 .filter(|r| r.status == RunStatus::Success)
                 .count();
+            let next_run = if !j.enabled {
+                None
+            } else if inner.active {
+                inner.due.get(&j.id).copied()
+            } else {
+                other.as_ref().and_then(|s| s.due.get(&j.id).copied())
+            };
             JobView {
                 job: j.clone(),
-                next_run: if j.enabled && inner.active {
-                    inner.due.get(&j.id).copied()
-                } else {
-                    None
-                },
-                running: inner.running.contains(&j.id),
-                queued: inner.queued.contains(&j.id),
+                next_run,
+                running: inner.running.contains(&j.id) || in_other(|s| &s.running, &j.id),
+                queued: inner.queued.contains(&j.id)
+                    || in_other(|s| &s.queued, &j.id)
+                    || pending.contains(&j.id),
                 runs: runs.len(),
                 ok,
                 failed: runs.len() - ok,
@@ -628,156 +1127,42 @@ fn view(inner: &Inner) -> Vec<JobView> {
         })
         .collect()
 }
-
-/// Start one run of `id` unless it is already running or waiting. Returns at once;
-/// the run waits for a free slot.
-fn launch(
-    app: &AppHandle,
-    inner: &Arc<Mutex<Inner>>,
-    slots: &Arc<tokio::sync::Semaphore>,
-    id: &str,
-    trigger: &str,
-) -> Result<(), String> {
-    let job = {
-        let mut g = inner.lock().map_err(|_| "busy")?;
-        if g.running.contains(id) || g.queued.contains(id) {
-            return Err("This schedule is already running.".into());
-        }
-        let job = g
-            .jobs
-            .iter()
-            .find(|j| j.id == id)
-            .cloned()
-            .ok_or("Schedule not found.")?;
-        g.queued.insert(id.to_string());
-        job
-    };
-    let _ = app.emit(CHANGED_EVENT, ());
-    let (app, inner, slots, trigger) = (
-        app.clone(),
-        inner.clone(),
-        slots.clone(),
-        trigger.to_string(),
-    );
-    tauri::async_runtime::spawn(async move {
-        let _permit = slots.acquire_owned().await;
-        if let Ok(mut g) = inner.lock() {
-            g.queued.remove(&job.id);
-            g.running.insert(job.id.clone());
-        }
-        let _ = app.emit(CHANGED_EVENT, ());
-        let started = now_ms();
-        let env = tauri::async_runtime::spawn_blocking(login_env)
-            .await
-            .map(|e| e.clone())
-            .unwrap_or_default();
-        let bin = crate::agents::claude_bin().to_string();
-        let args = claude_args(&job.prompt, job.bypass, job.chrome);
-        let timeout = std::time::Duration::from_secs(u64::from(job.timeout_min) * 60);
-        let (status, exit_code, cost, output) =
-            match spawn_run(&bin, &args, &job.folder, &env, timeout).await {
-                Ok(s) if s.timed_out => {
-                    let (_, cost, text) = classify(s.exit_code, &s.stdout, &s.stderr);
-                    (
-                        RunStatus::Timeout,
-                        None,
-                        cost,
-                        format!("Stopped after {} min.\n\n{text}", job.timeout_min)
-                            .trim()
-                            .to_string(),
-                    )
-                }
-                Ok(s) => {
-                    let (st, cost, text) = classify(s.exit_code, &s.stdout, &s.stderr);
-                    (st, s.exit_code, cost, text)
-                }
-                Err(e) => (RunStatus::Failed, None, None, e),
-            };
-        let run = Run {
-            job_id: job.id.clone(),
-            started,
-            ended: now_ms(),
-            status,
-            exit_code,
-            cost_usd: cost,
-            trigger,
-            output,
-        };
-        let paths = inner.lock().map(|g| g.paths.clone()).ok();
-        if let Some(p) = paths {
-            if let Err(e) = append_run(&p, &run) {
-                log::warn!("schedules: could not save run of {}: {e}", job.id);
-            }
-        }
-        if let Ok(mut g) = inner.lock() {
-            g.running.remove(&job.id);
-        }
-        let _ = app.emit(CHANGED_EVENT, ());
-    });
-    Ok(())
-}
-
-/// The timer. Started once from setup.
-pub fn start(app: &AppHandle) {
-    let state = app.state::<ScheduleState>();
-    let (inner, slots) = (state.inner.clone(), state.slots.clone());
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(TICK_SECS));
-        loop {
-            tick.tick().await;
-            let now = Local::now();
-            let fire: Vec<String> = {
-                let Ok(mut g) = inner.lock() else { continue };
-                if !g.active {
-                    continue;
-                }
-                let due_now: Vec<(String, Schedule)> = g
-                    .jobs
-                    .iter()
-                    .filter(|j| {
-                        j.enabled
-                            && g.due
-                                .get(&j.id)
-                                .is_some_and(|d| *d <= now.timestamp_millis())
-                    })
-                    .map(|j| (j.id.clone(), j.schedule.clone()))
-                    .collect();
-                for (id, s) in &due_now {
-                    // From now, not from the missed time: a Mac that slept through
-                    // several slots runs once, not once per slot.
-                    match next_after(s, now) {
-                        Some(t) => g.due.insert(id.clone(), t.timestamp_millis()),
-                        None => g.due.remove(id),
-                    };
-                }
-                due_now.into_iter().map(|(id, _)| id).collect()
-            };
-            for id in fire {
-                let _ = launch(&app, &inner, &slots, &id, "schedule");
-            }
-        }
-    });
-}
-
 // ── Commands ──────────────────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListResult {
     jobs: Vec<JobView>,
-    /// False when another Muya holds the schedule lock (its timer runs the jobs).
+    /// False when another process holds the schedule lock (its timer runs the jobs).
     active: bool,
+    /// Who runs the timers: "here", "service" (the background service) or "other"
+    /// (another Muya window). "none" briefly while the lock changes hands.
+    runner: &'static str,
+}
+
+fn runner(inner: &Inner) -> &'static str {
+    let now = now_ms();
+    if inner.active {
+        "here"
+    } else if heartbeat_at(&inner.paths, now).is_some() {
+        "service"
+    } else if other_status(&inner.paths, &inner.token, now).is_some() {
+        "other"
+    } else {
+        "none"
+    }
 }
 
 #[tauri::command]
 pub async fn schedules_list(state: State<'_, ScheduleState>) -> Result<ListResult, String> {
     let inner = state.inner.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let g = inner.lock().map_err(|_| "busy".to_string())?;
+        let mut g = inner.lock().map_err(|_| "busy".to_string())?;
+        g.refresh();
         Ok(ListResult {
             jobs: view(&g),
             active: g.active,
+            runner: runner(&g),
         })
     })
     .await
@@ -786,6 +1171,7 @@ pub async fn schedules_list(state: State<'_, ScheduleState>) -> Result<ListResul
 
 fn upsert(inner: &mut Inner, input: JobInput) -> Result<Job, String> {
     let folder = validate(&input)?;
+    inner.refresh();
     let now = now_ms();
     let job = match input.id.as_deref().filter(|s| !s.is_empty()) {
         Some(id) => {
@@ -824,7 +1210,7 @@ fn upsert(inner: &mut Inner, input: JobInput) -> Result<Job, String> {
             j
         }
     };
-    save_jobs(&inner.paths, &inner.jobs)?;
+    inner.persist()?;
     match next_after(&job.schedule, Local::now()) {
         Some(t) => inner.due.insert(job.id.clone(), t.timestamp_millis()),
         None => inner.due.remove(&job.id),
@@ -844,7 +1230,6 @@ fn rand_u16() -> u16 {
 
 #[tauri::command]
 pub async fn schedule_save(
-    app: AppHandle,
     state: State<'_, ScheduleState>,
     job: JobInput,
 ) -> Result<Job, String> {
@@ -855,11 +1240,12 @@ pub async fn schedule_save(
     })
     .await
     .map_err(|e| e.to_string())?;
-    let _ = app.emit(CHANGED_EVENT, ());
+    state.changed();
     out
 }
 
 fn set_enabled(inner: &mut Inner, id: &str, enabled: bool) -> Result<(), String> {
+    inner.refresh();
     let j = inner
         .jobs
         .iter_mut()
@@ -868,7 +1254,7 @@ fn set_enabled(inner: &mut Inner, id: &str, enabled: bool) -> Result<(), String>
     j.enabled = enabled;
     j.updated = now_ms();
     let s = j.schedule.clone();
-    save_jobs(&inner.paths, &inner.jobs)?;
+    inner.persist()?;
     if let Some(t) = next_after(&s, Local::now()) {
         inner.due.insert(id.to_string(), t.timestamp_millis());
     }
@@ -877,7 +1263,6 @@ fn set_enabled(inner: &mut Inner, id: &str, enabled: bool) -> Result<(), String>
 
 #[tauri::command]
 pub async fn schedule_set_enabled(
-    app: AppHandle,
     state: State<'_, ScheduleState>,
     id: String,
     enabled: bool,
@@ -889,12 +1274,13 @@ pub async fn schedule_set_enabled(
     })
     .await
     .map_err(|e| e.to_string())??;
-    let _ = app.emit(CHANGED_EVENT, ());
+    state.changed();
     Ok(())
 }
 
 fn delete(inner: &mut Inner, id: &str) -> Result<(), String> {
-    if inner.running.contains(id) || inner.queued.contains(id) {
+    inner.refresh();
+    if inner.busy(id) {
         return Err("Wait for the running schedule to finish.".into());
     }
     let before = inner.jobs.len();
@@ -902,7 +1288,7 @@ fn delete(inner: &mut Inner, id: &str) -> Result<(), String> {
     if inner.jobs.len() == before {
         return Err("Schedule not found.".into());
     }
-    save_jobs(&inner.paths, &inner.jobs)?;
+    inner.persist()?;
     inner.due.remove(id);
     let _ = fs::remove_file(inner.paths.runs_file(id));
     Ok(())
@@ -910,7 +1296,6 @@ fn delete(inner: &mut Inner, id: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn schedule_delete(
-    app: AppHandle,
     state: State<'_, ScheduleState>,
     id: String,
 ) -> Result<(), String> {
@@ -921,17 +1306,13 @@ pub async fn schedule_delete(
     })
     .await
     .map_err(|e| e.to_string())??;
-    let _ = app.emit(CHANGED_EVENT, ());
+    state.changed();
     Ok(())
 }
 
 #[tauri::command]
-pub fn schedule_run_now(
-    app: AppHandle,
-    state: State<'_, ScheduleState>,
-    id: String,
-) -> Result<(), String> {
-    launch(&app, &state.inner, &state.slots, &id, "manual")
+pub fn schedule_run_now(state: State<'_, ScheduleState>, id: String) -> Result<(), String> {
+    state.run_now(&id)
 }
 
 /// Runs of one job, newest first.
@@ -1048,18 +1429,17 @@ pub fn agent_op(
     enabled: Option<bool>,
     limit: Option<usize>,
 ) -> Result<serde_json::Value, String> {
-    let state = app.state::<ScheduleState>();
+    let state = app.state::<ScheduleState>().inner().clone();
     let need_key = || {
         key.filter(|k| !k.trim().is_empty())
             .ok_or_else(|| "Missing 'schedule' (its id or name).".to_string())
     };
-    let changed = |app: &AppHandle| {
-        let _ = app.emit(CHANGED_EVENT, ());
-    };
+    let changed = |_: &AppHandle| state.changed();
     match op {
         "schedules_list" => {
-            let g = state.inner.lock().map_err(|_| "busy")?;
-            Ok(serde_json::json!({ "jobs": view(&g), "timersActive": g.active }))
+            let mut g = state.inner.lock().map_err(|_| "busy")?;
+            g.refresh();
+            Ok(serde_json::json!({ "jobs": view(&g), "timersActive": g.active, "runner": runner(&g) }))
         }
         "schedule_create" => {
             let input = input_from(None, fields.ok_or("Missing schedule fields.")?)?;
@@ -1097,18 +1477,20 @@ pub fn agent_op(
             Ok(serde_json::json!({ "deleted": id }))
         }
         "schedule_run_now" => {
-            let g = state.inner.lock().map_err(|_| "busy")?;
+            let mut g = state.inner.lock().map_err(|_| "busy")?;
+            g.refresh();
             let id = resolve(&g, need_key()?)?;
             drop(g);
-            launch(app, &state.inner, &state.slots, &id, "manual")?;
+            state.run_now(&id)?;
             Ok(
                 serde_json::json!({ "started": id, "note": "The run continues in the background; read its result with schedule_history." }),
             )
         }
         "schedule_history" => {
-            let g = state.inner.lock().map_err(|_| "busy")?;
+            let mut g = state.inner.lock().map_err(|_| "busy")?;
+            g.refresh();
             let id = resolve(&g, need_key()?)?;
-            let running = g.running.contains(&id) || g.queued.contains(&id);
+            let running = g.busy(&id);
             let paths = g.paths.clone();
             drop(g);
             let mut runs = read_runs(&paths, &id);
@@ -1457,6 +1839,108 @@ mod tests {
         delete(&mut st.inner.lock().unwrap(), &j.id).unwrap();
         assert!(load_jobs(&paths).is_empty());
         assert!(!paths.runs_file(&j.id).exists());
+    }
+
+    fn job_in(st: &ScheduleState, folder: &Path) -> Job {
+        upsert(&mut st.inner.lock().unwrap(), input(folder.to_str().unwrap())).unwrap()
+    }
+
+    #[test]
+    fn a_waiting_process_takes_the_lock_once_it_is_free() {
+        let home = tempfile::tempdir().unwrap();
+        let first = ScheduleState::at(home.path());
+        let second = ScheduleState::at(home.path());
+        assert!(first.inner.lock().unwrap().active);
+        second.tick(Local::now());
+        assert!(!second.inner.lock().unwrap().active, "lock still held");
+        drop(first);
+        let (_, refresh) = second.tick(Local::now());
+        assert!(second.inner.lock().unwrap().active && refresh, "taken on the next tick");
+    }
+
+    #[test]
+    fn the_window_hands_the_timers_to_the_service_and_takes_them_back() {
+        let home = tempfile::tempdir().unwrap();
+        let app = ScheduleState::at(home.path());
+        assert!(app.inner.lock().unwrap().active);
+        let service = ScheduleState::at_role(home.path(), Role::Service);
+        assert!(!service.inner.lock().unwrap().active, "the window got there first");
+
+        service.tick(Local::now()); // writes the heartbeat
+        let paths = Paths::under(home.path());
+        assert!(heartbeat_at(&paths, now_ms()).is_some());
+        app.tick(Local::now());
+        assert!(!app.inner.lock().unwrap().active, "the window yields to a live service");
+        service.tick(Local::now());
+        assert!(service.inner.lock().unwrap().active, "the service takes the free lock");
+
+        let _ = fs::remove_file(&paths.heartbeat);
+        app.tick(Local::now());
+        assert!(!app.inner.lock().unwrap().active, "the service still holds the lock");
+        drop(service);
+        app.tick(Local::now());
+        assert!(app.inner.lock().unwrap().active, "service gone: the window runs the timers again");
+
+        // A stale heartbeat does not count.
+        write_json(
+            &paths.heartbeat,
+            &Heartbeat { pid: 1, version: "x".into(), ts: now_ms() - HEARTBEAT_FRESH_MS - 1 },
+        );
+        app.tick(Local::now());
+        assert!(app.inner.lock().unwrap().active);
+    }
+
+    #[test]
+    fn the_active_process_picks_up_jobs_written_by_another() {
+        let home = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let active = ScheduleState::at(home.path());
+        let passive = ScheduleState::at(home.path());
+        let j = job_in(&passive, work.path());
+        let (_, refresh) = active.tick(Local::now());
+        assert!(refresh);
+        {
+            let g = active.inner.lock().unwrap();
+            assert!(g.jobs.iter().any(|x| x.id == j.id));
+            assert!(g.due.contains_key(&j.id), "a new job gets its next run");
+        }
+        // And an edit made on the active side is not lost by the passive one's next write.
+        set_enabled(&mut active.inner.lock().unwrap(), &j.id, false).unwrap();
+        let other = job_in(&passive, work.path());
+        let jobs = load_jobs(&Paths::under(home.path()));
+        assert_eq!(jobs.len(), 2);
+        assert!(!jobs.iter().find(|x| x.id == j.id).unwrap().enabled);
+        assert!(jobs.iter().any(|x| x.id == other.id));
+    }
+
+    #[test]
+    fn run_now_from_a_passive_process_goes_through_a_request_file() {
+        let home = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let active = ScheduleState::at(home.path());
+        let passive = ScheduleState::at(home.path());
+        let j = job_in(&passive, work.path());
+        active.tick(Local::now());
+
+        passive.run_now(&j.id).unwrap();
+        let paths = Paths::under(home.path());
+        assert!(pending_requests(&paths).contains(&j.id));
+        assert!(view(&passive.inner.lock().unwrap())[0].queued, "shown as waiting");
+        assert!(passive.run_now(&j.id).unwrap_err().contains("already"), "no double request");
+        assert!(passive.run_now("nope").is_err());
+
+        let (fire, _) = active.tick(Local::now());
+        assert_eq!(fire, vec![(j.id.clone(), "manual")]);
+        assert!(pending_requests(&paths).is_empty(), "the request is consumed");
+
+        // The passive side shows the active one's state from its status file.
+        active.inner.lock().unwrap().running.insert(j.id.clone());
+        active.changed();
+        let v = view(&passive.inner.lock().unwrap());
+        assert!(v[0].running);
+        assert_eq!(v[0].next_run, active.inner.lock().unwrap().due.get(&j.id).copied());
+        assert!(delete(&mut passive.inner.lock().unwrap(), &j.id).is_err(), "busy elsewhere");
+        assert_eq!(runner(&passive.inner.lock().unwrap()), "other");
     }
 
     #[tokio::test]

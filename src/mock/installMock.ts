@@ -481,6 +481,8 @@ function handleInvoke(cmd: string, rawPayload?: unknown): unknown {
     // --- debug log -------------------------------------------------------------------
     case "debug_log_get":
       return {};
+    case "app_prefs_get":
+      return { keepRunningInBackground: true };
 
     // --- resources / marketplace -------------------------------------------------------
     case "list_slash_commands":
