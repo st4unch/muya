@@ -29,7 +29,7 @@
 | AA1 | Serious | Assumes target `PasswordAuthentication` enabled → direct-inject hangs on key-only hosts | applied | §13 + O6 |
 | AA2 | Serious | Assumes CyberArk retrieve returns a PASSWORD; `secretType:"key"` returns an SSH key | applied | §13 + O7: detect secretType, handle/reject keys |
 | AA3 | Consider | Assumes single PVWA; load-balanced deployments need sticky session or re-logon | applied | §12.5 + O8 |
-| EA2 | Minor | §3.5 "1Password/Bitwarden use Argon2id" partly false | applied | Corrected in §3.5 (1Password=PBKDF2+Secret Key; Bitwarden Argon2id opt-in since 2023) |
+| EA2 | Minor | §3.5 "1Password/Bitwarden use Argon2id" partly false | applied | Corrected in §3.5 (1Password=PBKDF2+Secret Key; Bitwarden Argon2id opt-in since 2023) | <!-- gitleaks:allow -->
 | EA1 | Consider | PSMP syntax still `[NEEDS-WEB-VERIFY]`, core of Faz 2 | RESOLVED | Verified 2026-07-24: `vaultUser@targetUser[#domain]@targetMachine[#port]@proxyAddress`, `@`/`#` delimiters configurable (CyberArk PSM-for-SSH docs + community). Builder + 5 tests match. |
 
 **Review rounds:** 2 (round 1 inline; round 2 = software-architect gate + prd-devils-advocate, opus subagents)

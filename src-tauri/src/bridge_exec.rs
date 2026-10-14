@@ -992,7 +992,7 @@ mod tests {
         // Inject a fake sensitive env var into current process env for the test.
         // (We need to verify they're NOT passed through.)
         std::env::set_var("MY_TEST_SECRET_TOKEN", "super_secret_123");
-        std::env::set_var("CLAUDE_API_KEY", "claude_key_456");
+        std::env::set_var("CLAUDE_API_KEY", "claude_key_456"); // gitleaks:allow (fake test value)
         std::env::set_var("AWS_SECRET_ACCESS_KEY", "aws_secret_789");
 
         let env = build_sandbox_env("/tmp/sandbox_test");
