@@ -58,3 +58,8 @@ src-tauri/doc/
 *.pem
 *.key
 *.mobileprovision
+
+# Internal working notes — kept locally, never published
+.claude/agent-memory/
+docs/handoff-*.md
+docs/security-audit-report-*.md
