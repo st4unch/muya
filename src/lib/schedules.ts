@@ -5,8 +5,16 @@
 
 export type Schedule =
   | { kind: "interval"; minutes: number }
-  | { kind: "daily"; time: string }
-  | { kind: "weekly"; days: number[]; time: string };
+  | { kind: "daily"; time: string; extraTimes?: string[] }
+  | { kind: "weekly"; days: number[]; time: string; extraTimes?: string[] };
+
+/** Most runs a daily/weekly schedule may have in a day (Rust MAX_TIMES_PER_DAY). */
+export const MAX_TIMES_PER_DAY = 6;
+
+/** Every time of day a daily/weekly schedule runs, sorted, without duplicates. */
+export function dayTimes(s: { time: string; extraTimes?: string[] }): string[] {
+  return [...new Set([s.time, ...(s.extraTimes ?? [])])].sort();
+}
 
 export type RunStatus = "success" | "failed" | "timeout";
 
@@ -67,12 +75,12 @@ export function describeSchedule(s: Schedule): string {
       if (s.minutes % 60 === 0) return s.minutes === 60 ? "Every hour" : `Every ${s.minutes / 60} hours`;
       return `Every ${s.minutes} min`;
     case "daily":
-      return `Every day at ${s.time}`;
+      return `Every day at ${dayTimes(s).join(", ")}`;
     case "weekly": {
       const days = [...s.days].sort((a, b) => a - b);
       const label =
         days.join() === "0,1,2,3,4" ? "Weekdays" : days.join() === "5,6" ? "Weekends" : days.length === 7 ? "Every day" : days.map((d) => WEEKDAYS[d]).join(", ");
-      return `${label} at ${s.time}`;
+      return `${label} at ${dayTimes(s).join(", ")}`;
     }
   }
 }
@@ -179,24 +187,26 @@ export function emptyInput(): JobInput {
  *  minutes" doesn't lose the days and time already picked. */
 export interface ScheduleMemory {
   time: string;
+  extraTimes: string[];
   days: number[];
   minutes: number;
 }
 
 export function rememberSchedule(s: Schedule, mem: ScheduleMemory): ScheduleMemory {
   if (s.kind === "interval") return { ...mem, minutes: s.minutes };
-  if (s.kind === "daily") return { ...mem, time: s.time };
-  return { ...mem, time: s.time, days: s.days };
+  if (s.kind === "daily") return { ...mem, time: s.time, extraTimes: s.extraTimes ?? [] };
+  return { ...mem, time: s.time, extraTimes: s.extraTimes ?? [], days: s.days };
 }
 
 export function initialMemory(s: Schedule): ScheduleMemory {
-  return rememberSchedule(s, { time: "09:00", days: [0, 1, 2, 3, 4], minutes: 60 });
+  return rememberSchedule(s, { time: "09:00", extraTimes: [], days: [0, 1, 2, 3, 4], minutes: 60 });
 }
 
 /** The schedule after switching to `kind`, filled from what was picked before. */
 export function withKind(s: Schedule, kind: Schedule["kind"], mem: ScheduleMemory = initialMemory(s)): Schedule {
   const m = rememberSchedule(s, mem);
   if (kind === "interval") return { kind, minutes: m.minutes };
-  if (kind === "daily") return { kind, time: m.time };
-  return { kind, days: m.days, time: m.time };
+  const extra = m.extraTimes.length ? { extraTimes: m.extraTimes } : {};
+  if (kind === "daily") return { kind, time: m.time, ...extra };
+  return { kind, days: m.days, time: m.time, ...extra };
 }

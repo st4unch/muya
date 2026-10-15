@@ -492,12 +492,13 @@ fn tools_list() -> Value {
                         "folder": { "type": "string", "description": "Absolute path of an existing folder to run in." },
                         "schedule": {
                     "type": "object",
-                    "description": "When it runs. One of: {\"kind\":\"interval\",\"minutes\":N} (N >= 5), {\"kind\":\"daily\",\"time\":\"HH:MM\"}, {\"kind\":\"weekly\",\"days\":[0..6],\"time\":\"HH:MM\"} with 0 = Monday … 6 = Sunday. Local time.",
+                    "description": "When it runs. One of: {\"kind\":\"interval\",\"minutes\":N} (N >= 5), {\"kind\":\"daily\",\"time\":\"HH:MM\"}, {\"kind\":\"weekly\",\"days\":[0..6],\"time\":\"HH:MM\"} with 0 = Monday … 6 = Sunday. Local time. daily/weekly may add \"extraTimes\":[\"HH:MM\",…] to run several times a day (at most 6 in total).",
                     "properties": {
                         "kind": { "type": "string", "enum": ["interval", "daily", "weekly"] },
                         "minutes": { "type": "integer", "minimum": 5 },
                         "time": { "type": "string", "pattern": "^\\d{2}:\\d{2}$" },
-                        "days": { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 6 } }
+                        "days": { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 6 } },
+                        "extraTimes": { "type": "array", "maxItems": 5, "items": { "type": "string", "pattern": "^\\d{2}:\\d{2}$" } }
                     },
                     "required": ["kind"]
                 },
@@ -522,12 +523,13 @@ fn tools_list() -> Value {
                         "folder": { "type": "string", "description": "Absolute path of an existing folder to run in." },
                         "schedule": {
                     "type": "object",
-                    "description": "When it runs. One of: {\"kind\":\"interval\",\"minutes\":N} (N >= 5), {\"kind\":\"daily\",\"time\":\"HH:MM\"}, {\"kind\":\"weekly\",\"days\":[0..6],\"time\":\"HH:MM\"} with 0 = Monday … 6 = Sunday. Local time.",
+                    "description": "When it runs. One of: {\"kind\":\"interval\",\"minutes\":N} (N >= 5), {\"kind\":\"daily\",\"time\":\"HH:MM\"}, {\"kind\":\"weekly\",\"days\":[0..6],\"time\":\"HH:MM\"} with 0 = Monday … 6 = Sunday. Local time. daily/weekly may add \"extraTimes\":[\"HH:MM\",…] to run several times a day (at most 6 in total).",
                     "properties": {
                         "kind": { "type": "string", "enum": ["interval", "daily", "weekly"] },
                         "minutes": { "type": "integer", "minimum": 5 },
                         "time": { "type": "string", "pattern": "^\\d{2}:\\d{2}$" },
-                        "days": { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 6 } }
+                        "days": { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 6 } },
+                        "extraTimes": { "type": "array", "maxItems": 5, "items": { "type": "string", "pattern": "^\\d{2}:\\d{2}$" } }
                     },
                     "required": ["kind"]
                 },

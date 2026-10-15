@@ -10,10 +10,12 @@ import { useCallback, useEffect, useId, useRef, useState, type CSSProperties, ty
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
-import { AlertTriangle, CalendarClock, Moon, ChevronDown, ChevronRight, FolderOpen, History, Pencil, Play, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, CalendarClock, Moon, ChevronDown, ChevronRight, FolderOpen, History, Pencil, Play, Plus, Trash2, X } from "lucide-react";
 import { ModalCss, ModalShell, Segmented, Switch, dangerBtn, ghostBtn, groupStyle, helperStyle, inputStyle, labelStyle, primaryBtn, rowStyle, rowsBox } from "./modalKit";
 import {
   WEEKDAYS,
+  MAX_TIMES_PER_DAY,
+  dayTimes,
   describeSchedule,
   emptyInput,
   initialMemory,
@@ -508,6 +510,49 @@ export function EditDialog({ initial, onClose, onSaved }: { initial: JobInput; o
               )}
               <label htmlFor={id("time")}>at</label>
               <input id={id("time")} aria-label="Time" type="time" style={{ ...inputStyle, width: 112 }} value={s.time} onChange={(e) => setS({ ...s, time: e.target.value })} />
+              {(s.extraTimes ?? []).map((t, i) => {
+                const extra = s.extraTimes ?? [];
+                return (
+                  <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    and
+                    <input
+                      aria-label={`Extra time ${i + 1}`}
+                      type="time"
+                      style={{ ...inputStyle, width: 112 }}
+                      value={t}
+                      onChange={(e) => setS({ ...s, extraTimes: extra.map((x, j) => (j === i ? e.target.value : x)) })}
+                    />
+                    <button
+                      type="button"
+                      className="st-btn"
+                      aria-label={`Remove time ${t}`}
+                      title="Remove this time"
+                      style={{ ...ghostBtn, width: 30, padding: 0, justifyContent: "center" }}
+                      onClick={() => {
+                        const rest = extra.filter((_, j) => j !== i);
+                        setS(rest.length ? { ...s, extraTimes: rest } : (({ extraTimes: _x, ...base }) => base)(s));
+                      }}
+                    >
+                      <X size={13} />
+                    </button>
+                  </span>
+                );
+              })}
+              {1 + (s.extraTimes?.length ?? 0) < MAX_TIMES_PER_DAY && (
+                <button
+                  type="button"
+                  className="st-btn"
+                  style={ghostBtn}
+                  onClick={() => {
+                    const all = dayTimes(s);
+                    const last = all[all.length - 1];
+                    const next = `${String((Number(last.slice(0, 2)) + 1) % 24).padStart(2, "0")}${last.slice(2)}`;
+                    setS({ ...s, extraTimes: [...(s.extraTimes ?? []), next] });
+                  }}
+                >
+                  <Plus size={13} /> Add time
+                </button>
+              )}
             </>
           )}
         </div>

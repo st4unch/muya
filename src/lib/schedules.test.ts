@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeSchedule, emptyInput, initialMemory, rememberSchedule, fmtClock, fmtDurationMs, jobState, relTime, serviceLine, summarize, withKind, type JobView } from "./schedules";
+import { dayTimes, describeSchedule, emptyInput, initialMemory, rememberSchedule, fmtClock, fmtDurationMs, jobState, relTime, serviceLine, summarize, withKind, type JobView } from "./schedules";
 
 const job = (p: Partial<JobView>): JobView => ({
   id: "a", name: "A", prompt: "p", folder: "/w", schedule: { kind: "daily", time: "09:00" }, enabled: true, timeoutMin: 30, bypass: true, chrome: true,
@@ -82,5 +82,20 @@ describe("serviceLine", () => {
     expect(serviceLine({ state: "on", running: true, version: "4.1.2" }, "4.1.2").text).toMatch(/even after you quit/);
     expect(serviceLine({ state: "on", running: true, version: "4.1.1" }, "4.1.2").text).toMatch(/moves to 4.1.2/);
     expect(serviceLine({ state: "unavailable", running: false, version: null }).text).toMatch(/installed Muya app/);
+  });
+});
+
+describe("several times a day", () => {
+  it("lists every time sorted and once", () => {
+    expect(dayTimes({ time: "19:00", extraTimes: ["09:00", "19:00", "13:30"] })).toEqual(["09:00", "13:30", "19:00"]);
+    expect(describeSchedule({ kind: "daily", time: "09:00", extraTimes: ["19:00"] })).toBe("Every day at 09:00, 19:00");
+    expect(describeSchedule({ kind: "weekly", days: [0, 1, 2, 3, 4], time: "18:00", extraTimes: ["08:00"] })).toBe("Weekdays at 08:00, 18:00");
+  });
+  it("keeps extra times across a detour through interval, and drops an empty list", () => {
+    const d = { kind: "daily" as const, time: "09:00", extraTimes: ["19:00"] };
+    const mem = initialMemory(d);
+    const back = withKind(withKind(d, "interval", mem), "weekly", mem);
+    expect(back).toEqual({ kind: "weekly", days: [0, 1, 2, 3, 4], time: "09:00", extraTimes: ["19:00"] });
+    expect(withKind({ kind: "daily", time: "09:00" }, "weekly")).toEqual({ kind: "weekly", days: [0, 1, 2, 3, 4], time: "09:00" });
   });
 });

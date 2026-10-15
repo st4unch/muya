@@ -145,7 +145,8 @@ background service). `schedules_list` says who fires the timers in `runner`: `he
 - Address a schedule by its `id` or exact name (`schedule_ref`); duplicate names need the id.
 - `schedule_create` needs `name`, `prompt`, `folder` (absolute, existing) and `schedule`:
   `{"kind":"interval","minutes":30}` (≥5), `{"kind":"daily","time":"09:00"}`, or
-  `{"kind":"weekly","days":[0,1,2,3,4],"time":"09:00"}` (0 = Monday). Defaults: on,
+  `{"kind":"weekly","days":[0,1,2,3,4],"time":"09:00"}` (0 = Monday). Daily/weekly can run several times a
+  day: add `"extraTimes":["13:00","19:00"]` (at most 6 times in total) instead of cloning the schedule. Defaults: on,
   30 min timeout, `bypass: true` (permission prompts skipped), `chrome: true` (Claude in
   Chrome loaded, so a browser task works like in the user's own sessions).
 - **Only create or turn on a schedule when the user asked for it.** With bypass on it runs

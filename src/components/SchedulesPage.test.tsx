@@ -151,4 +151,25 @@ describe("SchedulesPage", () => {
     expect(within(dlg).getByRole("radio", { name: "Daily" })).toHaveAttribute("aria-checked", "true");
     expect(within(dlg).getByRole("button", { name: "Save" })).toBeInTheDocument();
   });
+
+  it("a daily schedule can run several times a day; times are added, edited, removed and saved", async () => {
+    render(<SchedulesPage />);
+    const card = await screen.findByRole("region", { name: "Nightly report" });
+    fireEvent.click(within(card).getByRole("button", { name: "Edit Nightly report" }));
+    const dlg = screen.getByRole("dialog", { name: "Edit schedule" });
+    fireEvent.click(within(dlg).getByRole("button", { name: /Add time/ }));
+    expect(within(dlg).getByLabelText("Extra time 1")).toHaveValue("10:00");
+    fireEvent.change(within(dlg).getByLabelText("Extra time 1"), { target: { value: "19:00" } });
+    fireEvent.click(within(dlg).getByRole("button", { name: /Add time/ }));
+    fireEvent.change(within(dlg).getByLabelText("Extra time 2"), { target: { value: "13:00" } });
+    expect(within(dlg).getByText("Runs: Every day at 09:00, 13:00, 19:00")).toBeInTheDocument();
+    fireEvent.click(within(dlg).getByRole("button", { name: "Remove time 13:00" }));
+    for (let i = 0; i < 4; i++) fireEvent.click(within(dlg).getByRole("button", { name: /Add time/ }));
+    expect(within(dlg).queryByRole("button", { name: /Add time/ })).toBeNull(); // 6 times = the cap
+    for (const t of ["20:00", "21:00", "22:00", "23:00"]) fireEvent.click(within(dlg).getByRole("button", { name: `Remove time ${t}` }));
+    fireEvent.click(within(dlg).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    const saves = invoke.mock.calls.filter(([c]) => c === "schedule_save");
+    expect(saves[saves.length - 1][1].job.schedule).toEqual({ kind: "daily", time: "09:00", extraTimes: ["19:00"] });
+  });
 });

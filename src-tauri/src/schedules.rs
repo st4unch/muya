@@ -37,10 +37,38 @@ const CHANGED_EVENT: &str = "schedules-changed";
 pub enum Schedule {
     /// Every `minutes` minutes (≥ MIN_INTERVAL_MIN).
     Interval { minutes: u32 },
-    /// Every day at local "HH:MM".
-    Daily { time: String },
-    /// On the given weekdays (0 = Monday … 6 = Sunday) at local "HH:MM".
-    Weekly { days: Vec<u8>, time: String },
+    /// Every day at local "HH:MM", and at each of `extra_times`.
+    Daily {
+        time: String,
+        /// More times the same day (docs/prd-schedule-multi-times.md). Omitted when
+        /// empty so a single-time job is stored exactly as before.
+        #[serde(default, rename = "extraTimes", skip_serializing_if = "Vec::is_empty")]
+        extra_times: Vec<String>,
+    },
+    /// On the given weekdays (0 = Monday … 6 = Sunday) at local "HH:MM", and at each
+    /// of `extra_times`.
+    Weekly {
+        days: Vec<u8>,
+        time: String,
+        #[serde(default, rename = "extraTimes", skip_serializing_if = "Vec::is_empty")]
+        extra_times: Vec<String>,
+    },
+}
+
+/// Most runs one daily/weekly schedule may have in a day; more is an interval job.
+pub const MAX_TIMES_PER_DAY: usize = 6;
+
+/// `time` plus `extra`, parsed and de-duplicated; None if any is invalid or there are
+/// more than MAX_TIMES_PER_DAY.
+fn day_times(time: &str, extra: &[String]) -> Option<Vec<NaiveTime>> {
+    let mut v = Vec::with_capacity(1 + extra.len());
+    for s in std::iter::once(time).chain(extra.iter().map(String::as_str)) {
+        let t = parse_hhmm(s)?;
+        if !v.contains(&t) {
+            v.push(t);
+        }
+    }
+    (v.len() <= MAX_TIMES_PER_DAY).then_some(v)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,14 +188,22 @@ pub fn next_after(s: &Schedule, after: DateTime<Local>) -> Option<DateTime<Local
             }
             Some(after + ChronoDuration::minutes(i64::from(*minutes)))
         }
-        Schedule::Daily { time } => {
-            let t = parse_hhmm(time)?;
+        Schedule::Daily { time, extra_times } => {
+            let times = day_times(time, extra_times)?;
             (0..=2).find_map(|d| {
-                local_at(after.date_naive() + ChronoDuration::days(d), t).filter(|x| *x > after)
+                let date = after.date_naive() + ChronoDuration::days(d);
+                times
+                    .iter()
+                    .filter_map(|t| local_at(date, *t).filter(|x| *x > after))
+                    .min()
             })
         }
-        Schedule::Weekly { days, time } => {
-            let t = parse_hhmm(time)?;
+        Schedule::Weekly {
+            days,
+            time,
+            extra_times,
+        } => {
+            let times = day_times(time, extra_times)?;
             if days.is_empty() || days.iter().any(|d| *d > 6) {
                 return None;
             }
@@ -177,7 +213,10 @@ pub fn next_after(s: &Schedule, after: DateTime<Local>) -> Option<DateTime<Local
                 if !days.contains(&wd) {
                     return None;
                 }
-                local_at(date, t).filter(|x| *x > after)
+                times
+                    .iter()
+                    .filter_map(|t| local_at(date, *t).filter(|x| *x > after))
+                    .min()
             })
         }
     }
@@ -202,7 +241,14 @@ fn validate(input: &JobInput) -> Result<String, String> {
         return Err(match input.schedule {
             Schedule::Interval { .. } => format!("Run at most every {MIN_INTERVAL_MIN} minutes."),
             Schedule::Weekly { ref days, .. } if days.is_empty() => "Pick at least one day.".into(),
-            _ => "Use a time like 09:30.".into(),
+            Schedule::Daily { ref time, ref extra_times }
+            | Schedule::Weekly { ref time, ref extra_times, .. }
+                if extra_times.len() + 1 > MAX_TIMES_PER_DAY
+                    && extra_times.iter().chain([time]).all(|t| parse_hhmm(t).is_some()) =>
+            {
+                format!("At most {MAX_TIMES_PER_DAY} times a day.")
+            }
+            _ => "Use times like 09:30.".into(),
         });
     }
     let p = Path::new(input.folder.trim());
@@ -1599,6 +1645,7 @@ mod tests {
     fn daily_is_today_if_still_ahead_else_tomorrow() {
         let s = Schedule::Daily {
             time: "09:30".into(),
+                extra_times: vec![],
         };
         assert_eq!(
             next_after(&s, at(2026, 1, 5, 8, 0)),
@@ -1615,7 +1662,8 @@ mod tests {
         assert_eq!(
             next_after(
                 &Schedule::Daily {
-                    time: "25:00".into()
+                    time: "25:00".into(),
+                extra_times: vec![],
                 },
                 at(2026, 1, 5, 8, 0)
             ),
@@ -1624,11 +1672,63 @@ mod tests {
     }
 
     #[test]
+    fn several_times_a_day_pick_the_earliest_ahead() {
+        let s = Schedule::Daily {
+            time: "09:00".into(),
+            extra_times: vec!["19:00".into(), "13:30".into(), "09:00".into()],
+        };
+        assert_eq!(next_after(&s, at(2026, 1, 5, 8, 0)), Some(at(2026, 1, 5, 9, 0)));
+        assert_eq!(next_after(&s, at(2026, 1, 5, 9, 0)), Some(at(2026, 1, 5, 13, 30)));
+        assert_eq!(next_after(&s, at(2026, 1, 5, 14, 0)), Some(at(2026, 1, 5, 19, 0)));
+        assert_eq!(next_after(&s, at(2026, 1, 5, 19, 0)), Some(at(2026, 1, 6, 9, 0)));
+        // weekly: Mon + Wed, 08:00 and 20:00 (2026-01-05 is a Monday)
+        let w = Schedule::Weekly {
+            days: vec![0, 2],
+            time: "20:00".into(),
+            extra_times: vec!["08:00".into()],
+        };
+        assert_eq!(next_after(&w, at(2026, 1, 5, 9, 0)), Some(at(2026, 1, 5, 20, 0)));
+        assert_eq!(next_after(&w, at(2026, 1, 5, 21, 0)), Some(at(2026, 1, 7, 8, 0)));
+        // a bad extra time or too many times → invalid
+        let bad = Schedule::Daily { time: "09:00".into(), extra_times: vec!["7pm".into()] };
+        assert_eq!(next_after(&bad, at(2026, 1, 5, 8, 0)), None);
+        let many = Schedule::Daily {
+            time: "01:00".into(),
+            extra_times: (2..=7).map(|h| format!("{h:02}:00")).collect(),
+        };
+        assert_eq!(next_after(&many, at(2026, 1, 5, 0, 0)), None);
+    }
+
+    #[test]
+    fn validate_explains_bad_or_too_many_times() {
+        let input = |extra: serde_json::Value| {
+            input_from(None, &serde_json::json!({ "name": "a", "prompt": "b", "folder": "/tmp",
+                "schedule": { "kind": "daily", "time": "09:00", "extraTimes": extra } }))
+            .unwrap()
+        };
+        assert!(validate(&input(serde_json::json!(["19:00"]))).is_ok());
+        assert_eq!(validate(&input(serde_json::json!(["7pm"]))).unwrap_err(), "Use times like 09:30.");
+        let six: Vec<String> = (10..16).map(|h| format!("{h}:00")).collect();
+        assert_eq!(validate(&input(serde_json::json!(six))).unwrap_err(), "At most 6 times a day.");
+    }
+
+    #[test]
+    fn extra_times_are_optional_and_omitted_when_empty() {
+        let old: Schedule = serde_json::from_str(r#"{"kind":"daily","time":"09:00"}"#).unwrap();
+        assert_eq!(old, Schedule::Daily { time: "09:00".into(), extra_times: vec![] });
+        assert_eq!(serde_json::to_string(&old).unwrap(), r#"{"kind":"daily","time":"09:00"}"#);
+        let two: Schedule =
+            serde_json::from_str(r#"{"kind":"weekly","days":[1],"time":"09:00","extraTimes":["19:00"]}"#).unwrap();
+        assert!(serde_json::to_string(&two).unwrap().contains(r#""extraTimes":["19:00"]"#));
+    }
+
+    #[test]
     fn weekly_finds_the_next_chosen_weekday() {
         // 2026-01-05 is a Monday.
         let s = Schedule::Weekly {
             days: vec![2, 4],
             time: "18:00".into(),
+                extra_times: vec![],
         }; // Wed, Fri
         assert_eq!(
             next_after(&s, at(2026, 1, 5, 12, 0)),
@@ -1641,6 +1741,7 @@ mod tests {
         let mon = Schedule::Weekly {
             days: vec![0],
             time: "08:00".into(),
+                extra_times: vec![],
         };
         assert_eq!(
             next_after(&mon, at(2026, 1, 5, 9, 0)),
@@ -1650,7 +1751,8 @@ mod tests {
             next_after(
                 &Schedule::Weekly {
                     days: vec![],
-                    time: "08:00".into()
+                    time: "08:00".into(),
+                extra_times: vec![],
                 },
                 at(2026, 1, 5, 9, 0)
             ),
@@ -1660,7 +1762,8 @@ mod tests {
             next_after(
                 &Schedule::Weekly {
                     days: vec![7],
-                    time: "08:00".into()
+                    time: "08:00".into(),
+                extra_times: vec![],
                 },
                 at(2026, 1, 5, 9, 0)
             ),
@@ -1723,6 +1826,7 @@ mod tests {
             folder: folder.into(),
             schedule: Schedule::Daily {
                 time: "09:00".into(),
+                extra_times: vec![],
             },
             enabled: true,
             timeout_min: 30,
