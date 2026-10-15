@@ -6,6 +6,11 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.1.4] - 2026-10-15
+
+### Added
+- **Several times a day** (Schedules): a daily or weekly schedule can now run at up to 6 times a day — for example 09:00 and 19:00 — without copying it. Use **+ Add time** in the schedule's form; the card shows every time. Existing schedules are unchanged. The muya-mcp schedule tools accept the same through `extraTimes`.
+
 ## [4.1.3] - 2026-10-15
 
 ### Added
