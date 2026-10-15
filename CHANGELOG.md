@@ -6,6 +6,12 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.1.3] - 2026-10-15
+
+### Added
+- **Menu bar icon**: when you close the window with the red button, Muya keeps running and a panda icon in the menu bar shows it. Its menu opens the window, opens Settings, or quits Muya.
+- **Agent files in Activity**: the Activity tab now lists the files the selected Claude session's agent changed and read, newest first, with how many times. Click one to open it. (Files changed through shell commands aren't listed.)
+
 ## [4.1.2] - 2026-10-14
 
 ### Added
