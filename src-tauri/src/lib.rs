@@ -69,6 +69,7 @@ mod statusline;
 mod term_history;
 #[cfg(test)]
 mod testutil;
+mod agent_files;
 mod titlebar;
 mod validate;
 mod schedules;
@@ -416,6 +417,7 @@ pub fn run() {
             agents::kill_session,
             history::list_session_history,
             history::read_session_transcript,
+            agent_files::session_touched_files,
             fs::list_dir,
             fs::read_file,
             fs::write_file,

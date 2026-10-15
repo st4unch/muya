@@ -2576,7 +2576,7 @@ export default function App() {
             onNewTerminal={openBlankTerminal}
             filesSlot={filesSlot}
             activitySlot={
-              <ActivityPanel collisions={collisionReport.collisions} editedFiles={collisionReport.editedFiles} worktreesWatched={trackedPaths.length} />
+              <ActivityPanel collisions={collisionReport.collisions} editedFiles={collisionReport.editedFiles} worktreesWatched={trackedPaths.length} sessionId={selectedTab?.sessionId} sessionCwd={selectedTab?.sessionCwd ?? selectedCwd} onOpenFile={openFile} />
             }
             inspectorOpen={innerWidth >= 1280}
             filesCount={trackedPaths.length}

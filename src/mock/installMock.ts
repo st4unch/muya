@@ -350,6 +350,14 @@ function handleInvoke(cmd: string, rawPayload?: unknown): unknown {
       return "const answer = 42;\nexport default answer;\n";
 
     // --- agents / sessions -------------------------------------------------
+    case "session_touched_files":
+      return [
+        { path: "~/Documents/claude-control-plane/src/App.tsx", action: "modified", count: 3, lastAt: "2026-10-15T10:02:00Z" },
+        { path: "~/Documents/claude-control-plane/src-tauri/src/lib.rs", action: "modified", count: 1, lastAt: "2026-10-15T10:01:00Z" },
+        { path: "~/Documents/claude-control-plane/README.md", action: "read", count: 2, lastAt: "2026-10-15T10:00:00Z" },
+        { path: "~/Documents/claude-control-plane/src/redesign/ActivityPanel.tsx", action: "read", count: 1, lastAt: "2026-10-15T09:59:00Z" },
+        { path: "/etc/hosts", action: "read", count: 1, lastAt: "2026-10-15T09:58:00Z" },
+      ];
     case "list_agent_sessions":
       return MOCK_AGENTS;
 
