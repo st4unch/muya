@@ -64,7 +64,10 @@ pub fn open_third_party_licenses(app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Manager;
     let path = app
         .path()
-        .resolve("THIRD_PARTY_LICENSES.txt", tauri::path::BaseDirectory::Resource)
+        .resolve(
+            "THIRD_PARTY_LICENSES.txt",
+            tauri::path::BaseDirectory::Resource,
+        )
         .map_err(|e| e.to_string())?;
     if !path.is_file() {
         return Err(format!("license notices not found at {}", path.display()));
@@ -74,7 +77,13 @@ pub fn open_third_party_licenses(app: tauri::AppHandle) -> Result<(), String> {
         .arg(&path)
         .status()
         .map_err(|e| e.to_string())
-        .and_then(|s| if s.success() { Ok(()) } else { Err(format!("open exited with {s}")) })
+        .and_then(|s| {
+            if s.success() {
+                Ok(())
+            } else {
+                Err(format!("open exited with {s}"))
+            }
+        })
 }
 
 #[cfg(test)]

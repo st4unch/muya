@@ -45,11 +45,11 @@ use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tokio_rustls::TlsAcceptor;
 
-use crate::bridge::{Envelope, EnvelopeType, Kind as BridgeKind, MAX_FRAME_BYTES};
 #[cfg(test)]
 use crate::bridge::{
     required_approval, ApprovalState as BridgeApprovalState, BridgeState, InboundRequest,
 };
+use crate::bridge::{Envelope, EnvelopeType, Kind as BridgeKind, MAX_FRAME_BYTES};
 #[cfg(test)]
 use tokio::sync::mpsc;
 
@@ -1137,7 +1137,12 @@ fn probe_port_bindable(addr: &str) -> PortCheck {
     let bind_addr = match listen_socket_addr(addr) {
         Ok(a) => a,
         Err(e) => {
-            return PortCheck { ok: false, listening: false, addr: addr.to_string(), detail: format!("Invalid address: {e}") }
+            return PortCheck {
+                ok: false,
+                listening: false,
+                addr: addr.to_string(),
+                detail: format!("Invalid address: {e}"),
+            }
         }
     };
     match std::net::TcpListener::bind(bind_addr) {
@@ -1670,7 +1675,9 @@ pub async fn bridge_pair_confirm_sas(
             }
         }
     }
-    pair_confirm_impl(&state, sas_ok, None, Some(label)).await.map(|_| ())
+    pair_confirm_impl(&state, sas_ok, None, Some(label))
+        .await
+        .map(|_| ())
 }
 
 /// Finish (or abort) the pending pairing. `their_sas`, when given, is the code the
@@ -2222,15 +2229,38 @@ mod tests {
 
     #[test]
     fn wildcard_in_every_spelling_and_non_unicast_rejected() {
-        for bad in ["0.0.0.0:9876", "[::]:9876", "[::ffff:0.0.0.0]:9876", "[0:0:0:0:0:0:0:0]:1", " 0.0.0.0:1 ", "255.255.255.255:9876", "224.0.0.1:9876", "[ff02::1]:9876"] {
+        for bad in [
+            "0.0.0.0:9876",
+            "[::]:9876",
+            "[::ffff:0.0.0.0]:9876",
+            "[0:0:0:0:0:0:0:0]:1",
+            " 0.0.0.0:1 ",
+            "255.255.255.255:9876",
+            "224.0.0.1:9876",
+            "[ff02::1]:9876",
+        ] {
             assert!(listen_socket_addr(bad).is_err(), "{bad} must be refused");
-            assert!(probe_port_bindable(bad).ok == false, "{bad} must not be probed");
+            assert!(
+                probe_port_bindable(bad).ok == false,
+                "{bad} must not be probed"
+            );
         }
         for bad in ["localhost:9876", "0:9876", "example.com:1", "9876"] {
-            assert!(listen_socket_addr(bad).is_err(), "{bad}: only literal IP:port");
+            assert!(
+                listen_socket_addr(bad).is_err(),
+                "{bad}: only literal IP:port"
+            );
         }
-        assert_eq!(listen_socket_addr("[::ffff:192.168.1.5]:9876").unwrap().to_string(), "192.168.1.5:9876");
-        assert_eq!(listen_socket_addr("127.0.0.1:9876").unwrap().to_string(), "127.0.0.1:9876");
+        assert_eq!(
+            listen_socket_addr("[::ffff:192.168.1.5]:9876")
+                .unwrap()
+                .to_string(),
+            "192.168.1.5:9876"
+        );
+        assert_eq!(
+            listen_socket_addr("127.0.0.1:9876").unwrap().to_string(),
+            "127.0.0.1:9876"
+        );
     }
 
     #[test]

@@ -44,8 +44,14 @@ struct NameScan {
 }
 
 /// Scan `path` from `from` for name records, folding them into `best`.
-fn scan_names(path: &Path, from: u64, mut best: Option<(usize, String)>) -> Option<(usize, String)> {
-    let Ok(mut f) = std::fs::File::open(path) else { return best };
+fn scan_names(
+    path: &Path,
+    from: u64,
+    mut best: Option<(usize, String)>,
+) -> Option<(usize, String)> {
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return best;
+    };
     if from > 0 && f.seek(SeekFrom::Start(from)).is_err() {
         return best;
     }
@@ -63,7 +69,11 @@ fn scan_names(path: &Path, from: u64, mut best: Option<(usize, String)>) -> Opti
             }
             let name = serde_json::from_slice::<serde_json::Value>(&line)
                 .ok()
-                .and_then(|v| v.get(*field).and_then(|n| n.as_str()).map(|n| n.trim().to_string()))
+                .and_then(|v| {
+                    v.get(*field)
+                        .and_then(|n| n.as_str())
+                        .map(|n| n.trim().to_string())
+                })
                 .filter(|n| !n.is_empty());
             if let Some(name) = name {
                 if best.as_ref().map_or(true, |(r, _)| rank <= *r) {
@@ -84,8 +94,16 @@ fn session_name(path: &Path, len: u64, mtime: i64) -> Option<String> {
     let prev = cache.lock().ok().and_then(|c| c.get(path).cloned());
     let scan = match prev {
         Some(p) if p.len == len && p.mtime == mtime => p,
-        Some(p) if len > p.len => NameScan { len, mtime, best: scan_names(path, p.len, p.best) },
-        _ => NameScan { len, mtime, best: scan_names(path, 0, None) },
+        Some(p) if len > p.len => NameScan {
+            len,
+            mtime,
+            best: scan_names(path, p.len, p.best),
+        },
+        _ => NameScan {
+            len,
+            mtime,
+            best: scan_names(path, 0, None),
+        },
     };
     let name = scan.best.as_ref().map(|(_, n)| n.clone());
     if let Ok(mut c) = cache.lock() {
@@ -309,7 +327,12 @@ mod tests {
         let _ = list_session_history().unwrap();
         let warm = t.elapsed();
         let named: Vec<_> = a.iter().filter_map(|e| e.name.clone()).collect();
-        println!("{} transcripts, {} named, cold {cold:?}, warm {warm:?}, e.g. {:?}", a.len(), named.len(), &named[..named.len().min(6)]);
+        println!(
+            "{} transcripts, {} named, cold {cold:?}, warm {warm:?}, e.g. {:?}",
+            a.len(),
+            named.len(),
+            &named[..named.len().min(6)]
+        );
     }
 
     #[test]
@@ -319,18 +342,34 @@ mod tests {
         let p = dir.path().join("s.jsonl");
         let big = "x".repeat(200_000); // a long message line must not hide a record after it
         let write = |s: &str, append: bool| {
-            let mut f = std::fs::OpenOptions::new().create(true).write(true).append(append).truncate(!append).open(&p).unwrap();
+            let mut f = std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .append(append)
+                .truncate(!append)
+                .open(&p)
+                .unwrap();
             f.write_all(s.as_bytes()).unwrap();
         };
         let meta = |p: &Path| {
             let m = std::fs::metadata(p).unwrap();
-            (m.len(), m.modified().unwrap().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64)
+            (
+                m.len(),
+                m.modified()
+                    .unwrap()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as i64,
+            )
         };
         write(&format!("{{\"type\":\"user\",\"message\":\"{big}\"}}\n{{\"type\":\"ai-title\",\"aiTitle\":\"Auto title\"}}\n"), false);
         let (l, m) = meta(&p);
         assert_eq!(session_name(&p, l, m).as_deref(), Some("Auto title"));
 
-        write("{\"type\":\"agent-name\",\"agentName\":\"muya-all\"}\n", true);
+        write(
+            "{\"type\":\"agent-name\",\"agentName\":\"muya-all\"}\n",
+            true,
+        );
         let (l, m) = meta(&p);
         assert_eq!(session_name(&p, l, m).as_deref(), Some("muya-all"));
 

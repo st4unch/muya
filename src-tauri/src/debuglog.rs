@@ -99,14 +99,22 @@ pub fn log(msg: &str) {
     let line = format!("[{}] {}\n", rfc3339_now(), msg);
     // Bounded on disk: once past MAX_BYTES the log becomes `<name>.1` (replacing the
     // previous one) and a fresh file starts — at most ~2 × MAX_BYTES ever.
-    if std::fs::metadata(&path).map(|m| m.len() > MAX_BYTES).unwrap_or(false) {
+    if std::fs::metadata(&path)
+        .map(|m| m.len() > MAX_BYTES)
+        .unwrap_or(false)
+    {
         let mut old = path.clone().into_os_string();
         old.push(".1");
         let _ = std::fs::rename(&path, PathBuf::from(old));
     }
     // 0600: the log holds operator metadata (usernames, URLs) — not for other users.
     use std::os::unix::fs::OpenOptionsExt;
-    if let Ok(mut f) = OpenOptions::new().append(true).create(true).mode(0o600).open(&path) {
+    if let Ok(mut f) = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .mode(0o600)
+        .open(&path)
+    {
         let _ = f.write_all(line.as_bytes());
     }
 }
@@ -229,7 +237,10 @@ mod tests {
         let rotated = dir.path().join("dbg.log.1");
         assert_eq!(std::fs::metadata(&rotated).unwrap().len(), MAX_BYTES + 1);
         let fresh = std::fs::read_to_string(&path).unwrap();
-        assert!(fresh.contains("first line after rotation") && fresh.len() < 200, "{fresh:?}");
+        assert!(
+            fresh.contains("first line after rotation") && fresh.len() < 200,
+            "{fresh:?}"
+        );
 
         // Reset the global so other tests are unaffected.
         set(false, &path_str);

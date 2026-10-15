@@ -122,7 +122,17 @@ pub fn spawn_process(
     rows: Option<u16>,
     inject_secret: Option<Zeroizing<String>>,
 ) -> Result<String, String> {
-    spawn_process_env(manager, on_event, program, args, cwd, cols, rows, inject_secret, &[])
+    spawn_process_env(
+        manager,
+        on_event,
+        program,
+        args,
+        cwd,
+        cols,
+        rows,
+        inject_secret,
+        &[],
+    )
 }
 
 /// [`spawn_process`] with extra environment variables for the child.
@@ -846,7 +856,10 @@ mod tests {
         let mut tail: String = "→".repeat(200); // 600 bytes
         trim_prompt_tail(&mut tail, 512);
         assert!(tail.len() <= 512, "tail must be bounded");
-        assert!(tail.chars().all(|c| c == '→'), "no character may be sliced apart");
+        assert!(
+            tail.chars().all(|c| c == '→'),
+            "no character may be sliced apart"
+        );
 
         // Under the limit: untouched.
         let mut small = "kısa".to_string();
@@ -938,7 +951,10 @@ mod tests {
             .output()
             .expect("ps");
         let stat = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        assert!(!stat.starts_with('Z'), "pid {pid} left as a zombie (stat={stat})");
+        assert!(
+            !stat.starts_with('Z'),
+            "pid {pid} left as a zombie (stat={stat})"
+        );
     }
 
     /// Non-vacuous counterpart: a live shell must NOT be reaped, or closing a tab
@@ -965,9 +981,11 @@ mod tests {
             "a running session must stay registered"
         );
         pty_kill_inner(&manager, &id);
-        assert!(manager.sessions.lock().unwrap().is_empty(), "kill must release it");
+        assert!(
+            manager.sessions.lock().unwrap().is_empty(),
+            "kill must release it"
+        );
     }
-
 
     #[test]
     fn parse_ppid_map_reads_pid_parent_pairs() {
@@ -1371,7 +1389,10 @@ mod tests {
             &manager,
             ch,
             "/bin/sh",
-            &["-c".to_string(), "printf 'CT=[%s]' \"$COLORTERM\"".to_string()],
+            &[
+                "-c".to_string(),
+                "printf 'CT=[%s]' \"$COLORTERM\"".to_string(),
+            ],
             None,
             None,
             None,
@@ -1387,7 +1408,10 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(20));
         }
-        assert!(s.contains("CT=[truecolor]"), "COLORTERM not advertised, got: {s:?}");
+        assert!(
+            s.contains("CT=[truecolor]"),
+            "COLORTERM not advertised, got: {s:?}"
+        );
     }
 
     /// Proves the CLAUDE* env strip works: a shell spawned with the strip sees an

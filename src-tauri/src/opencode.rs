@@ -446,7 +446,10 @@ mod tests {
         }
         let warm = t.elapsed();
         println!("cold {cold:?}, 10 cached calls {warm:?}");
-        assert!(warm < std::time::Duration::from_millis(20), "cached calls must not spawn opencode: {warm:?}");
+        assert!(
+            warm < std::time::Duration::from_millis(20),
+            "cached calls must not spawn opencode: {warm:?}"
+        );
     }
 
     #[test]

@@ -115,7 +115,11 @@ fn read_view_bytes(p: &Path, max: u64) -> Result<Vec<u8>, String> {
         .and_then(|f| f.take(max + 1).read_to_end(&mut buf))
         .map_err(denied)?;
     if buf.len() as u64 > max {
-        return Err(format!("{} grew past the {} MB preview limit while reading", p.display(), max / 1_048_576));
+        return Err(format!(
+            "{} grew past the {} MB preview limit while reading",
+            p.display(),
+            max / 1_048_576
+        ));
     }
     Ok(buf)
 }
@@ -577,7 +581,9 @@ pub fn remove_worktree(worktree: String) -> Result<String, String> {
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|| worktree.clone());
     let out = Command::new("git")
-        .args(["-C", &main_repo, "worktree", "remove", "--force", "--", &worktree])
+        .args([
+            "-C", &main_repo, "worktree", "remove", "--force", "--", &worktree,
+        ])
         .output()
         .map_err(|e| format!("git worktree remove failed: {e}"))?;
     if !out.status.success() {
@@ -703,7 +709,9 @@ pub fn local_ip() -> Result<String, String> {
     match candidate {
         // Verify it's a real, bindable interface address before suggesting it — and
         // never suggest a wildcard (the bridge refuses one anyway).
-        Some(ip) if !ip.is_unspecified() && TcpListener::bind((ip, 0)).is_ok() => Ok(ip.to_string()),
+        Some(ip) if !ip.is_unspecified() && TcpListener::bind((ip, 0)).is_ok() => {
+            Ok(ip.to_string())
+        }
         _ => Ok(LOOPBACK.to_string()),
     }
 }
@@ -779,9 +787,13 @@ pub struct FolderAccess {
 /// Best-effort: a failure here is not worth blocking startup over; the
 /// translocation notice in the UI covers what's left (e.g. a read-only disk image).
 pub fn strip_own_quarantine() {
-    let Ok(exe) = std::env::current_exe() else { return };
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
     let exe = exe.to_string_lossy().into_owned();
-    let Some(bundle) = bundle_root_from_exe(&exe) else { return };
+    let Some(bundle) = bundle_root_from_exe(&exe) else {
+        return;
+    };
     let target = if path_is_translocated(&exe) {
         match crate::app_location::original_bundle(Path::new(&bundle)) {
             Some(orig) => orig.to_string_lossy().into_owned(),
@@ -871,7 +883,9 @@ pub fn relaunch_in_place(app: tauri::AppHandle) -> Result<(), String> {
     let original = crate::app_location::original_bundle(Path::new(&bundle))
         .ok_or("macOS did not say where the original app is")?;
     if crate::app_location::has_quarantine(&original) {
-        return Err("the original app is still quarantined — relaunching would translocate it again".into());
+        return Err(
+            "the original app is still quarantined — relaunching would translocate it again".into(),
+        );
     }
     Command::new("/bin/sh")
         .args([
@@ -1537,7 +1551,11 @@ fn opencode_config_path() -> Result<std::path::PathBuf, String> {
 ///
 /// Preserving the rest is not hypothetical: the config that prompted this work
 /// already had an unrelated `mcp.pencil` server in it.
-pub fn install_opencode_mcp(name: String, command: String, args: Vec<String>) -> Result<(), String> {
+pub fn install_opencode_mcp(
+    name: String,
+    command: String,
+    args: Vec<String>,
+) -> Result<(), String> {
     install_opencode_mcp_at(&opencode_config_path()?, name, command, args)
 }
 
@@ -1553,7 +1571,10 @@ fn install_opencode_mcp_at(
     let mut root: serde_json::Value = if cfg_path.exists() {
         let content = std::fs::read_to_string(cfg_path).map_err(|e| e.to_string())?;
         serde_json::from_str(&content).map_err(|e| {
-            format!("{} is not valid JSON — refusing to modify it: {e}", cfg_path.display())
+            format!(
+                "{} is not valid JSON — refusing to modify it: {e}",
+                cfg_path.display()
+            )
         })?
     } else {
         serde_json::json!({})
@@ -1657,10 +1678,17 @@ mod tests {
         std::fs::create_dir_all(f.parent().unwrap()).unwrap();
         std::fs::write(&f, [0x89, b'P', b'N', b'G', 0, 1, 2]).unwrap();
         // Dot-folders are fine here (the asset protocol scope refused them).
-        assert_eq!(read_view_bytes(&f, 1024).unwrap(), vec![0x89, b'P', b'N', b'G', 0, 1, 2]);
-        assert!(read_view_bytes(dir.path(), 1024).unwrap_err().contains("not a file"));
+        assert_eq!(
+            read_view_bytes(&f, 1024).unwrap(),
+            vec![0x89, b'P', b'N', b'G', 0, 1, 2]
+        );
+        assert!(read_view_bytes(dir.path(), 1024)
+            .unwrap_err()
+            .contains("not a file"));
         assert!(read_view_bytes(&f, 3).unwrap_err().contains("too large"));
-        assert!(read_view_bytes(&dir.path().join("nope.pdf"), 1024).unwrap_err().contains("cannot open"));
+        assert!(read_view_bytes(&dir.path().join("nope.pdf"), 1024)
+            .unwrap_err()
+            .contains("cannot open"));
     }
     use super::*;
 
@@ -1672,11 +1700,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("opened");
         let opener = dir.path().join("opener.sh");
-        std::fs::write(&opener, format!("#!/bin/sh\nprintf '%s' \"$1\" > '{}'\n", out.display())).unwrap();
+        std::fs::write(
+            &opener,
+            format!("#!/bin/sh\nprintf '%s' \"$1\" > '{}'\n", out.display()),
+        )
+        .unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&opener, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-        let mut old = std::process::Command::new("/bin/sleep").arg("1").spawn().unwrap();
+        let mut old = std::process::Command::new("/bin/sleep")
+            .arg("1")
+            .spawn()
+            .unwrap();
         let app = r#"/Users/x/My "Apps"; rm -rf ~/Muya.app"#;
         let start = std::time::Instant::now();
         let mut sh = std::process::Command::new("/bin/sh")
@@ -1685,7 +1720,10 @@ mod tests {
             .spawn()
             .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(300));
-        assert!(!out.exists(), "opened while the old process was still alive");
+        assert!(
+            !out.exists(),
+            "opened while the old process was still alive"
+        );
         old.wait().unwrap();
         sh.wait().unwrap();
         assert!(start.elapsed() >= std::time::Duration::from_millis(900));
@@ -1721,7 +1759,10 @@ mod tests {
         );
         // A bare binary (cargo run, test harness) has no bundle — we must never
         // run xattr against some unrelated parent directory.
-        assert_eq!(bundle_root_from_exe("/Users/x/proj/target/debug/muya"), None);
+        assert_eq!(
+            bundle_root_from_exe("/Users/x/proj/target/debug/muya"),
+            None
+        );
         assert_eq!(bundle_root_from_exe("muya"), None);
         assert_eq!(bundle_root_from_exe(""), None);
     }
@@ -1767,7 +1808,9 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(&copy).unwrap()).unwrap();
         println!(
             "after: {:?}",
-            after["mcp"].as_object().map(|o| o.keys().cloned().collect::<Vec<_>>())
+            after["mcp"]
+                .as_object()
+                .map(|o| o.keys().cloned().collect::<Vec<_>>())
         );
 
         // Every server the operator already had must still be there, byte-identical.
@@ -1806,7 +1849,11 @@ mod tests {
             r#"{"mcp":{"x":{"type":"local","command":["/bin/true"],"enabled":false}}}"#,
         );
         assert_eq!(mcps.len(), 1);
-        assert!(mcps[0].description.contains("disabled"), "{:?}", mcps[0].description);
+        assert!(
+            mcps[0].description.contains("disabled"),
+            "{:?}",
+            mcps[0].description
+        );
     }
 
     #[test]
@@ -1953,14 +2000,26 @@ mod tests {
     fn legacy_mcp_entry_removed_only_when_it_is_muyas() {
         let d = tempfile::tempdir().unwrap();
         let cfg = d.path().join(".claude.json");
-        std::fs::write(&cfg, r#"{"mcpServers":{"muya-ssh":{"command":"/opt/tools/my-own-server"}}}"#).unwrap();
+        std::fs::write(
+            &cfg,
+            r#"{"mcpServers":{"muya-ssh":{"command":"/opt/tools/my-own-server"}}}"#,
+        )
+        .unwrap();
         remove_legacy_muya_mcp_at(&cfg, "muya-ssh").unwrap();
-        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&cfg).unwrap()).unwrap();
-        assert!(v["mcpServers"]["muya-ssh"].is_object(), "a user's own entry is kept");
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&cfg).unwrap()).unwrap();
+        assert!(
+            v["mcpServers"]["muya-ssh"].is_object(),
+            "a user's own entry is kept"
+        );
         std::fs::write(&cfg, r#"{"mcpServers":{"muya-ssh":{"command":"/Applications/Muya.app/Contents/MacOS/muya-ssh-mcp"}}}"#).unwrap();
         remove_legacy_muya_mcp_at(&cfg, "muya-ssh").unwrap();
-        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&cfg).unwrap()).unwrap();
-        assert!(v["mcpServers"].get("muya-ssh").is_none(), "Muya's legacy entry is removed");
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&cfg).unwrap()).unwrap();
+        assert!(
+            v["mcpServers"].get("muya-ssh").is_none(),
+            "Muya's legacy entry is removed"
+        );
     }
 
     #[test]

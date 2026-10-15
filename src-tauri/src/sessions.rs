@@ -411,7 +411,10 @@ mod tests {
         let text = format!("{filler}ARANAN{filler}");
         let out = make_snippet(&text, "aranan").expect("needle is present");
         assert!(out.contains("ARANAN"), "{out}");
-        assert!(out.starts_with('…') && out.ends_with('…'), "must be elided both ends: {out}");
+        assert!(
+            out.starts_with('…') && out.ends_with('…'),
+            "must be elided both ends: {out}"
+        );
     }
 
     use super::*;
@@ -510,18 +513,37 @@ mod tests {
         let not_jsonl = projects.join("-p").join("notes.txt");
         std::fs::write(&not_jsonl, "x").unwrap();
 
-        assert_eq!(checked_transcript_path_in(&projects, &good).unwrap(), good.canonicalize().unwrap());
-        assert!(checked_transcript_path_in(&projects, &secret).is_err(), "outside the projects dir");
-        assert!(checked_transcript_path_in(&projects, &projects.join("-p/../../id_rsa.jsonl")).is_err(), "`..` escape");
-        assert!(checked_transcript_path_in(&projects, &not_jsonl).is_err(), "not a transcript");
+        assert_eq!(
+            checked_transcript_path_in(&projects, &good).unwrap(),
+            good.canonicalize().unwrap()
+        );
+        assert!(
+            checked_transcript_path_in(&projects, &secret).is_err(),
+            "outside the projects dir"
+        );
+        assert!(
+            checked_transcript_path_in(&projects, &projects.join("-p/../../id_rsa.jsonl")).is_err(),
+            "`..` escape"
+        );
+        assert!(
+            checked_transcript_path_in(&projects, &not_jsonl).is_err(),
+            "not a transcript"
+        );
         #[cfg(unix)]
         {
             let link = projects.join("-p").join("link.jsonl");
             std::os::unix::fs::symlink(&secret, &link).unwrap();
-            assert!(checked_transcript_path_in(&projects, &link).is_err(), "symlink out of the dir");
+            assert!(
+                checked_transcript_path_in(&projects, &link).is_err(),
+                "symlink out of the dir"
+            );
         }
         // The real resolver refuses a tempdir path (it is not under ~/.claude/projects).
-        let s = SessionRef { id: "x".into(), cwd: "/nonexistent".into(), path: Some(secret.to_string_lossy().into_owned()) };
+        let s = SessionRef {
+            id: "x".into(),
+            cwd: "/nonexistent".into(),
+            path: Some(secret.to_string_lossy().into_owned()),
+        };
         assert!(resolve_transcript(&s).is_none());
     }
 
