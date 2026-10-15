@@ -277,7 +277,7 @@ export default function SettingsModal({
                 <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
                   <span id={id("keep")} style={{ fontSize: 13, fontWeight: 600 }}>Keep running when the window is closed</span>
                   <span style={helperStyle}>
-                    The red close button hides the window; sessions and schedules keep running. Click Muya in the Dock to bring it back, ⌘Q to quit.
+                    The red close button hides the window; sessions and schedules keep running. Click Muya in the Dock or the panda in the menu bar to bring it back, ⌘Q to quit.
                   </span>
                 </div>
                 <Switch

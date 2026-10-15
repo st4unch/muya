@@ -85,8 +85,9 @@ conversation to Markdown.
 ### 5. Close the window, keep working
 
 Closing the window with the red button only hides it — your sessions and schedules keep running.
-Click Muya in the Dock to bring it back, ⌘Q to quit. (Settings → **Keep running when the window is
-closed** turns this off.)
+A panda icon in the menu bar shows Muya is still running: its menu opens the window, opens Settings or
+quits. Clicking Muya in the Dock also brings it back, ⌘Q quits. (Settings → **Keep running when the
+window is closed** turns this off.)
 
 ---
 

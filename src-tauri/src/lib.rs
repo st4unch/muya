@@ -2,7 +2,9 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::image::Image;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use tauri::tray::TrayIconBuilder;
 use tauri::Manager;
 
 // Double-press quit guard: two ⌘Q presses within 700 ms required to quit.
@@ -104,6 +106,43 @@ fn hide_on_close<R: tauri::Runtime>(app: &tauri::AppHandle<R>, event: &tauri::Ru
             }
         }
     }
+}
+
+/// Bring the main window back (Dock click, menu bar icon, a file opened from Finder).
+fn show_main<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
+/// Quit for real: kill PTY children so no shells are orphaned, close only THIS
+/// instance's SSH masters (a second Muya's stay up), then exit.
+fn quit_now(app: &tauri::AppHandle) {
+    pty::kill_all(&*app.state::<pty::PtyManager>());
+    crate::ssh::close_own_control_masters();
+    crate::statusline::cleanup();
+    app.exit(0);
+}
+
+/// Menu bar icon: while the red close button keeps Muya running with the window
+/// hidden, the icon shows it is still there and reopens or quits it
+/// (docs/prd-menubar-icon.md). Its items land in `.on_menu_event` as `tray_*`.
+fn build_tray(app: &tauri::App) -> tauri::Result<()> {
+    let open = MenuItemBuilder::with_id("tray_open", "Open Muya").build(app)?;
+    let settings = MenuItemBuilder::with_id("tray_settings", "Settings…").build(app)?;
+    let quit = MenuItemBuilder::with_id("tray_quit", "Quit Muya").build(app)?;
+    let menu = MenuBuilder::new(app)
+        .items(&[&open, &settings])
+        .separator()
+        .item(&quit)
+        .build()?;
+    TrayIconBuilder::with_id("muya")
+        .icon(Image::from_bytes(include_bytes!("../icons/tray-icon.png"))?)
+        .tooltip("Muya")
+        .menu(&menu)
+        .build(app)?;
+    Ok(())
 }
 
 /// `muya --scheduler`: the background schedules service, no window
@@ -215,6 +254,9 @@ pub fn run() {
                 .items(&[&app_menu, &file_menu, &edit_menu])
                 .build()?;
             app.set_menu(menu)?;
+            if let Err(e) = build_tray(app) {
+                log::warn!("[tray] menu bar icon failed: {e}");
+            }
             // Apply persisted debug-logging settings (~/.claude/muya-settings.json)
             // so CyberArk/SSH step logs start flowing immediately if enabled.
             debuglog::load_and_apply();
@@ -323,6 +365,14 @@ pub fn run() {
             "settings" => {
                 let _ = app.emit("menu:settings", ());
             }
+            "tray_open" => show_main(app),
+            "tray_settings" => {
+                show_main(app);
+                let _ = app.emit("menu:settings", ());
+            }
+            // A deliberate menu click, and the window may be hidden so the ⌘Q
+            // "press again" hint would never be seen: quit at once.
+            "tray_quit" => quit_now(app),
             "quit" => {
                 let now = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
@@ -330,12 +380,7 @@ pub fn run() {
                     .as_millis() as u64;
                 let last = LAST_QUIT_MS.load(Ordering::Relaxed);
                 if now.saturating_sub(last) < QUIT_DOUBLE_PRESS_MS {
-                    // Kill active PTY children before exit so no shells are orphaned.
-                    pty::kill_all(&*app.state::<pty::PtyManager>());
-                    // Close only THIS instance's SSH masters (a second Muya's stay up).
-                    crate::ssh::close_own_control_masters();
-                    crate::statusline::cleanup();
-                    app.exit(0);
+                    quit_now(app);
                 } else {
                     LAST_QUIT_MS.store(now, Ordering::Relaxed);
                     // First press — tell the UI to show a transient "press ⌘Q again
@@ -511,10 +556,7 @@ pub fn run() {
                 ..
             } = &event
             {
-                if let Some(w) = app_handle.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.set_focus();
-                }
+                show_main(app_handle);
             }
             #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
             if let tauri::RunEvent::Opened { urls } = event {
@@ -528,10 +570,7 @@ pub fn run() {
                     pending.extend(paths.clone());
                 }
                 // A file opened from Finder while the window is hidden shows it again.
-                if let Some(w) = app_handle.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.set_focus();
-                }
+                show_main(app_handle);
                 // Also emit for the already-running case.
                 for path in paths {
                     let _ = app_handle.emit("apex://open-file", path);
