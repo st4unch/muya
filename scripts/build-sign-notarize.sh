@@ -37,6 +37,14 @@ command -v ditto >/dev/null        || die "ditto not found"
 
 # Pick a notary auth mode: prefer the keychain profile; fall back to the raw
 # API key (survives a locked keychain, since no keychain read is needed).
+# The key's path and IDs live outside the repo: env vars, or a local file
+# (default ~/.config/muya-release/notary.env, 0600) setting NOTARY_KEY,
+# NOTARY_KEY_ID and NOTARY_ISSUER.
+NOTARY_ENV="${MUYA_NOTARY_ENV:-$HOME/.config/muya-release/notary.env}"
+if [ -z "${NOTARY_KEY:-}" ] && [ -f "$NOTARY_ENV" ]; then
+  # shellcheck disable=SC1090
+  . "$NOTARY_ENV"
+fi
 NOTARY_ARGS=()
 if xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1; then
   NOTARY_ARGS=(--keychain-profile "$PROFILE")
