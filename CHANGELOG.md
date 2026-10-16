@@ -6,6 +6,16 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.1.8] - 2026-10-16
+
+### Added
+- **Review every change**: Changes now lists all changed files (not just three), and clicking one — or **Review diff** — opens a review window with every file's before/after diff; move with ← Prev / Next → or the `[` `]` keys. In Queue, "N uncommitted" and "N changed" open the same review for that project or branch, and a branch's changed files can be clicked.
+- **File versions**: Muya keeps local versions of each file you edit — when you open it, when you pause typing (even unsaved) and when you save. Activity lists the versions of the file you're looking at; **File ▸ Version History** (⇧⌘H) compares any version with the file now and can restore it. Versions stay on this Mac (`~/.claude/muya-file-history`); `.env`, key files and files over 2 MB are never copied.
+- **Auto-save** (Settings ▸ Editor, off by default): files are saved a second after you stop typing.
+
+### Fixed
+- Esc closes an open dialog even while the "Auto-allow?" suggestion is showing.
+
 ## [4.1.7] - 2026-10-16
 
 ### Added
