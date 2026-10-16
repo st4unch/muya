@@ -5,6 +5,7 @@ import type { ThemePreference } from "../theme/theme";
 import { ThemeMonitorIcon, ThemeMoonIcon, ThemeSunIcon } from "../redesign/icons";
 import { loadResumeOnLaunch, saveResumeOnLaunch } from "../lib/startup";
 import { loadAutoApprove, saveAutoApprove } from "../lib/autoApprove";
+import { loadAutoSave, saveAutoSave } from "../lib/fileVersions";
 import { Switch, ghostBtn, groupStyle, helperStyle, labelStyle } from "./modalKit";
 
 const DEFAULT_LOG_PATH = "~/.claude/muya-debug.log";
@@ -52,6 +53,9 @@ export default function SettingsModal({
   const [resumeOnLaunch, setResumeOnLaunch] = useState(false);
   const [autoApprove, setAutoApprove] = useState(false);
   const [keepRunning, setKeepRunning] = useState(true);
+  // Editor → Auto-save, as stored when the modal opened (pending until Save).
+  const [autoSave, setAutoSave] = useState(false);
+  const [autoSaveStored, setAutoSaveStored] = useState(false);
   // Startup switches as stored when the modal opened: like the log settings, a change
   // is pending until Save (null = login item state still loading).
   const [startupStored, setStartupStored] = useState<{ login: boolean; resume: boolean; auto: boolean; keep: boolean } | null>(null);
@@ -65,6 +69,9 @@ export default function SettingsModal({
     const auto = loadAutoApprove();
     setResumeOnLaunch(resume);
     setAutoApprove(auto);
+    const as = loadAutoSave();
+    setAutoSave(as);
+    setAutoSaveStored(as);
     setStartupStored(null);
     Promise.all([
       invoke<boolean>("login_item_get").catch(() => false),
@@ -108,7 +115,8 @@ export default function SettingsModal({
   const startupDirty =
     startupStored !== null &&
     (startupStored.login !== loginItem || startupStored.resume !== resumeOnLaunch || startupStored.auto !== autoApprove || startupStored.keep !== keepRunning);
-  const dirty = logDirty || startupDirty;
+  const editorDirty = autoSave !== autoSaveStored;
+  const dirty = logDirty || startupDirty || editorDirty;
 
   const save = async () => {
     if (!dirty || busy) return;
@@ -123,6 +131,10 @@ export default function SettingsModal({
         saveAutoApprove(autoApprove);
         if (startupStored.keep !== keepRunning) await invoke("app_prefs_set", { prefs: { keepRunningInBackground: keepRunning } });
         setStartupStored({ login, resume: resumeOnLaunch, auto: autoApprove, keep: keepRunning });
+      }
+      if (editorDirty) {
+        saveAutoSave(autoSave);
+        setAutoSaveStored(autoSave);
       }
       if (logDirty) {
         await invoke("debug_log_set", { enabled, path: cleanPath });
@@ -317,6 +329,28 @@ export default function SettingsModal({
                   labelledBy={id("autoallow")}
                   onChange={(v) => {
                     setAutoApprove(v);
+                    edit();
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div style={groupStyle}>
+            <span style={labelStyle}>Editor</span>
+            <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 14px" }}>
+                <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span id={id("autosave")} style={{ fontSize: 13, fontWeight: 600 }}>Auto-save files</span>
+                  <span style={helperStyle}>
+                    Files you edit in Muya are saved a second after you stop typing. Either way, Muya keeps their earlier versions; see Activity or File ▸ Version History (⇧⌘H).
+                  </span>
+                </div>
+                <Switch
+                  checked={autoSave}
+                  labelledBy={id("autosave")}
+                  onChange={(v) => {
+                    setAutoSave(v);
                     edit();
                   }}
                 />

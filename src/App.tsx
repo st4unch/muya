@@ -68,6 +68,7 @@ import { approvableIds, AUTO_APPROVE_EVENT, keyOfApprovableId, AUTO_APPROVE_MS, 
 import { AutoAllowSuggest } from "./redesign/AutoAllowSuggest";
 import { historyKeyOf } from "./lib/termHistory";
 import { branchSource, workingTreeSource } from "./lib/reviewSources";
+import { listVersions, versionsSource } from "./lib/fileVersions";
 import type { ReviewSource } from "./components/ReviewChanges";
 
 // Types matching the user's workflow model
@@ -917,6 +918,18 @@ export default function App() {
 
   // File > Reopen Closed Tab (⌘⇧T): the newest closed tab comes back — a Claude tab in
   // its own conversation, an SSH tab reconnected, a file in its viewer.
+  // File ▸ Version History: the versions of the file in view.
+  useEffect(() => {
+    const un = listen("menu:version-history", () => {
+      const path = viewedFileRef.current;
+      if (!path) return;
+      setInspectorTab("activity");
+      openVersionsRef.current(path);
+    });
+    return () => {
+      void un.then((f) => f());
+    };
+  }, []);
   useEffect(() => {
     const un = listen("menu:reopen-closed-tab", () => {
       const stack = closedTabsRef.current;
@@ -1837,6 +1850,21 @@ export default function App() {
   const reviewDiff = () => {
     if (selectedCwd) openWorkingReview(selectedCwd);
   };
+  // Local versions of a file (docs/prd-file-versions.md): the same dialog, version vs now.
+  const openVersions = (path: string, id?: string) => {
+    listVersions(path)
+      .then((versions) => {
+        if (versions.length === 0) return;
+        const at = id ? versions.findIndex((v) => v.id === id) : 0;
+        setReview({ source: versionsSource(path, versions, () => setFsTick((n) => n + 1)), start: Math.max(0, at) });
+      })
+      .catch(() => {});
+  };
+  const viewedFilePath = controlMode === "files" ? openTerminals.find((t) => t.key === viewFileKey)?.filePath : undefined;
+  const viewedFileRef = useRef(viewedFilePath);
+  viewedFileRef.current = viewedFilePath;
+  const openVersionsRef = useRef(openVersions);
+  openVersionsRef.current = openVersions;
   // Commit…: put `git commit` in the terminal, unsent, and focus it.
   const startCommit = () => {
     if (!activeTerminalKey) return;
@@ -2597,7 +2625,7 @@ export default function App() {
             onNewTerminal={openBlankTerminal}
             filesSlot={filesSlot}
             activitySlot={
-              <ActivityPanel collisions={collisionReport.collisions} editedFiles={collisionReport.editedFiles} worktreesWatched={trackedPaths.length} sessionId={selectedTab?.sessionId} sessionCwd={selectedTab?.sessionCwd ?? selectedCwd} onOpenFile={openFile} />
+              <ActivityPanel collisions={collisionReport.collisions} editedFiles={collisionReport.editedFiles} worktreesWatched={trackedPaths.length} sessionId={selectedTab?.sessionId} sessionCwd={selectedTab?.sessionCwd ?? selectedCwd} onOpenFile={openFile} activeFile={viewedFilePath} onOpenVersion={openVersions} />
             }
             inspectorOpen={innerWidth >= 1280}
             filesCount={trackedPaths.length}

@@ -111,7 +111,7 @@ The left rail has nine screens: Control, Files, Sessions, Branches, Queue, Kanba
 
 ### Files — editor and viewers
 
-Up to 30 open files, restored after a restart. Monaco with HEAD-vs-working-tree diff, bundled locally (no CDN); unsaved files show a dot and closing asks first. PDFs (with zoom) and images (Fit / 100%) open in their own viewers; other binaries offer "Open in default app". The file tree follows the workspaces you add and refreshes on its own. ⌘K also searches files **on this Mac** (Spotlight), ⌘O opens one.
+Up to 30 open files, restored after a restart. Every file you edit keeps local versions (on open, when you pause typing, on save) — Activity lists them and File ▸ Version History (⇧⌘H) compares or restores one; Settings ▸ Editor has an optional auto-save. Monaco with HEAD-vs-working-tree diff, bundled locally (no CDN); unsaved files show a dot and closing asks first. PDFs (with zoom) and images (Fit / 100%) open in their own viewers; other binaries offer "Open in default app". The file tree follows the workspaces you add and refreshes on its own. ⌘K also searches files **on this Mac** (Spotlight), ⌘O opens one.
 
 ### Sessions — every session, live and past
 

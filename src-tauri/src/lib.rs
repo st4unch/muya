@@ -43,6 +43,7 @@ mod agent_ssh;
 mod agents;
 mod app_location;
 mod app_prefs;
+mod file_history;
 mod askpass;
 mod bg_service;
 mod bridge;
@@ -208,6 +209,11 @@ pub fn run() {
             let reopen_tab = MenuItemBuilder::with_id("reopen_tab", "Reopen Closed Tab")
                 .accelerator("CmdOrCtrl+Shift+T")
                 .build(app)?;
+            // ⇧⌘H: versions of the file in view (file_history.rs). Not ⌥⌘H — that is
+            // macOS "Hide Others". Emits "menu:version-history".
+            let version_history = MenuItemBuilder::with_id("version_history", "Version History")
+                .accelerator("CmdOrCtrl+Shift+H")
+                .build(app)?;
             // Custom quit item so we can intercept ⌘Q for double-press guard.
             // The built-in .quit() calls NSApplication.terminate() directly,
             // bypassing RunEvent::ExitRequested, so we must own it here.
@@ -241,6 +247,8 @@ pub fn run() {
                 .separator()
                 .item(&close_tab)
                 .item(&reopen_tab)
+                .separator()
+                .item(&version_history)
                 .build()?;
             let edit_menu = SubmenuBuilder::new(app, "Edit")
                 .undo()
@@ -360,6 +368,9 @@ pub fn run() {
             "reopen_tab" => {
                 let _ = app.emit("menu:reopen-closed-tab", ());
             }
+            "version_history" => {
+                let _ = app.emit("menu:version-history", ());
+            }
             "check_update" => {
                 let _ = app.emit("menu:check-update", ());
             }
@@ -426,6 +437,9 @@ pub fn run() {
             fs::path_kind,
             fs::read_head_file,
             fs::git_branch_file_pair,
+            file_history::file_history_snapshot,
+            file_history::file_history_list,
+            file_history::file_history_read,
             fs::create_worktree,
             fs::remove_worktree,
             fs::list_branches,

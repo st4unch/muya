@@ -1,12 +1,14 @@
 // Created by Claude — Classification: INTERNAL
 //
 // Inspector "Activity" tab: the files the selected session's agent read and changed
-// (from its transcript, docs/prd-activity-agent-files.md) — click one to open it — and
+// (from its transcript, docs/prd-activity-agent-files.md) — click one to open it —, the
+// local versions of the file in the editor (docs/prd-file-versions.md), and
 // the lock/edit telemetry the old left panel carried: which files are being edited in
 // more than one worktree, and how many uncommitted changes the watcher tracks.
 
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { KIND_LABEL, listVersions, versionTime, VERSIONS_EVENT, type FileVersion } from "../lib/fileVersions";
 
 export interface TouchedFile {
   path: string;
@@ -24,6 +26,10 @@ export interface ActivityPanelProps {
   /** Folder that session started in (its transcript dir and the base for relative paths). */
   sessionCwd?: string;
   onOpenFile: (path: string) => void;
+  /** File shown in the editor: its local versions are listed (docs/prd-file-versions.md). */
+  activeFile?: string;
+  /** Open the versions dialog for `path`, at version `id` (or the newest). */
+  onOpenVersion?: (path: string, id?: string) => void;
 }
 
 const POLL_MS = 4000;
@@ -88,12 +94,78 @@ function FileGroup({ title, files, cwd, onOpenFile }: { title: string; files: To
   );
 }
 
-export function ActivityPanel({ collisions, editedFiles, worktreesWatched, sessionId, sessionCwd, onOpenFile }: ActivityPanelProps) {
+/** Versions of `path`, newest first; reloads when a new one is stored. */
+export function useFileVersions(path?: string) {
+  const [versions, setVersions] = useState<FileVersion[]>([]);
+  useEffect(() => {
+    setVersions([]);
+    if (!path) return;
+    let alive = true;
+    const load = () => void listVersions(path).then((v) => alive && setVersions(v)).catch(() => {});
+    load();
+    const on = (e: Event) => { if ((e as CustomEvent<{ path: string }>).detail?.path === path) load(); };
+    window.addEventListener(VERSIONS_EVENT, on);
+    return () => {
+      alive = false;
+      window.removeEventListener(VERSIONS_EVENT, on);
+    };
+  }, [path]);
+  return versions;
+}
+
+const VERSION_ROWS = 12;
+
+function VersionsSection({ path, onOpenVersion }: { path: string; onOpenVersion?: (path: string, id?: string) => void }) {
+  const versions = useFileVersions(path);
+  const name = path.split("/").pop() ?? path;
+  const shown = versions.slice(0, VERSION_ROWS);
+  return (
+    <>
+      <div style={heading} title={path}>VERSIONS · {name}</div>
+      {versions.length === 0 ? (
+        <div>No versions yet. Muya keeps one when you open, pause typing in, or save a file.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          {shown.map((v) => (
+            <button
+              key={v.id}
+              className="rd-change-row"
+              onClick={() => onOpenVersion?.(path, v.id)}
+              title="Compare with the file now, or restore it"
+              style={{ display: "flex", gap: 8, alignItems: "baseline", padding: "5px 8px", borderRadius: 6, border: "none", background: "transparent", color: "var(--text)", textAlign: "left", fontFamily: "inherit", fontSize: "inherit", cursor: "pointer" }}
+            >
+              <span style={{ fontFamily: "var(--font-mono)", flexShrink: 0 }}>{versionTime(v.at)}</span>
+              <span className="rd-ellipsis" style={{ flexGrow: 1, color: v.kind === "draft" ? "var(--warning)" : "var(--text-muted)" }}>{KIND_LABEL[v.kind]}</span>
+              <span style={{ color: "var(--text-muted)", flexShrink: 0 }}>{v.size < 1024 ? `${v.size} B` : `${(v.size / 1024).toFixed(1)} KB`}</span>
+            </button>
+          ))}
+          {versions.length > VERSION_ROWS && (
+            <button
+              className="rd-change-row"
+              onClick={() => onOpenVersion?.(path)}
+              style={{ padding: "5px 8px", borderRadius: 6, border: "none", background: "transparent", color: "var(--text-muted)", textAlign: "left", fontSize: "inherit", cursor: "pointer" }}
+            >
+              All {versions.length} versions…
+            </button>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+export function ActivityPanel({ collisions, editedFiles, worktreesWatched, sessionId, sessionCwd, onOpenFile, activeFile, onOpenVersion }: ActivityPanelProps) {
   const { files, error } = useTouchedFiles(sessionId, sessionCwd);
   const modified = files.filter((f) => f.action === "modified");
   const read = files.filter((f) => f.action === "read");
   return (
     <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10, fontSize: 12, color: "var(--text-muted)" }}>
+      {activeFile && (
+        <>
+          <VersionsSection path={activeFile} onOpenVersion={onOpenVersion} />
+          <div style={{ height: 8 }} />
+        </>
+      )}
       <div style={heading}>AGENT FILES</div>
       {!sessionId ? (
         <div>Select a Claude session tab to see the files its agent read and changed.</div>

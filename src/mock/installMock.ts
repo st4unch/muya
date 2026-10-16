@@ -349,6 +349,20 @@ function handleInvoke(cmd: string, rawPayload?: unknown): unknown {
       return "const answer = 42;\nexport default answer;\n";
     case "read_head_file":
       return "const answer = 41;\nexport default answer;\n";
+    case "file_history_snapshot":
+      return null;
+    case "file_history_list": {
+      const now = Date.now();
+      return [
+        { id: String(now - 60_000), at: now - 60_000, size: 41, kind: "saved" },
+        { id: String(now - 300_000), at: now - 300_000, size: 44, kind: "draft" },
+        { id: String(now - 3_600_000), at: now - 3_600_000, size: 38, kind: "opened" },
+      ];
+    }
+    case "file_history_read": {
+      const id = Number(payload.id ?? 0);
+      return `const answer = ${id % 7};\n// older text\nexport default answer;\n`;
+    }
     case "git_branch_file_pair": {
       const path = String(payload.path ?? "");
       return [`// ${path} at base\nexport const v = 1;\n`, `// ${path} on branch\nexport const v = 2;\nexport const added = true;\n`];

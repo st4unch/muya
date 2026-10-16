@@ -4,6 +4,7 @@ import Editor, { DiffEditor } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 import { langFromPath, monacoModelPath } from "../lib/format";
 import "./monacoSetup";
+import { AUTO_SAVE_EVENT, AUTO_SAVE_MS, DRAFT_MS, loadAutoSave, snapshotVersion } from "../lib/fileVersions";
 
 /** Monaco-backed file editor. Loads via the backend `read_file`; Cmd/Ctrl+S saves
  *  via `write_file`. Language is inferred from the file path. */
@@ -46,6 +47,8 @@ export default function FileEditor({
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const valueRef = useRef(value);
   valueRef.current = value;
+  /** Text of our last write to disk (save / auto-save). */
+  const lastWrittenRef = useRef<string | null>(null);
 
   const toggleDiff = async () => {
     if (mode === "diff") {
@@ -86,6 +89,8 @@ export default function FileEditor({
           onDirtyChange?.(false);
           setDiskChanged(false);
           setStatus("ready");
+          // The text as it is on disk now is a version (docs/prd-file-versions.md).
+          void snapshotVersion(path, c, "opened");
         })
         .catch((e) => {
           if (cancelled) return;
@@ -97,8 +102,13 @@ export default function FileEditor({
       if (cancelled) return;
       // Disk changed for the SAME file while the user has unsaved edits → don't
       // clobber; flag it. Otherwise (new file, or clean editor) reload.
-      if (!pathChanged && dirtyRef.current) setDiskChanged(true);
-      else doLoad();
+      if (!pathChanged && dirtyRef.current) {
+        // Our own (auto-)save also fires this. If the disk holds exactly what we last
+        // wrote, nothing outside changed it — no warning.
+        invoke<string>("read_file", { path })
+          .then((c) => { if (!cancelled && c !== lastWrittenRef.current) setDiskChanged(true); })
+          .catch(() => { if (!cancelled) setDiskChanged(true); });
+      } else doLoad();
     }, pathChanged ? 0 : 200);
     return () => {
       cancelled = true;
@@ -124,15 +134,49 @@ export default function FileEditor({
     try {
       // Format document before saving if a formatter is available
       await editorRef.current?.getAction("editor.action.formatDocument")?.run();
+      lastWrittenRef.current = valueRef.current;
       await invoke("write_file", { path, content: valueRef.current });
       setDirty(false);
       onDirtyChange?.(false);
+      void snapshotVersion(path, valueRef.current, "saved");
     } catch (e) {
       setError(String(e));
     } finally {
       setSaving(false);
     }
   };
+
+  // Auto-save (Settings): write 1 s after typing stops, without formatting so the
+  // caret never jumps. With it off, a pause still keeps the unsaved text as a version.
+  const [autoSave, setAutoSave] = useState(loadAutoSave);
+  useEffect(() => {
+    const on = () => setAutoSave(loadAutoSave());
+    window.addEventListener(AUTO_SAVE_EVENT, on);
+    return () => window.removeEventListener(AUTO_SAVE_EVENT, on);
+  }, []);
+  useEffect(() => {
+    if (!dirty || status !== "ready") return;
+    const t = setTimeout(() => {
+      const text = valueRef.current;
+      if (!autoSave) {
+        void snapshotVersion(path, text, "draft");
+        return;
+      }
+      lastWrittenRef.current = text;
+      invoke("write_file", { path, content: text })
+        .then(() => {
+          // Typing may have continued while the write was in flight.
+          if (valueRef.current === text) {
+            setDirty(false);
+            onDirtyChange?.(false);
+          }
+          void snapshotVersion(path, text, "saved");
+        })
+        .catch((e) => setError(String(e)));
+    }, autoSave ? AUTO_SAVE_MS : DRAFT_MS);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value, dirty, autoSave, status, path]);
 
 
   return (
