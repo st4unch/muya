@@ -6,6 +6,11 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.1.7] - 2026-10-16
+
+### Added
+- **Prompt history in the message box**: ↑ brings back what you sent before, ↓ goes forward again and finally back to what you were typing. Works across all agents; shell commands and agent prompts keep separate lists. ↑ only recalls when the caret is on the first line, so moving around in a multi-line message still works.
+
 ## [4.1.6] - 2026-10-16
 
 ### Changed
