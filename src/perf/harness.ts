@@ -1,4 +1,5 @@
-// Dev-only performance stress harness (v2). Activated only with VITE_APEX_PERF=1.
+// Dev-only performance stress harness (v2). Activated only with VITE_APEX_PERF=1
+// (full run) or VITE_APEX_PERF=spawn (terminal-open latency only).
 //
 // Goal: settle "is the freezing / terminal input lag the framework
 // (Tauri/WKWebView/IPC/PTY) or our own React render/paint work?" with numbers.
@@ -165,8 +166,101 @@ async function heavyCommandProbe(label: string, command: string, count: number) 
   };
 }
 
+
+// Time to open a terminal: pty_spawn round-trip and first output byte (the prompt).
+// "busy" adds `busy` sibling PTYs that print continuously — a stand-in for many live
+// Claude sessions redrawing — on top of whatever the app already has open.
+async function spawnLatencyProbe(label: string, samples: number, busy: number) {
+  const siblings: string[] = [];
+  for (let i = 0; i < busy; i++) {
+    const ch = new Channel<ArrayBuffer | { type: string }>();
+    ch.onmessage = () => {};
+    try {
+      const id = await invoke<string>("pty_spawn", { onEvent: ch, cols: 120, rows: 40 });
+      siblings.push(id);
+      await invoke("pty_write", { id, data: "while :; do ls -la /usr/bin | head -40; sleep 0.1; done\r" });
+    } catch { /* ignore */ }
+  }
+  if (busy) await sleep(1500);
+  const start = performance.now();
+  const spawnMs: number[] = [];
+  const firstByteMs: number[] = [];
+  for (let i = 0; i < samples; i++) {
+    const t0 = performance.now();
+    let first = -1;
+    const gotFirst = new Promise<void>((r) => {
+      const ch = new Channel<ArrayBuffer | { type: string }>();
+      ch.onmessage = (m) => { if (first < 0 && m instanceof ArrayBuffer) { first = performance.now() - t0; r(); } };
+      void invoke<string>("pty_spawn", { onEvent: ch, cols: 120, rows: 40 }).then((id) => {
+        spawnMs.push(performance.now() - t0);
+        void Promise.race([gotFirst, sleep(5000)]).then(() => invoke("pty_kill", { id }).catch(() => {}));
+      });
+    });
+    await Promise.race([gotFirst, sleep(5000)]);
+    if (first >= 0) firstByteMs.push(first);
+    await sleep(300);
+  }
+  const ll = within(loopLag, start, performance.now()).map((s) => s.lag);
+  for (const id of siblings) { try { await invoke("pty_kill", { id }); } catch { /* ignore */ } }
+  return {
+    phase: label,
+    busySiblings: siblings.length,
+    samples,
+    spawnMsP50: pct(spawnMs, 50), spawnMsMax: max(spawnMs),
+    firstByteMsP50: pct(firstByteMs, 50), firstByteMsMax: max(firstByteMs),
+    eventLoopLagP95: pct(ll, 95), eventLoopLagMax: max(ll),
+  };
+}
+
+
+// Time from "open one more tab" to its xterm being on screen, with `base` tabs already
+// open — the React side of opening a session (state update, re-render of every panel).
+async function tabOpenProbe(label: string, base: number, samples: number) {
+  const ms: number[] = [];
+  const commitMs: number[] = [];
+  for (let i = 0; i < samples; i++) {
+    window.__apexPerf?.openTerminals?.(base);
+    await sleep(1500);
+    const before = document.querySelectorAll(".xterm").length;
+    const c0 = commits.length;
+    const t0 = performance.now();
+    window.__apexPerf?.openTerminals?.(base + 1);
+    await new Promise<void>((r) => {
+      const tick = () => (document.querySelectorAll(".xterm").length > before || performance.now() - t0 > 5000 ? r() : requestAnimationFrame(tick));
+      requestAnimationFrame(tick);
+    });
+    ms.push(performance.now() - t0);
+    commitMs.push(commits.slice(c0).reduce((a, c) => a + c.dur, 0));
+  }
+  return { phase: label, baseTabs: base, samples, tabVisibleMsP50: pct(ms, 50), tabVisibleMsMax: max(ms), reactCommitMsP50: pct(commitMs, 50) };
+}
+
+async function runSpawnOnly() {
+  await sleep(5000);
+  const phases = [await spawnLatencyProbe("spawn_idle", 8, 0)];
+  window.__apexPerf?.openTerminals?.(24);
+  await sleep(4000);
+  phases.push(await spawnLatencyProbe("spawn_24_tabs_24_busy", 8, 24));
+  window.__apexPerf?.closeTerminals?.();
+  await sleep(1500);
+  phases.push(await tabOpenProbe("tab_open_0", 0, 5) as never);
+  phases.push(await tabOpenProbe("tab_open_24", 24, 5) as never);
+  phases.push(await tabOpenProbe("tab_open_48", 48, 5) as never);
+  window.__apexPerf?.closeTerminals?.();
+  const out = { generatedAt: new Date().toISOString(), phases };
+  try {
+    await invoke("write_file", { path: "/tmp/apex-perf-spawn.json", content: JSON.stringify(out, null, 2) });
+    // eslint-disable-next-line no-console
+    console.log("[apex-perf] __APEX_PERF_DONE__ -> /tmp/apex-perf-spawn.json");
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.log("[apex-perf] spawn report write failed", e, JSON.stringify(out));
+  }
+}
+
 export function startPerfHarness() {
-  if (import.meta.env.VITE_APEX_PERF !== "1") return;
+  const mode = import.meta.env.VITE_APEX_PERF;
+  if (mode !== "1" && mode !== "spawn") return;
   active = true;
   // eslint-disable-next-line no-console
   console.log("[apex-perf] v2 armed (VITE_APEX_PERF=1); settling…");
@@ -199,7 +293,7 @@ export function startPerfHarness() {
   };
   requestAnimationFrame(onFrame);
 
-  void run();
+  void (mode === "spawn" ? runSpawnOnly() : run());
 }
 
 async function observe(label: string, ms: number) {

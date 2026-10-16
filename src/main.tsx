@@ -30,7 +30,7 @@ window.addEventListener("unhandledrejection", (e) => {
   void invoke("frontend_log", { level: "error", message: `unhandledrejection: ${String(e.reason)}` }).catch(() => {});
 });
 
-const perf = import.meta.env.VITE_APEX_PERF === "1";
+const perf = import.meta.env.VITE_APEX_PERF === "1" || import.meta.env.VITE_APEX_PERF === "spawn";
 
 // Dev-only: record every App commit's actual duration so the harness can show
 // how much main-thread time each poll-driven re-render burns. No-op in prod.

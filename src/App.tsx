@@ -1624,7 +1624,7 @@ export default function App() {
   // inflate render load with synthetic branches to measure main-thread blocking.
   // No-op unless VITE_APEX_PERF=1 — stripped from prod builds.
   useEffect(() => {
-    if (import.meta.env.VITE_APEX_PERF !== "1") return;
+    if (import.meta.env.VITE_APEX_PERF !== "1" && import.meta.env.VITE_APEX_PERF !== "spawn") return;
     const synth = (i: number): GitBranchState => ({
       name: `perf/synthetic-${i}`,
       type: i % 3 === 0 ? "PRD" : i % 3 === 1 ? "WIP" : "OPEN",
