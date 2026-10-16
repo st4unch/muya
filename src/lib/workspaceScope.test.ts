@@ -1,6 +1,6 @@
 // Created by Claude — Classification: INTERNAL
 import { describe, it, expect } from "vitest";
-import { belongsTo, inScope, workspaceOf } from "./workspaceScope";
+import { belongsTo, inScope, workspaceOf, workspaceShortcut } from "./workspaceScope";
 
 const A = "/home/u/projects/muya";
 const B = "/home/u/projects/padas";
@@ -36,5 +36,27 @@ describe("workspace scope", () => {
     expect(workspaceOf({ cwd: "/home/u/projects/other" }, roots)).toBe("/home/u/projects");
     expect(workspaceOf({ cwd: "/tmp" }, roots)).toBeUndefined();
     expect(workspaceOf({}, roots)).toBeUndefined();
+  });
+});
+
+describe("workspaceShortcut", () => {
+  const ws = ["/w/a", "/w/b", "/w/c"];
+  const k = (code: string, mods: Partial<Record<"altKey" | "metaKey" | "ctrlKey" | "shiftKey", boolean>> = { altKey: true }) =>
+    ({ code, altKey: false, metaKey: false, ctrlKey: false, shiftKey: false, ...mods });
+  it("⌥N picks the Nth workspace", () => {
+    expect(workspaceShortcut(k("Digit1"), ws)).toBe("/w/a");
+    expect(workspaceShortcut(k("Digit3"), ws)).toBe("/w/c");
+  });
+  it("⌥0 picks all workspaces", () => {
+    expect(workspaceShortcut(k("Digit0"), ws)).toBe("all");
+    expect(workspaceShortcut(k("Digit0"), [])).toBeNull();
+  });
+  it("ignores numbers past the list, other modifiers and other keys", () => {
+    expect(workspaceShortcut(k("Digit4"), ws)).toBeNull();
+    expect(workspaceShortcut(k("Digit1", { altKey: true, metaKey: true }), ws)).toBeNull();
+    expect(workspaceShortcut(k("Digit1", { altKey: true, shiftKey: true }), ws)).toBeNull();
+    expect(workspaceShortcut(k("Digit1", { metaKey: true }), ws)).toBeNull();
+    expect(workspaceShortcut(k("KeyA"), ws)).toBeNull();
+    expect(workspaceShortcut(k("Numpad1"), ws)).toBeNull();
   });
 });

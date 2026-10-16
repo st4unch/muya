@@ -99,7 +99,7 @@ The left rail has nine screens: Control, Files, Sessions, Branches, Queue, Kanba
 
 | | |
 |---|---|
-| **Agents list** | Every agent grouped as *waiting* / *working* / *idle*, with pinned agents on top and a SPLITS group for split panes. Double-click a name to rename it. Workspaces scope the list, the grid, ⌘K and notifications. |
+| **Agents list** | Every agent grouped as *waiting* / *working* / *idle*, with pinned agents on top and a SPLITS group for split panes. Double-click a name to rename it. Workspaces scope the list, the grid, ⌘K and notifications. ⌘1–9 jumps to an agent, ⌥1–9 to a workspace (⌥0 = all). |
 | **Real terminals** | PTY-backed (`portable-pty` + xterm.js, 24-bit color). One persistent terminal per session — survives switching screens and layouts. Shift+Enter inserts a newline without submitting. |
 | **Claude and opencode** | New Agent starts Claude Code or opencode. Optionally give the agent its own `git worktree` (auto-created, `.env` copied). |
 | **Split and Grid** | ⌘⇧D splits a terminal in place (up to 8 panes; a running Claude session is forked). **Grid** shows several sessions side by side, each panel with its own session picker and a full-screen button. |

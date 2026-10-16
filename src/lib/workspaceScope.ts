@@ -47,3 +47,18 @@ export function workspaceOf(tab: ScopedTab, roots: readonly string[]): string | 
   }
   return best;
 }
+
+/** ⌥1–9 → the Nth workspace (header menu order), ⌥0 → "all". null when the key is not
+ *  one of these or no workspace sits at that number. Uses `code`, not `key`: on macOS
+ *  ⌥1 reports `key` "¡". */
+export function workspaceShortcut(
+  e: Pick<KeyboardEvent, "code" | "altKey" | "metaKey" | "ctrlKey" | "shiftKey">,
+  workspaces: readonly string[],
+): string | "all" | null {
+  if (!e.altKey || e.metaKey || e.ctrlKey || e.shiftKey) return null;
+  const m = /^Digit([0-9])$/.exec(e.code);
+  if (!m) return null;
+  const n = Number(m[1]);
+  if (n === 0) return workspaces.length > 0 ? "all" : null;
+  return workspaces[n - 1] ?? null;
+}
