@@ -162,7 +162,8 @@ ASSETS=("$ZIP")
 # the .zip stays for manual download.
 [ -f "$TARGZ" ] && ASSETS+=("$TARGZ")
 # The .pkg is the RECOMMENDED download for new users: it installs into
-# /Applications, so the app is never quarantined-and-opened-in-place and macOS
+# /Applications (all users) or ~/Applications (only me; an update stays where the
+# app already is), so the app is never quarantined-and-opened-in-place and macOS
 # never App-Translocates it. That matters because a translocated app is run from
 # a path that changes every launch, so every file-access permission the user
 # grants is filed against a copy that no longer exists — they get asked again,
