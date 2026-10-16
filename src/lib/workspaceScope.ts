@@ -50,15 +50,22 @@ export function workspaceOf(tab: ScopedTab, roots: readonly string[]): string | 
 
 /** ⌥1–9 → the Nth workspace (header menu order), ⌥0 → "all". null when the key is not
  *  one of these or no workspace sits at that number. Uses `code`, not `key`: on macOS
- *  ⌥1 reports `key` "¡". */
+ *  ⌥1 reports `key` "¡". But when ⌥N types a plain ASCII sign (Turkish/German/UK
+ *  layouts: ⌥3 "#", ⌥8 "[", ⌥9 "]"…) the keyboard needs it for typing — not a shortcut. */
 export function workspaceShortcut(
-  e: Pick<KeyboardEvent, "code" | "altKey" | "metaKey" | "ctrlKey" | "shiftKey">,
+  e: Pick<KeyboardEvent, "code" | "key" | "altKey" | "metaKey" | "ctrlKey" | "shiftKey">,
   workspaces: readonly string[],
 ): string | "all" | null {
   if (!e.altKey || e.metaKey || e.ctrlKey || e.shiftKey) return null;
+  if (typesAsciiSign(e.key)) return null;
   const m = /^Digit([0-9])$/.exec(e.code);
   if (!m) return null;
   const n = Number(m[1]);
   if (n === 0) return workspaces.length > 0 ? "all" : null;
   return workspaces[n - 1] ?? null;
+}
+
+/** A printable ASCII character other than a digit (what a layout types with ⌥N). */
+function typesAsciiSign(key: string | undefined): boolean {
+  return !!key && key.length === 1 && key >= "!" && key <= "~" && !(key >= "0" && key <= "9");
 }

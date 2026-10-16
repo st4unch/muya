@@ -811,16 +811,29 @@ export default function App() {
 
   /** Closed tabs for ⌘⇧T, newest last (lib/tabs.ts pushClosed / reopenSpec). */
   const closedTabsRef = useRef<ClosedTab[]>([]);
+  // Keys whose "Unsaved changes" question is on screen. A second ⌘W while it is up
+  // used to queue a second native sheet, left standing after the file was gone.
+  const confirmingCloseRef = useRef(new Set<string>());
   const closeTerminal = async (key: string) => {
-    const list = openTerminalsRef.current;
-    const tab = list.find((t) => t.key === key);
-    if (dirtyTabsRef.current[key]) {
-      const ok = await confirmDialog(
-        `"${tab?.name ?? key}" has unsaved changes. Close anyway?`,
-        { title: "Unsaved changes", kind: "warning", okLabel: "Close", cancelLabel: "Cancel" }
-      );
+    const asked = !!dirtyTabsRef.current[key];
+    if (asked) {
+      if (confirmingCloseRef.current.has(key)) return;
+      confirmingCloseRef.current.add(key);
+      const name = openTerminalsRef.current.find((t) => t.key === key)?.name ?? key;
+      let ok = false;
+      try {
+        ok = await confirmDialog(`"${name}" has unsaved changes. Close anyway?`, {
+          title: "Unsaved changes", kind: "warning", okLabel: "Close", cancelLabel: "Cancel",
+        });
+      } finally {
+        confirmingCloseRef.current.delete(key);
+      }
       if (!ok) return;
     }
+    // Read after the question: the list may have changed while it was up.
+    const list = openTerminalsRef.current;
+    const tab = list.find((t) => t.key === key);
+    if (asked && !tab) return; // already closed another way while we asked
     // If this was an agent-opened ssh_open session, tell the broker it's gone so a
     // later ssh_send to this id is refused (not written to a recycled/dead PTY).
     // Remember it for ⌘⇧T, at the folder the shell is in NOW (refs: this runs from

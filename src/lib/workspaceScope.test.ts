@@ -41,8 +41,8 @@ describe("workspace scope", () => {
 
 describe("workspaceShortcut", () => {
   const ws = ["/w/a", "/w/b", "/w/c"];
-  const k = (code: string, mods: Partial<Record<"altKey" | "metaKey" | "ctrlKey" | "shiftKey", boolean>> = { altKey: true }) =>
-    ({ code, altKey: false, metaKey: false, ctrlKey: false, shiftKey: false, ...mods });
+  const k = (code: string, mods: Partial<Record<"altKey" | "metaKey" | "ctrlKey" | "shiftKey", boolean>> = { altKey: true }, key = "¡") =>
+    ({ code, key, altKey: false, metaKey: false, ctrlKey: false, shiftKey: false, ...mods });
   it("⌥N picks the Nth workspace", () => {
     expect(workspaceShortcut(k("Digit1"), ws)).toBe("/w/a");
     expect(workspaceShortcut(k("Digit3"), ws)).toBe("/w/c");
@@ -58,5 +58,11 @@ describe("workspaceShortcut", () => {
     expect(workspaceShortcut(k("Digit1", { metaKey: true }), ws)).toBeNull();
     expect(workspaceShortcut(k("KeyA"), ws)).toBeNull();
     expect(workspaceShortcut(k("Numpad1"), ws)).toBeNull();
+  });
+  it("leaves ⌥N alone when the layout types a sign with it (Turkish ⌥8 = \"[\")", () => {
+    expect(workspaceShortcut(k("Digit8", { altKey: true }, "["), ["1", "2", "3", "4", "5", "6", "7", "8"])).toBeNull();
+    expect(workspaceShortcut(k("Digit3", { altKey: true }, "#"), ws)).toBeNull();
+    expect(workspaceShortcut(k("Digit2", { altKey: true }, "™"), ws)).toBe("/w/b"); // US layout
+    expect(workspaceShortcut(k("Digit2", { altKey: true }, "2"), ws)).toBe("/w/b");
   });
 });
