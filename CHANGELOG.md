@@ -6,6 +6,12 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.1.9] - 2026-10-16
+
+### Fixed
+- Closing an edited file twice in a row (⌘W pressed again while "Unsaved changes" was showing) no longer leaves a second, orphaned "Unsaved changes" window on screen after the file is closed.
+- On Turkish, German, UK and similar keyboards, characters typed with ⌥ and a number (such as `#`, `$`, `[`, `]`, `|`) are typed again in files and terminals. The ⌥1–9 workspace shortcuts no longer swallow them; they still switch workspaces on layouts where ⌥ and a number types no plain sign.
+
 ## [4.1.8] - 2026-10-16
 
 ### Added
