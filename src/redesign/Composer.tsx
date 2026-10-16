@@ -1,7 +1,7 @@
 // Created by Claude — Classification: INTERNAL
 //
 // Message box at the bottom of Control (PROMPT.md §3). Controlled textarea:
-// Enter sends, Shift+Enter inserts a newline. The mode chip switches to the
+// Enter sends, Shift+Enter inserts a newline, ↑/↓ recall earlier sends. The mode chip switches to the
 // danger palette only in bypass mode (Shift+Tab cycles modes — exposed as a
 // callback, the actual cycle order is the caller's call).
 
@@ -12,6 +12,7 @@ import { messageHint, shortName } from "./text";
 import { SlashCommandsPopover } from "./SlashCommandsPopover";
 import { useSlashCommands } from "./useSlashCommands";
 import type { SlashAgent } from "./slashBuiltins";
+import { loadHistory, pushHistory, saveHistory, stepHistory, type HistoryCursor } from "./composerHistory";
 
 export interface ComposerProps {
   /** "shell" when no agent CLI is running in the terminal (see AgentVM.agentRunning). */
@@ -59,11 +60,41 @@ export function Composer({ agentName, value, onChange, onSend, mode, onCycleMode
   // A plain shell runs whatever is sent as a command (live: an English sentence went
   // to zsh and ran `write`). Say where the text goes, and drop the agent-only controls.
   const shell = target === "shell";
+  // ↑/↓ recall earlier sends (docs/prd-composer-history.md). Read fresh on every use so
+  // all Composers (one per agent) share the list.
+  const historyKind = shell ? "shell" : "agent";
+  const cursorRef = useRef<HistoryCursor>({ index: null, draft: "" });
+  function send() {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    saveHistory(historyKind, pushHistory(loadHistory(historyKind), trimmed));
+    cursorRef.current = { index: null, draft: "" };
+    onSend(trimmed);
+  }
+  function recall(e: KeyboardEvent<HTMLTextAreaElement>, dir: "up" | "down") {
+    const ta = e.currentTarget;
+    if (ta.selectionStart !== ta.selectionEnd) return;
+    const before = value.slice(0, ta.selectionStart);
+    const after = value.slice(ta.selectionEnd);
+    if (dir === "up" ? before.includes("\n") : after.includes("\n")) return;
+    const step = stepHistory(loadHistory(historyKind), cursorRef.current, dir, value);
+    if (!step) return;
+    e.preventDefault();
+    cursorRef.current = step.cursor;
+    onChange(step.text);
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (el) el.setSelectionRange(step.text.length, step.text.length);
+    });
+  }
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      const trimmed = value.trim();
-      if (trimmed) onSend(trimmed);
+      send();
+      return;
+    }
+    if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.shiftKey && !e.metaKey && !e.altKey && !e.ctrlKey && slashAnchor === null) {
+      recall(e, e.key === "ArrowUp" ? "up" : "down");
       return;
     }
     if (e.key === "Tab" && e.shiftKey && !shell) {
@@ -150,14 +181,11 @@ export function Composer({ agentName, value, onChange, onSend, mode, onCycleMode
           </button>
           )}
           <div style={{ flexGrow: 1 }} />
-          <span style={{ fontSize: 12, color: "var(--text-muted)", flexShrink: 0 }}>{shell ? "⏎ run · ⇧⏎ newline" : "⏎ send · ⇧⏎ newline"}</span>
+          <span style={{ fontSize: 12, color: "var(--text-muted)", flexShrink: 0 }}>{shell ? "⏎ run · ⇧⏎ newline · ↑ history" : "⏎ send · ⇧⏎ newline · ↑ history"}</span>
           <button
             type="button"
             aria-label="Send"
-            onClick={() => {
-              const trimmed = value.trim();
-              if (trimmed) onSend(trimmed);
-            }}
+            onClick={send}
             className="rd-icon-btn"
             style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: "var(--primary-bg)", color: "var(--primary-fg)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
           >
