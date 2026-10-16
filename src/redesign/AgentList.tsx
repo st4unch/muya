@@ -278,9 +278,15 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
 
       {filesSection}
 
-      <div style={{ padding: "12px 16px", borderTop: "1px solid var(--border)", fontSize: 12, color: "var(--text-muted)", display: "flex", justifyContent: "space-between" }}>
-        <span>Drag to reorder</span>
-        <span style={{ fontFamily: "var(--font-mono)" }}>⌘1–7</span>
+      <div style={{ padding: "10px 16px", borderTop: "1px solid var(--border)", fontSize: 12, color: "var(--text-muted)", display: "flex", flexDirection: "column", gap: 4 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+          <span>Drag to reorder</span>
+          <span style={{ fontFamily: "var(--font-mono)" }}>⌘1–9</span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+          <span>Switch workspace</span>
+          <span style={{ fontFamily: "var(--font-mono)" }} title="⌥0 shows all workspaces">⌥1–9 · ⌥0 all</span>
+        </div>
       </div>
     </aside>
   );
