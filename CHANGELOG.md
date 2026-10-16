@@ -6,6 +6,11 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.1.6] - 2026-10-16
+
+### Changed
+- The agent list's footer now also shows the workspace shortcuts (⌥1–9, ⌥0 for all), and the agent shortcut reads ⌘1–9 (it said ⌘1–7, but ⌘8 and ⌘9 already worked).
+
 ## [4.1.5] - 2026-10-16
 
 ### Added
