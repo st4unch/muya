@@ -31,8 +31,6 @@ export interface InspectorProps {
 const CODE_COLOR: Record<string, string> = { M: "var(--warning)", A: "var(--success)", D: "var(--danger-text)" };
 
 export function Inspector({ waitingAgents, onApprove, onDeny, onOpen, activeTab, onTabChange, inspector, onReviewDiff, onCommit, onOpenChange, width, resizeHandle, activitySlot }: InspectorProps) {
-  const visibleChanges = inspector.changes.slice(0, 3);
-  const moreCount = inspector.changes.length - visibleChanges.length;
   const hasCollisions = inspector.collisions.length > 0;
 
   return (
@@ -102,18 +100,13 @@ export function Inspector({ waitingAgents, onApprove, onDeny, onOpen, activeTab,
 
       {activeTab === "changes" && (
         <>
-          <div style={{ padding: "10px 8px", display: "flex", flexDirection: "column", gap: 2, fontFamily: "var(--font-mono)", fontSize: 12, overflow: "auto", minHeight: 0 }}>
-            {visibleChanges.map((change) => (
-              <button key={change.path} type="button" onClick={() => onOpenChange?.(change.path)} className="rd-change-row" style={{ display: "flex", gap: 10, alignItems: "center", padding: "7px 8px", borderRadius: 6, border: "none", background: "transparent", color: "var(--text)", textAlign: "left", fontFamily: "inherit", fontSize: "inherit" }}>
+          <div style={{ padding: "10px 8px", display: "flex", flexDirection: "column", gap: 2, fontFamily: "var(--font-mono)", fontSize: 12, overflow: "auto", minHeight: 0, maxHeight: "45vh" }}>
+            {inspector.changes.map((change) => (
+              <button key={change.path} type="button" onClick={() => onOpenChange?.(change.path)} title={`Review ${change.path}`} className="rd-change-row" style={{ display: "flex", gap: 10, alignItems: "center", padding: "7px 8px", borderRadius: 6, border: "none", background: "transparent", color: "var(--text)", textAlign: "left", fontFamily: "inherit", fontSize: "inherit" }}>
                 <span style={{ color: CODE_COLOR[change.code] ?? "var(--text-muted)", width: 12, flexShrink: 0 }}>{change.code}</span>
                 <span className="rd-ellipsis" style={{ flexGrow: 1 }}>{change.path}</span>
               </button>
             ))}
-            {moreCount > 0 && (
-              <button type="button" className="rd-change-row" style={{ display: "flex", gap: 10, alignItems: "center", padding: "7px 8px", borderRadius: 6, border: "none", background: "transparent", color: "var(--text-muted)", textAlign: "left", fontFamily: "var(--font-sans)", fontSize: 12 }}>
-                + {plural(moreCount, "more file", "more files")}
-              </button>
-            )}
           </div>
           <div style={{ margin: "4px 16px 0", display: "flex", gap: 8, flexShrink: 0 }}>
             <button type="button" onClick={onReviewDiff} disabled={inspector.changes.length === 0} className="rd-btn2" style={{ flexGrow: 1, height: 32, borderRadius: 7, border: "1px solid var(--border-control)", background: "var(--bg-control)", color: "var(--text)", fontSize: 13 }}>

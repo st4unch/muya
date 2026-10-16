@@ -311,7 +311,6 @@ const EMPTY_STRING = new Set([
   "export_session_markdown",
   "install_muya_plugin",
   "kill_session",
-  "read_head_file",
   "read_session_transcript",
   "remove_worktree",
   "stop_agent",
@@ -348,6 +347,12 @@ function handleInvoke(cmd: string, rawPayload?: unknown): unknown {
       return [{ name: "notes.ts", path: `${String(payload.path ?? "/mock")}/notes.ts`, isDirectory: false, is_directory: false }];
     case "read_file":
       return "const answer = 42;\nexport default answer;\n";
+    case "read_head_file":
+      return "const answer = 41;\nexport default answer;\n";
+    case "git_branch_file_pair": {
+      const path = String(payload.path ?? "");
+      return [`// ${path} at base\nexport const v = 1;\n`, `// ${path} on branch\nexport const v = 2;\nexport const added = true;\n`];
+    }
 
     // --- agents / sessions -------------------------------------------------
     case "session_touched_files":

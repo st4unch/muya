@@ -16,6 +16,7 @@ import SessionsPage from "./components/SessionsPage";
 import BranchesPage from "./components/BranchesPage";
 import ViewerErrorBoundary from "./components/ViewerErrorBoundary";
 const FileEditor = lazy(() => import("./components/FileEditor"));
+const ReviewChanges = lazy(() => import("./components/ReviewChanges").then((m) => ({ default: m.ReviewChanges })));
 const MarkdownView = lazy(() => import("./components/MarkdownView"));
 const ImageViewer = lazy(() => import("./components/ImageViewer"));
 const PdfViewer = lazy(() => import("./components/PdfViewer"));
@@ -66,6 +67,8 @@ import { deliveryWrites, SUBMIT_DELAY_MS, type RemoteSender } from "./lib/remote
 import { approvableIds, AUTO_APPROVE_EVENT, keyOfApprovableId, AUTO_APPROVE_MS, loadAutoApprove, saveAutoApprove } from "./lib/autoApprove";
 import { AutoAllowSuggest } from "./redesign/AutoAllowSuggest";
 import { historyKeyOf } from "./lib/termHistory";
+import { branchSource, workingTreeSource } from "./lib/reviewSources";
+import type { ReviewSource } from "./components/ReviewChanges";
 
 // Types matching the user's workflow model
 interface AgentSession {
@@ -1741,6 +1744,8 @@ export default function App() {
     // does not also reach Claude (where Esc would reject the prompt).
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
+      // An open dialog is on top: Esc is for it, not for this toast.
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       setAutoAllowSuggest(null);
@@ -1812,19 +1817,25 @@ export default function App() {
 
   const absoluteInRepo = (rel: string) => rel.startsWith("/") ? rel : `${(selectedCwd ?? "").replace(/\/+$/, "")}/${rel}`;
   const openChange = (rel: string) => {
-    if (!selectedCwd || rel.endsWith("/")) return;
-    openFile(absoluteInRepo(rel));
+    if (selectedCwd) openWorkingReview(selectedCwd, absoluteInRepo(rel));
+  };
+  // Review changes dialog: every changed file, one diff at a time (docs/prd-review-changes.md).
+  const [review, setReview] = useState<{ source: ReviewSource; start: number } | null>(null);
+  const openWorkingReview = (root: string, startPath?: string) => {
+    const name = root.replace(/\/+$/, "").split("/").pop() ?? root;
+    workingTreeSource(root, `Uncommitted changes · ${name}`)
+      .then((source) => {
+        const at = startPath ? source.files.findIndex((f) => f.path === startPath || f.abs === startPath) : -1;
+        const first = source.files.findIndex((f) => !f.path.endsWith("/"));
+        setReview({ source, start: at >= 0 ? at : Math.max(0, first) });
+      })
+      .catch(() => {});
+  };
+  const openBranchReview = (repo: string, base: string, branch: string, files: string[], startPath?: string) => {
+    setReview({ source: branchSource(repo, base, branch, files), start: Math.max(0, startPath ? files.indexOf(startPath) : 0) });
   };
   const reviewDiff = () => {
-    const first = changes.find((c) => !c.path.endsWith("/"));
-    if (!first || !selectedCwd) return;
-    const abs = absoluteInRepo(first.path);
-    const existing = openTerminalsRef.current.find((t) => t.key === `edit:${abs}`);
-    if (existing) {
-      setViewFileKey(existing.key);
-      setControlMode("files");
-    } else openEditor(abs, { diff: true });
-    showControl();
+    if (selectedCwd) openWorkingReview(selectedCwd);
   };
   // Commit…: put `git commit` in the terminal, unsent, and focus it.
   const startCommit = () => {
@@ -2112,7 +2123,7 @@ export default function App() {
 
   // ⌘K / ⌘1–9 / ⌥0–9 / grid shortcuts. Capture phase: xterm owns ⌘K (kill-to-EOL) and swallows
   // keys typed into a focused terminal, so a bubbling listener would never see them.
-  const overlayOpen = paletteOpen || broadcastOpen || swapKey !== null || menu !== null || renameKey !== null || settingsOpen || newAgentOpen;
+  const overlayOpen = review !== null || paletteOpen || broadcastOpen || swapKey !== null || menu !== null || renameKey !== null || settingsOpen || newAgentOpen;
   const shortcutRef = useRef({ screen, view, selectAgent, respond, maximize: maximizePanel, focused: focusedPanelKey, exitGrid, overlayOpen, controlMode, split: addSplitPane, selectWorkspace });
   shortcutRef.current = { screen, view, selectAgent, respond, maximize: maximizePanel, focused: focusedPanelKey, exitGrid, overlayOpen, controlMode, split: addSplitPane, selectWorkspace };
   useEffect(() => {
@@ -2471,6 +2482,8 @@ export default function App() {
                   onWorktreeRemoved={(p) => setWorktrees((prev) => prev.filter((x) => x !== p))}
                   inspect={branchInspect}
                   onClearInspect={() => setBranchInspect(null)}
+                  onReviewWorking={(root) => openWorkingReview(root)}
+                  onReviewBranch={openBranchReview}
                 />
               )}
             </div>
@@ -2754,6 +2767,17 @@ export default function App() {
         onLaunch={launchAgent}
       />
 
+      {review && (
+        <Suspense fallback={null}>
+          <ReviewChanges
+            source={review.source}
+            startIndex={review.start}
+            theme={effectiveTheme === "dark" ? "dark" : "light"}
+            onClose={() => setReview(null)}
+            onOpenFile={(abs) => openFile(abs)}
+          />
+        </Suspense>
+      )}
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} themePreference={themeMode} onThemePreferenceChange={setThemeMode} />
 
       <ScheduledPromptModal

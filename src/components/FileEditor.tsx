@@ -1,27 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import Editor, { DiffEditor, loader } from "@monaco-editor/react";
+import Editor, { DiffEditor } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 import { langFromPath, monacoModelPath } from "../lib/format";
-import editorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
-import jsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
-import cssWorker from "monaco-editor/esm/vs/language/css/css.worker?worker";
-import htmlWorker from "monaco-editor/esm/vs/language/html/html.worker?worker";
-import tsWorker from "monaco-editor/esm/vs/language/typescript/ts.worker?worker";
-
-// Use the locally-bundled Monaco (no CDN fetch — matters for an offline, security-
-// conscious desktop app) and wire its web workers through Vite.
-self.MonacoEnvironment = {
-  getWorker(_: unknown, label: string) {
-    if (label === "json") return new jsonWorker();
-    if (label === "css" || label === "scss" || label === "less") return new cssWorker();
-    if (label === "html" || label === "handlebars" || label === "razor")
-      return new htmlWorker();
-    if (label === "typescript" || label === "javascript") return new tsWorker();
-    return new editorWorker();
-  },
-};
-loader.config({ monaco });
+import "./monacoSetup";
 
 /** Monaco-backed file editor. Loads via the backend `read_file`; Cmd/Ctrl+S saves
  *  via `write_file`. Language is inferred from the file path. */

@@ -496,6 +496,46 @@ pub fn branch_detail(repo: String, branch: String) -> Result<BranchDetail, Strin
     })
 }
 
+/// Both sides of one file in a branch's change set: the content at the merge-base with
+/// `base` and at the branch tip. A side where the file doesn't exist is "" (added /
+/// deleted). Refs are checked as `refs/heads/<name>` (no option injection); `path` must
+/// be repo-relative without `..`.
+#[tauri::command(async)]
+pub fn git_branch_file_pair(
+    repo: String,
+    base: String,
+    branch: String,
+    path: String,
+) -> Result<(String, String), String> {
+    if path.is_empty()
+        || path.starts_with('/')
+        || path.starts_with('-')
+        || path.split('/').any(|c| c == "..")
+    {
+        return Err("invalid path".into());
+    }
+    let refs: Vec<String> = [&base, &branch].iter().map(|b| format!("refs/heads/{b}")).collect();
+    for (name, r) in [&base, &branch].iter().zip(&refs) {
+        if git_capture(&repo, &["rev-parse", "--verify", "--quiet", r]).is_none() {
+            return Err(format!("unknown branch: {name}"));
+        }
+    }
+    let mb = git_capture(&repo, &["merge-base", &refs[0], &refs[1]])
+        .ok_or("no common ancestor")?;
+    let show = |rev: &str| -> String {
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["show", &format!("{rev}:{path}")])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .unwrap_or_default()
+    };
+    Ok((show(&mb), show(&refs[1])))
+}
+
 fn git_capture(repo: &str, args: &[&str]) -> Option<String> {
     let out = Command::new("git")
         .arg("-C")
@@ -1670,6 +1710,35 @@ pub async fn install_muya_plugin() -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn branch_file_pair_sides() {
+        let d = tempfile::tempdir().unwrap();
+        let r = d.path().to_str().unwrap().to_string();
+        let git = |a: &[&str]| {
+            assert!(Command::new("git").arg("-C").arg(&r).args(a).output().unwrap().status.success(), "{a:?}");
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["config", "user.email", "t@example.com"]);
+        git(&["config", "user.name", "t"]);
+        std::fs::write(d.path().join("a.txt"), "one\n").unwrap();
+        std::fs::write(d.path().join("gone.txt"), "bye\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-qm", "base"]);
+        git(&["checkout", "-qb", "feat"]);
+        std::fs::write(d.path().join("a.txt"), "two\n").unwrap();
+        std::fs::write(d.path().join("new.txt"), "hi\n").unwrap();
+        std::fs::remove_file(d.path().join("gone.txt")).unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-qm", "feat"]);
+        let pair = |p: &str| git_branch_file_pair(r.clone(), "main".into(), "feat".into(), p.into());
+        assert_eq!(pair("a.txt").unwrap(), ("one\n".into(), "two\n".into()));
+        assert_eq!(pair("new.txt").unwrap(), ("".into(), "hi\n".into()));
+        assert_eq!(pair("gone.txt").unwrap(), ("bye\n".into(), "".into()));
+        assert!(pair("../x").is_err());
+        assert!(pair("/etc/passwd").is_err());
+        assert!(git_branch_file_pair(r.clone(), "--output=/tmp/x".into(), "feat".into(), "a.txt".into()).is_err());
+    }
+
 
     #[test]
     fn view_bytes_reads_files_and_refuses_dirs_and_oversize() {

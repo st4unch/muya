@@ -48,7 +48,8 @@ describe("Inspector", () => {
     expect(screen.queryByText("NEEDS APPROVAL")).not.toBeInTheDocument();
   });
 
-  it("shows the first 3 changes and a '+ N more files' row", () => {
+  it("lists every change and a row click opens the review at that file", () => {
+    const onOpenChange = vi.fn();
     render(
       <Inspector
         waitingAgents={[]}
@@ -60,10 +61,15 @@ describe("Inspector", () => {
         inspector={previewInspector}
         onReviewDiff={vi.fn()}
         onCommit={vi.fn()}
+        onOpenChange={onOpenChange}
       />,
     );
     expect(screen.getByText("src-tauri/src/pty.rs")).toBeInTheDocument();
-    expect(screen.getByText("+ 11 more files")).toBeInTheDocument();
+    expect(screen.queryByText(/more files/)).toBeNull();
+    const rows = screen.getAllByTitle(/^Review /);
+    expect(rows).toHaveLength(previewInspector.changes.length);
+    fireEvent.click(rows[rows.length - 1]);
+    expect(onOpenChange).toHaveBeenCalledWith(previewInspector.changes[previewInspector.changes.length - 1].path);
   });
 
   it("switching tabs calls onTabChange", () => {

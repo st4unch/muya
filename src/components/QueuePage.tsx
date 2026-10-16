@@ -61,6 +61,8 @@ export default function QueuePage({
   onRegisterRefresh,
   inspect,
   onClearInspect,
+  onReviewWorking,
+  onReviewBranch,
 }: {
   paths: string[];
   worktrees?: string[];
@@ -72,7 +74,19 @@ export default function QueuePage({
   /** A branch picked in the sidebar to inspect (commits / diff vs base). */
   inspect?: { repo: string; name: string } | null;
   onClearInspect?: () => void;
+  /** Open the Review changes dialog on a repo's uncommitted changes. */
+  onReviewWorking?: (root: string) => void;
+  /** Open it on a branch's changes since `base` (optionally at one file). */
+  onReviewBranch?: (repo: string, base: string, branch: string, files: string[], startPath?: string) => void;
 }) {
+  // "N changed" → the branch's file list, then the review dialog.
+  const reviewBranchOf = (repo: string, branch: string) => {
+    if (!onReviewBranch) return;
+    invoke<BranchDetail>("branch_detail", { repo, branch })
+      .then((d) => { if (d.base && d.changedFiles.length) onReviewBranch(repo, d.base, branch, d.changedFiles); })
+      .catch(() => {});
+  };
+  const linkCls = "underline decoration-dotted underline-offset-2 hover:text-indigo-600 dark:hover:text-indigo-400 cursor-pointer";
   const [projects, setProjects] = useState<ProjectStatus[]>([]);
   const [loading, setLoading] = useState(false);
   const [queue, setQueue] = useState<string[]>(() => {
@@ -295,9 +309,16 @@ export default function QueuePage({
                     </h3>
                     <div className="space-y-0.5">
                       {detail.changedFiles.map((f) => (
-                        <div key={f} className="text-[10px] font-mono text-neutral-600 dark:text-neutral-400 truncate" title={f}>
+                        <button
+                          key={f}
+                          type="button"
+                          disabled={!onReviewBranch || !inspect || !detail.base}
+                          onClick={() => inspect && onReviewBranch?.(inspect.repo, detail.base, detail.name, detail.changedFiles, f)}
+                          className="block w-full text-left text-[10px] font-mono text-neutral-600 dark:text-neutral-400 truncate hover:text-indigo-600 dark:hover:text-indigo-400 cursor-pointer"
+                          title={`Review ${f}`}
+                        >
                           {f}
-                        </div>
+                        </button>
                       ))}
                     </div>
                   </div>
@@ -352,8 +373,16 @@ export default function QueuePage({
                     </div>
                     <div className="flex items-center gap-3 mt-1 text-[10px] font-mono text-neutral-500 dark:text-neutral-400">
                       <span>↑{p.ahead} ↓{p.behind}</span>
-                      <span>{p.changed} changed</span>
-                      {p.dirty > 0 && <span className="text-amber-600 dark:text-amber-400">{p.dirty} uncommitted</span>}
+                      {p.changed > 0 && onReviewBranch ? (
+                        <button type="button" className={linkCls} title="Review the branch's changes" onClick={() => reviewBranchOf(p.path, p.branch)}>{p.changed} changed</button>
+                      ) : (
+                        <span>{p.changed} changed</span>
+                      )}
+                      {p.dirty > 0 && (onReviewWorking ? (
+                        <button type="button" className={`text-amber-600 dark:text-amber-400 ${linkCls}`} title="Review uncommitted changes" onClick={() => onReviewWorking(p.path)}>{p.dirty} uncommitted</button>
+                      ) : (
+                        <span className="text-amber-600 dark:text-amber-400">{p.dirty} uncommitted</span>
+                      ))}
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
@@ -428,7 +457,14 @@ export default function QueuePage({
                     <FolderGit2 className="h-3 w-3" /> {shortCwd(p.path)}
                   </span>
                   <span>↑{p.ahead} ↓{p.behind}</span>
-                  <span>{p.changed} changed</span>
+                  {p.changed > 0 && onReviewBranch ? (
+                    <button type="button" className={linkCls} title="Review the branch's changes" onClick={() => reviewBranchOf(p.path, p.branch)}>{p.changed} changed</button>
+                  ) : (
+                    <span>{p.changed} changed</span>
+                  )}
+                  {p.dirty > 0 && onReviewWorking && (
+                    <button type="button" className={`text-amber-600 dark:text-amber-400 ${linkCls}`} title="Review uncommitted changes" onClick={() => onReviewWorking(p.path)}>{p.dirty} uncommitted</button>
+                  )}
                   <span className="flex items-center gap-0.5">
                     <Clock className="h-2.5 w-2.5" /> {relTime(p.lastActivity)}
                   </span>

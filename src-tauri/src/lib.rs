@@ -425,6 +425,7 @@ pub fn run() {
             fs::create_dir,
             fs::path_kind,
             fs::read_head_file,
+            fs::git_branch_file_pair,
             fs::create_worktree,
             fs::remove_worktree,
             fs::list_branches,
