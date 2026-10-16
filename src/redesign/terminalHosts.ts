@@ -31,9 +31,50 @@ export function createHost(key: string): HTMLDivElement {
   return host;
 }
 
+/** Move a host, telling whatever has the keyboard inside it.
+ *
+ *  WebKit (the macOS webview) fires no blur when a focused element is moved in the DOM:
+ *  focus silently drops to <body> while Monaco and xterm still believe they have it.
+ *  Monaco then ignored the next click into the file (it thought it was focused), and an
+ *  IME composition left open (⌥ accents, press-and-hold) never ended, so it dropped
+ *  every key and Enter until the file was closed — only paste got through. Blur first so
+ *  they hear about it, and hand the focus back when the host is still on screen (its
+ *  slot was only re-created). */
+function moveHost(host: HTMLElement, target: HTMLElement, onScreen: boolean): void {
+  const doc = host.ownerDocument;
+  const active = doc.activeElement;
+  let had: HTMLElement | null = null;
+  if (active instanceof HTMLElement && host.contains(active)) {
+    had = active;
+    active.blur();
+  } else if (lastFocus.el && host.contains(lastFocus.el)) {
+    // React already removed the old slot, and the focus went with it, unannounced.
+    had = lastFocus.el;
+    had.dispatchEvent(new FocusEvent("blur"));
+    had.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+  }
+  lastFocus.el = null;
+  target.appendChild(host);
+  const free = !doc.activeElement || doc.activeElement === doc.body;
+  if (had && onScreen && free) had.focus({ preventScroll: true });
+}
+
+/** The element holding the keyboard, as long as it has not announced losing it — so a
+ *  focus that vanished with a removed node (no blur in WebKit) can still be found. */
+const lastFocus: { el: HTMLElement | null; doc: Document | null } = { el: null, doc: null };
+function trackFocus(doc: Document): void {
+  if (lastFocus.doc === doc) return;
+  lastFocus.doc = doc;
+  const a = doc.activeElement;
+  lastFocus.el = a instanceof HTMLElement && a !== doc.body ? a : null;
+  doc.addEventListener("focusin", (e) => { lastFocus.el = e.target instanceof HTMLElement ? e.target : null; }, true);
+  doc.addEventListener("focusout", (e) => { if (e.target === lastFocus.el) lastFocus.el = null; }, true);
+}
+
 /** Move every host into the slot that names it, or back into the pool.
  *  Returns the keys that ended up in a slot (i.e. are on screen). */
 export function adoptHosts(hosts: Map<string, HTMLElement>, pool: HTMLElement, root: ParentNode = document): Set<string> {
+  trackFocus(pool.ownerDocument);
   const slots = new Map<string, HTMLElement>();
   root.querySelectorAll<HTMLElement>("[data-terminal-slot]").forEach((el) => {
     const key = el.dataset.terminalSlot;
@@ -43,7 +84,7 @@ export function adoptHosts(hosts: Map<string, HTMLElement>, pool: HTMLElement, r
   for (const [key, host] of hosts) {
     const slot = slots.get(key);
     const target = slot ?? pool;
-    if (host.parentElement !== target) target.appendChild(host);
+    if (host.parentElement !== target) moveHost(host, target, !!slot);
     if (slot) {
       adopted.add(key);
       if (getComputedStyle(slot).position === "static") slot.style.position = "relative";

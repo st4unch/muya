@@ -345,6 +345,8 @@ function handleInvoke(cmd: string, rawPayload?: unknown): unknown {
     // real Monaco editor ("Open in Muya" flows) ---------------------------------
     case "list_dir":
       return [{ name: "notes.ts", path: `${String(payload.path ?? "/mock")}/notes.ts`, isDirectory: false, is_directory: false }];
+    case "spotlight_search":
+      return []; // "On this Mac" palette hits — none in the preview
     case "read_file":
       return "const answer = 42;\nexport default answer;\n";
     case "read_head_file":

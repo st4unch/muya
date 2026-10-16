@@ -4,7 +4,15 @@ import Editor, { DiffEditor } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 import { langFromPath, monacoModelPath } from "../lib/format";
 import "./monacoSetup";
+import { appModalOpen } from "../lib/modalOpen";
 import { AUTO_SAVE_EVENT, AUTO_SAVE_MS, DRAFT_MS, loadAutoSave, snapshotVersion } from "../lib/fileVersions";
+
+/** Nobody visible holds the keyboard: it sits on the page, or in a terminal parked
+ *  off screen (a closing dialog hands it back to whatever had it before). */
+function keyboardIsFree(): boolean {
+  const a = document.activeElement;
+  return !a || a === document.body || !!a.closest("[aria-hidden='true']");
+}
 
 /** Monaco-backed file editor. Loads via the backend `read_file`; Cmd/Ctrl+S saves
  *  via `write_file`. Language is inferred from the file path. */
@@ -178,6 +186,29 @@ export default function FileEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value, dirty, autoSave, status, path]);
 
+  // Opening or picking a file hands it the keyboard, as picking a terminal does. Before,
+  // keys went to the page until the operator clicked into the text.
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const focusTimerRef = useRef<number | undefined>(undefined);
+  const focusEditor = (tries = 20) => {
+    window.clearTimeout(focusTimerRef.current);
+    const editor = editorRef.current;
+    if (!editor || !activeRef.current) return;
+    // The ⌘K palette (or another dialog) is still closing: wait for it to go.
+    if (appModalOpen()) {
+      if (tries > 0) focusTimerRef.current = window.setTimeout(() => focusEditor(tries - 1), 50);
+      return;
+    }
+    if (keyboardIsFree()) editor.focus();
+  };
+  // A passive effect runs after App's layout effect has moved this host on screen.
+  useEffect(() => {
+    if (active && mode === "edit" && status === "ready") focusEditor();
+    return () => window.clearTimeout(focusTimerRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, mode, status]);
+
 
   return (
     <div className="flex flex-col h-full w-full">
@@ -310,6 +341,7 @@ export default function FileEditor({
             }}
             onMount={(editor) => {
               editorRef.current = editor;
+              focusEditor();
               editor.addCommand(
                 monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
                 () => void save()

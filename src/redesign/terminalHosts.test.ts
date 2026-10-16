@@ -58,4 +58,43 @@ describe("adoptHosts", () => {
     adoptHosts(hosts, pool);
     expect(host.style.getPropertyValue("--term-pad")).toBe(DEFAULT_TERM_PAD);
   });
+
+  it("tells a focused editor it lost the keyboard when its host is parked (WebKit sends no blur)", () => {
+    const { pool, screen } = setup();
+    const host = createHost("a");
+    const input = document.createElement("textarea");
+    host.append(input);
+    const hosts = new Map([["a", host]]);
+    const s = slot("a");
+    screen.append(s);
+    adoptHosts(hosts, pool);
+    input.focus();
+    const blurs: string[] = [];
+    input.addEventListener("blur", () => blurs.push("blur"));
+    s.remove();
+    adoptHosts(hosts, pool);
+    expect(blurs).toEqual(["blur"]);
+    expect(document.activeElement).not.toBe(input); // parked: it does not keep the keyboard
+  });
+
+  it("keeps the keyboard in a host whose slot was only re-created", () => {
+    const { pool, screen } = setup();
+    const host = createHost("a");
+    const input = document.createElement("textarea");
+    host.append(input);
+    const hosts = new Map([["a", host]]);
+    const s = slot("a");
+    screen.append(s);
+    adoptHosts(hosts, pool);
+    input.focus();
+    const events: string[] = [];
+    input.addEventListener("blur", () => events.push("blur"));
+    input.addEventListener("focus", () => events.push("focus"));
+    const s2 = slot("a");
+    s.replaceWith(s2);
+    adoptHosts(hosts, pool);
+    expect(host.parentElement).toBe(s2);
+    expect(document.activeElement).toBe(input);
+    expect(events).toEqual(["blur", "focus"]);
+  });
 });

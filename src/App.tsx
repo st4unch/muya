@@ -1770,8 +1770,8 @@ export default function App() {
     // does not also reach Claude (where Esc would reject the prompt).
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      // An open dialog is on top: Esc is for it, not for this toast.
-      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      // An open dialog or the ⌘K palette is on top: Esc is for it, not for this toast.
+      if (appModalOpen()) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       setAutoAllowSuggest(null);
@@ -1897,6 +1897,32 @@ export default function App() {
   const [agentFilter, setAgentFilter] = useState<AgentFilter>("all");
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("changes");
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // Closing ⌘K without a choice (Esc, click outside) gives the keyboard back to what had
+  // it — the dialog dropped it on the page, so typing into the open file went nowhere.
+  const paletteReturnRef = useRef<HTMLElement | null>(null);
+  const paletteDismissedRef = useRef(false);
+  useLayoutEffect(() => {
+    if (paletteOpen) {
+      // Layout phase: before the palette's input takes the focus.
+      const a = document.activeElement;
+      paletteReturnRef.current = a instanceof HTMLElement && a !== document.body ? a : null;
+      paletteDismissedRef.current = false;
+      return;
+    }
+    const back = paletteReturnRef.current;
+    const dismissed = paletteDismissedRef.current;
+    paletteReturnRef.current = null;
+    if (!back || !dismissed) return;
+    let tries = 20;
+    let t = 0;
+    const give = () => {
+      if (appModalOpen()) { if (tries-- > 0) t = window.setTimeout(give, 50); return; } // still closing
+      const a = document.activeElement;
+      if (back.isConnected && !back.closest("[aria-hidden='true']") && (!a || a === document.body)) back.focus({ preventScroll: true });
+    };
+    t = window.setTimeout(give, 0);
+    return () => window.clearTimeout(t);
+  }, [paletteOpen]);
   const [broadcastOpen, setBroadcastOpen] = useState(false);
   const [broadcastText, setBroadcastText] = useState("");
   const [menu, setMenu] = useState<null | { kind: "actions" | "workspaces" | "mode" | "notifications"; anchor: Anchor }>(null);
@@ -2680,7 +2706,7 @@ export default function App() {
       <div className="rd-root" style={{ display: "contents" }}>
         <CommandPalette
           open={paletteOpen}
-          onOpenChange={setPaletteOpen}
+          onOpenChange={(o) => { if (!o) paletteDismissedRef.current = true; setPaletteOpen(o); }}
           agents={scopedAgentVMs}
           files={paletteFiles}
           commands={PALETTE_COMMANDS}
