@@ -6,6 +6,13 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.1.10] - 2026-10-17
+
+### Fixed
+- **Typing in an open file sometimes did nothing** (letters and Enter ignored, paste still worked). After switching away from a file and back — with ⌘1–7, ⌥1–9 or by picking an agent — the editor lost the keyboard without noticing. The first click into the file was swallowed, and if an accent or ⌥ key combination was half-typed at the moment of the switch, the file ignored every key until it was closed. The editor now always notices and keeps working.
+- Opening or picking a file puts the keyboard in it straight away; no extra click needed.
+- Closing the ⌘K search with Esc returns the keyboard to the file or terminal you were in, and Esc now closes the search even while the "Auto-allow?" suggestion is showing.
+
 ## [4.1.9] - 2026-10-16
 
 ### Fixed
