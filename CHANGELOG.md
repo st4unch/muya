@@ -6,6 +6,11 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.1.5] - 2026-10-16
+
+### Added
+- **Workspace shortcuts**: ⌥1–⌥9 switch to the 1st–9th workspace (in the Workspaces menu order), ⌥0 shows all workspaces. They work while a terminal has focus, just like ⌘1–9 for agents. The Workspaces menu shows each shortcut.
+
 ## [4.1.4] - 2026-10-15
 
 ### Added
