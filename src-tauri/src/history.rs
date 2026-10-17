@@ -127,18 +127,19 @@ fn cwd_from_transcript(path: &Path) -> Option<String> {
     Some(rest[..end].replace("\\/", "/"))
 }
 
-/// A transcript's cwd never changes, so it is read once per file.
+/// A transcript's cwd never changes, so once found it is read once per file. Not found
+/// yet (a brand-new session whose first lines carry no cwd) is not remembered.
 fn cached_cwd(path: &Path) -> Option<String> {
-    static CACHE: OnceLock<Mutex<HashMap<PathBuf, Option<String>>>> = OnceLock::new();
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, String>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     if let Some(hit) = cache.lock().ok().and_then(|c| c.get(path).cloned()) {
-        return hit;
+        return Some(hit);
     }
-    let cwd = cwd_from_transcript(path);
+    let cwd = cwd_from_transcript(path)?;
     if let Ok(mut c) = cache.lock() {
         c.insert(path.to_path_buf(), cwd.clone());
     }
-    cwd
+    Some(cwd)
 }
 
 /// Bytes under `dir` (recursive, symlinks not followed). 0 when it doesn't exist.
@@ -156,19 +157,21 @@ fn dir_bytes(dir: &Path) -> u64 {
         .sum()
 }
 
-/// Size of the session's `<id>/` folder, re-measured only when the transcript changed
-/// (subagents and tool output only grow while the session itself writes).
+/// Size of the session's `<id>/` folder. Re-measured when the transcript changed, and at
+/// least every 5 minutes: a long subagent can fill the folder while the parent transcript
+/// sits still waiting for it.
 fn cached_extra_bytes(path: &Path, len: u64, mtime: i64) -> u64 {
-    static CACHE: OnceLock<Mutex<HashMap<PathBuf, (u64, i64, u64)>>> = OnceLock::new();
+    const FRESH: std::time::Duration = std::time::Duration::from_secs(300);
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, (u64, i64, u64, std::time::Instant)>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Some((l, m, b)) = cache.lock().ok().and_then(|c| c.get(path).copied()) {
-        if l == len && m == mtime {
+    if let Some((l, m, b, at)) = cache.lock().ok().and_then(|c| c.get(path).copied()) {
+        if l == len && m == mtime && at.elapsed() < FRESH {
             return b;
         }
     }
     let bytes = dir_bytes(&path.with_extension(""));
     if let Ok(mut c) = cache.lock() {
-        c.insert(path.to_path_buf(), (len, mtime, bytes));
+        c.insert(path.to_path_buf(), (len, mtime, bytes, std::time::Instant::now()));
     }
     bytes
 }
@@ -434,22 +437,28 @@ fn in_use(canon: &Path, live_ids: &[String]) -> Option<String> {
     (age.as_millis() < IN_USE_MS).then(|| "used in the last 10 minutes".into())
 }
 
-/// Move `<from_root>/<project>/<id>.jsonl` (+ `<id>/`) to the same place under `to_root`.
+/// Move `<from_root>/<project>/<id>.jsonl` and its `<id>/` folder to the same place under
+/// `to_root` — both or neither: the folder goes first, and comes back if the transcript
+/// can't follow.
 fn move_session(canon: &Path, from_root: &Path, to_root: &Path) -> Result<(), String> {
     let rel = canon.strip_prefix(from_root).map_err(|_| "outside its folder".to_string())?;
     let dest = to_root.join(rel);
-    if dest.exists() {
+    let side = canon.with_extension("");
+    let side_dest = dest.with_extension("");
+    let has_side = side.is_dir();
+    if dest.exists() || (has_side && side_dest.exists()) {
         return Err("already there".into());
     }
     let dest_dir = dest.parent().ok_or("bad path")?;
     std::fs::create_dir_all(dest_dir).map_err(|e| e.to_string())?;
-    std::fs::rename(canon, &dest).map_err(|e| e.to_string())?;
-    let side = canon.with_extension("");
-    if side.is_dir() {
-        let side_dest = dest.with_extension("");
-        if !side_dest.exists() {
-            let _ = std::fs::rename(&side, &side_dest);
+    if has_side {
+        std::fs::rename(&side, &side_dest).map_err(|e| format!("its folder can't be moved: {e}"))?;
+    }
+    if let Err(e) = std::fs::rename(canon, &dest) {
+        if has_side {
+            let _ = std::fs::rename(&side_dest, &side);
         }
+        return Err(e.to_string());
     }
     Ok(())
 }
@@ -537,12 +546,12 @@ pub fn trash_sessions(paths: Vec<String>, live_ids: Vec<String>) -> Result<House
             })
             .or_else(|e| checked_archived_path(Path::new(p)).map_err(|_| e))
             .and_then(|canon| {
-                to_trash(&canon)?;
+                // Folder first: if it can't go, the session stays whole.
                 let side = canon.with_extension("");
                 if side.is_dir() {
-                    let _ = to_trash(&side);
+                    to_trash(&side).map_err(|e| format!("its folder can't be moved: {e}"))?;
                 }
-                Ok(())
+                to_trash(&canon)
             });
         match res {
             Ok(()) => r.done += 1,
@@ -757,5 +766,29 @@ mod tests {
         assert_eq!(r.done, 1);
         assert!(old.is_file() && projects.join("-w/old/subagents/a.jsonl").is_file());
         assert!(!moved.exists());
+    }
+
+    #[test]
+    fn a_session_moves_whole_or_not_at_all() {
+        let d = tempfile::tempdir().unwrap();
+        let projects = d.path().join("projects");
+        let archive = d.path().join("archive");
+        let p = fake_session(&projects, "-w", "s1", 3 * 86400);
+        // A leftover folder of the same name already in the archive.
+        std::fs::create_dir_all(archive.join("-w/s1")).unwrap();
+        let r = archive_in(&projects, &archive, &[p.to_string_lossy().into_owned()], &[]);
+        assert_eq!(r.done, 0);
+        assert!(r.skipped[0].1.contains("already there"));
+        assert!(p.is_file() && projects.join("-w/s1/subagents/a.jsonl").is_file());
+    }
+
+    #[test]
+    fn a_cwd_not_written_yet_is_found_later() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("n.jsonl");
+        std::fs::write(&p, "{\"type\":\"summary\"}\n").unwrap();
+        assert_eq!(cached_cwd(&p), None);
+        std::fs::write(&p, "{\"type\":\"summary\"}\n{\"type\":\"user\",\"cwd\":\"/w/x\"}\n").unwrap();
+        assert_eq!(cached_cwd(&p).as_deref(), Some("/w/x"));
     }
 }

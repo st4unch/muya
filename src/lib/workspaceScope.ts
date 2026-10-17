@@ -48,15 +48,16 @@ export function workspaceOf(tab: ScopedTab, roots: readonly string[]): string | 
   return best;
 }
 
-/** ⌃1–9 → the Nth workspace (header menu order), ⌃0 → "all". null when the key is not
- *  one of these or no workspace sits at that number. Control, not ⌥: on a Mac ⌥+digit types
- *  a sign on every layout (US ⌥2 "™", Turkish ⌥3 "#", ⌥2 "€"…), and taking ⌥ blocked those
- *  signs. ⌃+digit types nothing. Uses `code` so the number row works on every layout. */
+/** ⌥⌘1–9 → the Nth workspace (header menu order), ⌥⌘0 → "all". null when the key is not
+ *  one of these or no workspace sits at that number. Not ⌥ alone: on a Mac ⌥+digit types a
+ *  sign on every layout (US ⌥2 "™", Turkish ⌥3 "#"…). Not ⌃: terminals use ⌃+digit (vim ⌃6,
+ *  ⌃2 NUL, ⌃3 ESC). With ⌘ held nothing is typed and nothing reaches a terminal. Uses
+ *  `code` so the number row works on every layout. */
 export function workspaceShortcut(
   e: Pick<KeyboardEvent, "code" | "altKey" | "metaKey" | "ctrlKey" | "shiftKey">,
   workspaces: readonly string[],
 ): string | "all" | null {
-  if (!e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return null;
+  if (!e.altKey || !e.metaKey || e.ctrlKey || e.shiftKey) return null;
   const m = /^Digit([0-9])$/.exec(e.code);
   if (!m) return null;
   const n = Number(m[1]);

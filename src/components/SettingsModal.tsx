@@ -413,6 +413,10 @@ export default function SettingsModal({
                   }}
                   style={{ ...inputStyle, width: "auto", flexShrink: 0, cursor: "pointer" }}
                 >
+                  {cleanupDays !== null && !CLEANUP_DAYS.includes(cleanupDays) && (
+                    // A value set by hand in settings.json: shown as it is, kept unless changed.
+                    <option value={cleanupDays}>{cleanupDays} days (set by hand)</option>
+                  )}
                   {CLEANUP_DAYS.map((d) => (
                     <option key={d} value={d}>
                       {d === 365 ? "1 year" : `${d} days`}

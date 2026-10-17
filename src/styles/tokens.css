@@ -79,6 +79,8 @@
   --success-card-border: #24463B;
   --success-card-text: #CFF5E7;
 
+  --shadow-popover: 0 12px 40px rgba(0, 0, 0, 0.35);
+
   /* The rail panda (docs/prd-rail-panda.md). */
   --panda-fur: #F4F2EA;
   --panda-ink: #0C0C0E;
@@ -157,6 +159,8 @@
   --success-card-bg: #EEF8F3;
   --success-card-border: #BDE3D1;
   --success-card-text: #0E5E43;
+
+  --shadow-popover: 0 12px 32px rgba(0, 0, 0, 0.14);
 
   --panda-fur: #FFFFFF;
   --panda-ink: #1C1C20;

@@ -41,26 +41,26 @@ describe("workspace scope", () => {
 
 describe("workspaceShortcut", () => {
   const ws = ["/w/a", "/w/b", "/w/c"];
-  const k = (code: string, mods: Partial<Record<"altKey" | "metaKey" | "ctrlKey" | "shiftKey", boolean>> = { ctrlKey: true }) =>
+  const k = (code: string, mods: Partial<Record<"altKey" | "metaKey" | "ctrlKey" | "shiftKey", boolean>> = { altKey: true, metaKey: true }) =>
     ({ code, altKey: false, metaKey: false, ctrlKey: false, shiftKey: false, ...mods });
-  it("⌃N picks the Nth workspace", () => {
+  it("⌥⌘N picks the Nth workspace", () => {
     expect(workspaceShortcut(k("Digit1"), ws)).toBe("/w/a");
     expect(workspaceShortcut(k("Digit3"), ws)).toBe("/w/c");
   });
-  it("⌃0 picks all workspaces", () => {
+  it("⌥⌘0 picks all workspaces", () => {
     expect(workspaceShortcut(k("Digit0"), ws)).toBe("all");
     expect(workspaceShortcut(k("Digit0"), [])).toBeNull();
   });
   it("ignores numbers past the list, other modifiers and other keys", () => {
     expect(workspaceShortcut(k("Digit4"), ws)).toBeNull();
-    expect(workspaceShortcut(k("Digit1", { ctrlKey: true, metaKey: true }), ws)).toBeNull();
-    expect(workspaceShortcut(k("Digit1", { ctrlKey: true, shiftKey: true }), ws)).toBeNull();
+    expect(workspaceShortcut(k("Digit1", { altKey: true, metaKey: true, shiftKey: true }), ws)).toBeNull();
     expect(workspaceShortcut(k("Digit1", { metaKey: true }), ws)).toBeNull();
     expect(workspaceShortcut(k("KeyA"), ws)).toBeNull();
     expect(workspaceShortcut(k("Numpad1"), ws)).toBeNull();
   });
-  it("never takes ⌥N — that types signs (US ⌥2 \"™\", Turkish ⌥3 \"#\")", () => {
+  it("never takes ⌥N (types signs) or ⌃N (terminals use it: vim ⌃6, ⌃2, ⌃3)", () => {
     expect(workspaceShortcut(k("Digit2", { altKey: true }), ws)).toBeNull();
-    expect(workspaceShortcut(k("Digit2", { altKey: true, ctrlKey: true }), ws)).toBeNull();
+    expect(workspaceShortcut(k("Digit2", { ctrlKey: true }), ws)).toBeNull();
+    expect(workspaceShortcut(k("Digit2", { ctrlKey: true, altKey: true, metaKey: true }), ws)).toBeNull();
   });
 });

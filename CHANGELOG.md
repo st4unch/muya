@@ -17,7 +17,7 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Opening a past session's conversation reads only the end of the file, so huge sessions (hundreds of MB) open at once.
 
 ### Changed
-- **Workspace shortcuts are now ⌃1–9 (⌃0 = all workspaces), not ⌥1–9.** On a Mac, ⌥ and a number types a character on every keyboard (™, €, #, [ …), so the old shortcut kept getting in the way of typing. ⌃ and a number types nothing. If you turned on macOS's own "Switch to Desktop N" (⌃N) shortcuts in System Settings → Keyboard → Shortcuts → Mission Control, macOS takes those keys first.
+- **Workspace shortcuts are now ⌥⌘1–9 (⌥⌘0 = all workspaces), not ⌥1–9.** On a Mac, ⌥ and a number types a character on every keyboard (™, €, #, [ …), so the old shortcut kept getting in the way of typing. With ⌘ held nothing is typed, and nothing reaches a terminal either (⌃ and a number would have taken keys vim and other terminal programs use).
 
 ## [4.1.11] - 2026-10-17
 

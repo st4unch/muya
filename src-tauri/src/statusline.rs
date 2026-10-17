@@ -196,9 +196,30 @@ fn wrapped_command(tap: &Path, user_cmd: Option<&str>) -> String {
 }
 
 /// The user's own `statusLine`, as Muya found it before wrapping it (`null` = none).
-fn saved_user_statusline(stable: &Path) -> Option<Value> {
+fn saved_user_statusline(stable: &Path) -> Option<Option<Value>> {
     let v: Value = serde_json::from_slice(&fs::read(stable.join("user-statusline.json")).ok()?).ok()?;
-    (!v.is_null()).then_some(v)
+    Some((!v.is_null()).then_some(v))
+}
+
+/// The user's command as embedded in Muya's wrapper (the part after the tap), so it is
+/// never lost even when Muya's saved copy is gone (folder deleted, reinstall).
+fn user_from_wrapper(sl: &Value) -> Option<Value> {
+    let cmd = sl.get("command")?.as_str()?;
+    let rest = cmd.split_once("exec sh \"$f\"; ")?.1.trim();
+    if rest.is_empty() || rest == ":" {
+        return None;
+    }
+    let mut u = sl.clone();
+    u["command"] = Value::from(rest);
+    Some(u)
+}
+
+/// Theirs, for a statusLine that is Muya's: the saved copy, else what the wrapper holds.
+fn user_of_ours(stable: &Path, sl: &Value) -> Option<Value> {
+    match saved_user_statusline(stable) {
+        Some(saved) => saved,
+        None => user_from_wrapper(sl),
+    }
 }
 
 /// (Re)write the stable dir: tap.sh, the user's script and their saved statusLine.
@@ -232,7 +253,7 @@ pub(crate) fn install_at(home: &Path) -> Result<(), String> {
     let sl = current.get("statusLine").cloned();
     // Theirs: what Muya saved when it wrapped it, or what is there now if it isn't ours.
     let user = match &sl {
-        Some(v) if is_ours(v) => saved_user_statusline(&stable),
+        Some(v) if is_ours(v) => user_of_ours(&stable, v),
         Some(v) if v.get("command").and_then(Value::as_str).is_some_and(|c| !c.trim().is_empty()) => Some(v.clone()),
         _ => None,
     };
@@ -257,12 +278,11 @@ pub(crate) fn install_at(home: &Path) -> Result<(), String> {
 pub(crate) fn uninstall_at(home: &Path) -> Result<(), String> {
     let settings = crate::claude_settings::path_under(home);
     let stable = stable_dir_under(home);
-    let user = saved_user_statusline(&stable);
     crate::claude_settings::update(&settings, None, |m| {
-        if !m.get("statusLine").is_some_and(is_ours) {
+        let Some(sl) = m.get("statusLine").filter(|v| is_ours(v)) else {
             return false; // not Muya's (any more): leave it
-        }
-        match &user {
+        };
+        match &user_of_ours(&stable, sl) {
             Some(u) => m.insert("statusLine".into(), u.clone()),
             None => m.remove("statusLine"),
         };
@@ -606,5 +626,23 @@ mod tests {
         fs::write(&settings, "{ broken").unwrap();
         assert!(install_at(home).is_err());
         assert_eq!(fs::read_to_string(&settings).unwrap(), "{ broken");
+    }
+
+    #[test]
+    fn the_users_line_survives_when_muyas_saved_copy_is_gone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let settings = crate::claude_settings::path_under(home);
+        fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        fs::write(&settings, r#"{"statusLine":{"type":"command","command":"printf MINE","padding":2}}"#).unwrap();
+        install_at(home).unwrap();
+        fs::remove_dir_all(stable_dir_under(home)).unwrap(); // folder deleted / reinstall
+        install_at(home).unwrap();
+        assert_eq!(run_statusline(home, "{}", None), "MINE");
+        fs::remove_dir_all(stable_dir_under(home)).unwrap();
+        uninstall_at(home).unwrap();
+        let v: Value = serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+        assert_eq!(v["statusLine"]["command"], "printf MINE");
+        assert_eq!(v["statusLine"]["padding"], 2);
     }
 }

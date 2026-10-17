@@ -214,7 +214,9 @@ export default function SessionsPage({
     }
   };
 
-  const liveIds = useMemo(() => new Set(live.map((s) => s.id)), [live]);
+  // `claude agents --all` also lists finished sessions; only the ones still running are
+  // off-limits for clean-up.
+  const liveIds = useMemo(() => new Set(live.filter((s) => s.status !== "stopped").map((s) => s.id)), [live]);
   const storage = useMemo(() => storageSummary(history, Date.now()), [history]);
 
   useEffect(() => {
@@ -416,23 +418,25 @@ export default function SessionsPage({
       {history.length > 0 && (
         <div
           role="status"
-          className={`mb-3 flex items-center gap-3 rounded-lg border px-3 py-2 text-[11px] font-mono ${
+          className="mb-3 flex items-center gap-3 rounded-lg border px-3 py-2 text-[11px] font-mono"
+          style={
             storage.heavy
-              ? "border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-300"
-              : "border-neutral-200 dark:border-neutral-700 bg-[var(--bg-control)] text-neutral-600 dark:text-neutral-400"
-          }`}
+              ? { borderColor: "var(--warning-border)", background: "var(--warning-bg)", color: "var(--warning-text)" }
+              : { borderColor: "var(--border)", background: "var(--bg-control)", color: "var(--text-muted)" }
+          }
         >
           <span className="min-w-0 flex-1 truncate">
             {storage.count} sessions · {formatBytes(storage.totalBytes)}
             {storage.oldCount > 0 && ` · ${storage.oldCount} not used for 30+ days`}
             {storage.bigCount > 0 && ` · ${storage.bigCount} over 100 MB`}
             {storage.heavy && " — big histories slow Muya and Claude down"}
-            {rowNote && <span className="ml-2 text-neutral-500 dark:text-neutral-400">{rowNote}</span>}
+            {rowNote && <span className="ml-2" style={{ color: "var(--text-muted)" }}>{rowNote}</span>}
           </span>
           <button
             type="button"
             onClick={() => setCleanupOpen(true)}
-            className="shrink-0 rounded border border-current/30 px-2 py-0.5 font-semibold hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer"
+            className="shrink-0 rounded border px-2 py-0.5 font-semibold cursor-pointer"
+            style={{ borderColor: "var(--border-strong)", background: "var(--bg-panel)", color: "var(--text)" }}
           >
             Clean up…
           </button>

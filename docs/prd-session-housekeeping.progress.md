@@ -22,3 +22,5 @@ started: 2026-10-17
 - Measured on the operator's Mac (release build): 201 MB transcript read 0.26 s; history scan cold 113 ms / warm 2 ms.
 
 ## Dersler
+
+- Code review (2026-10-17) fixes: user statusLine recovered from the wrapper when the saved copy is gone; footer switch edits settings first (retry works); settings edits serialized + unique temp file; cwd "not found yet" not cached; folder size re-measured every 5 min; session + folder move whole-or-nothing; finished sessions not treated as running; custom retention shown as is; strip colors via tokens.

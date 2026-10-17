@@ -36,7 +36,7 @@ export default function StorageHeadsUp({ summary, onOpen, onDismiss }: { summary
       className="rd-root"
       role="status"
       aria-live="polite"
-      style={{ position: "fixed", top: 52, right: 16, width: 340, zIndex: 140, borderRadius: 12, boxShadow: "var(--shadow-popover, 0 12px 40px rgba(0,0,0,0.35))", background: "var(--bg-panel)" }}
+      style={{ position: "fixed", top: 52, right: 16, width: 340, zIndex: 140, borderRadius: 12, boxShadow: "var(--shadow-popover)", background: "var(--bg-panel)" }}
     >
       <div style={{ display: "flex", gap: 10, padding: "10px 10px 10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-control)" }}>
         <span style={{ width: 8, height: 8, borderRadius: 4, background: "var(--warning)", flexShrink: 0, marginTop: 5 }} />

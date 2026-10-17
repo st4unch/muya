@@ -42,6 +42,10 @@ pub(crate) fn update(
     backup: Option<&Path>,
     edit: impl FnOnce(&mut Map<String, Value>) -> bool,
 ) -> Result<bool, String> {
+    // One Muya edit at a time (the footer switch and the retention select can overlap).
+    // Claude Code writes this file too; read→rename is kept as short as possible.
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut map = read(path)?;
     if !edit(&mut map) {
         return Ok(false);
@@ -60,7 +64,9 @@ pub(crate) fn update(
     fs::create_dir_all(dir).map_err(|e| format!("can't create {}: {e}", dir.display()))?;
     let mut bytes = serde_json::to_vec_pretty(&Value::Object(map)).map_err(|e| e.to_string())?;
     bytes.push(b'\n');
-    let tmp = dir.join(format!(".settings.json.muya-{}.tmp", std::process::id()));
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = dir.join(format!(".settings.json.muya-{}-{n}.tmp", std::process::id()));
     fs::write(&tmp, &bytes).map_err(|e| format!("write failed: {e}"))?;
     if let Ok(meta) = fs::metadata(&target) {
         let _ = fs::set_permissions(&tmp, meta.permissions());

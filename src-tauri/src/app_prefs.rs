@@ -90,12 +90,13 @@ pub fn app_prefs_get() -> AppPrefs {
 #[tauri::command]
 pub fn app_prefs_set(prefs: AppPrefs) -> Result<(), String> {
     let path = prefs_path().ok_or("No home folder.")?;
-    let before = read_at(&path);
-    write_at(&path, &prefs)?;
-    KEEP_RUNNING.store(prefs.keep_running_in_background, Ordering::Relaxed);
-    if before.claude_status_in_footer != prefs.claude_status_in_footer {
+    // The footer switch edits ~/.claude/settings.json first: when that fails nothing is
+    // saved, so trying again really tries again.
+    if read_at(&path).claude_status_in_footer != prefs.claude_status_in_footer {
         crate::statusline::apply(prefs.claude_status_in_footer)?;
     }
+    write_at(&path, &prefs)?;
+    KEEP_RUNNING.store(prefs.keep_running_in_background, Ordering::Relaxed);
     Ok(())
 }
 
