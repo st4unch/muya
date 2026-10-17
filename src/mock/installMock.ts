@@ -396,7 +396,8 @@ function handleInvoke(cmd: string, rawPayload?: unknown): unknown {
       from.splice(0, from.length, ...keep);
       if (cmd === "archive_sessions") mockArchived.push(...moved.map((h) => ({ ...h, path: h.path.replace("/.claude/projects/", "/Library/Application Support/com.staunch.muya/session-archive/") })));
       if (cmd === "restore_sessions") mockHistory.push(...moved.map((h) => ({ ...h, path: h.path.replace("/Library/Application Support/com.staunch.muya/session-archive/", "/.claude/projects/") })));
-      return { done: moved.length, skipped: [] };
+      // Moving files takes a moment for real: let the dialog show "Archiving…".
+      return new Promise((resolve) => setTimeout(() => resolve({ done: moved.length, skipped: [] }), 700));
     }
     case "claude_cleanup_days_get":
       return mockCleanupDays;

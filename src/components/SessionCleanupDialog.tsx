@@ -50,7 +50,9 @@ export default function SessionCleanupDialog({
   const [archived, setArchived] = useState<StoredSession[]>([]);
   // Unticked paths: everything a rule picks starts ticked.
   const [unticked, setUnticked] = useState<Set<string>>(new Set());
-  const [busy, setBusy] = useState(false);
+  // The action in progress ("Archiving…"): buttons say what is happening and stay disabled.
+  const [running, setRunning] = useState<string | null>(null);
+  const busy = running !== null;
   const [note, setNote] = useState("");
   const now = Date.now();
 
@@ -79,9 +81,9 @@ export default function SessionCleanupDialog({
       return next;
     });
 
-  const run = async (cmd: "archive_sessions" | "trash_sessions" | "restore_sessions", verb: string) => {
-    if (!picked.length) return;
-    setBusy(true);
+  const run = async (cmd: "archive_sessions" | "trash_sessions" | "restore_sessions", verb: string, doing: string) => {
+    if (!picked.length || busy) return;
+    setRunning(doing);
     setNote("");
     try {
       const paths = picked.map((s) => s.path);
@@ -94,9 +96,20 @@ export default function SessionCleanupDialog({
     } catch (e) {
       setNote(String(e));
     } finally {
-      setBusy(false);
+      setRunning(null);
     }
   };
+
+  // Why nothing can be done right now — shown in the list, the footer and the buttons' tooltip.
+  const rulesOff = tab === "cleanup" && !olderOn && !largerOn;
+  const emptyText =
+    tab === "archived"
+      ? "Nothing archived yet."
+      : rulesOff
+        ? "Turn on a rule above to pick sessions."
+        : `No session is ${[olderOn ? `unused for ${olderDays}+ days` : "", largerOn ? `larger than ${largerMb} MB` : ""].filter(Boolean).join(" or ")}. Running sessions and ones used in the last 10 minutes are left out — loosen the rules to see more.`;
+  const idleReason = shown.length === 0 ? (tab === "archived" ? "Nothing archived yet" : "Nothing to clean up with these rules") : picked.length === 0 ? "Tick the sessions to clean up" : "";
+  const btn = (base: React.CSSProperties) => ({ ...base, cursor: busy || !picked.length ? "not-allowed" : "pointer" });
 
   const rule = (label: string, id: string, on: boolean, setOn: (v: boolean) => void, value: number, setValue: (v: number) => void, options: number[], unit: (v: number) => string, border: boolean) => (
     <div style={{ ...rowStyle, alignItems: "center", ...(border ? { borderTop: "1px solid var(--border)" } : null) }}>
@@ -122,19 +135,19 @@ export default function SessionCleanupDialog({
       footer={
         <>
           <span style={{ ...helperStyle, minWidth: 0 }} role="status">
-            {note || (picked.length ? `${picked.length} selected · ${formatBytes(pickedBytes)}` : "Nothing selected")}
+            {running ? `${running} ${picked.length} session${picked.length === 1 ? "" : "s"}…` : note || (picked.length ? `${picked.length} selected · ${formatBytes(pickedBytes)}` : idleReason)}
           </span>
           <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-            <button type="button" style={ghostBtn} className="st-btn" disabled={busy || !picked.length} onClick={() => void run("trash_sessions", "Moved to the Trash:")}>
-              Move to Trash
+            <button type="button" style={btn(ghostBtn)} className="st-btn" title={idleReason || undefined} aria-busy={running === "Moving to the Trash"} disabled={busy || !picked.length} onClick={() => void run("trash_sessions", "Moved to the Trash:", "Moving to the Trash")}>
+              {running === "Moving to the Trash" ? "Moving…" : "Move to Trash"}
             </button>
             {tab === "cleanup" ? (
-              <button type="button" style={primaryBtn} className="st-btn" disabled={busy || !picked.length} onClick={() => void run("archive_sessions", "Archived")}>
-                Archive
+              <button type="button" style={btn(primaryBtn)} className="st-btn" title={idleReason || undefined} aria-busy={running === "Archiving"} disabled={busy || !picked.length} onClick={() => void run("archive_sessions", "Archived", "Archiving")}>
+                {running === "Archiving" ? "Archiving…" : "Archive"}
               </button>
             ) : (
-              <button type="button" style={primaryBtn} className="st-btn" disabled={busy || !picked.length} onClick={() => void run("restore_sessions", "Restored")}>
-                Restore
+              <button type="button" style={btn(primaryBtn)} className="st-btn" title={idleReason || undefined} aria-busy={running === "Restoring"} disabled={busy || !picked.length} onClick={() => void run("restore_sessions", "Restored", "Restoring")}>
+                {running === "Restoring" ? "Restoring…" : "Restore"}
               </button>
             )}
           </div>
@@ -168,7 +181,7 @@ export default function SessionCleanupDialog({
       )}
       <div style={{ ...rowsBox, maxHeight: 300, overflowY: "auto" }} aria-label={tab === "cleanup" ? "Sessions to clean up" : "Archived sessions"} role="group">
         {shown.length === 0 ? (
-          <div style={{ ...rowStyle, ...helperStyle }}>{tab === "cleanup" ? "No session matches." : "Nothing archived."}</div>
+          <div style={{ ...rowStyle, ...helperStyle }}>{emptyText}</div>
         ) : (
           shown.map((s, i) => (
             <label key={s.path} style={{ ...rowStyle, alignItems: "center", cursor: "pointer", ...(i ? { borderTop: "1px solid var(--border)" } : null) }}>

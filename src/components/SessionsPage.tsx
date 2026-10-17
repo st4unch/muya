@@ -225,6 +225,7 @@ export default function SessionsPage({
 
   const rowAction = async (cmd: "archive_sessions" | "trash_sessions", h: HistoryEntry) => {
     setRowMenu(null);
+    setRowNote(cmd === "archive_sessions" ? "Archiving…" : "Moving to the Trash…");
     try {
       const r = await invoke<{ done: number; skipped: [string, string][] }>(cmd, { paths: [h.path], liveIds: [...liveIds] });
       setRowNote(resultLine(cmd === "archive_sessions" ? "Archived" : "Moved to the Trash:", r));
