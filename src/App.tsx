@@ -2188,7 +2188,7 @@ export default function App() {
       });
   }, [macFiles, paletteFileMap]);
 
-  // ⌘K / ⌘1–9 / ⌥0–9 / grid shortcuts. Capture phase: xterm owns ⌘K (kill-to-EOL) and swallows
+  // ⌘K / ⌘1–9 / ⌃0–9 / grid shortcuts. Capture phase: xterm owns ⌘K (kill-to-EOL) and swallows
   // keys typed into a focused terminal, so a bubbling listener would never see them.
   const overlayOpen = review !== null || paletteOpen || broadcastOpen || swapKey !== null || menu !== null || renameKey !== null || settingsOpen || newAgentOpen;
   const shortcutRef = useRef({ screen, view, selectAgent, respond, maximize: maximizePanel, focused: focusedPanelKey, exitGrid, overlayOpen, controlMode, split: addSplitPane, selectWorkspace });
@@ -2205,7 +2205,7 @@ export default function App() {
         }
         return;
       }
-      // ⌥1–9 picks the Nth workspace, ⌥0 all of them (docs/prd-workspace-shortcuts.md).
+      // ⌃1–9 picks the Nth workspace, ⌃0 all of them (docs/prd-workspace-shortcuts.md).
       const ws = s.overlayOpen ? null : workspaceShortcut(e, workspacesRef.current);
       if (ws) {
         e.preventDefault();
@@ -2744,13 +2744,13 @@ export default function App() {
             <MenuHeading>WORKSPACES</MenuHeading>
             {workspaces.length === 0 && <div style={{ padding: "6px 10px", color: "var(--text-muted)" }}>No workspace yet.</div>}
             {workspaces.length > 0 && (
-              <MenuItem label="All workspaces" hint={`⌥0 · ${agentCountHint(agentVMs)}`} checked={selectedRoot === undefined} onSelect={() => { selectWorkspace(undefined); setMenu(null); }} />
+              <MenuItem label="All workspaces" hint={`⌃0 · ${agentCountHint(agentVMs)}`} checked={selectedRoot === undefined} onSelect={() => { selectWorkspace(undefined); setMenu(null); }} />
             )}
             {workspaces.map((w, i) => (
               <MenuItem
                 key={w}
                 label={w.split("/").filter(Boolean).pop() ?? w}
-                hint={`${i < 9 ? `⌥${i + 1} · ` : ""}${agentCountHint(agentVMs.filter((a) => { const t = openTerminals.find((x) => x.key === a.key); return !!t && belongsTo(t, w); }))} · ${abbreviateHome(w)}`}
+                hint={`${i < 9 ? `⌃${i + 1} · ` : ""}${agentCountHint(agentVMs.filter((a) => { const t = openTerminals.find((x) => x.key === a.key); return !!t && belongsTo(t, w); }))} · ${abbreviateHome(w)}`}
                 checked={w === selectedRoot}
                 onSelect={() => { selectWorkspace(w); setMenu(null); }}
               />

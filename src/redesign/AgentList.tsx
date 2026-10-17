@@ -285,7 +285,7 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
           <span>Switch workspace</span>
-          <span style={{ fontFamily: "var(--font-mono)" }} title="⌥0 shows all workspaces">⌥1–9 · ⌥0 all</span>
+          <span style={{ fontFamily: "var(--font-mono)" }} title="⌃0 shows all workspaces">⌃1–9 · ⌃0 all</span>
         </div>
       </div>
     </aside>

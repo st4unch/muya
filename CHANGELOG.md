@@ -6,6 +6,9 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **Workspace shortcuts are now ⌃1–9 (⌃0 = all workspaces), not ⌥1–9.** On a Mac, ⌥ and a number types a character on every keyboard (™, €, #, [ …), so the old shortcut kept getting in the way of typing. ⌃ and a number types nothing. If you turned on macOS's own "Switch to Desktop N" (⌃N) shortcuts in System Settings → Keyboard → Shortcuts → Mission Control, macOS takes those keys first.
+
 ## [4.1.11] - 2026-10-17
 
 ### Added
