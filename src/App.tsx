@@ -1770,8 +1770,8 @@ export default function App() {
     // does not also reach Claude (where Esc would reject the prompt).
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      // An open dialog or the ⌘K palette is on top: Esc is for it, not for this toast.
-      if (appModalOpen()) return;
+      // An open dialog, menu or the ⌘K palette is on top: Esc is for it, not for this toast.
+      if (appModalOpen() || document.querySelector('[role="menu"]')) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       setAutoAllowSuggest(null);

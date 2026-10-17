@@ -13,6 +13,11 @@ import { parseClaudeScreen, readScreenLines, type ScreenState } from "../lib/scr
 import { isMuyaChannelWarning } from "../lib/channelPrompt";
 import { applyLaunchFlags } from "../lib/statusline";
 import { appModalOpen } from "../lib/modalOpen";
+import { readText } from "@tauri-apps/plugin-clipboard-manager";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { copyToClipboard } from "../lib/clipboard";
+import { escapeForShell, isWebUrl } from "../lib/termMenu";
+import TerminalContextMenu, { type TerminalMenuActions } from "./TerminalContextMenu";
 
 // Output bytes arrive as a raw ArrayBuffer (binary fetch path — no JSON byte
 // bloat); process-exit arrives as a small JSON object. See src-tauri/src/pty.rs.
@@ -164,6 +169,10 @@ function Terminal({
 
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  // Right-click menu (copy, paste, …): where it opened and what was selected then.
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; selection: string } | null>(null);
+  const openCtxMenuRef = useRef<(e: MouseEvent) => void>(() => {});
+  openCtxMenuRef.current = (e) => setCtxMenu({ x: e.clientX, y: e.clientY, selection: termRef.current?.getSelection() ?? "" });
 
   const closeSearch = useCallback(() => {
     setShowSearch(false);
@@ -288,13 +297,17 @@ function Terminal({
         });
       },
     });
-    // Right-click over a hovered path link → the same action menu.
+    // Right-click over a hovered path link → the same action menu; anywhere else →
+    // the terminal menu. xterm's own handler runs first (it sits deeper), so on macOS a
+    // right-click outside the selection has already selected the word under the pointer.
     const onCtxMenu = (e: MouseEvent) => {
+      e.preventDefault();
       const link = hoveredLinkRef.current;
       if (link && onPathMenuRef.current) {
-        e.preventDefault();
         onPathMenuRef.current(link.resolved, link.kind, e.clientX, e.clientY);
+        return;
       }
+      openCtxMenuRef.current(e);
     };
     el.addEventListener("contextmenu", onCtxMenu);
 
@@ -673,6 +686,40 @@ function Terminal({
     syncRef.current();
   }, [prefs.lineHeight, prefs.letterSpacing]);
 
+  const pasteText = (escape: boolean) => {
+    void readText()
+      .then((t) => {
+        if (t) termRef.current?.paste(escape ? escapeForShell(t) : t);
+      })
+      .catch(() => {})
+      .finally(() => termRef.current?.focus());
+  };
+  const menuActions: TerminalMenuActions = {
+    copy: () => {
+      if (ctxMenu?.selection) void copyToClipboard(ctxMenu.selection);
+      termRef.current?.focus();
+    },
+    paste: () => pasteText(false),
+    pasteAsPath: () => pasteText(true),
+    selectAll: () => {
+      termRef.current?.selectAll();
+      termRef.current?.focus();
+    },
+    openLink: () => {
+      if (ctxMenu) void openUrl(ctxMenu.selection.trim()).catch(() => {});
+    },
+    find: () => openSearchRef.current(),
+    clear: () => {
+      termRef.current?.clear();
+      termRef.current?.clearSelection();
+      termRef.current?.focus();
+    },
+    font: (step) => {
+      stepTerminalFont(step);
+      termRef.current?.focus();
+    },
+  };
+
   const handleSearchChange = (q: string) => {
     setSearchQuery(q);
     if (searchRef.current && q)
@@ -690,7 +737,16 @@ function Terminal({
   };
 
   return (
-    <div className="relative h-full w-full overflow-hidden">
+    <div
+      className="relative h-full w-full overflow-hidden"
+      // The padding around the grid is part of the terminal too. A right-click on the
+      // grid itself was already handled (and prevented) by the xterm listener.
+      onContextMenu={(e) => {
+        if (e.defaultPrevented || !ref.current?.parentElement?.contains(e.target as Node)) return;
+        e.preventDefault();
+        openCtxMenuRef.current(e.nativeEvent);
+      }}
+    >
       {/* Padding lives on this WRAPPER, never on the element xterm opens into, and the
           wrapper is explicitly border-box. FitAddon sizes the grid from the computed
           height of xterm's parent. Measured live (2026-09-30): this wrapper resolved to
@@ -710,6 +766,25 @@ function Terminal({
       >
         <div ref={ref} data-xterm-host className="h-full w-full overflow-hidden" />
       </div>
+
+      {ctxMenu && (
+        <TerminalContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          hasSelection={ctxMenu.selection.length > 0}
+          link={isWebUrl(ctxMenu.selection) ? ctxMenu.selection.trim() : undefined}
+          actions={menuActions}
+          onClose={() => {
+            setCtxMenu(null);
+            // Esc / a click beside the menu: the keyboard goes back to this terminal,
+            // unless the click put it somewhere else.
+            setTimeout(() => {
+              const a = document.activeElement;
+              if (!a || a === document.body) termRef.current?.focus();
+            }, 0);
+          }}
+        />
+      )}
 
       {/* In-terminal search overlay — toggled by Cmd+F */}
       {showSearch && (

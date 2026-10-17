@@ -44,12 +44,35 @@ function useEscape(onClose: () => void) {
   }, [onClose]);
 }
 
-export function MenuPopover({ anchor, width = 240, onClose, children, label }: { anchor: Anchor; width?: number; onClose: () => void; children: ReactNode; label: string }) {
+/** ↑/↓ (and Home/End) move between the enabled items of a menu. */
+function moveInMenu(e: React.KeyboardEvent<HTMLDivElement>) {
+  const items = [...e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')];
+  if (!items.length) return;
+  const at = items.indexOf(document.activeElement as HTMLButtonElement);
+  const next =
+    e.key === "ArrowDown" ? (at + 1) % items.length
+    : e.key === "ArrowUp" ? (at <= 0 ? items.length - 1 : at - 1)
+    : e.key === "Home" ? 0
+    : e.key === "End" ? items.length - 1
+    : -1;
+  if (next < 0) return;
+  e.preventDefault();
+  items[next].focus();
+}
+
+/** `autoFocus`: the menu takes the keyboard, so keys typed while it is
+ *  open cannot reach a terminal underneath. */
+export function MenuPopover({ anchor, width = 240, onClose, children, label, autoFocus }: { anchor: Anchor; width?: number; onClose: () => void; children: ReactNode; label: string; autoFocus?: boolean }) {
   useEscape(onClose);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // The menu box itself, not its first item: no item lights up until ↓ or the pointer.
+    if (autoFocus) menuRef.current?.focus({ preventScroll: true });
+  }, [autoFocus]);
   const left = anchor.align === "left" ? Math.min(anchor.x, window.innerWidth - width - 8) : Math.max(8, anchor.x - width);
   return (
     <div className="rd-root" style={{ position: "fixed", inset: 0, zIndex: 150 }} onMouseDown={onClose} onContextMenu={(e) => { e.preventDefault(); onClose(); }}>
-      <div role="menu" aria-label={label} onMouseDown={(e) => e.stopPropagation()} style={{ ...PANEL, position: "absolute", ...(anchor.place === "below" ? { top: anchor.y } : { bottom: window.innerHeight - anchor.y }), left, width, padding: 4, display: "flex", flexDirection: "column", gap: 1 }}>
+      <div ref={menuRef} role="menu" aria-label={label} tabIndex={-1} onKeyDown={moveInMenu} onMouseDown={(e) => e.stopPropagation()} style={{ ...PANEL, outline: "none", position: "absolute", ...(anchor.place === "below" ? { top: anchor.y } : { bottom: window.innerHeight - anchor.y }), left, width, padding: 4, display: "flex", flexDirection: "column", gap: 1 }}>
         {children}
       </div>
     </div>

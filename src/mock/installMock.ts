@@ -541,6 +541,9 @@ function handleInvoke(cmd: string, rawPayload?: unknown): unknown {
   }
 }
 
+/** What the mock OS clipboard holds — Copy writes it, Paste reads it back. */
+let mockClipboard = "";
+
 function handlePlugin(cmd: string, payload: Record<string, unknown>): unknown {
   switch (cmd) {
     case "plugin:app|version":
@@ -571,9 +574,10 @@ function handlePlugin(cmd: string, payload: Record<string, unknown>): unknown {
     case "plugin:process|exit":
       return null;
     case "plugin:clipboard-manager|write_text":
+      mockClipboard = String(payload.text ?? "");
       return null;
     case "plugin:clipboard-manager|read_text":
-      return "";
+      return mockClipboard;
     default:
       // plugin:event|* is handled internally by mockIPC's `shouldMockEvents`
       // before it ever reaches this function. Anything else unrecognized here
