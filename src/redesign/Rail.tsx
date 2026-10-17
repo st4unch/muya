@@ -4,6 +4,7 @@
 // 7 items (Settings icon-only, pinned to the bottom via a flex spacer).
 
 import type { RailItem } from "./types";
+import RailPanda from "./RailPanda";
 import {
   ControlRailIcon,
   FilesRailIcon,
@@ -20,6 +21,8 @@ export interface RailProps {
   /** null on pages that have no rail item (Branches). */
   active: RailItem | null;
   onNavigate: (item: RailItem) => void;
+  /** Some agent is working — the panda gets busy too. */
+  busy?: boolean;
 }
 
 const ITEMS: { item: RailItem; label: string; Icon: typeof ControlRailIcon }[] = [
@@ -33,7 +36,7 @@ const ITEMS: { item: RailItem; label: string; Icon: typeof ControlRailIcon }[] =
   { item: "schedules", label: "Schedules", Icon: SchedulesRailIcon },
 ];
 
-export function Rail({ active, onNavigate }: RailProps) {
+export function Rail({ active, onNavigate, busy = false }: RailProps) {
   return (
     <nav
       aria-label="Main navigation"
@@ -80,7 +83,7 @@ export function Rail({ active, onNavigate }: RailProps) {
           </button>
         );
       })}
-      <div style={{ flexGrow: 1 }} />
+      <RailPanda busy={busy} />
       <button
         type="button"
         aria-label="Settings"

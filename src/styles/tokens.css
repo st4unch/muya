@@ -79,6 +79,16 @@
   --success-card-border: #24463B;
   --success-card-text: #CFF5E7;
 
+  /* The rail panda (docs/prd-rail-panda.md). */
+  --panda-fur: #F4F2EA;
+  --panda-ink: #0C0C0E;
+  --panda-line: #3A3A40;
+  --bamboo: #6FBF5A;
+  --bamboo-dark: #3E8A33;
+  --stone: #8C8F98;
+  --tofu: #F7EFCF;
+  --panda-z: #9AA3B5;
+
   --warning: #F2B34B;
   --warning-label: #F2B34B;
   --warning-btn-bg: #F2B34B;
@@ -147,6 +157,15 @@
   --success-card-bg: #EEF8F3;
   --success-card-border: #BDE3D1;
   --success-card-text: #0E5E43;
+
+  --panda-fur: #FFFFFF;
+  --panda-ink: #1C1C20;
+  --panda-line: #1C1C20;
+  --bamboo: #5DAE47;
+  --bamboo-dark: #357A2B;
+  --stone: #9A9DA6;
+  --tofu: #FFF6D8;
+  --panda-z: #7A8396;
 
   --warning: #D9921A;
   --warning-label: #9A6400;

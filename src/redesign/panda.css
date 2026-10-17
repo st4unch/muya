@@ -1,0 +1,169 @@
+/* The rail panda (docs/prd-rail-panda.md). Transforms and opacity only. */
+
+/* Only the moving parts: fill-box would also move the static `rotate(…)` of the eye patches. */
+.rp-panda, .rp-head, .rp-body, .rp-arm-l, .rp-arm-r, .rp-mouth,
+.rp-half-l, .rp-half-r, .rp-pow, .rp-grove, .rp-z text {
+  transform-box: fill-box;
+}
+.rp-panda { transform-origin: 50% 100%; }
+.rp-head { transform-origin: 50% 90%; }
+.rp-body { transform-origin: 50% 100%; }
+.rp-arm-l, .rp-arm-r { transform-origin: 50% 12%; }
+.rp-mouth { transform-origin: 50% 0%; }
+
+/* What each scene shows. */
+.rp-hill, .rp-z, .rp-pow, .rp-eyes-closed { opacity: 0; }
+.rp-grove { transition: opacity 0.8s ease; }
+.rp[data-scene="sleep"] .rp-grove { animation: rp-vanish 1.6s ease forwards; }
+.rp[data-scene="roll"] .rp-grove { opacity: 0; }
+.rp[data-scene="roll"] .rp-hill { opacity: 0.22; }
+.rp[data-scene="sleep"] .rp-eyes-open { opacity: 0; }
+.rp[data-scene="sleep"] .rp-eyes-closed { opacity: 1; }
+
+/* idle · eat — bamboo to the mouth, chewing */
+.rp[data-scene="eat"] .rp-arm-r { animation: rp-to-mouth 1.6s ease-in-out infinite; }
+.rp[data-scene="eat"] .rp-mouth { animation: rp-chew 0.4s ease-in-out infinite; }
+.rp[data-scene="eat"] .rp-head { animation: rp-nod 1.6s ease-in-out infinite; }
+
+/* idle · flip — somersault between the stalks */
+.rp[data-scene="flip"] .rp-panda { transform-origin: 50% 50%; animation: rp-flip 2.2s cubic-bezier(0.3, 0.7, 0.4, 1) infinite; }
+
+/* idle · sleep — bamboo gone, slow breathing, Zz */
+.rp[data-scene="sleep"] .rp-head { animation: rp-doze 3.2s ease-in-out infinite; }
+.rp[data-scene="sleep"] .rp-body { animation: rp-breathe 3.2s ease-in-out infinite; }
+.rp[data-scene="sleep"] .rp-z { opacity: 1; }
+.rp[data-scene="sleep"] .rp-z text { opacity: 0; animation: rp-z 3s ease-out infinite; }
+.rp[data-scene="sleep"] .rp-z text:nth-child(2) { animation-delay: 1s; }
+.rp[data-scene="sleep"] .rp-z text:nth-child(3) { animation-delay: 2s; }
+
+/* idle · roll — down the hill like a ball */
+.rp[data-scene="roll"] .rp-panda { transform-origin: 50% 50%; animation: rp-roll 2.6s cubic-bezier(0.5, 0, 0.7, 1) infinite; }
+
+/* kung-fu chop, bamboo-breaking chop and stone smash: arm up, down hard, the target splits */
+.rp[data-scene="kungfu"] .rp-arm-r,
+.rp[data-scene="chop"] .rp-arm-r,
+.rp[data-scene="stone"] .rp-arm-r { animation: rp-chop 1.5s cubic-bezier(0.6, 0, 0.3, 1) infinite; }
+.rp[data-scene="kungfu"] .rp-arm-l { animation: rp-guard 1.5s ease-in-out infinite; }
+.rp[data-scene="kungfu"] .rp-panda { animation: rp-hop 1.5s ease-in-out infinite; }
+.rp[data-scene="chop"] .rp-panda,
+.rp[data-scene="stone"] .rp-panda { transform: translateX(-6px); }
+.rp .rp-half-l { animation: rp-split-l 1.5s ease-out infinite; }
+.rp .rp-half-r { animation: rp-split-r 1.5s ease-out infinite; }
+.rp[data-scene="kungfu"] .rp-pow,
+.rp[data-scene="chop"] .rp-pow,
+.rp[data-scene="stone"] .rp-pow { animation: rp-pow 1.5s ease-out infinite; }
+
+/* busy · tofu */
+.rp[data-scene="tofu"] .rp-arm-r { animation: rp-to-mouth 1.3s ease-in-out infinite; }
+.rp[data-scene="tofu"] .rp-mouth { animation: rp-chew 0.35s ease-in-out infinite; }
+
+/* busy · wake — eyes open, big stretch */
+.rp[data-scene="wake"] .rp-eyes-closed { animation: rp-blink-closed 1.8s steps(1, end) forwards; }
+.rp[data-scene="wake"] .rp-eyes-open { animation: rp-blink-open 1.8s steps(1, end) forwards; }
+.rp[data-scene="wake"] .rp-arm-r { animation: rp-stretch 1.8s ease-in-out forwards; }
+.rp[data-scene="wake"] .rp-arm-l { animation: rp-stretch-l 1.8s ease-in-out forwards; }
+.rp[data-scene="wake"] .rp-panda { animation: rp-tall 1.8s ease-in-out forwards; }
+
+.rp[data-paused] * { animation-play-state: paused !important; }
+@media (prefers-reduced-motion: reduce) {
+  .rp * { animation: none !important; transition: none !important; }
+}
+
+@keyframes rp-to-mouth {
+  0%, 30% { transform: rotate(0deg); }
+  50%, 70% { transform: rotate(100deg); }
+  100% { transform: rotate(0deg); }
+}
+@keyframes rp-chew {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(0.4); }
+}
+@keyframes rp-nod {
+  0%, 30%, 100% { transform: rotate(0deg); }
+  55% { transform: rotate(4deg); }
+}
+@keyframes rp-flip {
+  0%, 15% { transform: translateY(0) rotate(0deg); }
+  45% { transform: translateY(-30px) rotate(-180deg); }
+  70% { transform: translateY(0) rotate(-360deg); }
+  78% { transform: translateY(0) scale(1.08, 0.9) rotate(-360deg); }
+  86%, 100% { transform: translateY(0) rotate(-360deg); }
+}
+@keyframes rp-vanish {
+  to { opacity: 0; transform: translateY(6px); }
+}
+@keyframes rp-doze {
+  0%, 100% { transform: rotate(8deg); }
+  50% { transform: rotate(11deg) translateY(1px); }
+}
+@keyframes rp-breathe {
+  0%, 100% { transform: scale(1, 1); }
+  50% { transform: scale(1.04, 1.06); }
+}
+@keyframes rp-z {
+  0% { opacity: 0; transform: translate(0, 4px); }
+  30% { opacity: 1; }
+  100% { opacity: 0; transform: translate(4px, -10px); }
+}
+@keyframes rp-roll {
+  0% { opacity: 0; transform: translate(-30px, -34px) scale(0.75) rotate(0deg); }
+  10% { opacity: 1; }
+  80% { opacity: 1; transform: translate(14px, 0) scale(0.75) rotate(600deg); }
+  92% { opacity: 1; transform: translate(18px, 0) scale(0.75) rotate(660deg); }
+  100% { opacity: 0; transform: translate(20px, 0) scale(0.75) rotate(660deg); }
+}
+@keyframes rp-chop {
+  0%, 20% { transform: rotate(-150deg); }
+  32% { transform: rotate(-25deg); }
+  60% { transform: rotate(-25deg); }
+  100% { transform: rotate(-150deg); }
+}
+@keyframes rp-guard {
+  0%, 100% { transform: rotate(-40deg); }
+  32% { transform: rotate(-60deg); }
+}
+@keyframes rp-hop {
+  0%, 22% { transform: translate(-6px, 0); }
+  28% { transform: translate(-6px, -4px); }
+  34%, 100% { transform: translate(-6px, 0); }
+}
+@keyframes rp-split-l {
+  0%, 30% { transform: translate(0, 0) rotate(0deg); opacity: 1; }
+  55% { transform: translate(-5px, -9px) rotate(-35deg); opacity: 1; }
+  80% { transform: translate(-7px, -2px) rotate(-60deg); opacity: 0; }
+  100% { transform: translate(0, 0); opacity: 0; }
+}
+@keyframes rp-split-r {
+  0%, 30% { transform: translate(0, 0) rotate(0deg); opacity: 1; }
+  55% { transform: translate(6px, -11px) rotate(40deg); opacity: 1; }
+  80% { transform: translate(9px, -2px) rotate(70deg); opacity: 0; }
+  100% { transform: translate(0, 0); opacity: 0; }
+}
+@keyframes rp-pow {
+  0%, 30% { opacity: 0; transform: scale(0.4); }
+  36% { opacity: 1; transform: scale(1.1); }
+  55%, 100% { opacity: 0; transform: scale(1.3); }
+}
+@keyframes rp-blink-closed {
+  0% { opacity: 1; }
+  40%, 100% { opacity: 0; }
+}
+@keyframes rp-blink-open {
+  0% { opacity: 0; }
+  40%, 100% { opacity: 1; }
+}
+@keyframes rp-stretch {
+  0%, 30% { transform: rotate(0deg); }
+  55%, 75% { transform: rotate(-165deg); }
+  100% { transform: rotate(0deg); }
+}
+@keyframes rp-stretch-l {
+  0%, 30% { transform: rotate(0deg); }
+  55%, 75% { transform: rotate(165deg); }
+  100% { transform: rotate(0deg); }
+}
+@keyframes rp-tall {
+  0%, 30% { transform: scale(1, 1); }
+  55%, 75% { transform: scale(0.96, 1.08); }
+  100% { transform: scale(1, 1); }
+}

@@ -15,6 +15,8 @@ import type { AgentVM, FooterVM, GridLayout, RailItem } from "./types";
 
 export interface GridScreenProps {
   railActive: RailItem;
+  /** Some agent (any workspace) is working — the rail panda gets busy. */
+  railBusy?: boolean;
   onRailNavigate: (item: RailItem) => void;
   footer: FooterVM;
 
@@ -99,7 +101,7 @@ export function GridScreen(props: GridScreenProps) {
             workspace={props.workspace}
           />
         }
-        rail={<Rail active={props.railActive} onNavigate={props.onRailNavigate} />}
+        rail={<Rail active={props.railActive} onNavigate={props.onRailNavigate} busy={props.railBusy} />}
         footer={<Footer {...props.footer} variant="grid" />}
       >
         <div

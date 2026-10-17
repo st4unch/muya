@@ -6,6 +6,7 @@ import { ThemeMonitorIcon, ThemeMoonIcon, ThemeSunIcon } from "../redesign/icons
 import { loadResumeOnLaunch, saveResumeOnLaunch } from "../lib/startup";
 import { loadAutoApprove, saveAutoApprove } from "../lib/autoApprove";
 import { loadAutoSave, saveAutoSave } from "../lib/fileVersions";
+import { pandaEnabled, setPandaEnabled } from "../lib/panda";
 import { Switch, ghostBtn, groupStyle, helperStyle, inputStyle, labelStyle, rowStyle, rowsBox } from "./modalKit";
 
 /** Claude's `cleanupPeriodDays` values offered (same list as the backend, claude_settings.rs). */
@@ -56,6 +57,8 @@ export default function SettingsModal({
   const [resumeOnLaunch, setResumeOnLaunch] = useState(false);
   const [autoApprove, setAutoApprove] = useState(false);
   const [keepRunning, setKeepRunning] = useState(true);
+  // Applies at once, like the theme (a look, not a setting to save).
+  const [panda, setPanda] = useState(pandaEnabled);
   // Claude group: footer status data (app pref) and Claude's own session retention
   // (`cleanupPeriodDays` in ~/.claude/settings.json; null = unset, Claude keeps 30 days).
   const [claudeStatus, setClaudeStatus] = useState(true);
@@ -288,6 +291,22 @@ export default function SettingsModal({
                 })}
               </div>
               <div style={helperStyle}>System follows your macOS appearance.</div>
+              <div style={rowsBox}>
+                <div style={rowStyle}>
+                  <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+                    <span id={id("panda")} style={{ fontSize: 13, fontWeight: 600 }}>Panda in the sidebar</span>
+                    <span style={helperStyle}>Lazes about while nothing runs, gets to work when your agents do. Click it for a trick.</span>
+                  </div>
+                  <Switch
+                    checked={panda}
+                    labelledBy={id("panda")}
+                    onChange={(v) => {
+                      setPanda(v);
+                      setPandaEnabled(v);
+                    }}
+                  />
+                </div>
+              </div>
             </div>
           )}
 
