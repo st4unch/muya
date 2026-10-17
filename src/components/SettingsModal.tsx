@@ -295,7 +295,7 @@ export default function SettingsModal({
                 <div style={rowStyle}>
                   <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
                     <span id={id("panda")} style={{ fontSize: 13, fontWeight: 600 }}>Panda in the sidebar</span>
-                    <span style={helperStyle}>Lazes about while nothing runs, gets to work when your agents do. Click it for a trick.</span>
+                    <span style={helperStyle}>Sleeps on its bamboo while nothing runs, plays a game while your agents work.</span>
                   </div>
                   <Switch
                     checked={panda}

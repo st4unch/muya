@@ -165,6 +165,14 @@ function build() {
     "",
     `Packages: ${uniq.length} (${uniq.filter((p) => p.eco === "Rust crate").length} Rust crates, ${uniq.filter((p) => p.eco === "npm package").length} npm packages)`,
     "",
+    // Not packages: artwork shipped in the app (src/assets), credited by hand.
+    "Artwork",
+    "-------",
+    "The sidebar panda animations are free LottieFiles animations, used under the Lottie",
+    "Simple License (https://lottiefiles.com/page/license) and shrunk for the sidebar:",
+    "  Panda sleeping on bamboo — bilal shehzad (LottieFiles)",
+    "  Cute Panda Playing Game — Abdul Latif (LottieFiles)",
+    "",
   ];
   if (mpl.length) {
     head.push(

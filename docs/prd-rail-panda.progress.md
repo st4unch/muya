@@ -21,3 +21,10 @@ started: 2026-10-17
 - AC3: Playwright WebKit frames of all 9 scenes dark + light; mock with working agents → wake → chop → stone.
 
 ## Dersler
+
+## Revision 2026-10-18 (operator feedback)
+- The hand-drawn SVG panda ("ucuza kaçmışsın") and the Blender attempts were dropped. The operator picked two LottieFiles animations in one style: sleeping on bamboo (idle) and playing a game (busy).
+- Assets: `src/assets/panda/{sleeping,gaming}.svg`. The 80 embedded PNGs were scaled to 30% and path precision cut to 0.1, which takes 2.0 MB to 1.1 MB (about 210 KB gzipped). Frames compared with the originals: identical. The viewBox was cropped to the drawing.
+- Shown as `<img>` (self-animating SVG, no player, no script). Unmounted while the window is hidden. Dark theme: `--panda-halo` light edge.
+- Credits in `THIRD_PARTY_LICENSES.txt` (generator updated). Lottie Simple License: commercial use allowed, attribution optional.
+- The scene engine (9 CSS scenes, tricks) was removed. The busy/idle signal is unchanged.

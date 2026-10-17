@@ -81,15 +81,9 @@
 
   --shadow-popover: 0 12px 40px rgba(0, 0, 0, 0.35);
 
-  /* The rail panda (docs/prd-rail-panda.md). */
-  --panda-fur: #F4F2EA;
-  --panda-ink: #0C0C0E;
-  --panda-line: #3A3A40;
-  --bamboo: #6FBF5A;
-  --bamboo-dark: #3E8A33;
-  --stone: #8C8F98;
-  --tofu: #F7EFCF;
-  --panda-z: #9AA3B5;
+  /* The rail panda (docs/prd-rail-panda.md): a thin light edge so its navy outline
+     doesn't sink into the dark rail. */
+  --panda-halo: drop-shadow(0 0 1.2px rgba(255, 255, 255, 0.55));
 
   --warning: #F2B34B;
   --warning-label: #F2B34B;
@@ -162,14 +156,7 @@
 
   --shadow-popover: 0 12px 32px rgba(0, 0, 0, 0.14);
 
-  --panda-fur: #FFFFFF;
-  --panda-ink: #1C1C20;
-  --panda-line: #1C1C20;
-  --bamboo: #5DAE47;
-  --bamboo-dark: #357A2B;
-  --stone: #9A9DA6;
-  --tofu: #FFF6D8;
-  --panda-z: #7A8396;
+  --panda-halo: none;
 
   --warning: #D9921A;
   --warning-label: #9A6400;

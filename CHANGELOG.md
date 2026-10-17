@@ -7,7 +7,7 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
-- **A panda lives in the sidebar**, under Schedules. While nothing runs it eats bamboo, somersaults between the stalks, makes the bamboo vanish and falls asleep, rolls down a hill and does the odd kung-fu chop. When your agents start working it wakes up with a stretch and gets busy: breaking bamboo, smashing stones, eating tofu. Click it for a trick. It hides on short windows, stays still if macOS "Reduce motion" is on, and Settings → Appearance → "Panda in the sidebar" turns it off.
+- **A panda lives in the sidebar**, under Schedules: it sleeps on its bamboo while nothing runs and plays a game while your agents work. It hides on short windows and pauses while the window is hidden; Settings → Appearance → "Panda in the sidebar" turns it off. Animations by bilal shehzad and Abdul Latif (LottieFiles, Lottie Simple License).
 - **Sessions shows how much Claude's saved sessions take** — count, total size, how many are 30+ days old or over 100 MB — and turns amber when it's enough to slow things down. **Clean up…** picks old or big sessions to **archive** (moved out of Claude's folder, restorable from the Archived tab) or **move to the Trash**. Each past session also has Archive / Move to Trash in its "…" menu. Running sessions and ones used in the last 10 minutes are never touched.
 - **A once-a-day heads-up** when saved sessions get big ("Claude sessions use 2.4 GB"), with a button straight to Clean up.
 - **Settings → Claude → Delete old Claude sessions after** (7 days to 1 year): sets Claude's own `cleanupPeriodDays`, so Claude removes sessions you haven't used for that long.
