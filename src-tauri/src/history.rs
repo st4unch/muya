@@ -19,6 +19,8 @@ pub struct SessionHistoryEntry {
     /// Last activity, ms epoch (transcript file mtime).
     pub last_modified: i64,
     pub size_bytes: u64,
+    /// The session's `<id>/` folder next to the transcript (subagents, tool output).
+    pub extra_bytes: u64,
     /// Absolute transcript path — feed to `read_session_transcript`.
     pub path: String,
     /// The session's own name: the latest `/rename` (custom-title), else the agent
@@ -125,6 +127,52 @@ fn cwd_from_transcript(path: &Path) -> Option<String> {
     Some(rest[..end].replace("\\/", "/"))
 }
 
+/// A transcript's cwd never changes, so it is read once per file.
+fn cached_cwd(path: &Path) -> Option<String> {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, Option<String>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(hit) = cache.lock().ok().and_then(|c| c.get(path).cloned()) {
+        return hit;
+    }
+    let cwd = cwd_from_transcript(path);
+    if let Ok(mut c) = cache.lock() {
+        c.insert(path.to_path_buf(), cwd.clone());
+    }
+    cwd
+}
+
+/// Bytes under `dir` (recursive, symlinks not followed). 0 when it doesn't exist.
+fn dir_bytes(dir: &Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .map(|e| match e.file_type() {
+            Ok(t) if t.is_dir() => dir_bytes(&e.path()),
+            Ok(t) if t.is_file() => e.metadata().map(|m| m.len()).unwrap_or(0),
+            _ => 0,
+        })
+        .sum()
+}
+
+/// Size of the session's `<id>/` folder, re-measured only when the transcript changed
+/// (subagents and tool output only grow while the session itself writes).
+fn cached_extra_bytes(path: &Path, len: u64, mtime: i64) -> u64 {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, (u64, i64, u64)>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some((l, m, b)) = cache.lock().ok().and_then(|c| c.get(path).copied()) {
+        if l == len && m == mtime {
+            return b;
+        }
+    }
+    let bytes = dir_bytes(&path.with_extension(""));
+    if let Ok(mut c) = cache.lock() {
+        c.insert(path.to_path_buf(), (len, mtime, bytes));
+    }
+    bytes
+}
+
 /// Trust boundary for any transcript path that came from the webview (or was derived
 /// from webview-supplied cwd/id): only `.jsonl` files under ~/.claude/projects, after
 /// resolving symlinks and `..`. Returns the canonical path.
@@ -154,12 +202,16 @@ pub(crate) fn checked_transcript_path_in(projects: &Path, path: &Path) -> Result
 #[tauri::command(async)]
 pub fn list_session_history() -> Result<Vec<SessionHistoryEntry>, String> {
     let home = std::env::var_os("HOME").ok_or("HOME not set")?;
-    let projects = Path::new(&home).join(".claude/projects");
+    list_in(&Path::new(&home).join(".claude/projects"))
+}
+
+/// Every `<root>/<project>/<id>.jsonl`, newest first.
+fn list_in(projects: &Path) -> Result<Vec<SessionHistoryEntry>, String> {
     if !projects.is_dir() {
         return Ok(vec![]);
     }
     let mut out = Vec::new();
-    let project_dirs = std::fs::read_dir(&projects).map_err(|e| format!("read_dir: {e}"))?;
+    let project_dirs = std::fs::read_dir(projects).map_err(|e| format!("read_dir: {e}"))?;
     for proj in project_dirs.filter_map(|r| r.ok()) {
         let pdir = proj.path();
         if !pdir.is_dir() {
@@ -188,7 +240,7 @@ pub fn list_session_history() -> Result<Vec<SessionHistoryEntry>, String> {
                 .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
                 .map(|d| d.as_millis() as i64)
                 .unwrap_or(0);
-            let cwd = cwd_from_transcript(&path).unwrap_or_else(|| {
+            let cwd = cached_cwd(&path).unwrap_or_else(|| {
                 // Fall back to the encoded directory name.
                 pdir.file_name()
                     .map(|n| n.to_string_lossy().into_owned())
@@ -200,6 +252,7 @@ pub fn list_session_history() -> Result<Vec<SessionHistoryEntry>, String> {
                 cwd,
                 last_modified,
                 size_bytes: meta.len(),
+                extra_bytes: cached_extra_bytes(&path, meta.len(), last_modified),
                 path: path.to_string_lossy().into_owned(),
                 name,
             });
@@ -249,6 +302,81 @@ fn content_to_text(content: &serde_json::Value) -> String {
     }
 }
 
+/// One transcript line as a displayable message, or None (meta lines, tool dumps, …).
+fn parse_message(line: &str) -> Option<TranscriptMessage> {
+    const MAX_TEXT_CHARS: usize = 4000;
+    let v: serde_json::Value = serde_json::from_str(line).ok()?;
+    let kind = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+    if kind != "user" && kind != "assistant" {
+        return None;
+    }
+    if v.get("isMeta").and_then(|m| m.as_bool()).unwrap_or(false) {
+        return None;
+    }
+    let message = v.get("message")?;
+    let role = message
+        .get("role")
+        .and_then(|r| r.as_str())
+        .unwrap_or(kind)
+        .to_string();
+    let raw = message
+        .get("content")
+        .map(content_to_text)
+        .unwrap_or_default();
+    let text = raw.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let mut text = text.to_string();
+    if text.chars().count() > MAX_TEXT_CHARS {
+        text = text.chars().take(MAX_TEXT_CHARS).collect::<String>() + "\n… [truncated]";
+    }
+    Some(TranscriptMessage {
+        role,
+        text,
+        timestamp: v
+            .get("timestamp")
+            .and_then(|t| t.as_str())
+            .map(String::from),
+    })
+}
+
+/// The newest `cap` messages of a transcript, read from the END of the file: a window
+/// of the last 4 MB, growing ×4 until it holds `cap` messages or the whole file. A
+/// 200 MB marathon session no longer has to be read (and parsed) whole to show its end.
+fn tail_messages(path: &Path, cap: usize, first_window: u64) -> Result<Vec<TranscriptMessage>, String> {
+    let mut f = std::fs::File::open(path).map_err(|e| format!("read failed: {e}"))?;
+    let len = f.metadata().map_err(|e| format!("read failed: {e}"))?.len();
+    let mut window = first_window.max(1);
+    loop {
+        let start = len.saturating_sub(window);
+        f.seek(SeekFrom::Start(start)).map_err(|e| format!("read failed: {e}"))?;
+        let mut buf = Vec::with_capacity((len - start) as usize);
+        (&mut f)
+            .take(len - start)
+            .read_to_end(&mut buf)
+            .map_err(|e| format!("read failed: {e}"))?;
+        // Mid-file, the first line is cut: start after its newline.
+        let body = if start == 0 {
+            &buf[..]
+        } else {
+            match buf.iter().position(|&b| b == b'\n') {
+                Some(i) => &buf[i + 1..],
+                None => &[][..],
+            }
+        };
+        let text = String::from_utf8_lossy(body);
+        let mut msgs: Vec<TranscriptMessage> = text.lines().filter_map(parse_message).collect();
+        if msgs.len() >= cap || start == 0 {
+            if msgs.len() > cap {
+                msgs.drain(..msgs.len() - cap);
+            }
+            return Ok(msgs);
+        }
+        window = window.saturating_mul(4);
+    }
+}
+
 /// Parse a Claude Code JSONL transcript into displayable messages (user/assistant
 /// turns only; meta lines and tool-result dumps skipped). Returns the LAST
 /// `max_messages` turns so multi-MB transcripts stay cheap to ship to the UI.
@@ -257,60 +385,171 @@ pub fn read_session_transcript(
     path: String,
     max_messages: Option<usize>,
 ) -> Result<Vec<TranscriptMessage>, String> {
-    // Trust boundary: the webview supplies the path.
-    let canon = checked_transcript_path(Path::new(&path))?;
+    // Trust boundary: the webview supplies the path (a live or an archived transcript).
+    let canon = checked_transcript_path(Path::new(&path))
+        .or_else(|_| checked_archived_path(Path::new(&path)))?;
+    tail_messages(&canon, max_messages.unwrap_or(500), 4 << 20)
+}
 
-    const MAX_TEXT_CHARS: usize = 4000;
-    let cap = max_messages.unwrap_or(500);
+// ── Archive / Trash / Restore (docs/prd-session-housekeeping.md) ───────────────
 
-    let content = std::fs::read_to_string(&canon).map_err(|e| format!("read failed: {e}"))?;
-    let mut msgs: Vec<TranscriptMessage> = Vec::new();
-    for line in content.lines() {
-        let v: serde_json::Value = match serde_json::from_str(line) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        let kind = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
-        if kind != "user" && kind != "assistant" {
-            continue;
+/// Where archived sessions go: same `<project>/<id>.jsonl` + `<id>/` layout as
+/// `~/.claude/projects`, outside Claude's folder (so Claude's own cleanup never sees them).
+fn archive_root_under(home: &Path) -> PathBuf {
+    home.join("Library/Application Support/com.staunch.muya/session-archive")
+}
+
+fn home_dir() -> Result<PathBuf, String> {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| "HOME not set".into())
+}
+
+fn checked_archived_path(path: &Path) -> Result<PathBuf, String> {
+    let root = archive_root_under(&home_dir()?);
+    checked_transcript_path_in(&root, path)
+}
+
+/// A transcript written to in the last 10 minutes is treated as in use.
+const IN_USE_MS: u128 = 10 * 60 * 1000;
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HousekeepingResult {
+    pub done: usize,
+    /// (path, why) for every transcript left as it was.
+    pub skipped: Vec<(String, String)>,
+}
+
+/// Why `canon` must not be moved, if anything: it is live, or was written just now.
+fn in_use(canon: &Path, live_ids: &[String]) -> Option<String> {
+    let id = canon.file_stem()?.to_string_lossy().into_owned();
+    if live_ids.iter().any(|l| l == &id) {
+        return Some("session is running".into());
+    }
+    let age = std::fs::metadata(canon)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())?;
+    (age.as_millis() < IN_USE_MS).then(|| "used in the last 10 minutes".into())
+}
+
+/// Move `<from_root>/<project>/<id>.jsonl` (+ `<id>/`) to the same place under `to_root`.
+fn move_session(canon: &Path, from_root: &Path, to_root: &Path) -> Result<(), String> {
+    let rel = canon.strip_prefix(from_root).map_err(|_| "outside its folder".to_string())?;
+    let dest = to_root.join(rel);
+    if dest.exists() {
+        return Err("already there".into());
+    }
+    let dest_dir = dest.parent().ok_or("bad path")?;
+    std::fs::create_dir_all(dest_dir).map_err(|e| e.to_string())?;
+    std::fs::rename(canon, &dest).map_err(|e| e.to_string())?;
+    let side = canon.with_extension("");
+    if side.is_dir() {
+        let side_dest = dest.with_extension("");
+        if !side_dest.exists() {
+            let _ = std::fs::rename(&side, &side_dest);
         }
-        if v.get("isMeta").and_then(|m| m.as_bool()).unwrap_or(false) {
-            continue;
-        }
-        let Some(message) = v.get("message") else {
-            continue;
-        };
-        let role = message
-            .get("role")
-            .and_then(|r| r.as_str())
-            .unwrap_or(kind)
-            .to_string();
-        let raw = message
-            .get("content")
-            .map(content_to_text)
-            .unwrap_or_default();
-        let text = raw.trim();
-        if text.is_empty() {
-            continue;
-        }
-        let mut text = text.to_string();
-        if text.chars().count() > MAX_TEXT_CHARS {
-            text = text.chars().take(MAX_TEXT_CHARS).collect::<String>() + "\n… [truncated]";
-        }
-        msgs.push(TranscriptMessage {
-            role,
-            text,
-            timestamp: v
-                .get("timestamp")
-                .and_then(|t| t.as_str())
-                .map(String::from),
+    }
+    Ok(())
+}
+
+fn archive_in(
+    projects: &Path,
+    archive: &Path,
+    paths: &[String],
+    live_ids: &[String],
+) -> HousekeepingResult {
+    let mut r = HousekeepingResult { done: 0, skipped: vec![] };
+    let Ok(root) = projects.canonicalize() else {
+        r.skipped = paths.iter().map(|p| (p.clone(), "no projects folder".into())).collect();
+        return r;
+    };
+    for p in paths {
+        let res = checked_transcript_path_in(projects, Path::new(p)).and_then(|canon| {
+            match in_use(&canon, live_ids) {
+                Some(why) => Err(why),
+                None => move_session(&canon, &root, archive),
+            }
         });
+        match res {
+            Ok(()) => r.done += 1,
+            Err(e) => r.skipped.push((p.clone(), e)),
+        }
     }
-    // Keep the newest `cap` turns (tail), preserving order.
-    if msgs.len() > cap {
-        msgs.drain(..msgs.len() - cap);
+    r
+}
+
+fn restore_in(projects: &Path, archive: &Path, paths: &[String]) -> HousekeepingResult {
+    let mut r = HousekeepingResult { done: 0, skipped: vec![] };
+    let Ok(root) = archive.canonicalize() else {
+        r.skipped = paths.iter().map(|p| (p.clone(), "no archive".into())).collect();
+        return r;
+    };
+    for p in paths {
+        let res = checked_transcript_path_in(archive, Path::new(p))
+            .and_then(|canon| move_session(&canon, &root, projects));
+        match res {
+            Ok(()) => r.done += 1,
+            Err(e) => r.skipped.push((p.clone(), e)),
+        }
     }
-    Ok(msgs)
+    r
+}
+
+/// Put one file or folder in the macOS Trash (recoverable from Finder).
+fn to_trash(path: &Path) -> Result<(), String> {
+    use objc2_foundation::{NSFileManager, NSString, NSURL};
+    let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
+    let fm = NSFileManager::defaultManager();
+    fm.trashItemAtURL_resultingItemURL_error(&url, None)
+        .map_err(|e| e.localizedDescription().to_string())
+}
+
+/// Move sessions out of `~/.claude/projects` into Muya's archive (running or just-used ones are skipped).
+#[tauri::command(async)]
+pub fn archive_sessions(paths: Vec<String>, live_ids: Vec<String>) -> Result<HousekeepingResult, String> {
+    let home = home_dir()?;
+    Ok(archive_in(&home.join(".claude/projects"), &archive_root_under(&home), &paths, &live_ids))
+}
+
+#[tauri::command(async)]
+pub fn restore_sessions(paths: Vec<String>) -> Result<HousekeepingResult, String> {
+    let home = home_dir()?;
+    Ok(restore_in(&home.join(".claude/projects"), &archive_root_under(&home), &paths))
+}
+
+/// Archived sessions, newest first (same shape as the history list).
+#[tauri::command(async)]
+pub fn list_archived_sessions() -> Result<Vec<SessionHistoryEntry>, String> {
+    list_in(&archive_root_under(&home_dir()?))
+}
+
+/// Move sessions (live-history or archived) to the Trash, with their `<id>/` folders.
+#[tauri::command(async)]
+pub fn trash_sessions(paths: Vec<String>, live_ids: Vec<String>) -> Result<HousekeepingResult, String> {
+    let mut r = HousekeepingResult { done: 0, skipped: vec![] };
+    for p in &paths {
+        let res = checked_transcript_path(Path::new(p))
+            .and_then(|canon| match in_use(&canon, &live_ids) {
+                Some(why) => Err(why),
+                None => Ok(canon),
+            })
+            .or_else(|e| checked_archived_path(Path::new(p)).map_err(|_| e))
+            .and_then(|canon| {
+                to_trash(&canon)?;
+                let side = canon.with_extension("");
+                if side.is_dir() {
+                    let _ = to_trash(&side);
+                }
+                Ok(())
+            });
+        match res {
+            Ok(()) => r.done += 1,
+            Err(e) => r.skipped.push((p.clone(), e)),
+        }
+    }
+    Ok(r)
 }
 
 #[cfg(test)]
@@ -445,5 +684,78 @@ mod tests {
                 e.size_bytes
             );
         }
+    }
+
+    fn full_read(path: &Path, cap: usize) -> Vec<(String, String)> {
+        let text = std::fs::read_to_string(path).unwrap();
+        let mut m: Vec<_> = text.lines().filter_map(parse_message).map(|m| (m.role, m.text)).collect();
+        if m.len() > cap {
+            m.drain(..m.len() - cap);
+        }
+        m
+    }
+
+    #[test]
+    fn tail_reader_matches_a_full_read_even_with_lines_longer_than_the_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("t.jsonl");
+        let mut s = String::new();
+        for i in 0..300 {
+            let body = if i % 50 == 7 { "y".repeat(3000) } else { format!("msg {i}") };
+            let role = if i % 2 == 0 { "user" } else { "assistant" };
+            s.push_str(&format!(
+                "{{\"type\":\"{role}\",\"message\":{{\"role\":\"{role}\",\"content\":\"{body}\"}}}}\n"
+            ));
+            s.push_str("{\"type\":\"progress\",\"data\":\"noise\"}\n");
+        }
+        std::fs::write(&p, &s).unwrap();
+        for (cap, window) in [(10, 64), (120, 256), (500, 1000), (5, 1 << 20)] {
+            let tail: Vec<_> = tail_messages(&p, cap, window).unwrap().into_iter().map(|m| (m.role, m.text)).collect();
+            assert_eq!(tail, full_read(&p, cap), "cap {cap} window {window}");
+        }
+    }
+
+    fn fake_session(projects: &Path, project: &str, id: &str, age_secs: u64) -> PathBuf {
+        let pdir = projects.join(project);
+        std::fs::create_dir_all(pdir.join(id).join("subagents")).unwrap();
+        std::fs::write(pdir.join(id).join("subagents/a.jsonl"), "x".repeat(100)).unwrap();
+        let p = pdir.join(format!("{id}.jsonl"));
+        std::fs::write(&p, "{\"type\":\"user\",\"cwd\":\"/w\"}\n").unwrap();
+        let t = std::time::SystemTime::now() - std::time::Duration::from_secs(age_secs);
+        std::fs::File::options().write(true).open(&p).unwrap().set_modified(t).unwrap();
+        p
+    }
+
+    #[test]
+    fn archive_and_restore_move_the_transcript_and_its_folder_and_skip_what_is_in_use() {
+        let d = tempfile::tempdir().unwrap();
+        let projects = d.path().join("projects");
+        let archive = d.path().join("archive");
+        let old = fake_session(&projects, "-w", "old", 3 * 86400);
+        let recent = fake_session(&projects, "-w", "recent", 60);
+        let live = fake_session(&projects, "-w", "live", 3 * 86400);
+        let outside = d.path().join("evil.jsonl");
+        std::fs::write(&outside, "{}").unwrap();
+
+        let listed = list_in(&projects).unwrap();
+        let e = listed.iter().find(|e| e.session_id == "old").unwrap();
+        assert_eq!(e.extra_bytes, 100);
+        assert_eq!(e.cwd, "/w");
+
+        let paths: Vec<String> = [&old, &recent, &live, &outside].iter().map(|p| p.to_string_lossy().into_owned()).collect();
+        let r = archive_in(&projects, &archive, &paths, &["live".to_string()]);
+        assert_eq!(r.done, 1);
+        let why: Vec<_> = r.skipped.iter().map(|(_, w)| w.as_str()).collect();
+        assert_eq!(why.len(), 3);
+        assert!(why[0].contains("10 minutes") && why[1].contains("running") && why[2].contains("outside"), "{why:?}");
+        assert!(!old.exists() && !projects.join("-w/old").exists());
+        let moved = archive.join("-w/old.jsonl");
+        assert!(moved.is_file() && archive.join("-w/old/subagents/a.jsonl").is_file());
+        assert_eq!(list_in(&archive).unwrap().len(), 1);
+
+        let r = restore_in(&projects, &archive, &[moved.to_string_lossy().into_owned()]);
+        assert_eq!(r.done, 1);
+        assert!(old.is_file() && projects.join("-w/old/subagents/a.jsonl").is_file());
+        assert!(!moved.exists());
     }
 }

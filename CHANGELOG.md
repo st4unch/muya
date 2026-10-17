@@ -6,6 +6,15 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Sessions shows how much Claude's saved sessions take** — count, total size, how many are 30+ days old or over 100 MB — and turns amber when it's enough to slow things down. **Clean up…** picks old or big sessions to **archive** (moved out of Claude's folder, restorable from the Archived tab) or **move to the Trash**. Each past session also has Archive / Move to Trash in its "…" menu. Running sessions and ones used in the last 10 minutes are never touched.
+- **A once-a-day heads-up** when saved sessions get big ("Claude sessions use 2.4 GB"), with a button straight to Clean up.
+- **Settings → Claude → Delete old Claude sessions after** (7 days to 1 year): sets Claude's own `cleanupPeriodDays`, so Claude removes sessions you haven't used for that long.
+
+### Changed
+- **Claude sessions no longer start with `--settings`.** Muya's footer data (model, context, cost, limits) now comes from a status line Muya adds once to `~/.claude/settings.json`; your own status line keeps running inside it, and a `claude` you type by hand in a Muya terminal feeds the footer too. Settings → Claude → "Claude status in Muya's footer" turns it off and puts your own status line back. If Muya is ever removed, your status line still works.
+- Opening a past session's conversation reads only the end of the file, so huge sessions (hundreds of MB) open at once.
+
 ### Changed
 - **Workspace shortcuts are now ⌃1–9 (⌃0 = all workspaces), not ⌥1–9.** On a Mac, ⌥ and a number types a character on every keyboard (™, €, #, [ …), so the old shortcut kept getting in the way of typing. ⌃ and a number types nothing. If you turned on macOS's own "Switch to Desktop N" (⌃N) shortcuts in System Settings → Keyboard → Shortcuts → Mission Control, macOS takes those keys first.
 

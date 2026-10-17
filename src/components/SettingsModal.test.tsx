@@ -68,7 +68,7 @@ describe("SettingsModal", () => {
     await waitFor(() => expect(save).toBeDisabled());
     fireEvent.click(sw);
     fireEvent.click(save);
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("app_prefs_set", { prefs: { keepRunningInBackground: false } }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("app_prefs_set", { prefs: { keepRunningInBackground: false, claudeStatusInFooter: true } }));
     await waitFor(() => expect(save).toBeDisabled());
   });
 

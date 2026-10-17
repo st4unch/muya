@@ -296,7 +296,6 @@ const EMPTY_ARRAY = new Set([
   "cyberark_list_accounts",
   "fetch_skill_marketplace",
   "get_startup_files",
-  "list_session_history",
   "scan_prd_docs",
   "search_session_contents",
   "vault_detect_candidates",
@@ -381,6 +380,29 @@ function handleInvoke(cmd: string, rawPayload?: unknown): unknown {
       ];
     case "list_agent_sessions":
       return MOCK_AGENTS;
+
+    // --- session housekeeping (docs/prd-session-housekeeping.md) ----------------------
+    case "list_session_history":
+      return mockHistory.map((h) => ({ ...h }));
+    case "list_archived_sessions":
+      return mockArchived.map((h) => ({ ...h }));
+    case "archive_sessions":
+    case "trash_sessions":
+    case "restore_sessions": {
+      const paths = new Set(Array.isArray(payload.paths) ? (payload.paths as string[]) : []);
+      const from = cmd === "restore_sessions" || [...paths].some((p) => p.includes("/session-archive/")) ? mockArchived : mockHistory;
+      const moved = from.filter((h) => paths.has(h.path));
+      const keep = from.filter((h) => !paths.has(h.path));
+      from.splice(0, from.length, ...keep);
+      if (cmd === "archive_sessions") mockArchived.push(...moved.map((h) => ({ ...h, path: h.path.replace("/.claude/projects/", "/Library/Application Support/com.staunch.muya/session-archive/") })));
+      if (cmd === "restore_sessions") mockHistory.push(...moved.map((h) => ({ ...h, path: h.path.replace("/Library/Application Support/com.staunch.muya/session-archive/", "/.claude/projects/") })));
+      return { done: moved.length, skipped: [] };
+    }
+    case "claude_cleanup_days_get":
+      return mockCleanupDays;
+    case "claude_cleanup_days_set":
+      mockCleanupDays = Number(payload.days);
+      return null;
 
     // --- pty -----------------------------------------------------------------
     case "pty_spawn":
@@ -511,7 +533,7 @@ function handleInvoke(cmd: string, rawPayload?: unknown): unknown {
     case "debug_log_get":
       return {};
     case "app_prefs_get":
-      return { keepRunningInBackground: true };
+      return { keepRunningInBackground: true, claudeStatusInFooter: true };
 
     // --- resources / marketplace -------------------------------------------------------
     case "list_slash_commands":
@@ -540,6 +562,27 @@ function handleInvoke(cmd: string, rawPayload?: unknown): unknown {
       return null;
   }
 }
+
+/** Past Claude sessions: a 201 MB marathon, some old ones, a fresh one. */
+const MOCK_DAY = 86_400_000;
+const mockSession = (id: string, name: string, cwd: string, days: number, mb: number, extraMb = 0) => ({
+  sessionId: id,
+  cwd,
+  name,
+  lastModified: Date.now() - days * MOCK_DAY,
+  sizeBytes: Math.round(mb * 1024 * 1024),
+  extraBytes: Math.round(extraMb * 1024 * 1024),
+  path: `/Users/you/.claude/projects/${cwd.replace(/\//g, "-")}/${id}.jsonl`,
+});
+const mockHistory = [
+  mockSession("9d210ed5-59c6-4e59-b3a3-9bc36511a1ab", "muya-all", "/Users/you/Documents/muya", 0, 201, 38),
+  mockSession("1b7c0e22-4a9e-4c1d-9a51-0c2f3d4e5f60", "release v4.1", "/Users/you/Documents/muya", 3, 24, 2),
+  mockSession("2c8d1f33-5b0f-4d2e-8b62-1d3e4f5a6b71", "M3u_plus download", "/Users/you/Documents/iptv", 41, 6.4),
+  mockSession("3d9e2a44-6c1a-4e3f-9c73-2e4f5a6b7c82", "lharries/whatsapp-mcp", "/Users/you/Documents/whatsapp-mcp", 63, 132, 11),
+  mockSession("4e0f3b55-7d2b-4f4a-8d84-3f5a6b7c8d93", "audit-m1-target3", "/Users/you/Documents/padas", 95, 0.8),
+];
+const mockArchived: typeof mockHistory = [];
+let mockCleanupDays: number | null = null;
 
 /** What the mock OS clipboard holds — Copy writes it, Paste reads it back. */
 let mockClipboard = "";

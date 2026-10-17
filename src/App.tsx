@@ -9,6 +9,8 @@ import type { SplitPaneVM } from "./redesign/SplitArea";
 import { belongsTo, inScope, workspaceOf, workspaceShortcut } from "./lib/workspaceScope";
 import { asNotifications, detectEvents, MAX_NOTIFICATIONS, type AgentNotification } from "./lib/agentNotifications";
 import { NotificationsPopover, NotificationToast, type NotificationItem } from "./redesign/NotificationsPanel";
+import StorageHeadsUp, { headsUpDue, markHeadsUpShown } from "./redesign/StorageHeadsUp";
+import { storageSummary, type StorageSummary, type StoredSession } from "./lib/sessionStorage";
 import { installNoAutocorrect } from "./lib/noAutocorrect";
 import AgentTerminal from "./components/Terminal";
 import FileTree from "./components/FileTree";
@@ -2333,6 +2335,26 @@ export default function App() {
   }, [agentVMs, watchedKeysId]);
   // A new event also pops a bubble under the bell for a few seconds (it stays in the list).
   const [toastNotification, setToastNotification] = useState<AgentNotification | null>(null);
+
+  // Plan C heads-up (docs/prd-session-housekeeping.md): once a day, a while after launch,
+  // tell the operator when Claude's saved sessions got big enough to slow things down.
+  const [storageHeadsUp, setStorageHeadsUp] = useState<StorageSummary | null>(null);
+  const [openCleanupToken, setOpenCleanupToken] = useState(0);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const today = new Date().toISOString().slice(0, 10);
+      if (!headsUpDue(today)) return;
+      invoke<StoredSession[]>("list_session_history")
+        .then((h) => {
+          const sum = storageSummary(Array.isArray(h) ? h : [], Date.now());
+          if (!sum.heavy) return;
+          markHeadsUpShown(today);
+          setStorageHeadsUp(sum);
+        })
+        .catch(() => {});
+    }, 20_000);
+    return () => clearTimeout(t);
+  }, []);
   useEffect(() => {
     if (!toastNotification) return;
     const t = setTimeout(() => setToastNotification(null), 6000);
@@ -2520,6 +2542,7 @@ export default function App() {
               {mountedViews.has("sessions") && (
                 <SessionsPage
                   onRegisterRefresh={registerSessionsRefresh}
+                  openCleanupToken={openCleanupToken}
                   onOpen={(spec) => {
                     if (spec.cwd) ensureWorktreeTracked(spec.cwd);
                     openTerminal({ ...spec, kind: "terminal" });
@@ -2778,6 +2801,17 @@ export default function App() {
             onDismiss={(id) => setNotifications(notificationsRef.current.filter((n) => n.id !== id))}
             onClearAll={() => setNotifications([])}
             onClose={() => setMenu(null)}
+          />
+        )}
+        {storageHeadsUp && !toastNotification && !autoAllowSuggest && (
+          <StorageHeadsUp
+            summary={storageHeadsUp}
+            onOpen={() => {
+              setStorageHeadsUp(null);
+              setView("sessions");
+              setOpenCleanupToken((n) => n + 1);
+            }}
+            onDismiss={() => setStorageHeadsUp(null)}
           />
         )}
         {toastNotification && menu?.kind !== "notifications" && (

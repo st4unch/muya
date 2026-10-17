@@ -6,7 +6,10 @@ import { ThemeMonitorIcon, ThemeMoonIcon, ThemeSunIcon } from "../redesign/icons
 import { loadResumeOnLaunch, saveResumeOnLaunch } from "../lib/startup";
 import { loadAutoApprove, saveAutoApprove } from "../lib/autoApprove";
 import { loadAutoSave, saveAutoSave } from "../lib/fileVersions";
-import { Switch, ghostBtn, groupStyle, helperStyle, labelStyle } from "./modalKit";
+import { Switch, ghostBtn, groupStyle, helperStyle, inputStyle, labelStyle, rowStyle, rowsBox } from "./modalKit";
+
+/** Claude's `cleanupPeriodDays` values offered (same list as the backend, claude_settings.rs). */
+const CLEANUP_DAYS = [7, 14, 30, 60, 90, 180, 365];
 
 const DEFAULT_LOG_PATH = "~/.claude/muya-debug.log";
 
@@ -53,6 +56,11 @@ export default function SettingsModal({
   const [resumeOnLaunch, setResumeOnLaunch] = useState(false);
   const [autoApprove, setAutoApprove] = useState(false);
   const [keepRunning, setKeepRunning] = useState(true);
+  // Claude group: footer status data (app pref) and Claude's own session retention
+  // (`cleanupPeriodDays` in ~/.claude/settings.json; null = unset, Claude keeps 30 days).
+  const [claudeStatus, setClaudeStatus] = useState(true);
+  const [cleanupDays, setCleanupDays] = useState<number | null>(null);
+  const [claudeStored, setClaudeStored] = useState<{ status: boolean; days: number | null } | null>(null);
   // Editor → Auto-save, as stored when the modal opened (pending until Save).
   const [autoSave, setAutoSave] = useState(false);
   const [autoSaveStored, setAutoSaveStored] = useState(false);
@@ -73,14 +81,21 @@ export default function SettingsModal({
     setAutoSave(as);
     setAutoSaveStored(as);
     setStartupStored(null);
+    setClaudeStored(null);
     Promise.all([
       invoke<boolean>("login_item_get").catch(() => false),
-      invoke<{ keepRunningInBackground?: boolean }>("app_prefs_get").catch(() => null),
-    ]).then(([v, prefs]) => {
+      invoke<{ keepRunningInBackground?: boolean; claudeStatusInFooter?: boolean }>("app_prefs_get").catch(() => null),
+      invoke<number | null>("claude_cleanup_days_get").catch(() => null),
+    ]).then(([v, prefs, days]) => {
       const keep = prefs?.keepRunningInBackground !== false;
+      const status = prefs?.claudeStatusInFooter !== false;
       setLoginItem(!!v);
       setKeepRunning(keep);
       setStartupStored({ login: !!v, resume, auto, keep });
+      const d = typeof days === "number" ? days : null;
+      setClaudeStatus(status);
+      setCleanupDays(d);
+      setClaudeStored({ status, days: d });
     });
     setSaved(false);
     setStored(null);
@@ -116,7 +131,8 @@ export default function SettingsModal({
     startupStored !== null &&
     (startupStored.login !== loginItem || startupStored.resume !== resumeOnLaunch || startupStored.auto !== autoApprove || startupStored.keep !== keepRunning);
   const editorDirty = autoSave !== autoSaveStored;
-  const dirty = logDirty || startupDirty || editorDirty;
+  const claudeDirty = claudeStored !== null && (claudeStored.status !== claudeStatus || claudeStored.days !== cleanupDays);
+  const dirty = logDirty || startupDirty || editorDirty || claudeDirty;
 
   const save = async () => {
     if (!dirty || busy) return;
@@ -129,8 +145,15 @@ export default function SettingsModal({
         setLoginItem(login);
         saveResumeOnLaunch(resumeOnLaunch);
         saveAutoApprove(autoApprove);
-        if (startupStored.keep !== keepRunning) await invoke("app_prefs_set", { prefs: { keepRunningInBackground: keepRunning } });
+        if (startupStored.keep !== keepRunning) await invoke("app_prefs_set", { prefs: { keepRunningInBackground: keepRunning, claudeStatusInFooter: claudeStored?.status ?? true } });
         setStartupStored({ login, resume: resumeOnLaunch, auto: autoApprove, keep: keepRunning });
+      }
+      if (claudeStored && claudeDirty) {
+        // Both prefs travel together: a missing key would reset to its default.
+        if (claudeStored.status !== claudeStatus)
+          await invoke("app_prefs_set", { prefs: { keepRunningInBackground: keepRunning, claudeStatusInFooter: claudeStatus } });
+        if (cleanupDays !== null && claudeStored.days !== cleanupDays) await invoke("claude_cleanup_days_set", { days: cleanupDays });
+        setClaudeStored({ status: claudeStatus, days: cleanupDays });
       }
       if (editorDirty) {
         saveAutoSave(autoSave);
@@ -332,6 +355,52 @@ export default function SettingsModal({
                     edit();
                   }}
                 />
+              </div>
+            </div>
+          </div>
+
+          <div style={groupStyle}>
+            <span style={labelStyle}>Claude</span>
+            <div style={rowsBox}>
+              <div style={rowStyle}>
+                <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span id={id("cstatus")} style={{ fontSize: 13, fontWeight: 600 }}>Claude status in Muya's footer</span>
+                  <span style={helperStyle}>
+                    Model, context, cost and limits of the session you're looking at. Muya adds its status line to ~/.claude/settings.json and keeps yours running. Off puts your own back.
+                  </span>
+                </div>
+                <Switch
+                  checked={claudeStatus}
+                  labelledBy={id("cstatus")}
+                  onChange={(v) => {
+                    setClaudeStatus(v);
+                    edit();
+                  }}
+                />
+              </div>
+              <div style={{ ...rowStyle, borderTop: "1px solid var(--border)" }}>
+                <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+                  <label htmlFor={id("cleanup")} style={{ fontSize: 13, fontWeight: 600 }}>Delete old Claude sessions after</label>
+                  <span style={helperStyle}>
+                    Claude deletes sessions not used for this long when it starts. Old sessions make Muya and Claude slower. Sessions you archive in Sessions are kept.
+                  </span>
+                </div>
+                <select
+                  id={id("cleanup")}
+                  value={cleanupDays ?? 30}
+                  onChange={(e) => {
+                    setCleanupDays(Number(e.target.value));
+                    edit();
+                  }}
+                  style={{ ...inputStyle, width: "auto", flexShrink: 0, cursor: "pointer" }}
+                >
+                  {CLEANUP_DAYS.map((d) => (
+                    <option key={d} value={d}>
+                      {d === 365 ? "1 year" : `${d} days`}
+                      {d === 30 && cleanupDays === null ? " (default)" : ""}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
           </div>

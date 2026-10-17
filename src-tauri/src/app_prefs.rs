@@ -16,6 +16,10 @@ pub struct AppPrefs {
     /// schedules stay alive). Off: closing the window quits, as before 4.1.2.
     #[serde(default = "yes")]
     pub keep_running_in_background: bool,
+    /// Claude's status data (model, context, cost) in Muya's footer, through a
+    /// `statusLine` in `~/.claude/settings.json` (docs/prd-statusline-user-settings.md).
+    #[serde(default = "yes")]
+    pub claude_status_in_footer: bool,
 }
 
 fn yes() -> bool {
@@ -26,6 +30,7 @@ impl Default for AppPrefs {
     fn default() -> Self {
         AppPrefs {
             keep_running_in_background: true,
+            claude_status_in_footer: true,
         }
     }
 }
@@ -57,6 +62,11 @@ fn write_at(path: &Path, prefs: &AppPrefs) -> Result<(), String> {
     std::fs::rename(&tmp, path).map_err(|e| e.to_string())
 }
 
+/// The footer-status switch, read straight from disk (startup only).
+pub fn claude_status_in_footer() -> bool {
+    prefs_path().map(|p| read_at(&p)).unwrap_or_default().claude_status_in_footer
+}
+
 /// Apply the saved preferences. Called once from setup.
 pub fn load() {
     let prefs = prefs_path().map(|p| read_at(&p)).unwrap_or_default();
@@ -80,8 +90,12 @@ pub fn app_prefs_get() -> AppPrefs {
 #[tauri::command]
 pub fn app_prefs_set(prefs: AppPrefs) -> Result<(), String> {
     let path = prefs_path().ok_or("No home folder.")?;
+    let before = read_at(&path);
     write_at(&path, &prefs)?;
     KEEP_RUNNING.store(prefs.keep_running_in_background, Ordering::Relaxed);
+    if before.claude_status_in_footer != prefs.claude_status_in_footer {
+        crate::statusline::apply(prefs.claude_status_in_footer)?;
+    }
     Ok(())
 }
 
@@ -102,6 +116,7 @@ mod tests {
         );
         let off = AppPrefs {
             keep_running_in_background: false,
+            claude_status_in_footer: false,
         };
         write_at(&path, &off).unwrap();
         assert_eq!(read_at(&path), off);

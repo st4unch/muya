@@ -6,6 +6,10 @@ import { contentTerms, describeQuery, isEmptyQuery, parseSessionQuery, sessionMa
 import { RefreshCw, Play, Plug, FolderGit2, Clock, Square, Search, X, MessageSquare, User, Bot, Copy, Check, Download, SquareTerminal } from "lucide-react";
 import TerminalHistoryView from "./TerminalHistoryView";
 import { buildResumeCommand, isSafeSessionId, singleQuote, type AgentKind } from "../lib/agent";
+import { formatBytes, sessionBytes, storageSummary } from "../lib/sessionStorage";
+import SessionCleanupDialog, { resultLine } from "./SessionCleanupDialog";
+import { MenuItem, MenuPopover, anchorFromRect, type Anchor } from "../redesign/Menus";
+import { MoreHorizontal } from "lucide-react";
 
 /// The command that opens a session row in a terminal.
 ///
@@ -41,6 +45,8 @@ interface HistoryEntry {
   cwd: string;
   lastModified: number;
   sizeBytes: number;
+  /** The session's `<id>/` folder (subagents, tool output). */
+  extraBytes?: number;
   path: string;
   /** The session's own name (latest /rename, agent name or Claude's title), if any. */
   name?: string | null;
@@ -74,11 +80,18 @@ function statusColor(s: string) {
 export default function SessionsPage({
   onOpen,
   onRegisterRefresh,
+  openCleanupToken,
 }: {
   onOpen: (spec: OpenTerminalSpec) => void;
   /** Register this page's refresh fn with the App-level hourly coordinator. */
   onRegisterRefresh?: (fn: () => Promise<void>) => void;
+  /** Bumped by the App (storage heads-up) to open the clean-up dialog. */
+  openCleanupToken?: number;
 }) {
+  const [cleanupOpen, setCleanupOpen] = useState(false);
+  // A past session's "…" menu, and the last single-row archive/trash outcome.
+  const [rowMenu, setRowMenu] = useState<{ anchor: Anchor; h: HistoryEntry } | null>(null);
+  const [rowNote, setRowNote] = useState("");
   const [live, setLive] = useState<AgentSession[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   // Second tab: plain terminals' own command histories (TerminalHistoryView).
@@ -201,7 +214,23 @@ export default function SessionsPage({
     }
   };
 
-  const liveIds = new Set(live.map((s) => s.id));
+  const liveIds = useMemo(() => new Set(live.map((s) => s.id)), [live]);
+  const storage = useMemo(() => storageSummary(history, Date.now()), [history]);
+
+  useEffect(() => {
+    if (openCleanupToken) setCleanupOpen(true);
+  }, [openCleanupToken]);
+
+  const rowAction = async (cmd: "archive_sessions" | "trash_sessions", h: HistoryEntry) => {
+    setRowMenu(null);
+    try {
+      const r = await invoke<{ done: number; skipped: [string, string][] }>(cmd, { paths: [h.path], liveIds: [...liveIds] });
+      setRowNote(resultLine(cmd === "archive_sessions" ? "Archived" : "Moved to the Trash:", r));
+      await refresh();
+    } catch (e) {
+      setRowNote(String(e));
+    }
+  };
 
   const q = !isEmptyQuery(pq);
   const filteredLive = q
@@ -383,6 +412,33 @@ export default function SessionsPage({
         </div>
       </section>
 
+      {/* STORAGE — what Claude's saved sessions take, and the way to clean up. */}
+      {history.length > 0 && (
+        <div
+          role="status"
+          className={`mb-3 flex items-center gap-3 rounded-lg border px-3 py-2 text-[11px] font-mono ${
+            storage.heavy
+              ? "border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-300"
+              : "border-neutral-200 dark:border-neutral-700 bg-[var(--bg-control)] text-neutral-600 dark:text-neutral-400"
+          }`}
+        >
+          <span className="min-w-0 flex-1 truncate">
+            {storage.count} sessions · {formatBytes(storage.totalBytes)}
+            {storage.oldCount > 0 && ` · ${storage.oldCount} not used for 30+ days`}
+            {storage.bigCount > 0 && ` · ${storage.bigCount} over 100 MB`}
+            {storage.heavy && " — big histories slow Muya and Claude down"}
+            {rowNote && <span className="ml-2 text-neutral-500 dark:text-neutral-400">{rowNote}</span>}
+          </span>
+          <button
+            type="button"
+            onClick={() => setCleanupOpen(true)}
+            className="shrink-0 rounded border border-current/30 px-2 py-0.5 font-semibold hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer"
+          >
+            Clean up…
+          </button>
+        </div>
+      )}
+
       {/* HISTORY */}
       <section>
         <h2 className="text-[10px] font-mono uppercase tracking-widest font-bold text-neutral-500 dark:text-neutral-400 mb-2">
@@ -413,7 +469,7 @@ export default function SessionsPage({
                       </span>
                     )}
                     <span className="text-[9px] font-mono text-neutral-400 dark:text-neutral-500">
-                      {(h.sizeBytes / 1024).toFixed(0)} KB
+                      {formatBytes(sessionBytes(h))}
                     </span>
                   </div>
                   <div className="flex items-center gap-3 mt-1 text-[10px] font-mono text-neutral-500 dark:text-neutral-400">
@@ -475,6 +531,15 @@ export default function SessionsPage({
                     title="Resume this session in a new terminal"
                   >
                     <Play className="h-3 w-3" /> Resume
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`More actions for ${name}`}
+                    onClick={(e) => setRowMenu({ anchor: anchorFromRect(e.currentTarget.getBoundingClientRect(), "right"), h })}
+                    className="flex items-center px-1.5 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-[var(--bg-control)] text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer transition-colors"
+                    title="Archive or move to the Trash"
+                  >
+                    <MoreHorizontal className="h-3.5 w-3.5" />
                   </button>
                 </div>
               </div>
@@ -547,6 +612,16 @@ export default function SessionsPage({
             </div>
           </div>
         </>
+      )}
+
+      {rowMenu && (
+        <MenuPopover label="Session actions" anchor={rowMenu.anchor} width={210} onClose={() => setRowMenu(null)}>
+          <MenuItem label="Archive" disabled={liveIds.has(rowMenu.h.sessionId)} onSelect={() => void rowAction("archive_sessions", rowMenu.h)} />
+          <MenuItem label="Move to Trash" danger disabled={liveIds.has(rowMenu.h.sessionId)} onSelect={() => void rowAction("trash_sessions", rowMenu.h)} />
+        </MenuPopover>
+      )}
+      {cleanupOpen && (
+        <SessionCleanupDialog history={history} liveIds={liveIds} onClose={() => setCleanupOpen(false)} onChanged={() => void refresh()} />
       )}
     </div>
   );

@@ -13,6 +13,11 @@
 //!
 //! PC-agnostic: the dir is `<system temp>/muya-status-<pid>` (per instance, 0700), the
 //! scripts are plain POSIX `sh` (no jq), and every path is quoted for `sh`.
+//!
+//! Since 4.1.12 (docs/prd-statusline-user-settings.md) the tap normally lives at a stable
+//! per-user place and `~/.claude/settings.json`'s own `statusLine` points at it, so no
+//! `--settings` flag is needed and a hand-typed `claude` inside Muya feeds the footer too.
+//! The per-launch `--settings` file above is only the fallback when that edit fails.
 
 use serde_json::Value;
 use std::fs;
@@ -23,6 +28,10 @@ const DIR_PREFIX: &str = "muya-status-";
 const MAX_JSON_BYTES: u64 = 256 * 1024;
 
 static DIR: OnceLock<PathBuf> = OnceLock::new();
+/// The tap is wired into `~/.claude/settings.json` — no `--settings` flag needed.
+static IN_USER_SETTINGS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The operator turned the footer data off (app_prefs): no tap, no flag.
+static DISABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Serialises `ensure` so two launches never rebuild the dir at the same time.
 static ENSURE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -149,7 +158,9 @@ fn sweep_stale(base: &Path, alive: impl Fn(u32) -> bool) {
     }
 }
 
-/// Startup: sweep dead instances' dirs, create this one's. Failure only disables the feature.
+/// Startup: sweep dead instances' dirs, create this one's (status files + fallback
+/// settings), then wire the tap into the user's settings when the operator wants it.
+/// Failure only disables the feature.
 pub(crate) fn init() {
     let base = std::env::temp_dir();
     sweep_stale(&base, crate::ssh::process_alive);
@@ -157,6 +168,125 @@ pub(crate) fn init() {
     let home = dirs_next::home_dir();
     let _ = write_files(&dir, home.as_deref());
     let _ = DIR.set(dir);
+    let _ = apply(crate::app_prefs::claude_status_in_footer());
+}
+
+// ── The tap in the user's own settings ─────────────────────────────────────────
+
+/// `~/Library/Application Support/com.staunch.muya/statusline` under `home`.
+pub(crate) fn stable_dir_under(home: &Path) -> PathBuf {
+    home.join("Library/Application Support/com.staunch.muya/statusline")
+}
+
+/// The marker that tells Muya's own `statusLine` command apart from anyone else's.
+const MARK: &str = "/com.staunch.muya/statusline/tap.sh";
+
+fn is_ours(sl: &Value) -> bool {
+    sl.get("command").and_then(Value::as_str).is_some_and(|c| c.contains(MARK))
+}
+
+/// What goes into `statusLine.command`: run Muya's tap while it exists, else the user's
+/// own command — so removing Muya never leaves them without their status line.
+fn wrapped_command(tap: &Path, user_cmd: Option<&str>) -> String {
+    let fallback = user_cmd.map(str::trim).filter(|c| !c.is_empty()).unwrap_or(":");
+    format!(
+        "f={}; [ -f \"$f\" ] && exec sh \"$f\"; {fallback}",
+        sh_quote(&tap.to_string_lossy())
+    )
+}
+
+/// The user's own `statusLine`, as Muya found it before wrapping it (`null` = none).
+fn saved_user_statusline(stable: &Path) -> Option<Value> {
+    let v: Value = serde_json::from_slice(&fs::read(stable.join("user-statusline.json")).ok()?).ok()?;
+    (!v.is_null()).then_some(v)
+}
+
+/// (Re)write the stable dir: tap.sh, the user's script and their saved statusLine.
+fn write_stable(stable: &Path, user: Option<&Value>) -> std::io::Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    if fs::symlink_metadata(stable).is_ok_and(|m| !m.is_dir()) {
+        fs::remove_file(stable)?;
+    }
+    fs::DirBuilder::new().recursive(true).mode(0o700).create(stable)?;
+    fs::set_permissions(stable, fs::Permissions::from_mode(0o700))?;
+    for name in ["tap.sh", "user-statusline.sh", "user-statusline.json"] {
+        let _ = fs::remove_file(stable.join(name));
+    }
+    write_private(&stable.join("tap.sh"), TAP_SH.as_bytes())?;
+    if let Some(cmd) = user.and_then(|u| u.get("command")).and_then(Value::as_str) {
+        write_private(&stable.join("user-statusline.sh"), format!("{cmd}\n").as_bytes())?;
+    }
+    let saved = user.cloned().unwrap_or(Value::Null);
+    write_private(
+        &stable.join("user-statusline.json"),
+        &serde_json::to_vec_pretty(&saved).unwrap_or_default(),
+    )
+}
+
+/// Point `statusLine` in `home`'s settings at Muya's tap (wrapping the user's own).
+/// Running it again changes nothing. Err leaves the settings file as it was.
+pub(crate) fn install_at(home: &Path) -> Result<(), String> {
+    let settings = crate::claude_settings::path_under(home);
+    let stable = stable_dir_under(home);
+    let current = crate::claude_settings::read(&settings)?;
+    let sl = current.get("statusLine").cloned();
+    // Theirs: what Muya saved when it wrapped it, or what is there now if it isn't ours.
+    let user = match &sl {
+        Some(v) if is_ours(v) => saved_user_statusline(&stable),
+        Some(v) if v.get("command").and_then(Value::as_str).is_some_and(|c| !c.trim().is_empty()) => Some(v.clone()),
+        _ => None,
+    };
+    write_stable(&stable, user.as_ref()).map_err(|e| format!("can't write {}: {e}", stable.display()))?;
+    let tap = stable.join("tap.sh");
+    let user_cmd = user.as_ref().and_then(|u| u.get("command")).and_then(Value::as_str);
+    // Keep the user's other statusLine keys (padding, refreshInterval, …).
+    let mut wanted = user.clone().filter(Value::is_object).unwrap_or_else(|| serde_json::json!({}));
+    wanted["type"] = Value::from("command");
+    wanted["command"] = Value::from(wrapped_command(&tap, user_cmd));
+    crate::claude_settings::update(&settings, Some(&stable.join("settings.before-muya.json")), |m| {
+        if m.get("statusLine") == Some(&wanted) {
+            return false;
+        }
+        m.insert("statusLine".into(), wanted);
+        true
+    })?;
+    Ok(())
+}
+
+/// Put the user's own `statusLine` back (or remove Muya's when they had none).
+pub(crate) fn uninstall_at(home: &Path) -> Result<(), String> {
+    let settings = crate::claude_settings::path_under(home);
+    let stable = stable_dir_under(home);
+    let user = saved_user_statusline(&stable);
+    crate::claude_settings::update(&settings, None, |m| {
+        if !m.get("statusLine").is_some_and(is_ours) {
+            return false; // not Muya's (any more): leave it
+        }
+        match &user {
+            Some(u) => m.insert("statusLine".into(), u.clone()),
+            None => m.remove("statusLine"),
+        };
+        true
+    })?;
+    Ok(())
+}
+
+/// Turn the footer data on or off (startup and the Settings switch).
+pub(crate) fn apply(on: bool) -> Result<(), String> {
+    use std::sync::atomic::Ordering;
+    DISABLED.store(!on, Ordering::Relaxed);
+    let home = dirs_next::home_dir().ok_or("No home folder.")?;
+    if on {
+        let r = install_at(&home);
+        IN_USER_SETTINGS.store(r.is_ok(), Ordering::Relaxed);
+        if let Err(e) = &r {
+            eprintln!("[muya] statusline: {e} — falling back to --settings per launch");
+        }
+        r
+    } else {
+        IN_USER_SETTINGS.store(false, Ordering::Relaxed);
+        uninstall_at(&home)
+    }
 }
 
 /// Make sure `dir` still holds settings.json and tap.sh, rebuilding it when they're
@@ -198,6 +328,10 @@ fn read_status(dir: &Path, pty_id: &str) -> Option<Value> {
 /// session then starts without the status tap rather than not at all.
 #[tauri::command]
 pub fn statusline_settings_path() -> Option<String> {
+    use std::sync::atomic::Ordering;
+    if DISABLED.load(Ordering::Relaxed) || IN_USER_SETTINGS.load(Ordering::Relaxed) {
+        return None;
+    }
     let d = dir()?;
     let _guard = ENSURE.lock().unwrap_or_else(|e| e.into_inner());
     ensure(d, dirs_next::home_dir().as_deref())
@@ -371,5 +505,106 @@ mod tests {
         assert!(!base.path().join("muya-status-111").exists());
         assert!(base.path().join("muya-status-222").exists());
         assert!(base.path().join("other-333").exists());
+    }
+
+    /// Run the installed `statusLine.command` the way Claude does: `sh -c`, JSON on stdin.
+    fn run_statusline(home: &Path, json: &str, status_file: Option<&Path>) -> String {
+        let v: Value = serde_json::from_str(
+            &fs::read_to_string(crate::claude_settings::path_under(home)).unwrap(),
+        )
+        .unwrap();
+        let cmd = v["statusLine"]["command"].as_str().unwrap().to_string();
+        let mut c = Command::new("sh");
+        c.arg("-c").arg(&cmd).env_remove("MUYA_STATUS_FILE");
+        if let Some(f) = status_file {
+            c.env("MUYA_STATUS_FILE", f);
+        }
+        let mut child = c
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        use std::io::Write;
+        child.stdin.take().unwrap().write_all(json.as_bytes()).unwrap();
+        String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).into_owned()
+    }
+
+    #[test]
+    fn install_wraps_the_users_statusline_keeps_other_keys_and_is_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("my home");
+        let settings = crate::claude_settings::path_under(&home);
+        fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        let original = r#"{"model":"opus","statusLine":{"type":"command","command":"read -r l; printf 'USER:%s' \"$l\"","padding":1},"hooks":{}}"#;
+        fs::write(&settings, original).unwrap();
+        install_at(&home).unwrap();
+        let after = fs::read_to_string(&settings).unwrap();
+        let v: Value = serde_json::from_str(&after).unwrap();
+        assert!(is_ours(&v["statusLine"]));
+        assert_eq!(v["statusLine"]["padding"], 1);
+        assert_eq!(v["model"], "opus");
+        let keys: Vec<_> = v.as_object().unwrap().keys().cloned().collect();
+        assert_eq!(keys, ["model", "statusLine", "hooks"]);
+        let stable = stable_dir_under(&home);
+        assert_eq!(fs::read_to_string(stable.join("settings.before-muya.json")).unwrap(), original);
+        // Again: nothing changes (the user's command is not wrapped twice).
+        install_at(&home).unwrap();
+        assert_eq!(fs::read_to_string(&settings).unwrap(), after);
+
+        let json = r#"{"model":{"display_name":"Opus"}}"#;
+        // Inside Muya: the JSON is kept for the footer and the user's line still prints.
+        let f = tmp.path().join("pty-9.json");
+        assert_eq!(run_statusline(&home, json, Some(&f)), format!("USER:{json}"));
+        assert!(fs::read_to_string(&f).unwrap().contains("Opus"));
+        // Outside Muya: only the user's line.
+        assert_eq!(run_statusline(&home, json, None), format!("USER:{json}"));
+        // Muya gone (tap deleted): the user's line still prints.
+        fs::remove_dir_all(&stable).unwrap();
+        assert_eq!(run_statusline(&home, json, None), format!("USER:{json}"));
+    }
+
+    #[test]
+    fn uninstall_puts_back_exactly_what_the_user_had() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let settings = crate::claude_settings::path_under(home);
+        fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        let theirs = serde_json::json!({"type":"command","command":"echo mine","refreshInterval":5});
+        fs::write(&settings, serde_json::json!({"a":1,"statusLine":theirs}).to_string()).unwrap();
+        install_at(home).unwrap();
+        uninstall_at(home).unwrap();
+        let v: Value = serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+        assert_eq!(v["statusLine"], theirs);
+        assert_eq!(v["a"], 1);
+
+        // No status line of their own: Muya's is removed, nothing else touched.
+        fs::write(&settings, r#"{"a":2}"#).unwrap();
+        install_at(home).unwrap();
+        assert!(run_statusline(home, "{}", None).is_empty());
+        uninstall_at(home).unwrap();
+        let v: Value = serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+        assert!(v.get("statusLine").is_none());
+        assert_eq!(v["a"], 2);
+    }
+
+    #[test]
+    fn a_later_status_line_of_their_own_gets_wrapped_and_a_broken_file_is_left_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let settings = crate::claude_settings::path_under(home);
+        fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        fs::write(&settings, "{}").unwrap();
+        install_at(home).unwrap();
+        // The user sets a new one by hand.
+        fs::write(&settings, r#"{"statusLine":{"type":"command","command":"printf NEW"}}"#).unwrap();
+        install_at(home).unwrap();
+        assert_eq!(run_statusline(home, "{}", None), "NEW");
+        uninstall_at(home).unwrap();
+        let v: Value = serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+        assert_eq!(v["statusLine"]["command"], "printf NEW");
+
+        fs::write(&settings, "{ broken").unwrap();
+        assert!(install_at(home).is_err());
+        assert_eq!(fs::read_to_string(&settings).unwrap(), "{ broken");
     }
 }

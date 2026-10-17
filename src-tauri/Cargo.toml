@@ -40,7 +40,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["protocol-asset", "tray-icon", "image-png"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
 portable-pty = "0.9.0"
 tauri-plugin-dialog = "2.7.1"
 sysinfo = "0.38.4"
@@ -96,8 +96,8 @@ core-foundation = "0.10"
 objc2-service-management = "0.3.2"
 objc2 = "0.6"
 # NSString for SMAppService.agent(plistName:); already in the tree via
-# objc2-service-management.
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString"] }
+# objc2-service-management. NSFileManager/NSURL/NSError: "Move to Trash" for sessions.
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString", "NSFileManager", "NSURL", "NSError"] }
 
 [dev-dependencies]
 # MockRuntime for the window-close test (lib.rs window_close_tests).

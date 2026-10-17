@@ -50,6 +50,7 @@ mod bridge;
 mod bridge_exec;
 mod bridge_mcp;
 mod bridge_remote;
+mod claude_settings;
 mod broker;
 mod credstore;
 mod cyberark;
@@ -428,6 +429,10 @@ pub fn run() {
             agents::kill_session,
             history::list_session_history,
             history::read_session_transcript,
+            history::archive_sessions,
+            history::restore_sessions,
+            history::list_archived_sessions,
+            history::trash_sessions,
             agent_files::session_touched_files,
             fs::list_dir,
             fs::read_file,
@@ -466,6 +471,8 @@ pub fn run() {
             slash_commands::list_slash_commands,
             statusline::statusline_settings_path,
             statusline::statusline_get,
+            claude_settings::claude_cleanup_days_get,
+            claude_settings::claude_cleanup_days_set,
             fs::fetch_skill_marketplace,
             fs::fetch_mcp_marketplace,
             fs::install_skill,
