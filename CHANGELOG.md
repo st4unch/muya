@@ -6,6 +6,11 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.1.11] - 2026-10-17
+
+### Added
+- **Right-click menu in terminals and Claude sessions.** Copy, Paste, Paste as Path (spaces and special characters escaped, so a pasted path stays one word), Select All, Open Link (when the selection is a web address), Find…, Clear Scrollback, and Bigger / Smaller / Default Text Size. Right-clicking a file path in the output still opens the path menu. While the menu is open, ↑/↓ and Enter pick an item and Esc closes it; nothing you type reaches the terminal.
+
 ## [4.1.10] - 2026-10-17
 
 ### Fixed
