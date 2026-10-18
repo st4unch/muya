@@ -62,3 +62,16 @@ started: 2026-10-17
 - Decision: character art comes only from professional sources (LottieFiles, the operator picks). Muya does the scene logic.
 - `kungfu.svg` was removed. busy starts with `gaming` again. The 5-minute sleep rule stays.
 - Next: LottieFiles candidates (same creators first) for the operator to choose from.
+
+## Revision 2026-10-18 (e): first LottieFiles (Weblodge) scene, waving
+- The operator picked 9 Weblodge animations from LottieFiles: roll, eating noodles, celebrating, waving, fan dance, teaching, travelling, notes, bowing. The purple set was dropped. Started with one sample, "Panda waving" (1509739). Its page says Lottie Simple License (free, commercial use allowed).
+- Shipped as Lottie JSON (`src/assets/panda/waving.json`), played by `lottie-web` 5.12.2 (MIT, exact pin) through its light build `lottie_light`:
+  - It is the SVG renderer only and has no expression engine. A grep finds no `eval`/`new Function`, so it fits the CSP `script-src 'self'`.
+  - The player and the JSON are dynamic imports, about 48 KB + 41 KB gzipped, loaded only while the scene shows. The player is destroyed when the scene goes away.
+  - `npm audit --omit=dev`: 0 vulnerabilities. npm needed `NODE_EXTRA_CA_CERTS` pointing at the system keychain export on this machine (TLS interception).
+- New component `src/redesign/LottiePanda.tsx`. `RailPanda` shows Lottie scenes through it and SVG scenes as `<img>` like before.
+- idle = waving only. The roll scene (hand-drawn) is removed. `nextScene` keeps a mood's only scene instead of returning nothing.
+- Dark theme keeps the existing thin `--panda-halo`. The operator compared it with a light disc and a thick outline and chose the current one.
+- Verified:
+  - Mock UI with idle agents, in dark and light: the waving `<svg>` renders, the arm moves between screenshots, and there are no console errors.
+  - Tests: picker, Lottie options (svg/loop/container/data), destroy on scene change. 503/503, `tsc` and `vite build` pass.

@@ -2,14 +2,14 @@
 //
 // The panda in the rail's empty space (docs/prd-rail-panda.md). While an agent works it
 // takes turns playing a game, snapping bamboo, eating tofu or mantı, and once in a while farts
-// and runs. With nothing running it stays awake (rolls down a hill, snacks) until nobody has
-// touched Muya for 5 minutes, then sleeps on its bamboo. sleeping/gaming are LottieFiles
-// animations (Lottie Simple License — credits in resources/THIRD_PARTY_LICENSES.txt), shrunk
-// for the 64 px rail; the others reuse the gaming panda's head with a jointed body.
+// and runs. With nothing running it waves, until nobody has touched Muya for 5 minutes; then
+// it sleeps on its bamboo. sleeping/gaming/waving are LottieFiles animations (Lottie Simple
+// License — credits in resources/THIRD_PARTY_LICENSES.txt); the others reuse the gaming
+// panda's head with a jointed body.
 //
-// Shown as <img>: the SVG animates itself, needs no player and can't touch the page. Only
-// the current one is mounted, and nothing is mounted while the window is hidden, so the
-// animation costs nothing when nobody can see it.
+// SVG scenes are shown as <img>: they animate themselves and can't touch the page. Lottie
+// scenes (LottiePanda) load their player only while shown. Only the current scene is mounted,
+// and nothing is mounted while the window is hidden, so it costs nothing when nobody looks.
 
 import { useEffect, useRef, useState } from "react";
 import sleepingUrl from "../assets/panda/sleeping.svg";
@@ -18,17 +18,21 @@ import bambooUrl from "../assets/panda/bamboo.svg";
 import tofuUrl from "../assets/panda/tofu.svg";
 import mantiUrl from "../assets/panda/manti.svg";
 import fartUrl from "../assets/panda/fart.svg";
-import rollUrl from "../assets/panda/roll.svg";
+import LottiePanda, { type LottieData } from "./LottiePanda";
 import { PANDA_EVENT, SCENE_MS, SLEEP_AFTER_MS, firstScene, nextScene, pandaEnabled, pandaMood, type PandaMood, type PandaScene } from "../lib/panda";
 
-const SRC: Record<PandaScene, string> = {
+const SRC: Record<Exclude<PandaScene, "waving">, string> = {
   sleeping: sleepingUrl,
-  roll: rollUrl,
   gaming: gamingUrl,
   bamboo: bambooUrl,
   tofu: tofuUrl,
   manti: mantiUrl,
   fart: fartUrl,
+};
+
+// Lottie scenes (Weblodge, LottieFiles), fetched only when shown.
+const LOTTIE: Partial<Record<PandaScene, LottieData>> = {
+  waving: () => import("../assets/panda/waving.json"),
 };
 
 /** Below this the rail has no room for the panda. */
@@ -130,21 +134,24 @@ export default function RailPanda({ busy }: { busy: boolean }) {
   if (!enabled) return <div style={{ flexGrow: 1 }} />;
 
   const label = LABEL[mood];
+  const lottie = LOTTIE[scene];
   return (
     <div ref={boxRef} style={{ flexGrow: 1, minHeight: 0, width: 64, display: "flex", alignItems: "flex-end", justifyContent: "center", overflow: "hidden" }}>
-      {fits && !hidden && (
+      {fits && !hidden && (lottie ? (
+        <LottiePanda key={scene} load={lottie} label={label} mood={mood} scene={scene} width={62} />
+      ) : (
         <img
           key={scene}
           className="rp-img"
-          src={SRC[scene]}
+          src={SRC[scene as Exclude<PandaScene, "waving">]}
           alt={label}
           title={label}
           draggable={false}
           data-mood={mood}
           data-scene={scene}
-          style={{ width: scene === "sleeping" || scene === "roll" ? 62 : 58, height: "auto", display: "block", userSelect: "none", filter: "var(--panda-halo)" }}
+          style={{ width: scene === "sleeping" ? 62 : 58, height: "auto", display: "block", userSelect: "none", filter: "var(--panda-halo)" }}
         />
-      )}
+      ))}
     </div>
   );
 }

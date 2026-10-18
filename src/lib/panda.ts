@@ -25,7 +25,7 @@ export function setPandaEnabled(on: boolean): void {
   window.dispatchEvent(new Event(PANDA_EVENT));
 }
 
-export type PandaScene = "sleeping" | "roll" | "gaming" | "bamboo" | "tofu" | "manti" | "fart";
+export type PandaScene = "sleeping" | "waving" | "gaming" | "bamboo" | "tofu" | "manti" | "fart";
 
 /** busy = an agent works · idle = nothing runs but someone was here lately · asleep = neither for SLEEP_AFTER_MS */
 export type PandaMood = "busy" | "idle" | "asleep";
@@ -41,7 +41,7 @@ export function pandaMood(busy: boolean, quietMs: number): PandaMood {
 /** How long each scene stays before the next one (about two loops of its animation). */
 export const SCENE_MS: Record<PandaScene, number> = {
   sleeping: 60_000,
-  roll: 9_000,
+  waving: 60_000,
   gaming: 16_000,
   bamboo: 9_200,
   tofu: 12_400,
@@ -50,21 +50,22 @@ export const SCENE_MS: Record<PandaScene, number> = {
 };
 
 // Weighted pools. Working: the game first, then bamboo, snacks and (rarely) a fart.
-// Idle but awake: rolls down the hill and snacks. Asleep: sleeps.
+// Idle but awake: waves. Asleep: sleeps.
 const POOLS: Record<PandaMood, [PandaScene, number][]> = {
   busy: [["gaming", 3], ["bamboo", 2], ["tofu", 2], ["manti", 2], ["fart", 1]],
-  idle: [["roll", 3], ["tofu", 2], ["manti", 2]],
+  idle: [["waving", 1]],
   asleep: [["sleeping", 1]],
 };
 
 /** The scene shown first when the mood changes. */
 export function firstScene(mood: PandaMood): PandaScene {
-  return mood === "busy" ? "gaming" : mood === "idle" ? "roll" : "sleeping";
+  return mood === "busy" ? "gaming" : mood === "idle" ? "waving" : "sleeping";
 }
 
-/** The scene after `prev`. Only sleeping may play twice in a row. */
+/** The scene after `prev`. No scene plays twice in a row unless it is the mood's only one. */
 export function nextScene(mood: PandaMood, prev: PandaScene, rnd: () => number = Math.random): PandaScene {
-  const pool = POOLS[mood].filter(([s]) => s !== prev || s === "sleeping");
+  const others = POOLS[mood].filter(([s]) => s !== prev);
+  const pool = others.length ? others : POOLS[mood];
   const total = pool.reduce((n, [, w]) => n + w, 0);
   let r = rnd() * total;
   for (const [s, w] of pool) {
