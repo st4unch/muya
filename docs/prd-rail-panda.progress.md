@@ -40,3 +40,19 @@ started: 2026-10-17
   - The timer runs only while the panda is on screen.
 - Tests: picker sequences (pools, no repeats, fart rarer, edges), rotation with fake timers, mood reset.
 - Lesson L74: check every view of a demo video frame by frame before sending. WebKit's recordVideo did not repaint the large `<img>`.
+
+## Revision 2026-10-18 (c): kung fu + sleep after 5 quiet minutes
+- Operator: sleep only when idle and nobody has touched Muya for 5 min. When a prompt is sent, open with kung-fu-panda-style flying moves that snap bamboo, and give it a wide area.
+- Three moods (`pandaMood`): busy (any agent working) / idle (awake) / asleep (no work, no key, click, move or scroll for `SLEEP_AFTER_MS` = 5 min).
+  - The activity listeners are window capture-phase, so typing in xterm or Monaco counts.
+  - The countdown restarts when work stops.
+  - The 5 s check runs only while the panda is enabled.
+- Pools:
+  - busy = kungfu (first) 3, gaming 3, bamboo/tofu/manti 2, fart 1.
+  - idle = roll (first) 3, tofu/manti 2.
+  - asleep = sleeping.
+- `kungfu.svg` is a tall frame (750×1700, about 62×141 px in the rail). The panda leaps up into the rail's empty height without shrinking. If the box is shorter, the top is clipped and the ground action stays visible. The panda wears a red headband with fluttering tails, drawn on the head layer.
+- Verified:
+  - Frames checked over the whole loop, at large size and at rail size.
+  - The mock UI opens with kung fu in dark and light, the image loads, and there are no console errors.
+  - Fake-timer tests cover sleep at 5 min, waking on a key press, and staying awake while busy.

@@ -4,6 +4,12 @@ All notable changes to Muya are documented here, newest first.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **The panda does kung fu when your agents start**: a flying kick that snaps a tall bamboo, a backflip, a flying chop through a second one, a tornado jump and a crane pose. It uses the empty height of the sidebar to leap without shrinking.
+- **The panda only sleeps after 5 quiet minutes**: when no agent is working and nobody has pressed a key, clicked or scrolled in Muya for 5 minutes. Until then it stays awake, rolling down its hill and snacking. Any key or click wakes it.
+
 ## [4.1.12] - 2026-10-18
 
 ### Added

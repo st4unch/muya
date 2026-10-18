@@ -25,12 +25,24 @@ export function setPandaEnabled(on: boolean): void {
   window.dispatchEvent(new Event(PANDA_EVENT));
 }
 
-export type PandaScene = "sleeping" | "roll" | "gaming" | "bamboo" | "tofu" | "manti" | "fart";
+export type PandaScene = "sleeping" | "roll" | "kungfu" | "gaming" | "bamboo" | "tofu" | "manti" | "fart";
+
+/** busy = an agent works · idle = nothing runs but someone was here lately · asleep = neither for SLEEP_AFTER_MS */
+export type PandaMood = "busy" | "idle" | "asleep";
+
+/** No agent working and no key, click or scroll in Muya for this long → the panda falls asleep. */
+export const SLEEP_AFTER_MS = 5 * 60_000;
+
+export function pandaMood(busy: boolean, quietMs: number): PandaMood {
+  if (busy) return "busy";
+  return quietMs >= SLEEP_AFTER_MS ? "asleep" : "idle";
+}
 
 /** How long each scene stays before the next one (about two loops of its animation). */
 export const SCENE_MS: Record<PandaScene, number> = {
-  sleeping: 40_000,
+  sleeping: 60_000,
   roll: 9_000,
+  kungfu: 15_000,
   gaming: 16_000,
   bamboo: 9_200,
   tofu: 12_400,
@@ -38,18 +50,22 @@ export const SCENE_MS: Record<PandaScene, number> = {
   fart: 7_500,
 };
 
-// Weighted pools: while agents work it plays, eats and (rarely) farts; idle it mostly sleeps.
-const BUSY: [PandaScene, number][] = [["gaming", 3], ["bamboo", 3], ["tofu", 3], ["manti", 3], ["fart", 1]];
-const IDLE: [PandaScene, number][] = [["sleeping", 3], ["roll", 1]];
+// Weighted pools. Working: kung fu first, then games, bamboo, snacks and (rarely) a fart.
+// Idle but awake: rolls down the hill and snacks. Asleep: sleeps.
+const POOLS: Record<PandaMood, [PandaScene, number][]> = {
+  busy: [["kungfu", 3], ["gaming", 3], ["bamboo", 2], ["tofu", 2], ["manti", 2], ["fart", 1]],
+  idle: [["roll", 3], ["tofu", 2], ["manti", 2]],
+  asleep: [["sleeping", 1]],
+};
 
 /** The scene shown first when the mood changes. */
-export function firstScene(busy: boolean): PandaScene {
-  return busy ? "gaming" : "sleeping";
+export function firstScene(mood: PandaMood): PandaScene {
+  return mood === "busy" ? "kungfu" : mood === "idle" ? "roll" : "sleeping";
 }
 
 /** The scene after `prev`. Only sleeping may play twice in a row. */
-export function nextScene(busy: boolean, prev: PandaScene, rnd: () => number = Math.random): PandaScene {
-  const pool = (busy ? BUSY : IDLE).filter(([s]) => s !== prev || s === "sleeping");
+export function nextScene(mood: PandaMood, prev: PandaScene, rnd: () => number = Math.random): PandaScene {
+  const pool = POOLS[mood].filter(([s]) => s !== prev || s === "sleeping");
   const total = pool.reduce((n, [, w]) => n + w, 0);
   let r = rnd() * total;
   for (const [s, w] of pool) {
