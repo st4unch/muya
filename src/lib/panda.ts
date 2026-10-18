@@ -25,7 +25,7 @@ export function setPandaEnabled(on: boolean): void {
   window.dispatchEvent(new Event(PANDA_EVENT));
 }
 
-export type PandaScene = "sleeping" | "roll" | "kungfu" | "gaming" | "bamboo" | "tofu" | "manti" | "fart";
+export type PandaScene = "sleeping" | "roll" | "gaming" | "bamboo" | "tofu" | "manti" | "fart";
 
 /** busy = an agent works · idle = nothing runs but someone was here lately · asleep = neither for SLEEP_AFTER_MS */
 export type PandaMood = "busy" | "idle" | "asleep";
@@ -42,7 +42,6 @@ export function pandaMood(busy: boolean, quietMs: number): PandaMood {
 export const SCENE_MS: Record<PandaScene, number> = {
   sleeping: 60_000,
   roll: 9_000,
-  kungfu: 15_000,
   gaming: 16_000,
   bamboo: 9_200,
   tofu: 12_400,
@@ -50,17 +49,17 @@ export const SCENE_MS: Record<PandaScene, number> = {
   fart: 7_500,
 };
 
-// Weighted pools. Working: kung fu first, then games, bamboo, snacks and (rarely) a fart.
+// Weighted pools. Working: the game first, then bamboo, snacks and (rarely) a fart.
 // Idle but awake: rolls down the hill and snacks. Asleep: sleeps.
 const POOLS: Record<PandaMood, [PandaScene, number][]> = {
-  busy: [["kungfu", 3], ["gaming", 3], ["bamboo", 2], ["tofu", 2], ["manti", 2], ["fart", 1]],
+  busy: [["gaming", 3], ["bamboo", 2], ["tofu", 2], ["manti", 2], ["fart", 1]],
   idle: [["roll", 3], ["tofu", 2], ["manti", 2]],
   asleep: [["sleeping", 1]],
 };
 
 /** The scene shown first when the mood changes. */
 export function firstScene(mood: PandaMood): PandaScene {
-  return mood === "busy" ? "kungfu" : mood === "idle" ? "roll" : "sleeping";
+  return mood === "busy" ? "gaming" : mood === "idle" ? "roll" : "sleeping";
 }
 
 /** The scene after `prev`. Only sleeping may play twice in a row. */

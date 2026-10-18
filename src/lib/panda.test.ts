@@ -39,18 +39,18 @@ describe("panda scenes", () => {
     expect(SLEEP_AFTER_MS).toBe(300_000);
   });
 
-  it("kung fu first when agents start, the hill roll when they stop, sleep when asleep", () => {
-    expect(firstScene("busy")).toBe("kungfu");
+  it("the game first when agents start, the hill roll when they stop, sleep when asleep", () => {
+    expect(firstScene("busy")).toBe("gaming");
     expect(firstScene("idle")).toBe("roll");
     expect(firstScene("asleep")).toBe("sleeping");
   });
 
   it("busy takes turns, never the same twice in a row, farts rarely, never sleeps", () => {
     const s = seq("busy", 400);
-    for (const x of s) expect(["kungfu", "gaming", "bamboo", "tofu", "manti", "fart"]).toContain(x);
+    for (const x of s) expect(["gaming", "bamboo", "tofu", "manti", "fart"]).toContain(x);
     for (let i = 1; i < s.length; i++) expect(s[i]).not.toBe(s[i - 1]);
-    for (const x of ["gaming", "bamboo", "tofu", "manti", "fart"] as PandaScene[]) expect(s).toContain(x);
-    expect(count(s, "fart")).toBeLessThan(count(s, "kungfu"));
+    for (const x of ["bamboo", "tofu", "manti", "fart"] as PandaScene[]) expect(s).toContain(x);
+    expect(count(s, "fart")).toBeLessThan(count(s, "gaming"));
   });
 
   it("idle stays awake (rolls, snacks) and never sleeps; asleep only sleeps", () => {
@@ -61,8 +61,8 @@ describe("panda scenes", () => {
   });
 
   it("the edges of the random range pick a real scene", () => {
-    expect(nextScene("busy", "kungfu", () => 0)).toBe("gaming");
-    expect(nextScene("busy", "kungfu", () => 0.999999)).toBe("fart");
+    expect(nextScene("busy", "gaming", () => 0)).toBe("bamboo");
+    expect(nextScene("busy", "gaming", () => 0.999999)).toBe("fart");
     expect(nextScene("idle", "roll", () => 0)).toBe("tofu");
     expect(nextScene("asleep", "sleeping", () => 0.5)).toBe("sleeping");
   });

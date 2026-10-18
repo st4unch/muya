@@ -56,3 +56,9 @@ started: 2026-10-17
   - Frames checked over the whole loop, at large size and at rail size.
   - The mock UI opens with kung fu in dark and light, the image loads, and there are no console errors.
   - Fake-timer tests cover sleep at 5 min, waking on a key press, and staying awake while busy.
+
+## Revision 2026-10-18 (d): kung fu removed
+- The operator rejected every hand-drawn version of the kung fu panda: the jointed rig ("kaplumbağa"), a borrowed Lottie rig ("eklemleri kaynıyor"), ball joints ("amatörce"), rubber-hose limbs ("prisma") and a new black-and-white design ("berbat").
+- Decision: character art comes only from professional sources (LottieFiles, the operator picks). Muya does the scene logic.
+- `kungfu.svg` was removed. busy starts with `gaming` again. The 5-minute sleep rule stays.
+- Next: LottieFiles candidates (same creators first) for the operator to choose from.

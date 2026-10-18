@@ -12,13 +12,13 @@ describe("RailPanda", () => {
     vi.restoreAllMocks();
   });
 
-  it("kung fu when agents start, awake while idle", () => {
+  it("plays the game when agents start, awake while idle", () => {
     const { rerender } = render(<RailPanda busy={false} />);
     expect(panda()?.getAttribute("data-mood")).toBe("idle");
     expect(panda()?.getAttribute("src")).toMatch(/roll/);
     rerender(<RailPanda busy />);
     expect(panda()?.getAttribute("data-mood")).toBe("busy");
-    expect(panda()?.getAttribute("src")).toMatch(/kungfu/);
+    expect(panda()?.getAttribute("src")).toMatch(/gaming/);
   });
 
   it("falls asleep after 5 quiet minutes and wakes on a key press", () => {
@@ -55,12 +55,12 @@ describe("RailPanda", () => {
     vi.useFakeTimers();
     vi.spyOn(Math, "random").mockReturnValue(0);
     render(<RailPanda busy />);
-    expect(panda()?.getAttribute("data-scene")).toBe("kungfu");
-    act(() => vi.advanceTimersByTime(SCENE_MS.kungfu));
     expect(panda()?.getAttribute("data-scene")).toBe("gaming");
-    expect(panda()?.getAttribute("src")).toMatch(/gaming/);
     act(() => vi.advanceTimersByTime(SCENE_MS.gaming));
-    expect(panda()?.getAttribute("data-scene")).toBe("kungfu");
+    expect(panda()?.getAttribute("data-scene")).toBe("bamboo");
+    expect(panda()?.getAttribute("src")).toMatch(/bamboo/);
+    act(() => vi.advanceTimersByTime(SCENE_MS.bamboo));
+    expect(panda()?.getAttribute("data-scene")).toBe("gaming");
   });
 
   it("a change of mood starts over with that mood's first scene", () => {
@@ -70,7 +70,7 @@ describe("RailPanda", () => {
     act(() => vi.advanceTimersByTime(SCENE_MS.roll));
     expect(panda()?.getAttribute("data-scene")).toBe("manti");
     rerender(<RailPanda busy />);
-    expect(panda()?.getAttribute("data-scene")).toBe("kungfu");
+    expect(panda()?.getAttribute("data-scene")).toBe("gaming");
     rerender(<RailPanda busy={false} />);
     expect(panda()?.getAttribute("data-scene")).toBe("roll");
   });

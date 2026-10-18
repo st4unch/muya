@@ -1,12 +1,11 @@
 // Created by Claude — Classification: INTERNAL
 //
-// The panda in the rail's empty space (docs/prd-rail-panda.md). When an agent starts it does
-// kung fu (flying kick, flips, snaps bamboo), then takes turns playing a game, snapping
-// bamboo, eating tofu or mantı, and once in a while farts and runs. With nothing running it
-// stays awake (rolls down a hill, snacks) until nobody has touched Muya for 5 minutes, then
-// sleeps on its bamboo. sleeping/gaming are LottieFiles animations (Lottie Simple License —
-// credits in resources/THIRD_PARTY_LICENSES.txt), shrunk for the 64 px rail; the others reuse
-// the gaming panda's head with a jointed body drawn in the same style.
+// The panda in the rail's empty space (docs/prd-rail-panda.md). While an agent works it
+// takes turns playing a game, snapping bamboo, eating tofu or mantı, and once in a while farts
+// and runs. With nothing running it stays awake (rolls down a hill, snacks) until nobody has
+// touched Muya for 5 minutes, then sleeps on its bamboo. sleeping/gaming are LottieFiles
+// animations (Lottie Simple License — credits in resources/THIRD_PARTY_LICENSES.txt), shrunk
+// for the 64 px rail; the others reuse the gaming panda's head with a jointed body.
 //
 // Shown as <img>: the SVG animates itself, needs no player and can't touch the page. Only
 // the current one is mounted, and nothing is mounted while the window is hidden, so the
@@ -20,13 +19,11 @@ import tofuUrl from "../assets/panda/tofu.svg";
 import mantiUrl from "../assets/panda/manti.svg";
 import fartUrl from "../assets/panda/fart.svg";
 import rollUrl from "../assets/panda/roll.svg";
-import kungfuUrl from "../assets/panda/kungfu.svg";
 import { PANDA_EVENT, SCENE_MS, SLEEP_AFTER_MS, firstScene, nextScene, pandaEnabled, pandaMood, type PandaMood, type PandaScene } from "../lib/panda";
 
 const SRC: Record<PandaScene, string> = {
   sleeping: sleepingUrl,
   roll: rollUrl,
-  kungfu: kungfuUrl,
   gaming: gamingUrl,
   bamboo: bambooUrl,
   tofu: tofuUrl,
@@ -145,7 +142,7 @@ export default function RailPanda({ busy }: { busy: boolean }) {
           draggable={false}
           data-mood={mood}
           data-scene={scene}
-          style={{ width: scene === "sleeping" || scene === "roll" || scene === "kungfu" ? 62 : 58, height: "auto", display: "block", userSelect: "none", filter: "var(--panda-halo)" }}
+          style={{ width: scene === "sleeping" || scene === "roll" ? 62 : 58, height: "auto", display: "block", userSelect: "none", filter: "var(--panda-halo)" }}
         />
       )}
     </div>
