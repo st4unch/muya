@@ -1,39 +1,57 @@
 // Created by Claude — Classification: INTERNAL
 //
-// The panda in the rail's empty space (docs/prd-rail-panda.md). While an agent works it
-// takes turns playing a game, snapping bamboo, eating tofu or mantı, and once in a while farts
-// and runs. With nothing running it waves, until nobody has touched Muya for 5 minutes; then
-// it sleeps on its bamboo. sleeping/gaming/waving are LottieFiles animations (Lottie Simple
-// License — credits in resources/THIRD_PARTY_LICENSES.txt); the others reuse the gaming
-// panda's head with a jointed body.
+// The panda in the rail's empty space (docs/prd-rail-panda.md). Weblodge's black-and-white
+// pandas (LottieFiles, Lottie Simple License — credits in resources/THIRD_PARTY_LICENSES.txt):
+// when an agent starts, the teacher points at a board that shows what Claude is doing
+// ("Thinking…"), then the fan dance, the traveller and the businessman take turns. When the
+// work is done the panda celebrates once; with nothing running it waves, rolls and bows; after
+// 5 quiet minutes it sleeps on its bamboo (bilal shehzad's animation, an SVG).
 //
-// SVG scenes are shown as <img>: they animate themselves and can't touch the page. Lottie
-// scenes (LottiePanda) load their player only while shown. Only the current scene is mounted,
-// and nothing is mounted while the window is hidden, so it costs nothing when nobody looks.
+// Lottie scenes (LottiePanda) load their player and data only while shown; the SVG scene is an
+// <img> that animates itself. Only the current scene is mounted, and nothing is mounted while
+// the window is hidden, so the panda costs nothing when nobody looks.
 
 import { useEffect, useRef, useState } from "react";
 import sleepingUrl from "../assets/panda/sleeping.svg";
-import gamingUrl from "../assets/panda/gaming.svg";
-import bambooUrl from "../assets/panda/bamboo.svg";
-import tofuUrl from "../assets/panda/tofu.svg";
-import mantiUrl from "../assets/panda/manti.svg";
-import fartUrl from "../assets/panda/fart.svg";
 import LottiePanda, { type LottieData } from "./LottiePanda";
 import { PANDA_EVENT, SCENE_MS, SLEEP_AFTER_MS, firstScene, nextScene, pandaEnabled, pandaMood, type PandaMood, type PandaScene } from "../lib/panda";
 
-const SRC: Record<Exclude<PandaScene, "waving">, string> = {
-  sleeping: sleepingUrl,
-  gaming: gamingUrl,
-  bamboo: bambooUrl,
-  tofu: tofuUrl,
-  manti: mantiUrl,
-  fart: fartUrl,
+// Lottie scenes, fetched only when shown.
+const LOTTIE: Record<Exclude<PandaScene, "sleeping">, LottieData> = {
+  waving: () => import("../assets/panda/waving.json"),
+  rolling: () => import("../assets/panda/rolling.json"),
+  bowing: () => import("../assets/panda/bowing.json"),
+  celebrating: () => import("../assets/panda/celebrating.json"),
+  teaching: () => import("../assets/panda/teaching.json"),
+  dance: () => import("../assets/panda/dance.json"),
+  traveling: () => import("../assets/panda/traveling.json"),
+  business: () => import("../assets/panda/business.json"),
 };
 
-// Lottie scenes (Weblodge, LottieFiles), fetched only when shown.
-const LOTTIE: Partial<Record<PandaScene, LottieData>> = {
-  waving: () => import("../assets/panda/waving.json"),
-};
+const SPIN = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"];
+
+/** The teacher's board: Claude's spinner and what it is doing, like Claude's own status line. */
+function Board({ text }: { text: string }) {
+  const [i, setI] = useState(0);
+  useEffect(() => {
+    const t = window.setInterval(() => setI((n) => (n + 1) % SPIN.length), 120);
+    return () => window.clearInterval(t);
+  }, []);
+  return (
+    <div
+      className="rp-board"
+      title={text}
+      style={{
+        boxSizing: "border-box", width: 58, marginBottom: 1, padding: "2px 4px", borderRadius: 6,
+        border: "1px solid var(--border-strong)", background: "var(--bg-control)", color: "var(--text)",
+        font: "600 8.5px/1.3 var(--font-sans)", letterSpacing: "-0.1px", whiteSpace: "nowrap", overflow: "hidden",
+      }}
+    >
+      <span style={{ color: "var(--agent-claude)", display: "inline-block", width: 8 }}>{SPIN[i]}</span>
+      {text}
+    </div>
+  );
+}
 
 /** Below this the rail has no room for the panda. */
 export const PANDA_MIN_HEIGHT = 72;
@@ -85,7 +103,8 @@ function useQuiet(busy: boolean, on: boolean): boolean {
   return quiet;
 }
 
-export default function RailPanda({ busy }: { busy: boolean }) {
+/** busy: an agent is working · status: what it is doing ("Thinking…"), shown on the teacher's board */
+export default function RailPanda({ busy, status }: { busy: boolean; status?: string }) {
   const [enabled, setEnabled] = useState(pandaEnabled);
   const [fits, setFits] = useState(true);
   const [hidden, setHidden] = useState(() => typeof document !== "undefined" && document.hidden);
@@ -99,10 +118,10 @@ export default function RailPanda({ busy }: { busy: boolean }) {
   const [shownMood, setShownMood] = useState(mood);
   if (shownMood !== mood) {
     setShownMood(mood);
-    setScene(firstScene(mood));
+    setScene(firstScene(mood, shownMood));
   }
 
-  // Take turns while the panda is on screen (an <img> restarts its animation when swapped).
+  // Take turns while the panda is on screen (a remounted scene starts its animation over).
   const showing = enabled && fits && !hidden;
   useEffect(() => {
     if (!showing) return;
@@ -134,23 +153,23 @@ export default function RailPanda({ busy }: { busy: boolean }) {
   if (!enabled) return <div style={{ flexGrow: 1 }} />;
 
   const label = LABEL[mood];
-  const lottie = LOTTIE[scene];
   return (
-    <div ref={boxRef} style={{ flexGrow: 1, minHeight: 0, width: 64, display: "flex", alignItems: "flex-end", justifyContent: "center", overflow: "hidden" }}>
-      {fits && !hidden && (lottie ? (
-        <LottiePanda key={scene} load={lottie} label={label} mood={mood} scene={scene} width={62} />
-      ) : (
+    <div ref={boxRef} style={{ flexGrow: 1, minHeight: 0, width: 64, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", overflow: "hidden" }}>
+      {fits && !hidden && scene === "teaching" && status && <Board text={status} />}
+      {fits && !hidden && (scene === "sleeping" ? (
         <img
           key={scene}
           className="rp-img"
-          src={SRC[scene as Exclude<PandaScene, "waving">]}
+          src={sleepingUrl}
           alt={label}
           title={label}
           draggable={false}
           data-mood={mood}
           data-scene={scene}
-          style={{ width: scene === "sleeping" ? 62 : 58, height: "auto", display: "block", userSelect: "none", filter: "var(--panda-halo)" }}
+          style={{ width: 62, height: "auto", display: "block", userSelect: "none", filter: "var(--panda-halo)" }}
         />
+      ) : (
+        <LottiePanda key={scene} load={LOTTIE[scene]} label={label} mood={mood} scene={scene} width={62} />
       ))}
     </div>
   );

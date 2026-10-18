@@ -18,13 +18,38 @@ describe("RailPanda", () => {
     vi.restoreAllMocks();
   });
 
-  it("plays the game when agents start, waves while idle", () => {
+  it("the teacher with Claude's status when agents start, waving while idle", () => {
     const { rerender } = render(<RailPanda busy={false} />);
     expect(panda()?.getAttribute("data-mood")).toBe("idle");
     expect(panda()?.getAttribute("data-scene")).toBe("waving");
-    rerender(<RailPanda busy />);
+    rerender(<RailPanda busy status="Thinking…" />);
     expect(panda()?.getAttribute("data-mood")).toBe("busy");
-    expect(panda()?.getAttribute("src")).toMatch(/gaming/);
+    expect(panda()?.getAttribute("data-scene")).toBe("teaching");
+    expect(document.querySelector(".rp-board")?.textContent).toContain("Thinking…");
+    rerender(<RailPanda busy status="Reading…" />);
+    expect(document.querySelector(".rp-board")?.textContent).toContain("Reading…");
+  });
+
+  it("no board without a status, and none on other scenes", () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const { rerender } = render(<RailPanda busy />);
+    expect(document.querySelector(".rp-board")).toBeNull();
+    rerender(<RailPanda busy status="Thinking…" />);
+    act(() => vi.advanceTimersByTime(SCENE_MS.teaching));
+    expect(panda()?.getAttribute("data-scene")).toBe("dance");
+    expect(document.querySelector(".rp-board")).toBeNull();
+  });
+
+  it("celebrates once when the work is done, then carries on idle", () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const { rerender } = render(<RailPanda busy />);
+    rerender(<RailPanda busy={false} />);
+    expect(panda()?.getAttribute("data-scene")).toBe("celebrating");
+    act(() => vi.advanceTimersByTime(SCENE_MS.celebrating));
+    expect(panda()?.getAttribute("data-scene")).toBe("waving");
+    expect(panda()?.getAttribute("data-mood")).toBe("idle");
   });
 
   it("falls asleep after 5 quiet minutes and wakes on a key press", () => {
@@ -60,28 +85,15 @@ describe("RailPanda", () => {
   it("takes turns between scenes while it is on screen", () => {
     vi.useFakeTimers();
     vi.spyOn(Math, "random").mockReturnValue(0);
-    render(<RailPanda busy />);
-    expect(panda()?.getAttribute("data-scene")).toBe("gaming");
-    act(() => vi.advanceTimersByTime(SCENE_MS.gaming));
-    expect(panda()?.getAttribute("data-scene")).toBe("bamboo");
-    expect(panda()?.getAttribute("src")).toMatch(/bamboo/);
-    act(() => vi.advanceTimersByTime(SCENE_MS.bamboo));
-    expect(panda()?.getAttribute("data-scene")).toBe("gaming");
-  });
-
-  it("a change of mood starts over with that mood's first scene", () => {
-    vi.useFakeTimers();
-    vi.spyOn(Math, "random").mockReturnValue(0.999);
-    const { rerender } = render(<RailPanda busy={false} />);
+    render(<RailPanda busy={false} />);
+    expect(panda()?.getAttribute("data-scene")).toBe("waving");
     act(() => vi.advanceTimersByTime(SCENE_MS.waving));
-    expect(panda()?.getAttribute("data-scene")).toBe("waving");
-    rerender(<RailPanda busy />);
-    expect(panda()?.getAttribute("data-scene")).toBe("gaming");
-    rerender(<RailPanda busy={false} />);
+    expect(panda()?.getAttribute("data-scene")).toBe("rolling");
+    act(() => vi.advanceTimersByTime(SCENE_MS.rolling));
     expect(panda()?.getAttribute("data-scene")).toBe("waving");
   });
 
-  it("the waving scene plays its Lottie as SVG and stops the player when it goes away", async () => {
+  it("each Lottie scene plays as SVG and its player stops when it goes away", async () => {
     lottie.loadAnimation.mockClear();
     lottie.destroy.mockClear();
     const { rerender } = render(<RailPanda busy={false} />);
@@ -91,9 +103,11 @@ describe("RailPanda", () => {
     expect(opts.loop).toBe(true);
     expect(opts.container).toBe(panda());
     expect(opts.animationData.nm).toMatch(/Panda waving/);
-    rerender(<RailPanda busy />);
+    rerender(<RailPanda busy status="Thinking…" />);
     expect(lottie.destroy).toHaveBeenCalledTimes(1);
-    expect(panda()?.getAttribute("src")).toMatch(/gaming/);
+    await vi.waitFor(() => expect(lottie.loadAnimation).toHaveBeenCalledTimes(2));
+    const busyOpts = (lottie.loadAnimation.mock.calls[1] as unknown[])[0] as { animationData: { nm?: string } };
+    expect(busyOpts.animationData.nm).toMatch(/teaching/i);
   });
 
   it("the Settings switch hides and brings it back", () => {

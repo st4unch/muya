@@ -17,6 +17,8 @@ export interface GridScreenProps {
   railActive: RailItem;
   /** Some agent (any workspace) is working — the rail panda gets busy. */
   railBusy?: boolean;
+  /** What the working agent is doing, for the rail panda's board. */
+  railStatus?: string;
   onRailNavigate: (item: RailItem) => void;
   footer: FooterVM;
 
@@ -101,7 +103,7 @@ export function GridScreen(props: GridScreenProps) {
             workspace={props.workspace}
           />
         }
-        rail={<Rail active={props.railActive} onNavigate={props.onRailNavigate} busy={props.railBusy} />}
+        rail={<Rail active={props.railActive} onNavigate={props.onRailNavigate} busy={props.railBusy} status={props.railStatus} />}
         footer={<Footer {...props.footer} variant="grid" />}
       >
         <div

@@ -7,7 +7,7 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
-- **The panda waves while nothing runs, and only sleeps after 5 quiet minutes**: when no agent is working it waves (a black-and-white panda by Weblodge, LottieFiles), and once nobody has pressed a key, clicked or scrolled in Muya for 5 minutes it falls asleep. Any key or click wakes it.
+- **A new panda in the sidebar: Weblodge's black-and-white panda (LottieFiles).** When an agent starts, the panda becomes a teacher pointing at a little board that shows what Claude is doing right now ("✻ Thinking…", "Unfurling…"); while agents work it takes turns with a fan dance, a traveller and a businessman. When the work is done it celebrates with confetti. With nothing running it waves, rolls and bows, and once nobody has pressed a key, clicked or scrolled in Muya for 5 minutes it falls asleep on its bamboo. Any key or click wakes it.
 
 ## [4.1.12] - 2026-10-18
 

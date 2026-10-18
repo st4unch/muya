@@ -75,3 +75,23 @@ started: 2026-10-17
 - Verified:
   - Mock UI with idle agents, in dark and light: the waving `<svg>` renders, the arm moves between screenshots, and there are no console errors.
   - Tests: picker, Lottie options (svg/loop/container/data), destroy on scene change. 503/503, `tsc` and `vite build` pass.
+
+## Revision 2026-10-18 (f): the Weblodge set
+- The operator approved each scene one at a time. Approved: waving, rolling, celebrating, fan dance, teaching, traveling, business, bowing. Rejected: eating (the ears look like balls; fixing them needs manual work on 20 frames).
+- Teaching: the floating Chinese characters were removed from all 23 frames, and the pointer stick was kept (checked frame by frame). A board above the panda shows Claude's spinner and verb: `boardText(agent)` reads `progress.verb`, or falls back to the first part of `activity`. It passes through App → Rail/ControlScreen/GridScreen → RailPanda `status`.
+- Kung fu dropped: none of the sources has kicks or punches.
+  - Splicing frames from different sources gave "not kung fu".
+  - Bending the limbs of the celebrating panda's outline gave "olmamış".
+  - Searches on LottieFiles, IconScout, Rive, OpenGameArt and itch.io found no free kung-fu panda.
+- Moods:
+  - busy: teaching first, then teaching 3, dance 2, traveling 2, business 2.
+  - busy → idle: celebrating once for 3 s, then waving.
+  - idle: waving 2, rolling 2, bowing 1.
+  - asleep: sleeping (bilal shehzad SVG).
+- Removed: the gaming panda (Abdul Latif) and the hand-drawn bamboo/tofu/manti/fart SVGs, plus their credits.
+- Lottie numbers were rounded to 0.1 (0.001 below 2). A 1000 px pixel diff shows 0 changed pixels. Raw size went from 5.1 MB to 4.4 MB (683 KB gzipped); one scene loads at a time.
+- Verified:
+  - Mock UI, busy, dark and light: teaching + board "✻ Unfurling…" fully fits after switching from mono to sans.
+  - Mock UI, idle: waving.
+  - No console errors.
+  - Tests cover pools, the celebrate-on-finish rule, the board, sleep/wake, and the player being destroyed on scene change.
