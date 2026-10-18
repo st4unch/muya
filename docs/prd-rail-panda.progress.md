@@ -28,3 +28,15 @@ started: 2026-10-17
 - Shown as `<img>` (self-animating SVG, no player, no script). Unmounted while the window is hidden. Dark theme: `--panda-halo` light edge.
 - Credits in `THIRD_PARTY_LICENSES.txt` (generator updated). Lottie Simple License: commercial use allowed, attribution optional.
 - The scene engine (9 CSS scenes, tricks) was removed. The busy/idle signal is unchanged.
+
+## Revision 2026-10-18 (b): jointed scenes
+- The operator asked for the original scene ideas (rolling, snapping bamboo, tofu, mantı, fart and run) with moving joints, not a sitting pose that only slides ("eklemleri hareketli olmalı"). Rolling must start from a hilltop.
+- Five new SVGs in `src/assets/panda/` (bamboo, tofu, manti, fart, roll, 86–169 KB each). The head and face are the gaming panda's original art. The torso and limbs are redrawn in the same style with shoulder, elbow, hip and knee joints. Poses are set by where the paws and feet go, and the joints are solved from that. Everything is pure CSS keyframes, with no script.
+- Roll: the panda walks to a hilltop, wobbles, curls into a ball and rolls down without sliding (rotation matches the distance travelled). It sits dizzy with stars, shakes it off and walks away while the camera pans back.
+- Rotation (`src/lib/panda.ts` `firstScene` / `nextScene` / `SCENE_MS`):
+  - busy = gaming first, then weighted gaming/bamboo/tofu/manti 3 each and fart 1, never the same scene twice in a row.
+  - idle = sleeping 3 : roll 1, and roll never twice in a row.
+  - A change of mood restarts with that mood's first scene, set during render so there is no wrong-scene frame.
+  - The timer runs only while the panda is on screen.
+- Tests: picker sequences (pools, no repeats, fart rarer, edges), rotation with fake timers, mood reset.
+- Lesson L74: check every view of a demo video frame by frame before sending. WebKit's recordVideo did not repaint the large `<img>`.
