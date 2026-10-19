@@ -24,6 +24,8 @@ export interface AgentListProps {
   onRenameAgent?: (key: string, name: string) => void;
   /** Right-click a session: the caller opens its actions menu at the pointer. */
   onAgentContextMenu?: (key: string, e: ReactMouseEvent) => void;
+  /** The × in a session's top-right corner. */
+  onCloseAgent?: (key: string) => void;
   /** Agents the operator pinned: listed first under PINNED, whatever their status. */
   pinnedKeys?: ReadonlySet<string>;
   /** Operator-set width in px; undefined = the responsive default (296, 264 at ≤1360). */
@@ -42,13 +44,16 @@ export interface AgentListProps {
   onSelectGroup?: (id: string) => void;
 }
 
+/** Past this many sessions every row is one line, so a long list stays scannable. */
+export const COMPACT_AFTER = 20;
+
 const GROUPS: { status: AgentStatus; label: string; color: string }[] = [
   { status: "waiting", label: "WAITING FOR YOU", color: "var(--warning-label)" },
   { status: "working", label: "WORKING", color: "var(--success)" },
   { status: "idle", label: "IDLE", color: "var(--text-muted)" },
 ];
 
-export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelectAgent, onNewAgent, onReorder, width, resizeHandle, filesSection, filesFill = false, onRenameAgent, onAgentContextMenu, pinnedKeys, splitGroups = [], onToggleGroup, onSelectGroup }: AgentListProps) {
+export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelectAgent, onNewAgent, onReorder, width, resizeHandle, filesSection, filesFill = false, onRenameAgent, onAgentContextMenu, onCloseAgent, pinnedKeys, splitGroups = [], onToggleGroup, onSelectGroup }: AgentListProps) {
   const dragKeyRef = useRef<string | null>(null);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
 
@@ -127,7 +132,32 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
     };
   }
 
+  const compact = agents.length > COMPACT_AFTER;
   const renderRow = (agent: AgentVM) =>
+    agent.key === renamingKey || !onCloseAgent ? (
+      renderBody(agent)
+    ) : (
+      <div key={agent.key} className="rd-agent-row" style={{ position: "relative", display: "flex", flexDirection: "column", minWidth: 0 }}>
+        {renderBody(agent)}
+        <button
+          type="button"
+          aria-label={`Close ${agent.name}`}
+          title="Close"
+          draggable={false}
+          onClick={(e) => {
+            e.stopPropagation();
+            onCloseAgent(agent.key);
+          }}
+          onDoubleClick={(e) => e.stopPropagation()}
+          className="rd-agent-close"
+          style={{ position: "absolute", top: compact || agent.status === "idle" ? 7 : 8, right: 6, width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", border: "none", borderRadius: 5, background: "transparent", color: "var(--text-faint)", fontSize: 14, lineHeight: 1, padding: 0 }}
+        >
+          ×
+        </button>
+      </div>
+    );
+  const closable = !!onCloseAgent;
+  const renderBody = (agent: AgentVM) =>
                 agent.key === renamingKey && onRenameAgent ? (
                   <div
                     key={agent.key}
@@ -143,13 +173,14 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
                       onCancel={() => setRenamingKey(null)}
                     />
                   </div>
-                ) : agent.status === "idle" ? (
-                  <IdleRow key={agent.key} agent={agent} onSelect={() => onSelectAgent(agent.key)} dragOver={dragOverKey === agent.key} dragProps={{ ...dragProps(agent.key), ...rowExtras(agent.key) }} />
+                ) : agent.status === "idle" || compact ? (
+                  <IdleRow key={agent.key} agent={agent} selected={compact && agent.key === selectedKey} closable={closable} onSelect={() => onSelectAgent(agent.key)} dragOver={dragOverKey === agent.key} dragProps={{ ...dragProps(agent.key), ...rowExtras(agent.key) }} />
                 ) : (
                   <AgentCard
                     key={agent.key}
                     agent={agent}
                     selected={agent.key === selectedKey}
+                    closable={closable}
                     onSelect={() => onSelectAgent(agent.key)}
                     dragOver={dragOverKey === agent.key}
                     dragProps={{ ...dragProps(agent.key), ...rowExtras(agent.key) }}
@@ -295,13 +326,15 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
 interface CardProps {
   agent: AgentVM;
   selected: boolean;
+  /** Leave room for the × in the top-right corner. */
+  closable?: boolean;
   onSelect: () => void;
   dragOver: boolean;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   dragProps: any;
 }
 
-function AgentCard({ agent, selected, onSelect, dragOver, dragProps }: CardProps) {
+function AgentCard({ agent, selected, closable, onSelect, dragOver, dragProps }: CardProps) {
   const waiting = agent.status === "waiting";
   const dotColor = waiting ? "var(--warning)" : "var(--success)";
   const border = waiting ? "1px solid var(--warning-border)" : selected ? "1px solid var(--border-selected)" : "1px solid transparent";
@@ -315,7 +348,7 @@ function AgentCard({ agent, selected, onSelect, dragOver, dragProps }: CardProps
       className="rd-agent-card"
       style={{
         textAlign: "left",
-        padding: "10px 12px",
+        padding: closable ? "10px 30px 10px 12px" : "10px 12px",
         borderRadius: 10,
         border,
         outlineOffset: dragOver ? -2 : undefined,
@@ -345,28 +378,33 @@ function AgentCard({ agent, selected, onSelect, dragOver, dragProps }: CardProps
   );
 }
 
-function IdleRow({ agent, onSelect, dragOver, dragProps }: { agent: AgentVM; onSelect: () => void; dragOver: boolean; dragProps: CardProps["dragProps"] }) {
+/** One-line row: idle sessions, and every session once the list is compact. */
+function IdleRow({ agent, selected, closable, onSelect, dragOver, dragProps }: { agent: AgentVM; selected?: boolean; closable?: boolean; onSelect: () => void; dragOver: boolean; dragProps: CardProps["dragProps"] }) {
+  const waiting = agent.status === "waiting";
+  const idle = agent.status === "idle";
   return (
     <button
       type="button"
       {...dragProps}
       onClick={onSelect}
+      aria-current={selected ? "true" : undefined}
       className="rd-idle-row"
+      title={idle ? dragProps?.title : `${agent.activity}${dragProps?.title ? ` — ${dragProps.title}` : ""}`}
       style={{
         textAlign: "left",
-        padding: "8px 12px",
+        padding: closable ? "8px 30px 8px 12px" : "8px 12px",
         borderRadius: 8,
-        border: "none",
+        border: waiting ? "1px solid var(--warning-border)" : selected ? "1px solid var(--border-selected)" : "1px solid transparent",
         outline: dragOver ? "2px dashed var(--accent)" : undefined,
         outlineOffset: dragOver ? -2 : undefined,
-        background: "transparent",
+        background: waiting ? "var(--warning-bg)" : selected ? "var(--bg-selected)" : "transparent",
         color: "var(--text)",
         display: "flex",
         alignItems: "center",
         gap: 8,
       }}
     >
-      <span style={{ width: 8, height: 8, borderRadius: 4, border: "1.5px solid var(--text-faint)", boxSizing: "border-box", flexShrink: 0 }} />
+      <span style={{ width: 8, height: 8, borderRadius: 4, background: idle ? "transparent" : waiting ? "var(--warning)" : "var(--success)", border: idle ? "1.5px solid var(--text-faint)" : "none", boxSizing: "border-box", flexShrink: 0 }} />
       <AgentKindIcon agent={agent} />
       {/* The name is what identifies the row: it keeps its full width up to 70% of the
           row and only then truncates. The path takes whatever is left, right-aligned,

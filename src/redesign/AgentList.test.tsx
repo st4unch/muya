@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { AgentList } from "./AgentList";
+import { AgentList, COMPACT_AFTER } from "./AgentList";
 import { previewAgents } from "./previewFixture";
 
 describe("AgentList", () => {
@@ -96,5 +96,28 @@ describe("AgentList", () => {
     );
     fireEvent.click(screen.getByText("+ New agent"));
     expect(onNewAgent).toHaveBeenCalled();
+  });
+
+  it("the × on a session closes it without selecting it", () => {
+    const onCloseAgent = vi.fn();
+    const onSelectAgent = vi.fn();
+    render(
+      <AgentList agents={previewAgents} selectedKey={null} filter="all" onFilterChange={vi.fn()} onSelectAgent={onSelectAgent} onNewAgent={vi.fn()} onReorder={vi.fn()} onCloseAgent={onCloseAgent} />,
+    );
+    expect(screen.getAllByRole("button", { name: /^Close / })).toHaveLength(previewAgents.length);
+    fireEvent.click(screen.getByRole("button", { name: "Close muya-all" }));
+    expect(onCloseAgent).toHaveBeenCalledWith("muya-all");
+    expect(onSelectAgent).not.toHaveBeenCalled();
+  });
+
+  it("past COMPACT_AFTER sessions every session is a one-line row", () => {
+    const many = Array.from({ length: COMPACT_AFTER + 1 }, (_, i) => ({ ...previewAgents[i % previewAgents.length], key: `k${i}`, name: `term ${i}` }));
+    const { container, rerender } = render(
+      <AgentList agents={many.slice(0, COMPACT_AFTER)} selectedKey={null} filter="all" onFilterChange={vi.fn()} onSelectAgent={vi.fn()} onNewAgent={vi.fn()} onReorder={vi.fn()} />,
+    );
+    expect(container.querySelectorAll(".rd-agent-card").length).toBeGreaterThan(0);
+    rerender(<AgentList agents={many} selectedKey={null} filter="all" onFilterChange={vi.fn()} onSelectAgent={vi.fn()} onNewAgent={vi.fn()} onReorder={vi.fn()} />);
+    expect(container.querySelectorAll(".rd-agent-card")).toHaveLength(0);
+    expect(container.querySelectorAll(".rd-idle-row")).toHaveLength(many.length);
   });
 });

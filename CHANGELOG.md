@@ -6,8 +6,15 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Every session in the Agents list has a small × in its top-right corner** that closes it in one click (it still asks first when there are unsaved changes).
+
 ### Changed
 - **A new panda in the sidebar: Weblodge's black-and-white panda (LottieFiles).** When an agent starts, the panda becomes a teacher pointing at a little board that shows what Claude is doing right now ("✻ Thinking…", "Unfurling…"); while agents work it takes turns with a fan dance, a traveller and a businessman. When the work is done it celebrates with confetti. With nothing running it waves, rolls and bows, and once nobody has pressed a key, clicked or scrolled in Muya for 5 minutes it falls asleep on its bamboo. Any key or click wakes it.
+- **With more than 20 sessions open, the Agents list shows each one on a single line**, so long lists stay easy to scan. Waiting and working sessions keep their colour; hover a row to see what it is doing.
+
+### Fixed
+- **The right-click menu no longer runs off the bottom of the window.** On the last sessions of a long list, "Close agent" was cut off and could not be clicked; the menu now moves up to stay fully on screen.
 
 ## [4.1.12] - 2026-10-18
 

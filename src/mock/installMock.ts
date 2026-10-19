@@ -117,6 +117,9 @@ function seedLocalStorage(screen: "control" | "grid", theme: string | null) {
     cwd: t.cwd,
     ...(t.agent ? { agent: t.agent } : {}),
   }));
+  // `?sessions=34` pads the list with plain terminals (long-list layout, the × close).
+  const extra = Number(new URLSearchParams(window.location.search).get("sessions")) - tabs.length;
+  for (let i = 0; i < extra; i++) tabs.push({ key: `term-${i + 1}`, name: `term-${i + 1}`, kind: "terminal" as const, cwd: MOCK_TABS[0].cwd });
   set("apex.openTabs", JSON.stringify(tabs));
   set("apex.gridKeys", JSON.stringify(GRID_AGENT_IDS));
   set("apex.viewMode", screen === "grid" ? "grid" : "tabs");

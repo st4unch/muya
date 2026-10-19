@@ -2632,6 +2632,7 @@ export default function App() {
             composerOpen={composerOpen}
             onRenameAgent={renameTerminal}
             onAgentContextMenu={openAgentContextMenu}
+            onCloseAgent={(key) => void closeTerminal(key)}
             pinnedAgentKeys={pinnedKeys}
             {...headerProps}
             footer={footerVM}

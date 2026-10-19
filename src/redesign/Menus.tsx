@@ -5,7 +5,7 @@
 // Everything is declared at module level — a component declared inside another
 // component's render body is a new type every render and swaps its DOM (lost clicks).
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { AgentVM } from "./types";
 
@@ -70,9 +70,21 @@ export function MenuPopover({ anchor, width = 240, onClose, children, label, aut
     if (autoFocus) menuRef.current?.focus({ preventScroll: true });
   }, [autoFocus]);
   const left = anchor.align === "left" ? Math.min(anchor.x, window.innerWidth - width - 8) : Math.max(8, anchor.x - width);
+  // Keep the whole menu on screen: opened near the bottom (the last session of a long
+  // list), it used to run off the window with "Close agent", its last item, out of reach.
+  const [top, setTop] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    if (!r.height) return;
+    const max = window.innerHeight - 8;
+    if (r.bottom > max || r.top < 8) setTop(Math.max(8, Math.min(r.top, max - r.height)));
+  }, [anchor.x, anchor.y, anchor.place]);
+  const vertical = top !== null ? { top } : anchor.place === "below" ? { top: anchor.y } : { bottom: window.innerHeight - anchor.y };
   return (
     <div className="rd-root" style={{ position: "fixed", inset: 0, zIndex: 150 }} onMouseDown={onClose} onContextMenu={(e) => { e.preventDefault(); onClose(); }}>
-      <div ref={menuRef} role="menu" aria-label={label} tabIndex={-1} onKeyDown={moveInMenu} onMouseDown={(e) => e.stopPropagation()} style={{ ...PANEL, outline: "none", position: "absolute", ...(anchor.place === "below" ? { top: anchor.y } : { bottom: window.innerHeight - anchor.y }), left, width, padding: 4, display: "flex", flexDirection: "column", gap: 1 }}>
+      <div ref={menuRef} role="menu" aria-label={label} tabIndex={-1} onKeyDown={moveInMenu} onMouseDown={(e) => e.stopPropagation()} style={{ ...PANEL, outline: "none", position: "absolute", ...vertical, left, width, maxHeight: "calc(100vh - 16px)", overflowY: "auto", boxSizing: "border-box", padding: 4, display: "flex", flexDirection: "column", gap: 1 }}>
         {children}
       </div>
     </div>

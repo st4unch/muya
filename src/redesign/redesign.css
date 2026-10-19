@@ -149,6 +149,15 @@
 .rd-agent-card {
   transition: background-color 120ms;
 }
+/* The × on a session row: faint until the row is hovered. */
+.rd-agent-row:hover .rd-agent-close,
+.rd-agent-close:focus-visible {
+  color: var(--text-muted) !important;
+}
+.rd-agent-close:hover {
+  background: var(--bg-segment-active) !important;
+  color: var(--text) !important;
+}
 
 /* Inspector "Değişiklikler" file rows. */
 .rd-change-row {
