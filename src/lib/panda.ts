@@ -1,8 +1,8 @@
 // Created by Claude — Classification: INTERNAL
 //
-// The rail panda's Settings switch and which scene it plays (docs/prd-rail-panda.md). The
-// scenes are LottieFiles animations picked by whether an agent is working
-// (redesign/RailPanda.tsx).
+// The rail panda's Settings switch and which scene it plays (docs/prd-rail-panda.md,
+// docs/prd-rive-panda.md). The scenes are Rive animations of our own rigged panda
+// (tools/panda-studio), picked by whether an agent is working (redesign/RailPanda.tsx).
 
 const KEY = "apex.panda";
 export const PANDA_EVENT = "muya:panda";
@@ -26,14 +26,22 @@ export function setPandaEnabled(on: boolean): void {
 }
 
 export type PandaScene =
-  | "sleeping"
-  | "waving"
-  | "rolling"
-  | "bowing"
-  | "celebrating"
-  | "teaching"
+  | "sleep"
+  | "wave"
+  | "flip"
+  | "bow"
+  | "roll"
+  | "fart"
+  | "bamboo_eat"
+  | "tofu_eat"
+  | "manti"
+  | "celebrate"
+  | "teacher"
+  | "gaming"
+  | "cookie"
+  | "bamboo"
   | "dance"
-  | "traveling"
+  | "traveller"
   | "business";
 
 /** busy = an agent works · idle = nothing runs but someone was here lately · asleep = neither for SLEEP_AFTER_MS */
@@ -47,32 +55,41 @@ export function pandaMood(busy: boolean, quietMs: number): PandaMood {
   return quietMs >= SLEEP_AFTER_MS ? "asleep" : "idle";
 }
 
-/** How long each scene stays before the next one (a few loops of its animation). */
+/** How long each scene stays before the next one: its animation's length × loops. */
 export const SCENE_MS: Record<PandaScene, number> = {
-  sleeping: 60_000,
-  waving: 8_500, // 4 × 2.1 s
-  rolling: 9_400, // 3 × 3.1 s
-  bowing: 7_300, // 2 × 3.6 s
-  celebrating: 3_000, // once
-  teaching: 11_500, // 4 × 2.9 s
-  dance: 8_000, // 4 × 2 s
-  traveling: 6_000, // 4 × 1.5 s
-  business: 9_000, // 4 × 2.25 s
+  sleep: 60_000,
+  wave: 6_667, // 2 × 3.33 s
+  flip: 6_000, // 2 × 3 s
+  bow: 5_667, // 2 × 2.83 s
+  roll: 6_800, // once
+  fart: 4_667, // once
+  bamboo_eat: 4_033, // once
+  tofu_eat: 3_533, // once
+  manti: 4_933, // once
+  celebrate: 2_933, // once
+  teacher: 9_500, // 3 × 3.17 s
+  gaming: 9_100, // 3 × 3.03 s
+  cookie: 7_700, // once
+  bamboo: 7_167, // 2 × 3.58 s
+  dance: 7_333, // 2 × 3.67 s
+  traveller: 5_867, // once
+  business: 5_700, // once
 };
 
-// Weighted pools. Working: the teacher (pointing at what Claude is doing) most, then the fan
-// dance, the traveller and the businessman. Idle but awake: waves, rolls, bows. Asleep: sleeps.
-// "celebrating" is not in a pool: it plays once when the agents finish (see firstScene).
+// Weighted pools. Working: the teacher (pointing at what Claude is doing) and the gamer most,
+// then the kung-fu cookie run and the bamboo splits, the fan dance, the traveller and the
+// businessman. Idle but awake: waves, flips, bows, rolls down a hill, snacks, and (rarely) the
+// fart. Asleep: sleeps. "celebrate" is not in a pool: it plays once when the agents finish.
 const POOLS: Record<PandaMood, [PandaScene, number][]> = {
-  busy: [["teaching", 3], ["dance", 2], ["traveling", 2], ["business", 2]],
-  idle: [["waving", 2], ["rolling", 2], ["bowing", 1]],
-  asleep: [["sleeping", 1]],
+  busy: [["teacher", 3], ["gaming", 3], ["cookie", 2], ["bamboo", 2], ["dance", 1], ["traveller", 1], ["business", 1]],
+  idle: [["wave", 3], ["flip", 2], ["bow", 2], ["roll", 2], ["bamboo_eat", 2], ["tofu_eat", 1], ["manti", 1], ["fart", 1]],
+  asleep: [["sleep", 1]],
 };
 
 /** The scene shown first when the mood changes; finishing work (busy → idle) celebrates first. */
 export function firstScene(mood: PandaMood, prev?: PandaMood): PandaScene {
-  if (mood === "idle" && prev === "busy") return "celebrating";
-  return mood === "busy" ? "teaching" : mood === "idle" ? "waving" : "sleeping";
+  if (mood === "idle" && prev === "busy") return "celebrate";
+  return mood === "busy" ? "teacher" : mood === "idle" ? "wave" : "sleep";
 }
 
 /** The scene after `prev`. No scene plays twice in a row unless it is the mood's only one. */

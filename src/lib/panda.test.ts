@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { PANDA_EVENT, SLEEP_AFTER_MS, boardText, firstScene, nextScene, pandaEnabled, pandaMood, setPandaEnabled, type PandaMood, type PandaScene } from "./panda";
+import { PANDA_EVENT, SCENE_MS, SLEEP_AFTER_MS, boardText, firstScene, nextScene, pandaEnabled, pandaMood, setPandaEnabled, type PandaMood, type PandaScene } from "./panda";
 
 describe("panda switch", () => {
   beforeEach(() => localStorage.removeItem("apex.panda"));
@@ -40,34 +40,44 @@ describe("panda scenes", () => {
   });
 
   it("the teacher first when agents start, a celebration when they finish, waving otherwise", () => {
-    expect(firstScene("busy")).toBe("teaching");
-    expect(firstScene("idle", "busy")).toBe("celebrating");
-    expect(firstScene("idle")).toBe("waving");
-    expect(firstScene("idle", "asleep")).toBe("waving");
-    expect(firstScene("asleep", "idle")).toBe("sleeping");
+    expect(firstScene("busy")).toBe("teacher");
+    expect(firstScene("idle", "busy")).toBe("celebrate");
+    expect(firstScene("idle")).toBe("wave");
+    expect(firstScene("idle", "asleep")).toBe("wave");
+    expect(firstScene("asleep", "idle")).toBe("sleep");
   });
 
-  it("busy takes turns, the teacher most, never the same twice in a row", () => {
-    const s = seq("busy", 400);
-    for (const x of s) expect(["teaching", "dance", "traveling", "business"]).toContain(x);
+  const BUSY: PandaScene[] = ["teacher", "gaming", "cookie", "bamboo", "dance", "traveller", "business"];
+  const IDLE: PandaScene[] = ["wave", "flip", "bow", "roll", "bamboo_eat", "tofu_eat", "manti", "fart"];
+
+  it("busy takes turns, the teacher and the gamer most, never the same twice in a row", () => {
+    const s = seq("busy", 600);
+    for (const x of s) expect(BUSY).toContain(x);
     for (let i = 1; i < s.length; i++) expect(s[i]).not.toBe(s[i - 1]);
-    for (const x of ["dance", "traveling", "business"] as PandaScene[]) expect(s).toContain(x);
-    expect(count(s, "teaching")).toBeGreaterThan(count(s, "dance"));
+    for (const x of BUSY) expect(s).toContain(x);
+    expect(count(s, "teacher")).toBeGreaterThan(count(s, "dance"));
+    expect(count(s, "gaming")).toBeGreaterThan(count(s, "business"));
   });
 
-  it("idle waves, rolls and bows; after the celebration it carries on idle; asleep only sleeps", () => {
-    const s = seq("idle", 300);
-    for (const x of s) expect(["waving", "rolling", "bowing"]).toContain(x);
+  it("idle waves, flips, bows, rolls and snacks; after the celebration it carries on idle; asleep only sleeps", () => {
+    const s = seq("idle", 600);
+    for (const x of s) expect(IDLE).toContain(x);
     for (let i = 1; i < s.length; i++) expect(s[i]).not.toBe(s[i - 1]);
-    expect(["waving", "rolling", "bowing"]).toContain(nextScene("idle", "celebrating", () => 0.5));
-    expect(new Set(seq("asleep", 20))).toEqual(new Set(["sleeping"]));
+    for (const x of IDLE) expect(s).toContain(x);
+    expect(count(s, "wave")).toBeGreaterThan(count(s, "fart"));
+    expect(IDLE).toContain(nextScene("idle", "celebrate", () => 0.5));
+    expect(new Set(seq("asleep", 20))).toEqual(new Set(["sleep"]));
   });
 
   it("the edges of the random range pick a real scene", () => {
-    expect(nextScene("busy", "teaching", () => 0)).toBe("dance");
-    expect(nextScene("busy", "teaching", () => 0.999999)).toBe("business");
-    expect(nextScene("idle", "waving", () => 0)).toBe("rolling");
-    expect(nextScene("asleep", "sleeping", () => 0.5)).toBe("sleeping");
+    expect(nextScene("busy", "teacher", () => 0)).toBe("gaming");
+    expect(nextScene("busy", "teacher", () => 0.999999)).toBe("business");
+    expect(nextScene("idle", "wave", () => 0)).toBe("flip");
+    expect(nextScene("asleep", "sleep", () => 0.5)).toBe("sleep");
+  });
+
+  it("every scene has a length", () => {
+    for (const x of [...BUSY, ...IDLE, "celebrate", "sleep"] as PandaScene[]) expect(SCENE_MS[x]).toBeGreaterThan(2_000);
   });
 
   it("the board shows Claude's spinner verb, else the first part of the working line", () => {

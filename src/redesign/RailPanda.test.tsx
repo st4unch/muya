@@ -3,11 +3,30 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import RailPanda from "./RailPanda";
 import { SCENE_MS, SLEEP_AFTER_MS, setPandaEnabled } from "../lib/panda";
 
-const lottie = vi.hoisted(() => {
-  const destroy = vi.fn();
-  return { destroy, loadAnimation: vi.fn(() => ({ destroy })) };
+const rive = vi.hoisted(() => {
+  const cleanup = vi.fn();
+  const made: { src: string; canvas: Element; stateMachines: string; layout: Record<string, unknown> }[] = [];
+  class Rive {
+    cleanup = cleanup;
+    constructor(opts: (typeof made)[number]) {
+      made.push(opts);
+    }
+  }
+  class Layout {
+    constructor(p: Record<string, unknown>) {
+      Object.assign(this, p);
+    }
+  }
+  return { cleanup, made, Rive, Layout, setWasmUrl: vi.fn() };
 });
-vi.mock("lottie-web/build/player/lottie_light", () => ({ default: { loadAnimation: lottie.loadAnimation } }));
+vi.mock("@rive-app/canvas-lite", () => ({
+  Rive: rive.Rive,
+  Layout: rive.Layout,
+  Fit: { Contain: "contain" },
+  Alignment: { Center: "center" },
+  RuntimeLoader: { setWasmUrl: rive.setWasmUrl },
+}));
+vi.mock("@rive-app/canvas-lite/rive.wasm?url", () => ({ default: "/assets/rive.wasm" }));
 
 const panda = () => screen.queryByRole("img");
 
@@ -21,10 +40,10 @@ describe("RailPanda", () => {
   it("the teacher with Claude's status when agents start, waving while idle", () => {
     const { rerender } = render(<RailPanda busy={false} />);
     expect(panda()?.getAttribute("data-mood")).toBe("idle");
-    expect(panda()?.getAttribute("data-scene")).toBe("waving");
+    expect(panda()?.getAttribute("data-scene")).toBe("wave");
     rerender(<RailPanda busy status="Thinking…" />);
     expect(panda()?.getAttribute("data-mood")).toBe("busy");
-    expect(panda()?.getAttribute("data-scene")).toBe("teaching");
+    expect(panda()?.getAttribute("data-scene")).toBe("teacher");
     expect(document.querySelector(".rp-board")?.textContent).toContain("Thinking…");
     rerender(<RailPanda busy status="Reading…" />);
     expect(document.querySelector(".rp-board")?.textContent).toContain("Reading…");
@@ -36,8 +55,8 @@ describe("RailPanda", () => {
     const { rerender } = render(<RailPanda busy />);
     expect(document.querySelector(".rp-board")).toBeNull();
     rerender(<RailPanda busy status="Thinking…" />);
-    act(() => vi.advanceTimersByTime(SCENE_MS.teaching));
-    expect(panda()?.getAttribute("data-scene")).toBe("dance");
+    act(() => vi.advanceTimersByTime(SCENE_MS.teacher));
+    expect(panda()?.getAttribute("data-scene")).toBe("gaming");
     expect(document.querySelector(".rp-board")).toBeNull();
   });
 
@@ -46,9 +65,9 @@ describe("RailPanda", () => {
     vi.spyOn(Math, "random").mockReturnValue(0);
     const { rerender } = render(<RailPanda busy />);
     rerender(<RailPanda busy={false} />);
-    expect(panda()?.getAttribute("data-scene")).toBe("celebrating");
-    act(() => vi.advanceTimersByTime(SCENE_MS.celebrating));
-    expect(panda()?.getAttribute("data-scene")).toBe("waving");
+    expect(panda()?.getAttribute("data-scene")).toBe("celebrate");
+    act(() => vi.advanceTimersByTime(SCENE_MS.celebrate));
+    expect(panda()?.getAttribute("data-scene")).toBe("wave");
     expect(panda()?.getAttribute("data-mood")).toBe("idle");
   });
 
@@ -59,10 +78,10 @@ describe("RailPanda", () => {
     expect(panda()?.getAttribute("data-mood")).toBe("idle");
     act(() => vi.advanceTimersByTime(15_000));
     expect(panda()?.getAttribute("data-mood")).toBe("asleep");
-    expect(panda()?.getAttribute("src")).toMatch(/sleeping/);
+    expect(panda()?.getAttribute("data-scene")).toBe("sleep");
     act(() => void window.dispatchEvent(new KeyboardEvent("keydown", { key: "a" })));
     expect(panda()?.getAttribute("data-mood")).toBe("idle");
-    expect(panda()?.getAttribute("data-scene")).toBe("waving");
+    expect(panda()?.getAttribute("data-scene")).toBe("wave");
   });
 
   it("activity keeps it awake; a working agent never lets it sleep", () => {
@@ -86,28 +105,33 @@ describe("RailPanda", () => {
     vi.useFakeTimers();
     vi.spyOn(Math, "random").mockReturnValue(0);
     render(<RailPanda busy={false} />);
-    expect(panda()?.getAttribute("data-scene")).toBe("waving");
-    act(() => vi.advanceTimersByTime(SCENE_MS.waving));
-    expect(panda()?.getAttribute("data-scene")).toBe("rolling");
-    act(() => vi.advanceTimersByTime(SCENE_MS.rolling));
-    expect(panda()?.getAttribute("data-scene")).toBe("waving");
+    expect(panda()?.getAttribute("data-scene")).toBe("wave");
+    act(() => vi.advanceTimersByTime(SCENE_MS.wave));
+    expect(panda()?.getAttribute("data-scene")).toBe("flip");
+    act(() => vi.advanceTimersByTime(SCENE_MS.flip));
+    expect(panda()?.getAttribute("data-scene")).toBe("wave");
   });
 
-  it("each Lottie scene plays as SVG and its player stops when it goes away", async () => {
-    lottie.loadAnimation.mockClear();
-    lottie.destroy.mockClear();
+  it("each scene plays its own Rive file on the panda's canvas, framed for the rail, and stops when it goes away", async () => {
+    rive.made.length = 0;
+    rive.cleanup.mockClear();
     const { rerender } = render(<RailPanda busy={false} />);
-    await vi.waitFor(() => expect(lottie.loadAnimation).toHaveBeenCalledTimes(1));
-    const opts = (lottie.loadAnimation.mock.calls[0] as unknown[])[0] as { renderer: string; loop: boolean; container: Element; animationData: { nm?: string } };
-    expect(opts.renderer).toBe("svg");
-    expect(opts.loop).toBe(true);
-    expect(opts.container).toBe(panda());
-    expect(opts.animationData.nm).toMatch(/Panda waving/);
+    await vi.waitFor(() => expect(rive.made).toHaveLength(1));
+    expect(rive.setWasmUrl).toHaveBeenCalledWith("/assets/rive.wasm"); // the bundled wasm, no CDN
+    const first = rive.made[0];
+    expect(first.src).toMatch(/wave/);
+    expect(first.canvas).toBe(panda()?.querySelector("canvas"));
+    expect(first.stateMachines).toBe("State Machine 1");
+    expect(first.layout).toMatchObject({ fit: "contain" });
+    // the canvas is the whole artboard, shifted so the scene's crop square fills the 62 px box
+    const c = first.canvas as HTMLCanvasElement;
+    expect(parseFloat(c.style.width)).toBeGreaterThan(62);
+    expect(parseFloat(c.style.left)).toBeLessThan(0);
+    expect((panda() as HTMLElement).style.overflow).toBe("hidden");
     rerender(<RailPanda busy status="Thinking…" />);
-    expect(lottie.destroy).toHaveBeenCalledTimes(1);
-    await vi.waitFor(() => expect(lottie.loadAnimation).toHaveBeenCalledTimes(2));
-    const busyOpts = (lottie.loadAnimation.mock.calls[1] as unknown[])[0] as { animationData: { nm?: string } };
-    expect(busyOpts.animationData.nm).toMatch(/teaching/i);
+    expect(rive.cleanup).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(rive.made).toHaveLength(2));
+    expect(rive.made[1].src).toMatch(/teacher/);
   });
 
   it("the Settings switch hides and brings it back", () => {

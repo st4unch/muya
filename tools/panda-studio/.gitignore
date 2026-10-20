@@ -1,0 +1,5 @@
+scene_*/
+frames/
+videos/
+__pycache__/
+*.rev

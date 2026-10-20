@@ -1,31 +1,42 @@
 // Created by Claude — Classification: INTERNAL
 //
-// The panda in the rail's empty space (docs/prd-rail-panda.md). Weblodge's black-and-white
-// pandas (LottieFiles, Lottie Simple License — credits in resources/THIRD_PARTY_LICENSES.txt):
-// when an agent starts, the teacher points at a board that shows what Claude is doing
-// ("Thinking…"), then the fan dance, the traveller and the businessman take turns. When the
-// work is done the panda celebrates once; with nothing running it waves, rolls and bows; after
-// 5 quiet minutes it sleeps on its bamboo (bilal shehzad's animation, an SVG).
+// The panda in the rail's empty space (docs/prd-rail-panda.md, docs/prd-rive-panda.md). Our
+// own rigged panda, animated in Rive (tools/panda-studio; artwork credits in
+// resources/THIRD_PARTY_LICENSES.txt): when an agent starts, the teacher points at a board that
+// shows what Claude is doing ("Thinking…"), then gaming, the kung-fu cookie run, the bamboo
+// splits, the fan dance, the traveller and the businessman take turns. When the work is done
+// the panda celebrates once; with nothing running it waves, flips, bows, rolls down a hill and
+// snacks; after 5 quiet minutes it sleeps on its bamboo branch.
 //
-// Lottie scenes (LottiePanda) load their player and data only while shown; the SVG scene is an
-// <img> that animates itself. Only the current scene is mounted, and nothing is mounted while
-// the window is hidden, so the panda costs nothing when nobody looks.
+// Each scene (RivePanda) loads the runtime and its file only while shown. Only the current scene
+// is mounted, and nothing is mounted while the window is hidden, so the panda costs nothing
+// when nobody looks.
 
 import { useEffect, useRef, useState } from "react";
-import sleepingUrl from "../assets/panda/sleeping.svg";
-import LottiePanda, { type LottieData } from "./LottiePanda";
+import RivePanda, { type Crop, type RiveSrc, type Size } from "./RivePanda";
 import { PANDA_EVENT, SCENE_MS, SLEEP_AFTER_MS, firstScene, nextScene, pandaEnabled, pandaMood, type PandaMood, type PandaScene } from "../lib/panda";
 
-// Lottie scenes, fetched only when shown.
-const LOTTIE: Record<Exclude<PandaScene, "sleeping">, LottieData> = {
-  waving: () => import("../assets/panda/waving.json"),
-  rolling: () => import("../assets/panda/rolling.json"),
-  bowing: () => import("../assets/panda/bowing.json"),
-  celebrating: () => import("../assets/panda/celebrating.json"),
-  teaching: () => import("../assets/panda/teaching.json"),
-  dance: () => import("../assets/panda/dance.json"),
-  traveling: () => import("../assets/panda/traveling.json"),
-  business: () => import("../assets/panda/business.json"),
+// Rive scenes, fetched only when shown. `size` is the artboard; `crop` is the square of it the
+// rail shows (the panda and its props), measured from rendered frames by
+// tools/panda-studio/crops.py.
+const SCENES: Record<PandaScene, { load: RiveSrc; size: Size; crop: Crop }> = {
+  sleep: { load: () => import("../assets/panda/rive/sleep.riv?url"), size: [1200, 1000], crop: [38, -96, 1149, 1016] },
+  wave: { load: () => import("../assets/panda/rive/wave.riv?url"), size: [1000, 1100], crop: [124, 299, 896, 1070] },
+  flip: { load: () => import("../assets/panda/rive/flip.riv?url"), size: [1000, 1100], crop: [-26, 69, 1025, 1120] },
+  bow: { load: () => import("../assets/panda/rive/bow.riv?url"), size: [1000, 1100], crop: [119, 310, 889, 1079] },
+  roll: { load: () => import("../assets/panda/rive/roll.riv?url"), size: [1500, 1100], crop: [-30, -449, 1530, 1111] },
+  fart: { load: () => import("../assets/panda/rive/fart.riv?url"), size: [1500, 1100], crop: [139, 243, 1033, 1138] },
+  bamboo_eat: { load: () => import("../assets/panda/rive/bamboo_eat.riv?url"), size: [1000, 1100], crop: [112, 295, 894, 1076] },
+  tofu_eat: { load: () => import("../assets/panda/rive/tofu_eat.riv?url"), size: [1000, 1100], crop: [153, 282, 945, 1075] },
+  manti: { load: () => import("../assets/panda/rive/manti.riv?url"), size: [1150, 1100], crop: [168, 295, 949, 1076] },
+  celebrate: { load: () => import("../assets/panda/rive/celebrate.riv?url"), size: [1000, 1100], crop: [16, 99, 1021, 1105] },
+  teacher: { load: () => import("../assets/panda/rive/teacher.riv?url"), size: [1150, 1100], crop: [128, 214, 1000, 1085] },
+  gaming: { load: () => import("../assets/panda/rive/gaming.riv?url"), size: [1000, 1100], crop: [99, 314, 900, 1115] },
+  cookie: { load: () => import("../assets/panda/rive/cookie.riv?url"), size: [1100, 1150], crop: [-48, -22, 1147, 1173] },
+  bamboo: { load: () => import("../assets/panda/rive/bamboo.riv?url"), size: [1000, 1150], crop: [-40, 91, 1039, 1171] },
+  dance: { load: () => import("../assets/panda/rive/dance.riv?url"), size: [1000, 1100], crop: [115, 310, 884, 1078] },
+  traveller: { load: () => import("../assets/panda/rive/traveller.riv?url"), size: [1200, 1100], crop: [149, 243, 1043, 1138] },
+  business: { load: () => import("../assets/panda/rive/business.riv?url"), size: [1200, 1100], crop: [149, 243, 1043, 1138] },
 };
 
 const SPIN = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"];
@@ -155,22 +166,8 @@ export default function RailPanda({ busy, status }: { busy: boolean; status?: st
   const label = LABEL[mood];
   return (
     <div ref={boxRef} style={{ flexGrow: 1, minHeight: 0, width: 64, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", overflow: "hidden" }}>
-      {fits && !hidden && scene === "teaching" && status && <Board text={status} />}
-      {fits && !hidden && (scene === "sleeping" ? (
-        <img
-          key={scene}
-          className="rp-img"
-          src={sleepingUrl}
-          alt={label}
-          title={label}
-          draggable={false}
-          data-mood={mood}
-          data-scene={scene}
-          style={{ width: 62, height: "auto", display: "block", userSelect: "none", filter: "var(--panda-halo)" }}
-        />
-      ) : (
-        <LottiePanda key={scene} load={LOTTIE[scene]} label={label} mood={mood} scene={scene} width={62} />
-      ))}
+      {fits && !hidden && scene === "teacher" && status && <Board text={status} />}
+      {fits && !hidden && <RivePanda key={scene} load={SCENES[scene].load} size={SCENES[scene].size} crop={SCENES[scene].crop} label={label} mood={mood} scene={scene} width={62} />}
     </div>
   );
 }
