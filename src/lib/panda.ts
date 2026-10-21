@@ -61,19 +61,19 @@ export const SCENE_MS: Record<PandaScene, number> = {
   wave: 6_667, // 2 × 3.33 s
   flip: 6_000, // 2 × 3 s
   bow: 5_667, // 2 × 2.83 s
-  roll: 6_800, // once
+  roll: 6_383, // once
   fart: 4_667, // once
   bamboo_eat: 4_033, // once
   tofu_eat: 3_533, // once
   manti: 4_933, // once
   celebrate: 2_933, // once
-  teacher: 9_500, // 3 × 3.17 s
+  teacher: 11_600, // 3 × 3.87 s
   gaming: 9_100, // 3 × 3.03 s
   cookie: 7_700, // once
   bamboo: 7_167, // 2 × 3.58 s
   dance: 7_333, // 2 × 3.67 s
-  traveller: 5_867, // once
-  business: 5_700, // once
+  traveller: 6_667, // 2 × 3.33 s
+  business: 8_667, // 2 × 4.33 s
 };
 
 // Weighted pools. Working: the teacher (pointing at what Claude is doing) and the gamer most,

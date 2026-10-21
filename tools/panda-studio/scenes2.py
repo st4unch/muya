@@ -8,7 +8,7 @@ import gen_panda as G
 from gen_panda import el, solid, nid, rect, ellipse, star, keyframes, show, P, REST, GUARD, CROUCH, LAND, RAD, GROUND, PIV, LIMBS, INK, FUR, Frag
 
 # ---------------------------------------------------------------- shared build
-def build(name, keys, props=None, extra=None, size=(1000, 1100), origin=(334, 640), background=None, fps=60):
+def build(name, keys, props=None, extra=None, size=(1000, 1100), origin=(334, 640), background=None, fps=60, head_extra=None, chest_extra=None):
     """panda + optional props(world, front, back) -> dict, then keys + extra(la, ids, props)"""
     G.PAW_IDS.clear(); G.PAW_IDS_NODE.clear()
     W, H = size
@@ -28,10 +28,16 @@ def build(name, keys, props=None, extra=None, size=(1000, 1100), origin=(334, 64
         node, b1, b2 = G.limb(n, x, y, a, L1, L2, r0, r1, G.hand if paw == "hand" else G.foot)
         parts[n] = node; ids[n + "1"] = b1; ids[n + "2"] = b2
     pr = props(world, front, back, ids) if props else {}
-    for c in (parts["armL"], parts["armR"], G.face_head(), G.borrowed("1:728"),
+    head = G.face_head()
+    if head_extra:
+        head_extra(head)                     # things worn on the head turn and bob with it
+    for c in (parts["armL"], parts["armR"], head, G.borrowed("1:728"),
               parts["legL"], parts["legR"], G.borrowed("1:740")):
         inner.append(c)
     inner.append(G.borrowed("1:751", x="-209.11639", y="-340.1178"))
+    if chest_extra:                          # worn on the chest: over the body, under the arms and head
+        for k, c in enumerate(chest_extra()):
+            inner.insert(3 + k, c)
     world.append(G.borrowed("1:748", name="shadow", id="2:14")); ids["shadow"] = "2:14"
     sm = el("StateMachine", ab, name="State Machine 1", id="9:7")
     lay = el("StateMachineLayer", sm, name="Layer 1", id="9:8")
@@ -69,38 +75,35 @@ def wave():
     keys += [(132, UP, "io"), (150, P(SMILE, head=3), "io"), (200, SMILE, "hold")]
     return build("wave", keys)
 
-# ---------------------------------------------------------------- 1. sleep on a bamboo branch
+# ---------------------------------------------------------------- 1. sleep, sitting against a bamboo stalk
 def sleep():
-    ROT = -84                             # lying on its back across a branch, head to the left
-    def hang(**k):    # limbs hang to the floor whatever the body tilt
-        p = P(rot=ROT, dx=40, dy=-128, eyes="shut", mouth="grin", head=6, sx=100, sy=100)
-        for limb, extra in (("armL", 8), ("armR", -6), ("legL", 6), ("legR", -10)):
-            rest = LIMBS[limb][2] / RAD
-            p[limb + "1"] = 90 - rest - ROT + extra
-            p[limb + "2"] = 4
+    def sit(**k):
+        # sitting on the ground: body lowered, legs splayed forward-out, paws folded on the belly,
+        # head dropped to the side onto the stalk
+        p = P(dy=46, legL1=52, legR1=-52, legL2=-8, legR2=8, eyes="shut", mouth="grin", head=-13, hy=14, rot=-5)
+        r1, r2 = G.ik("armL", (150, 252), elbow_out=1); p["armL1"], p["armL2"] = r1, r2
+        r1, r2 = G.ik("armR", (182, 258), elbow_out=-1); p["armR1"], p["armR2"] = r1, r2
         p.update(k); return p
-    A, B = hang(sy=100), hang(sy=104, sx=99, head=8, dy=-131)
-    keys = [(0, A, "io"), (60, B, "io"), (120, A, "io"), (180, B, "io"), (240, A, "hold")]
+    IN, OUT = sit(sy=103, sx=99, hy=10, head=-12), sit(sy=99, sx=101, hy=16, head=-14)
+    keys = [(0, OUT, "io"), (70, IN, "io"), (140, OUT, "io"), (210, IN, "io"), (280, OUT, "hold")]
 
     def props(world, front, back, ids):
         pr = {"z": []}
-        # the branch the panda sleeps on: a long bamboo on two short posts
-        y = G.GROUND - 160
-        back.append(G.bamboo_piece("branch", 166, y + 40, 620, drop=(G.LEAF_BOTTOM,), thick=1.9, rot=0))
-        for dx in (-200, 230):
-            back.append(G.bamboo_piece("post", 166 + dx, (G.GROUND + y + 40) / 2 + 10, G.GROUND - y - 30, drop=(G.LEAF_TOP, G.LEAF_BOTTOM), thick=1.6))
+        # a tall bamboo stalk behind the panda's shoulder to lean on, a second one further back
+        back.append(G.bamboo_piece("stalk", -40, G.GROUND - 330, 660, drop=(G.LEAF_BOTTOM,), thick=1.9))
+        back.append(G.bamboo_piece("stalk2", 410, G.GROUND - 260, 520, drop=(G.LEAF_BOTTOM,), thick=1.6))
         for k in range(3):
-            pr["z"].append(zz(front, 60 + k * 10, -40, 54 - k * 10).get("id"))
+            pr["z"].append(zz(front, 0, 0, 58 - k * 12).get("id"))
         return pr
 
     def extra(la, ids, pr, end):
-        for k, zid in enumerate(pr["z"]):       # z's drift up from the mouth and fade, one after another
-            t0 = k * 80
-            pts = [(0, t0), (t0 + 70, t0 + 70)]
-            la.append(keyframes(zid, 13, [(0, -60, "hold"), (t0, -60, "lin"), (t0 + 90, 10, "hold")]))
-            la.append(keyframes(zid, 14, [(0, 60, "hold"), (t0, 60, "lin"), (t0 + 90, -110, "hold")]))
-            la.append(keyframes(zid, 18, [(0, 0, "hold"), (t0, 0, "lin"), (t0 + 20, 1, "lin"), (t0 + 70, 1, "lin"), (t0 + 90, 0, "hold")]))
-    return build("sleep", keys, props, extra, size=(1200, 1000), origin=(520, 560))
+        for k, zid in enumerate(pr["z"]):       # z's drift up from the head and fade, one after another
+            t0 = k * 90
+            la.append(keyframes(zid, 13, [(0, 250, "hold"), (t0, 250, "out"), (t0 + 100, 330, "hold")]))
+            la.append(keyframes(zid, 14, [(0, -120, "hold"), (t0, -120, "out"), (t0 + 100, -300, "hold")]))
+            la.append(keyframes(zid, 15, [(0, 0, "hold"), (t0, -0.2, "io"), (t0 + 100, 0.25, "hold")]))
+            la.append(keyframes(zid, 18, [(0, 0, "hold"), (t0, 0, "lin"), (t0 + 20, 1, "lin"), (t0 + 75, 1, "lin"), (t0 + 100, 0, "hold")]))
+    return build("sleep", keys, props, extra)
 
 def zz(parent, x, y, size):
     """a sleepy 'Z' drawn as a thick navy stroke"""
@@ -205,47 +208,88 @@ def slow_fall(fr, t):
     return x + 8 * math.sin(t * 0.15 + fr.rot), y, fr.rot + fr.spin * t
 
 # ---------------------------------------------------------------- 12. teacher at a chalkboard
-BOARD = (-260, 110, 300, 210)          # board centre x, y, w, h (root space), left of the panda
+BOARD = (-300, 10, 400, 290)           # board centre x, y, w, h (root space), left of the panda
+CHALK = "E6FFFFFF"
+
+def chalk_line(parent, pts, name, w=7):
+    s = el("Shape", parent, name=name, id=nid())
+    p = el("PointsPath", s, isClosed="false", name="Path", id=nid())
+    for x, y in pts:
+        el("StraightVertex", p, x=round(x, 1), y=round(y, 1))
+    solid(s, "Stroke", CHALK, thickness=w, cap="round", join="round")
+    return s
 
 def teacher():
-    tip_target = (BOARD[0] + BOARD[2] / 2 - 30, BOARD[1] + 10)      # pointer tip on the board
-
-    def point(base, dy=0):
+    bx, by, bw, bh = BOARD
+    SPOTS = [(bx - 110, by + 70), (bx + 110, by - 70), (bx - 60, by - 70)]    # chart, star, text
+    PTR = 190                                   # pointer length past the paw
+    def point(base, spot, tap=0):
+        """left paw holds the pointer so its tip lands on a spot on the board: search the angle at
+        which the forearm (and so the pointer) actually aims from the paw to the spot"""
         p = P(base)
-        r1, r2 = G.ik("armL", (-10 - p["dx"], 100 + dy - p["dy"]), elbow_out=1)
-        p["armL1"], p["armL2"] = r1, r2
+        tx, ty = SPOTS[spot][0] - p["dx"], SPOTS[spot][1] + tap - p["dy"]
+        best = None
+        for deg in range(-70, 71, 2):
+            th = math.radians(deg)
+            paw = (tx + PTR * math.cos(th), ty + PTR * math.sin(th))      # paw to the right of the spot
+            r1, r2 = G.ik("armL", paw, elbow_out=1)
+            q = dict(p, armL1=r1, armL2=r2)
+            (px_, py_), d2 = G.tip(q, "armL")
+            miss = math.hypot(px_ + PTR * math.cos(d2) - tx, py_ + PTR * math.sin(d2) - ty)
+            if best is None or miss < best[0]:
+                best = (miss, r1, r2)
+        p["armL1"], p["armL2"] = best[1], best[2]
         return p
-    TALK = P(armR1=-20, armR2=-80, head=-5)
-    keys = [(0, point(TALK), "io")]
+    EXPLAIN = P(armR1=-55, armR2=-75, head=-7, lenAR=96)          # right paw up, palm out
+    BELLY = P(armR1=20, armR2=95, head=-4)
+    AUDIENCE = P(armR1=-70, armR2=-40, head=6, eyes="happy", mouth="open", lenAR=96)
+    keys = [(0, point(BELLY, 0), "io")]
     f = 0
-    for i in range(8):                   # taps the board while talking
-        f += 9
-        keys.append((f, P(point(TALK, -14 if i % 2 else 8), mouth="open" if i % 2 == 0 else "grin", head=-5 + (2 if i % 2 else -1)), "io"))
-    LOOK = P(TALK, head=6, armR1=-35, armR2=-100, mouth="grin")
-    keys += [(f + 20, point(LOOK), "io"), (f + 50, point(LOOK), "io")]
-    f += 50
-    for i in range(6):
-        f += 9
-        keys.append((f, P(point(TALK, -14 if i % 2 else 8), mouth="open" if i % 2 == 0 else "grin"), "io"))
-    keys.append((f + 14, point(TALK), "hold"))
+    for spot, side in ((0, EXPLAIN), (1, BELLY), (2, EXPLAIN)):
+        f += 14
+        keys.append((f, point(side, spot), "out"))
+        for i in range(3):              # tap, tap, tap while talking
+            f += 8
+            keys.append((f, P(point(side, spot, -12 if i % 2 == 0 else 0), mouth="open" if i % 2 == 0 else "grin"), "io"))
+        f += 16
+        keys.append((f, P(point(side, spot), mouth="grin"), "io"))
+    keys += [(f + 18, point(AUDIENCE, 2, 30), "io"), (f + 50, point(AUDIENCE, 2, 30), "io"), (f + 70, point(BELLY, 0), "hold")]
 
     def props(world, front, back, ids):
-        bx, by, bw, bh = BOARD
         b = el("Node", back, name="board", id=nid())
-        # chalk scribbles stand in for the words (Muya writes the real status over it); on top of the slate
-        for i, w in enumerate((170, 120, 150)):
-            rect(b, bx - bw / 2 + 40 + w / 2, by - 50 + i * 40, w, 8, "CCFFFFFF", f"chalk{i}", stroke=0, radius=4)
-        rect(b, bx, by, bw - 34, bh - 34, "FF2F5D50", "slate", stroke=0, radius=8)
+        # chalk drawings first (on top of the slate): a bar chart, two lines of "text", a star, a tick
+        x0, y0 = SPOTS[0]
+        for i, h in enumerate((50, 90, 70)):
+            rect(b, x0 - 40 + i * 40, y0 + 40 - h / 2, 22, h, "00000000", f"bar{i}", stroke=0, radius=3)
+            chalk_line(b, [(x0 - 51 + i * 40, y0 + 40), (x0 - 51 + i * 40, y0 + 40 - h), (x0 - 29 + i * 40, y0 + 40 - h), (x0 - 29 + i * 40, y0 + 40)], f"bar{i}", 6)
+        chalk_line(b, [(x0 - 70, y0 + 40), (x0 + 60, y0 + 40)], "axis", 6)
+        tx, ty = SPOTS[2]
+        for i, w in enumerate((150, 110)):
+            pts = [(tx - 70 + k * 10, ty - 8 + i * 36 + (6 if k % 2 else -6)) for k in range(int(w / 10) + 1)]
+            chalk_line(b, pts, f"words{i}", 5)
+        sx_, sy_ = SPOTS[1]
+        star_pts = []
+        for k in range(11):
+            r = 34 if k % 2 == 0 else 14
+            a_ = -math.pi / 2 + k * math.pi / 5
+            star_pts.append((sx_ + r * math.cos(a_), sy_ + r * math.sin(a_)))
+        chalk_line(b, star_pts, "star", 5)
+        chalk_line(b, [(sx_ - 34, sy_ + 110), (sx_ - 14, sy_ + 132), (sx_ + 30, sy_ + 80)], "tick", 7)
+        rect(b, bx, by, bw - 36, bh - 36, "FF2F5D50", "slate", stroke=0, radius=8)
         rect(b, bx, by, bw, bh, "FFB9824A", "frame", stroke=9, radius=14)
-        for dx in (-bw / 2 + 40, bw / 2 - 40):           # easel legs
-            rect(b, bx + dx, by + bh / 2 + 100, 14, 220, "FFB9824A", "leg", stroke=7, radius=6)
-        # the pointer: a thin bamboo held in the left paw
-        ptr = G.bamboo_piece("pointer", 0, 0, 170, drop=(G.LEAF_TOP, G.LEAF_BOTTOM), thick=0.5, rot=0)
+        rect(b, bx, by + bh / 2 + 6, bw * 0.7, 16, "FFB9824A", "ledge", stroke=6, radius=6)
+        for dx in (-bw / 2 + 60, bw / 2 - 60):           # easel legs to the floor
+            top = by + bh / 2
+            rect(b, bx + dx, (top + G.GROUND) / 2, 16, G.GROUND - top, "FFB9824A", "leg", stroke=7, radius=6)
+        b.remove(b[-1]); b.remove(b[-1])                  # (re-add legs behind the frame)
+        for dx in (-bw / 2 + 60, bw / 2 - 60):
+            top = by + bh / 2
+            b.append(rect(el("Node", None), bx + dx, (top + G.GROUND) / 2, 16, G.GROUND - top, "FFB9824A", "leg", stroke=7, radius=6))
+        ptr = G.bamboo_piece("pointer", 0, 0, 190, drop=(G.LEAF_TOP, G.LEAF_BOTTOM), thick=0.5, rot=0)
         G.PAW_IDS_NODE["armL"].insert(0, ptr)
-        ptr.attrib.update(x="0", y="85", rotation=f"{math.pi / 2}")
+        ptr.attrib.update(x="0", y="95", rotation=f"{math.pi / 2}")
         return {}
-    return build("teacher", keys, props, None, size=(1150, 1100), origin=(560, 640))
-
+    return build("teacher", keys, props, None, size=(1250, 1100), origin=(660, 640))
 
 # ---------------------------------------------------------------- shared bits for B / C
 def walk_cycle(base, start, steps, period=16, stride=18, bob=10):
@@ -328,8 +372,8 @@ def bow():
     return build("bow", keys)
 
 # ---------------------------------------------------------------- 7. roll down a hill
-HILL_X = (-420, 520)                    # root x where the slope starts (top) and ends (bottom)
-HILL_TOP = 260                          # how high the top is above the floor
+HILL_X = (-470, 560)                    # root x where the slope starts (top) and ends (bottom)
+HILL_TOP = 300                          # how high the top is above the floor
 
 def hill_y(x):
     """floor height (root y) on the slope at x: an eased S-curve from top to bottom"""
@@ -337,44 +381,76 @@ def hill_y(x):
     s = t * t * (3 - 2 * t)
     return GROUND - HILL_TOP * (1 - s)
 
+# how far below the body pivot the tucked ball reaches at each rotation (measured by
+# measure_ball.py from renders); the big head makes it an egg, not a ball
+BALL_LOW = {0: 49, 24: 73, 48: 94, 72: 129, 96: 257, 120: 418, 144: 519, 168: 541, 192: 540,
+            216: 516, 240: 415, 264: 252, 288: 130, 312: 94, 336: 73}
+ROLL_H = 245                       # roll about a point this far above the pivot (between belly and head)
+
+def ball_low(a):
+    a %= 360
+    lo = int(a // 24) * 24; hi = (lo + 24) % 360
+    t = (a - lo) / 24
+    return BALL_LOW[lo] * (1 - t) + BALL_LOW[hi] * t
+
 def roll():
-    BALL = dict(legL1=70, legR1=-70, legL2=-120, legR2=120, armL1=60, armR1=-60, armL2=-110, armR2=110, eyes="shut")
-    def at(x, **k):            # stand on the slope at root x (body centre)
-        return P(dx=x - PIV[0], dy=hill_y(x) - GROUND, **k)
+    BALL = dict(legL1=70, legR1=-70, legL2=-120, legR2=120, armL1=60, armR1=-60, armL2=-110, armR2=110, eyes="shut", sx=86, sy=86)
     guard_arms = {k: v for k, v in GUARD.items() if k.startswith("arm") or k == "head"}
-    keys = [(0, at(-330, **guard_arms), "io")]
-    keys.append((20, P(keys[0][1], eyes="happy"), "io"))
-    keys.append((34, at(-300, **BALL, sy=96), "in"))
-    x, r, f = -300, 0, 34
-    while x < 470:              # roll: distance / circumference -> turns
-        x += 46; r += 46 / (math.pi * 300) * 360 * 1.6; f += 4
-        keys.append((f, at(x, rot=r, **BALL), "lin"))
-    keys.append((f + 10, at(x + 30, rot=r + 30, **BALL), "out"))
-    end_rot = round((r + 30) / 360) * 360
-    keys.append((f + 22, at(x + 30, rot=end_rot, eyes="shut", head=8, sx=104, sy=96), "back"))
-    for i in range(4):          # dizzy wobble
-        keys.append((f + 34 + i * 10, at(x + 30, rot=end_rot + (6 if i % 2 else -6), eyes="shut", head=(-8 if i % 2 else 8)), "io"))
-    f += 34 + 40
-    keys.append((f + 10, at(x + 30, rot=end_rot, eyes="happy", mouth="open"), "io"))
-    # walk back up the hill
-    steps = 16
-    for i in range(steps + 1):
-        xx = x + 30 + (-330 - (x + 30)) * i / steps
-        s = 1 if i % 2 == 0 else -1
-        keys.append((f + 24 + i * 12, at(xx, rot=end_rot, legL1=s * 16, legR1=s * 16, armL1=-s * 12, armR1=-s * 12, head=s * 2), "io"))
-    f = f + 24 + steps * 12
-    keys.append((f + 16, at(-330, rot=end_rot, **guard_arms), "hold"))
+    def stand(x, **k):         # feet on the slope at root x (body centre)
+        return P(dx=x - PIV[0], dy=hill_y(x) - GROUND, **k)
+    def rolling(x, rot, **k):  # an egg rolling on the slope about its middle: lowest point on the ground
+        rr = rot * RAD
+        g = ball_low(rot) + ROLL_H * math.cos(rr)          # lowest point below the roll centre
+        cy = hill_y(x) - g                                  # roll centre, root space
+        p = P(rot=rot, **BALL, **k)
+        p["dx"] = x - ROLL_H * math.sin(rr) - PIV[0]
+        p["dy"] = cy + ROLL_H * math.cos(rr) - PIV[1]
+        return p
+    X0, X1 = -330, 430
+    keys = [(0, stand(X0, **guard_arms), "io"), (24, stand(X0, eyes="happy", mouth="open", **guard_arms), "io"),
+            (36, rolling(X0, 0), "out")]
+    f, x, r = 36, X0, 0.0
+    while x < X1:              # roll: angle follows the distance (radius ~ 260), speeding up downhill
+        step = 14 + 26 * (x - X0) / (X1 - X0)
+        x = min(X1, x + step); r += step / 260 / RAD; f += 3
+        keys.append((f, rolling(x, r), "lin"))
+    end_rot = math.ceil(r / 360) * 360
+    keys.append((f + 10, rolling(X1 + 30, end_rot - 20), "out"))
+    keys.append((f + 20, stand(X1 + 30, rot=end_rot, eyes="shut", head=8, sx=108, sy=92), "back"))
+    for i in range(5):          # dizzy wobble
+        keys.append((f + 32 + i * 9, stand(X1 + 30, rot=end_rot + (7 if i % 2 else -7), eyes="shut", mouth="open", head=(-9 if i % 2 else 9)), "io"))
+    f += 32 + 45
+    keys.append((f + 10, stand(X1 + 30, rot=end_rot, eyes="happy", mouth="open", armL1=118, armR1=-118, armL2=35, armR2=-35), "io"))
+    f += 30
+    # hop back up the hill in four big hops
+    xs = [X1 + 30 - (X1 + 30 - X0) * k / 4 for k in range(5)]
+    for k in range(4):
+        mid = (xs[k] + xs[k + 1]) / 2
+        keys.append((f + 8, P(stand(xs[k], rot=end_rot, **CROUCH_LEGS), sy=92, sx=106), "out"))
+        keys.append((f + 20, P(stand(mid, rot=end_rot, legL1=20, legR1=-20, legL2=-30, legR2=30, armL1=40, armR1=-40), dy=hill_y(mid) - GROUND - 95), "in"))
+        keys.append((f + 32, P(stand(xs[k + 1], rot=end_rot), sy=94, sx=105), "back"))
+        f += 32
+    keys.append((f + 16, stand(X0, rot=end_rot, **guard_arms), "hold"))
 
     def props(world, front, back, ids):
         h = el("Shape", back, name="hill", id=nid())
         p = el("PointsPath", h, isClosed="true", name="Path", id=nid())
-        xs = [HILL_X[0] - 260 + i * 20 for i in range(int((HILL_X[1] - HILL_X[0] + 520) / 20) + 1)]
-        for xv in xs:
+        xs_ = [HILL_X[0] - 260 + i * 20 for i in range(int((HILL_X[1] - HILL_X[0] + 520) / 20) + 1)]
+        for xv in xs_:
             el("StraightVertex", p, x=xv, y=round(hill_y(xv) + 4, 1))
-        el("StraightVertex", p, x=xs[-1], y=GROUND + 200); el("StraightVertex", p, x=xs[0], y=GROUND + 200)
+        el("StraightVertex", p, x=xs_[-1], y=GROUND + 200); el("StraightVertex", p, x=xs_[0], y=GROUND + 200)
         solid(h, "Fill", "FF8FD46F"); solid(h, "Stroke", INK, thickness=8, join="round")
+        for gx in (-380, -150, 120, 360):               # tufts of grass on the slope
+            t = el("Shape", back, x=gx, y=hill_y(gx) + 2, name="tuft", id=nid())
+            q = el("PointsPath", t, isClosed="false", name="Path", id=nid())
+            for vx, vy in ((-14, 0), (-8, -22), (-2, 0), (4, -28), (10, 0), (16, -18), (20, 0)):
+                el("StraightVertex", q, x=vx, y=vy)
+            solid(t, "Stroke", "FF4E9A3A", thickness=5, cap="round", join="round")
+            back.remove(t); back.insert(0, t)
         return {}
-    return build("roll", keys, props, size=(1500, 1100), origin=(720, 600))
+    return build("roll", keys, props, size=(1500, 1260), origin=(720, 760))
+
+CROUCH_LEGS = dict(legL1=10, legR1=-10, legL2=-22, legR2=22)
 
 # ---------------------------------------------------------------- 6. fart and run
 def fart():
@@ -515,24 +591,78 @@ def poly_shape(parent, poly, fill, name, opacity=1.0, stroke=7):
     solid(s, "Fill", fill); solid(s, "Stroke", INK, thickness=stroke, join="round")
     return s
 
+def upright_track(la, node_id, arm, keys, extra_deg=0):
+    """keep a held prop upright in the world: undo the arm's (and body's) turn on the paw's child"""
+    rest = LIMBS[arm][2]
+    la.append(keyframes(node_id, 15, [(f, -(rest + (p[arm + "1"] + p[arm + "2"] + p["rot"]) * RAD) + math.pi / 2 + extra_deg * RAD, e) for f, p, e in keys]))
+
+def tofu_shapes(parent, bites):
+    """a soft tofu cube in 2.5D: front face, a lighter top, a shaded right side; bites eat into all of it"""
+    from shapely.geometry import Polygon, LineString, Point
+    front = Polygon([(-44, -26), (40, -26), (40, 56), (-44, 56)])
+    top = Polygon([(-44, -26), (40, -26), (60, -46), (-24, -46)])
+    side = Polygon([(40, -26), (60, -46), (60, 36), (40, 56)])
+    ids = []
+    for stage in range(len(bites) + 1):
+        cut = None
+        for bx, by in bites[:stage]:
+            c = Point(bx, by).buffer(24, 24)
+            cut = c if cut is None else cut.union(c)
+        n = el("Node", parent, opacity=1 if stage == 0 else 0, name=f"tofu{stage}", id=nid())
+        whole = front.union(top).union(side)
+        # face fills first (on top), outline last
+        for poly, col in ((top, "FFFFFFFF"), (side, "FFE9DFC6"), (front, "FFFFF8E7")):
+            piece = poly.difference(cut) if cut is not None else poly
+            if not piece.is_empty and piece.area > 30:
+                poly_shape(n, piece, col, "face", stroke=0)
+        sil = whole.difference(cut) if cut is not None else whole
+        s = poly_shape(n, sil, "00000000", "outline", stroke=7)
+        # the inner edges (front/top, front/side), cut where bitten
+        for a_, b_ in (((-44, -26), (40, -26)), ((40, -26), (40, 56))):
+            ln = LineString([a_, b_])
+            if cut is not None:
+                ln = ln.difference(cut)
+            for g in getattr(ln, "geoms", [ln]):
+                if g.length > 4:
+                    e = el("Shape", n, name="edge", id=nid())
+                    pth = el("PointsPath", e, isClosed="false", name="Path", id=nid())
+                    for x, y in g.coords:
+                        el("StraightVertex", pth, x=round(x, 1), y=round(y, 1))
+                    solid(e, "Stroke", INK, thickness=4, cap="round")
+                    n.remove(e); n.insert(0, e)
+        ids.append(n.get("id"))
+    return ids
+
 def tofu_eat():
-    from shapely.geometry import box
-    block = box(-50, -42, 50, 42).buffer(10).buffer(-6)
-    polys = bitten_polys(block, [(-20, 50), (24, 46), (0, 14)])
-    ck, marks, f = chew_keys(P(), 40, 3)
-    keys = [(0, eat_pose(P(), -110, 6), "io"), (24, eat_pose(P(), -120, 8, 102), "io")] + ck + \
-           [(f + 10, P(eyes="happy", armL1=-30, armR1=30, armL2=-90, armR2=90), "io"), (f + 50, P(eyes="happy", armL1=-30, armR1=30, armL2=-90, armR2=90), "io"),
-            (f + 70, eat_pose(P(), -110, 6), "hold")]
+    BITES = [(-40, -40), (-6, -48), (-44, 8)]          # from the top-left corner: the side facing the mouth
+    def eat(r2, head, sy=100):
+        return P(head=head, sy=sy, armR1=-92, armR2=r2, lenAR=118, armL1=14, armL2=-12)
+    keys = [(0, eat(-112, 6), "io"), (24, eat(-120, 8, 102), "io")]
+    f, marks = 40, []
+    for b in range(3):
+        keys += [(f, eat(-150, -5, 98), "out"), (f + 8, eat(-135, 4, 102), "io"), (f + 16, eat(-128, -2, 99), "io"), (f + 24, eat(-135, 4, 102), "io")]
+        marks.append(f); f += 34
+    HAPPY = P(eyes="happy", armL1=-30, armR1=30, armL2=-90, armR2=90)
+    keys += [(f + 10, HAPPY, "io"), (f + 50, HAPPY, "io"), (f + 70, eat(-112, 6), "hold")]
 
     def props(world, front, back, ids):
         st = []
-        held_food("armR", lambda n: st.extend(poly_shape(n, p, "FFFFF8E7", f"tofu{i}", opacity=1 if i == 0 else 0).get("id") for i, p in enumerate(polys)), y=60)
-        return {"stages": st, "crumbs": crumbs(front, "FFFFF8E7", 12, 6)}
+        def build_tofu(n):
+            st.append(n.get("id"))
+            st.extend(tofu_shapes(n, BITES))
+        held_food("armR", build_tofu, y=78)
+        return {"held": st[0], "stages": st[1:], "crumbs": crumbs(front, "FFFFF8E7", 12, 6)}
 
     def extra(la, ids, pr, end):
-        stages = [0] + marks + [end - 40]
+        upright_track(la, pr["held"], "armR", keys)
+        for prop in (16, 17):
+            la.append(keyframes(pr["held"], prop, [(0, 1.32 / 0.82, "hold")]))
+        stages = [0] + marks + [marks[-1] + 26]           # the last bite finishes it
         for k, sid in enumerate(pr["stages"]):
-            show(la, sid, [(0, 1 if k == 0 else 0), (stages[k], 1), (stages[k + 1], 0)] if k else [(0, 1), (stages[1], 0), (end - 30, 1)])
+            if k == 0:
+                show(la, sid, [(0, 1), (stages[1], 0), (end - 6, 1)])
+            else:
+                show(la, sid, [(0, 0), (stages[k], 1), (stages[k + 1], 0)])
         crumb_tracks(la, pr["crumbs"], marks, keys, 6)
     return build("tofu_eat", keys, props, extra)
 
@@ -615,71 +745,163 @@ def scroll_tracks(la, trees, end, span=1400, x0=-600):
             fixed.append((f, x, "hold" if nxt > x else "lin"))
         la.append(keyframes(tid, 13, fixed))
 
-def traveller():
-    base = P(armL1=-20, armL2=-70)                    # left paw holds the strap
-    keys = walk_cycle(base, 0, 10)
-    f = keys[-1][0] + 10
-    MAP = P(head=-8, eyes="open", armL1=-20, armL2=-120, armR1=20, armR2=120)    # stops and reads the map
-    keys += [(f, MAP, "io"), (f + 50, P(MAP, head=6), "io"), (f + 70, P(MAP, eyes="happy", mouth="open", head=0), "io")]
-    keys += walk_cycle(base, f + 90, 6)
-    end = keys[-1][0] + 12
-    keys.append((end, P(base), "hold"))
+def collar_and_tie(world, ids_out):
+    """shirt collar and tie under the chin (follow the body)"""
+    n = el("Node", world, x=PIV[0], y=PIV[1], name="tie", id=nid())
+    world.remove(n); world.insert(0, n)
+    k = el("Shape", n, x=0, y=-128, name="knot", id=nid())
+    el("Ellipse", k, width=30, height=24, name="Path", id=nid()); solid(k, "Fill", "FFC93C3C"); solid(k, "Stroke", INK, thickness=5)
+    t = el("Shape", n, x=0, y=-124, name="blade", id=nid())
+    p = el("PointsPath", t, isClosed="true", name="Path", id=nid())
+    for vx, vy in ((-11, 0), (11, 0), (20, 80), (0, 104), (-20, 80)):
+        el("StraightVertex", p, x=vx, y=vy)
+    solid(t, "Fill", "FFE04A4A"); solid(t, "Stroke", INK, thickness=6, join="round")
+    for sx_ in (-1, 1):                                  # collar points
+        c = el("Shape", n, x=0, y=-134, name="collar", id=nid())
+        q = el("PointsPath", c, isClosed="true", name="Path", id=nid())
+        for vx, vy in ((0, 0), (sx_ * 44, -6), (sx_ * 26, 22)):
+            el("StraightVertex", q, x=vx, y=vy)
+        solid(c, "Fill", "FFFFFFFF"); solid(c, "Stroke", INK, thickness=5, join="round")
+    ids_out.append(n.get("id"))
 
-    def props(world, front, back, ids):
-        pack = el("Node", back, name="backpack", id=nid())
-        rect(pack, 166, 120, 250, 70, "FFF2E3C6", "mat", stroke=8, radius=34)          # rolled mat on top
-        rect(pack, 166, 230, 400, 250, "FFE07B39", "pack", stroke=9, radius=50)       # wider than the body: it shows at the sides
-        straps = []
-        for dx in (-62, 62):                                                         # straps over the shoulders, in front
-            st = rect(front, 166 + dx, 215, 24, 140, "FFC85F22", "strap", stroke=6, radius=10)
-            straps.append(st.get("id"))
-        mp = []
-        held_food("armR", lambda n: mp.append(rect(n, 0, 20, 90, 70, "FFF5E6B8", "map", stroke=6, radius=6).get("id")), y=40)
-        return {"trees": scenery(back), "straps": straps, "map": mp[0]}
+def body_follow(la, node_id, keys):
+    """a prop pinned to the body pivot: same move, tilt and squash"""
+    la.append(keyframes(node_id, 13, [(f, PIV[0] + p["dx"], e) for f, p, e in keys]))
+    la.append(keyframes(node_id, 14, [(f, PIV[1] + p["dy"], e) for f, p, e in keys]))
+    la.append(keyframes(node_id, 15, [(f, p["rot"] * RAD, e) for f, p, e in keys]))
+    la.append(keyframes(node_id, 16, [(f, p["sx"] / 100, e) for f, p, e in keys]))
+    la.append(keyframes(node_id, 17, [(f, p["sy"] / 100, e) for f, p, e in keys]))
 
-    def extra(la, ids, pr, end):
-        scroll_tracks(la, pr["trees"], end)
-        for sid in pr["straps"]:
-            la.append(keyframes(sid, 14, [(f, 215 + p["dy"], e) for f, p, e in keys]))
-        show(la, pr["map"], [(0, 0), (keys[20][0], 1), (keys[23][0], 0)])
-    return build("traveller", keys, props, extra, size=(1200, 1100), origin=(430, 640))
+def phone(n):
+    rect(n, 0, 0, 22, 8, "FF2A2560", "speaker", stroke=0, radius=3)
+    rect(n, 0, 6, 34, 50, "FF9FD8F2", "screen", stroke=0, radius=6)
+    rect(n, 0, 4, 46, 78, "FF2A2560", "phone", stroke=6, radius=10)
 
+def briefcase(n):
+    """hangs from the paw: the handle at the pivot, the case below"""
+    rect(n, 0, 6, 40, 26, "00000000", "handle", stroke=8, radius=10)
+    rect(n, -30, 46, 10, 10, "FFE6C35C", "latch", stroke=3, radius=2)
+    rect(n, 30, 46, 10, 10, "FFE6C35C", "latch2", stroke=3, radius=2)
+    rect(n, 0, 70, 130, 94, "FF8B5A2B", "case", stroke=7, radius=14)
+
+EAR = (-6, -40)                        # inner-space spot beside the left side of the face
 def business():
-    base = P(armL1=-10, armL2=-20, armR1=5, armR2=0)
-    keys = walk_cycle(base, 0, 10)
-    f = keys[-1][0] + 10
-    def watch(base):
-        p = P(base)
-        r1, r2 = G.ik("armL", (130, 150), elbow_out=1); p["armL1"], p["armL2"] = r1, r2
+    def pose(**k):
+        p = P(armR1=-12, armR2=4, **k)
         return p
-    W1 = watch(P(base, head=8, hy=6))
-    keys += [(f, W1, "io"), (f + 40, W1, "io"), (f + 52, P(base, eyes="shut", head=-4), "io"), (f + 64, P(base, mouth="open", eyes="open"), "io")]
-    keys += walk_cycle(base, f + 80, 6)
-    end = keys[-1][0] + 12
-    keys.append((end, P(base), "hold"))
+    def on_phone(**k):
+        p = pose(lenAL=118, **k)
+        r1, r2 = G.ik("armL", (EAR[0], EAR[1] + 30), elbow_out=1); p["armL1"], p["armL2"] = r1, r2
+        return p
+    def watch(**k):
+        p = pose(**k)
+        r1, r2 = G.ik("armL", (120, 175), elbow_out=1); p["armL1"], p["armL2"] = r1, r2
+        return p
+    keys = [(0, pose(), "io"), (16, pose(), "io"), (34, on_phone(head=-6), "out")]
+    f = 34
+    for i in range(8):                 # talks: mouth, nods, a little bounce
+        f += 10
+        keys.append((f, on_phone(head=-6 + (5 if i % 2 else -2), hy=(6 if i % 2 else 0), mouth="open" if i % 2 == 0 else "grin"), "io"))
+    keys += [(f + 14, on_phone(head=-4, eyes="happy", mouth="open"), "io"), (f + 30, pose(), "io")]
+    f += 30
+    keys += [(f + 16, watch(head=10, hy=10), "out"), (f + 46, watch(head=10, hy=10), "io"), (f + 56, watch(head=6, eyes="shut"), "io"),
+             (f + 70, pose(eyes="happy", mouth="open", head=-3), "io"), (f + 100, pose(eyes="happy", head=-3), "io"), (f + 116, pose(), "hold")]
 
     def props(world, front, back, ids):
-        tie = el("Shape", world, x=166, y=168, name="tie", id=nid())
-        p = el("PointsPath", tie, isClosed="true", name="Path", id=nid())
-        for vx, vy in ((-12, 0), (12, 0), (18, 70), (0, 95), (-18, 70)):
-            el("StraightVertex", p, x=vx, y=vy)
-        solid(tie, "Fill", "FFE04A4A"); solid(tie, "Stroke", INK, thickness=6, join="round")
-        knot = el("Shape", world, x=166, y=164, name="knot", id=nid())
-        el("Ellipse", knot, width=30, height=22, name="Path", id=nid()); solid(knot, "Fill", "FFC93C3C"); solid(knot, "Stroke", INK, thickness=5)
-        world.remove(tie); world.remove(knot); world.insert(0, tie); world.insert(0, knot)
-        bag = []
-        def case(n):
-            n.set("rotation", "0")
-            rect(n, 0, -42, 34, 22, "FF6B4226", "handle", stroke=6, radius=8)
-            bag.append(rect(n, 0, 10, 120, 84, "FF8B5A2B", "case", stroke=7, radius=12).get("id"))
-        held_food("armR", case, y=60)
-        return {"trees": scenery(back, seed=2), "tie": tie.get("id"), "knot": knot.get("id")}
+        pr = {"tie": []}
+        collar_and_tie(world, pr["tie"])
+        held = []
+        def ph(n):
+            held.append(n.get("id")); phone(n)
+        held_food("armL", ph, y=40)
+        cs = []
+        def cs_(n):
+            cs.append(n.get("id")); briefcase(n)
+        held_food("armR", cs_, y=6)
+        pr["phone"], pr["case"] = held[0], cs[0]
+        return pr
 
     def extra(la, ids, pr, end):
-        scroll_tracks(la, pr["trees"], end)
-        for k, base_y in ((pr["tie"], 168), (pr["knot"], 164)):
-            la.append(keyframes(k, 14, [(f, base_y + p["dy"], e) for f, p, e in keys]))
-    return build("business", keys, props, extra, size=(1200, 1100), origin=(430, 640))
+        body_follow(la, pr["tie"][0], keys)
+        upright_track(la, pr["case"], "armR", keys)
+        upright_track(la, pr["phone"], "armL", keys, extra_deg=-12)
+        talk = [k for k in keys if k[1]["lenAL"] == 118]
+        show(la, pr["phone"], [(0, 0), (talk[0][0] - 10, 1), (talk[-1][0] + 8, 0)])
+    return build("business", keys, props, extra)
+
+def straw_hat(head):
+    """a straw sun hat on the head node (head space: the top of the head is near y -230)"""
+    h = el("Node", head, x=-12, y=-176, name="hat", id=nid())
+    head.remove(h); head.insert(0, h)                   # on top of the head art
+    rect(h, 0, -40, 196, 24, "FFE04A4A", "band", stroke=0, radius=6)
+    d = el("Shape", h, x=0, y=-30, name="crown", id=nid())
+    p = el("PointsPath", d, isClosed="true", name="Path", id=nid())
+    for k in range(0, 13):
+        a_ = math.pi + k * math.pi / 12
+        el("StraightVertex", p, x=round(110 * math.cos(a_), 1), y=round(96 * math.sin(a_), 1))
+    solid(d, "Fill", "FFF2D27A"); solid(d, "Stroke", INK, thickness=8, join="round")
+    b = el("Shape", h, x=0, y=-24, name="brim", id=nid())
+    el("Ellipse", b, width=430, height=86, name="Path", id=nid())
+    solid(b, "Fill", "FFF2D27A"); solid(b, "Stroke", INK, thickness=8)
+
+def map_sheet(n):
+    for x in (-25, 25):                                   # folds
+        rect(n, x, 0, 3, 96, "33000073", "fold", stroke=0, radius=1)
+    for i, (x, y) in enumerate(((-55, 30), (-30, 18), (-5, 24), (20, 4))):     # a dotted route
+        ellipse(n, x, y, 7, 7, "FFE04A4A")
+    xm = el("Shape", n, x=40, y=-18, name="x", id=nid())
+    q = el("PointsPath", xm, isClosed="false", name="Path", id=nid())
+    for vx, vy in ((-9, -9), (9, 9)):
+        el("StraightVertex", q, x=vx, y=vy)
+    solid(xm, "Stroke", "FFE04A4A", thickness=5, cap="round")
+    rect(n, 0, 0, 150, 104, "FFF5E6B8", "map", stroke=6, radius=6)
+
+def suitcase(parent, x):
+    """a rolling suitcase standing on the floor, its handle up by the paw"""
+    n = el("Node", parent, name="suitcase", id=nid())
+    for dx in (-26, 26):
+        ellipse(n, x + dx, G.GROUND - 6, 20, 20, "FF2A2560")
+    rect(n, x - 22, G.GROUND - 212, 8, 50, "FF9AA0B5", "rodL", stroke=4, radius=3)
+    rect(n, x + 22, G.GROUND - 212, 8, 50, "FF9AA0B5", "rodR", stroke=4, radius=3)
+    rect(n, x, G.GROUND - 240, 64, 14, "FF2A2560", "grip", stroke=4, radius=6)
+    rect(n, x, G.GROUND - 100, 140, 180, "FF3FA7D6", "case", stroke=8, radius=20)
+    rect(n, x, G.GROUND - 100, 104, 10, "FF2E86B0", "stripe", stroke=0, radius=4)
+    return n
+
+def traveller():
+    def read(**k):
+        p = P(lenAL=96, **k)
+        r1, r2 = G.ik("armL", (128, 205), elbow_out=1); p["armL1"], p["armL2"] = r1, r2
+        r1, r2 = G.ik("armR", (300, 172), elbow_out=-1); p["armR1"], p["armR2"] = r1, r2     # holds the case's grip
+        return p
+    keys = [(0, read(head=8, hy=12), "io"), (30, read(head=8, hy=12), "io"), (46, read(head=-8, hy=12), "io"),
+            (62, read(head=10, hy=12, mouth="open"), "io"), (80, read(head=-4, hy=4, eyes="shut"), "io")]
+    AHA = read(eyes="happy", mouth="open", hy=-6)
+    AHA["armL1"], AHA["armL2"] = 150, 20
+    keys += [(94, P(AHA, dy=-40, sy=104), "out"), (104, AHA, "back"), (120, AHA, "io")]
+    POINT = read(eyes="open", mouth="open", head=-6)
+    POINT["armL1"], POINT["armL2"] = 100, -10
+    keys += [(140, POINT, "io"), (180, POINT, "io"), (200, read(head=8, hy=12), "hold")]
+
+    def props(world, front, back, ids):
+        pr = {}
+        held = []
+        def mp(n):
+            held.append(n.get("id")); map_sheet(n)
+        held_food("armL", mp, y=58)
+        pr["map"] = held[0]
+        suitcase(back, 330)
+        return pr
+
+    def extra(la, ids, pr, end):
+        upright_track(la, pr["map"], "armL", keys)
+
+    def straps():                      # backpack straps over the shoulders (body space)
+        out = []
+        for dx in (-62, 62):
+            out.append(rect(el("Node", None), 166 + dx, 215, 24, 150, "FFC85F22", "strap", stroke=6, radius=10))
+        return out
+    return build("traveller", keys, props, extra, size=(1100, 1100), origin=(334, 640), head_extra=straw_hat, chest_extra=straps)
 
 SCENES = {"wave": wave, "sleep": sleep, "gaming": gaming, "celebrate": celebrate, "teacher": teacher,
           "flip": flip, "bow": bow, "roll": roll, "fart": fart, "dance": dance,

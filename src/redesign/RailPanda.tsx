@@ -20,23 +20,23 @@ import { PANDA_EVENT, SCENE_MS, SLEEP_AFTER_MS, firstScene, nextScene, pandaEnab
 // rail shows (the panda and its props), measured from rendered frames by
 // tools/panda-studio/crops.py.
 const SCENES: Record<PandaScene, { load: RiveSrc; size: Size; crop: Crop }> = {
-  sleep: { load: () => import("../assets/panda/rive/sleep.riv?url"), size: [1200, 1000], crop: [38, -96, 1149, 1016] },
+  sleep: { load: () => import("../assets/panda/rive/sleep.riv?url"), size: [1000, 1100], crop: [79, 240, 930, 1092] },
   wave: { load: () => import("../assets/panda/rive/wave.riv?url"), size: [1000, 1100], crop: [124, 299, 896, 1070] },
   flip: { load: () => import("../assets/panda/rive/flip.riv?url"), size: [1000, 1100], crop: [-26, 69, 1025, 1120] },
   bow: { load: () => import("../assets/panda/rive/bow.riv?url"), size: [1000, 1100], crop: [119, 310, 889, 1079] },
-  roll: { load: () => import("../assets/panda/rive/roll.riv?url"), size: [1500, 1100], crop: [-30, -449, 1530, 1111] },
+  roll: { load: () => import("../assets/panda/rive/roll.riv?url"), size: [1500, 1260], crop: [-30, -289, 1530, 1271] },
   fart: { load: () => import("../assets/panda/rive/fart.riv?url"), size: [1500, 1100], crop: [139, 243, 1033, 1138] },
   bamboo_eat: { load: () => import("../assets/panda/rive/bamboo_eat.riv?url"), size: [1000, 1100], crop: [112, 295, 894, 1076] },
-  tofu_eat: { load: () => import("../assets/panda/rive/tofu_eat.riv?url"), size: [1000, 1100], crop: [153, 282, 945, 1075] },
+  tofu_eat: { load: () => import("../assets/panda/rive/tofu_eat.riv?url"), size: [1000, 1100], crop: [118, 282, 911, 1075] },
   manti: { load: () => import("../assets/panda/rive/manti.riv?url"), size: [1150, 1100], crop: [168, 295, 949, 1076] },
   celebrate: { load: () => import("../assets/panda/rive/celebrate.riv?url"), size: [1000, 1100], crop: [16, 99, 1021, 1105] },
-  teacher: { load: () => import("../assets/panda/rive/teacher.riv?url"), size: [1150, 1100], crop: [128, 214, 1000, 1085] },
+  teacher: { load: () => import("../assets/panda/rive/teacher.riv?url"), size: [1250, 1100], crop: [136, 91, 1126, 1081] },
   gaming: { load: () => import("../assets/panda/rive/gaming.riv?url"), size: [1000, 1100], crop: [99, 314, 900, 1115] },
   cookie: { load: () => import("../assets/panda/rive/cookie.riv?url"), size: [1100, 1150], crop: [-48, -22, 1147, 1173] },
   bamboo: { load: () => import("../assets/panda/rive/bamboo.riv?url"), size: [1000, 1150], crop: [-40, 91, 1039, 1171] },
   dance: { load: () => import("../assets/panda/rive/dance.riv?url"), size: [1000, 1100], crop: [115, 310, 884, 1078] },
-  traveller: { load: () => import("../assets/panda/rive/traveller.riv?url"), size: [1200, 1100], crop: [149, 243, 1043, 1138] },
-  business: { load: () => import("../assets/panda/rive/business.riv?url"), size: [1200, 1100], crop: [149, 243, 1043, 1138] },
+  traveller: { load: () => import("../assets/panda/rive/traveller.riv?url"), size: [1100, 1100], crop: [53, 243, 947, 1138] },
+  business: { load: () => import("../assets/panda/rive/business.riv?url"), size: [1000, 1100], crop: [53, 243, 947, 1138] },
 };
 
 const SPIN = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"];
