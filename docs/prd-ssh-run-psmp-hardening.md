@@ -31,20 +31,20 @@ PSMP'ye karşı hiç canlı test edilmedi**.
   - Rust-only kimlik modeli (secret JS/argv/disk'e gitmez) — değişmez.
 
 ## 3. Kabul Kriterleri (binary)
-- [ ] **AC1** (mevcut yol korunur): connection_type=`psmp`, kimlik yerel parola, PSMP
+- [ ] **AC1** 🔒 operatör canlı-test bekliyor (mekanizma kod düzeyinde doğru — `pty.rs:396-406` is_psmp Password enjeksiyonu korunur): connection_type=`psmp`, kimlik yerel parola, PSMP
   vault-user prompt'u `Password:` olan bir sunucuda `ssh_run(alias, "uname -a")` →
   `ok:true`, `stdout` dolu, `exitCode:0`. (Docker/harness PSMP-benzeri katmanlı prompt ile.)
-- [ ] **AC2** (challenge → enjekte etme): Bağlantı bir OTP/passcode/2FA prompt'u gösterirse
+- [x] **AC2** ✅ (challenge → enjekte etme): Bağlantı bir OTP/passcode/2FA prompt'u gösterirse
   (tail `passcode:` / `verification code:` / `one-time` / `otp:` ile biter) **parola PTY'ye
   YAZILMAZ** ve `ok:false` + mesaj "2FA/interactive — use ssh_open" içerir. Kanıt: enjeksiyon
-  sayacı 0.
-- [ ] **AC3** (push timeout ayrımı): Prompt hiç gelmeden `RUN_TIMEOUT`'a düşülürse dönen
-  yanıt `timedOut:true` + mesajda "olası 2FA push; ssh_open ile interaktif dene" ipucu.
-- [ ] **AC4** (direct SSH regresyon yok): connection_type=`direct` bir sunucuda `ssh_run`
-  `Password:` prompt'unda parolayı **eskisi gibi enjekte eder** (Docker sshd e2e yeşil kalır).
-- [ ] **AC5** (MCP açıklama): `ssh_run` tool `description`'ı PSMP + 2FA sınırını ve `ssh_open`
-  fallback'ini belirtir.
-- [ ] **AC6** (canlı doğrulama): Gerçek PSMP'ye VEYA katmanlı-prompt harness'a karşı bir uçtan
+  sayacı 0. (test `ac2_psmp_challenge_prompt_withholds_injection`, `pty.rs:396-398`, `broker.rs:604-608`)
+- [x] **AC3** ✅ (push timeout ayrımı): Prompt hiç gelmeden `RUN_TIMEOUT`'a düşülürse dönen
+  yanıt `timedOut:true` + mesajda "olası 2FA push; ssh_open ile interaktif dene" ipucu. (`broker.rs:620-625`)
+- [x] **AC4** ✅ (direct SSH regresyon yok): connection_type=`direct` bir sunucuda `ssh_run`
+  `Password:` prompt'unda parolayı **eskisi gibi enjekte eder** (test `ac4_direct_still_injects_on_passcode_prompt`, `pty.rs:396`).
+- [x] **AC5** ✅ (MCP açıklama): `ssh_run` tool `description`'ı PSMP + 2FA sınırını ve `ssh_open`
+  fallback'ini belirtir. (`muya_ssh_mcp.rs:97`)
+- [ ] **AC6** 🔒 operatör canlı-test bekliyor: Gerçek PSMP'ye VEYA katmanlı-prompt harness'a karşı bir uçtan
   uca koşu progress dosyasına kanıtla (PASS/FAIL + çıktı) kaydedilir.
 
 ## 4. Koruma Listesi (dokunulmayacak)

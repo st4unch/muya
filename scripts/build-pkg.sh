@@ -2,7 +2,7 @@
 #
 # build-pkg.sh — build a signed, notarized macOS installer package for Muya
 #
-#   staged Muya.app -> pkgbuild (installs to /Applications) -> sign with
+#   staged Muya.app -> pkgbuild + productbuild (asks where to install) -> sign with
 #   Developer ID Installer -> notarize -> staple -> verify
 #
 # WHY A .PKG AND NOT JUST THE ZIP
@@ -17,9 +17,10 @@
 # permission on every single launch, forever. The self-updater fails too — the
 # translocated mount is read-only.
 #
-# An installer package places the app directly in /Applications with no
-# quarantine flag on the installed payload, so translocation never applies and
-# the permission the user grants is the last one they are asked for.
+# An installer package places the app in /Applications (all users) or
+# ~/Applications (only me) with no quarantine flag on the installed payload, so
+# translocation never applies and the permission the user grants is the last one
+# they are asked for.
 #
 # REQUIREMENT — a certificate this repo cannot create for you:
 #   "Developer ID Installer: <name> (<team>)"
@@ -50,6 +51,8 @@ say()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m  ✓\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m  !\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m  ✗ %s\033[0m\n' "$*" >&2; exit 1; }
+# Text going into the distribution XML.
+xml_escape() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"; }  # sed, not ${v//…}: bash 5.2 reads & there
 
 command -v pkgbuild >/dev/null || die "pkgbuild not found (Xcode command line tools)"
 command -v xcrun >/dev/null    || die "xcrun not found"
@@ -96,16 +99,56 @@ pkgbuild --analyze --root "$STAGE" "$COMPONENT_PLIST" >/dev/null
   || die "could not disable bundle relocation in $COMPONENT_PLIST"
 [ "$(/usr/libexec/PlistBuddy -c "Print :0:BundleIsRelocatable" "$COMPONENT_PLIST")" = "false" ] \
   || die "BundleIsRelocatable is still true — the pkg would install over an existing copy"
-ok "bundle relocation disabled (installs to /Applications, always)"
+ok "bundle relocation disabled (installs where the user chooses, never over a stray copy)"
 
 INSTALLER_ID="$(security find-identity -v 2>/dev/null | grep "Developer ID Installer" | head -1 | sed -E 's/.*"(.*)"/\1/' || true)"
+
+# --- component pkg + product archive: the installer ASKS who it is for -------------
+# The component pkg carries the app; a product archive (productbuild + a distribution
+# file) around it gives the Installer its "Installation Type" step:
+#   * Install for all users   → /Applications    (default, admin password)
+#   * Install for me only     → ~/Applications   (no admin password)
+# The install location is relative to the chosen domain. A choice-level customLocation
+# would pin it absolutely: test-installing with customLocation="/Applications" and
+# "only me" put the app in /Applications, not ~/Applications. So no custom folder.
+# Two copies of the same bundle id confuse Launch Services, the login item and the
+# file-access permissions, so when a copy already exists the installer only offers
+# the place where it is (an update), never a second one (the <domains> scripts).
+# Relocation stays OFF (above), so it lands there — never over a stray copy elsewhere.
+WORK="$(mktemp -d)"   # productbuild scans --package-path: keep it to our own files
+COMPONENT_PKG="$WORK/$PRODUCT-component.pkg"
+DIST="$WORK/distribution.xml"
+trap 'rm -rf "$STAGE" "$STAGE.plist" "$WORK"' EXIT
+pkgbuild --root "$STAGE" --component-plist "$COMPONENT_PLIST" \
+         --install-location /Applications \
+         --identifier "$IDENT" --version "$VER" "$COMPONENT_PKG" >/dev/null
+ok "component pkg built"
+
+cat > "$DIST" <<EOXML
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>$(xml_escape "$PRODUCT")</title>
+    <options customize="never" require-scripts="false" hostArchitectures="arm64"/>
+    <script>
+    function copyAt(dir) { return system.files.fileExistsAtPath(dir + '/$(xml_escape "$PRODUCT").app'); }
+    function systemCopy() { return copyAt('/Applications'); }
+    function homeCopy() { return copyAt(system.env.HOME + '/Applications'); }
+    </script>
+    <domains enable_localSystem="!homeCopy() || systemCopy()" enable_currentUserHome="!systemCopy() || homeCopy()" enable_anywhere="false"/>
+    <choices-outline>
+        <line choice="app"/>
+    </choices-outline>
+    <choice id="app" title="$(xml_escape "$PRODUCT")" description="The $(xml_escape "$PRODUCT") app.">
+        <pkg-ref id="$(xml_escape "$IDENT")"/>
+    </choice>
+    <pkg-ref id="$(xml_escape "$IDENT")" version="$(xml_escape "$VER")" onConclusion="none">$(basename "$COMPONENT_PKG")</pkg-ref>
+</installer-gui-script>
+EOXML
 
 rm -f "$PKG"
 if [ -z "$INSTALLER_ID" ]; then
   say "Building UNSIGNED pkg (no Developer ID Installer certificate found)…"
-  pkgbuild --root "$STAGE" --component-plist "$COMPONENT_PLIST" \
-           --install-location /Applications \
-           --identifier "$IDENT" --version "$VER" "$PKG"
+  productbuild --distribution "$DIST" --package-path "$WORK" "$PKG"
   warn "pkg written to $PKG but it is UNSIGNED — Gatekeeper will block it."
   warn "Create a 'Developer ID Installer' certificate at"
   warn "  https://developer.apple.com/account/resources/certificates/add"
@@ -113,12 +156,10 @@ if [ -z "$INSTALLER_ID" ]; then
   exit 2
 fi
 
-say "Building + signing pkg as: $INSTALLER_ID"
-pkgbuild --root "$STAGE" --component-plist "$COMPONENT_PLIST" \
-         --install-location /Applications \
-         --identifier "$IDENT" --version "$VER" \
-         --sign "$INSTALLER_ID" "$PKG"
-ok "pkg signed"
+say "Building + signing installer as: $INSTALLER_ID"
+productbuild --distribution "$DIST" --package-path "$WORK" \
+             --sign "$INSTALLER_ID" "$PKG"
+ok "installer signed (asks: all users / only me)"
 
 # --- notarize -----------------------------------------------------------------
 NOTARY_ARGS=()
@@ -144,4 +185,4 @@ spctl --assess --type install -vv "$PKG" 2>&1 | sed 's/^/    /'
 ok "Gatekeeper: accepted"
 
 printf '\033[1;32m\nDONE.\033[0m %s ready: %s\n' "v$VER" "$PKG"
-echo "Installs to /Applications — no quarantine, no App Translocation, permissions stick."
+echo "Asks: all users (/Applications) or only me (~/Applications); an update stays where the app already is — no quarantine, no App Translocation, permissions stick."

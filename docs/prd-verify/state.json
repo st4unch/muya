@@ -1,48 +1,22 @@
 {
-  "prd_path": "docs/prd-claude-remote-bridge.md",
-  "prd_sha256": "354b2e9f3e5d1d2fabb6cf7cb9ee17b8e44a83a6a230c44d732c2d9dc6aed0be",
-  "tier_acknowledged": "sonnet",
-  "started_at": "2026-07-15T12:41:35+03:00",
-  "last_updated": "2026-07-15T19:38:15.343639+03:00",
-  "base_checkpoint": "ac6aec9ab480ec522d0f79b8328fe93ad1e7e9a5",
+  "prd_path": "docs/prd-ssh-scp.md",
+  "prd_sha256": "a9fb90dde61f347d77243cf5b5abcf2ff39d3c6890a0058ee56a7414b41a4303",
+  "tier_acknowledged": "opus",
+  "started_at": "2026-08-04",
+  "last_updated": "2026-08-05",
   "phases": {
-    "faz-0-prep": {
+    "P1": {
       "status": "done",
       "retries": 0,
-      "deps": [],
-      "previous_strategy_hashes": [],
-      "wall_clock_started_at": "2026-07-15T12:42:11.182053+03:00"
-    },
-    "faz-1-local-mvp": {
-      "status": "done",
-      "retries": 0,
-      "deps": [
-        "faz-0-prep"
-      ],
-      "previous_strategy_hashes": [],
-      "wall_clock_started_at": "2026-07-15T14:12:54.377279+03:00"
-    },
-    "faz-2-remote-mtls": {
-      "status": "done",
-      "retries": 1,
-      "deps": [
-        "faz-1-local-mvp"
-      ],
-      "previous_strategy_hashes": [],
-      "wall_clock_started_at": "2026-07-15T14:20:57.551853+03:00",
-      "last_fail": "AC-2-3: invitee-side pairing handler missing (SPAKE2 state discarded at bridge_remote.rs:713); MITM protection one-sided; pinned verifier blocks unpaired dialer during pairing",
-      "note": "AC-2-3 fixed (invitee pairing handler); SPAKE2 used instead of CPace (ADR R7); minor: duplex-not-TCP test naming, dead spake2_outmsg field"
-    },
-    "faz-3-task-handoff": {
-      "status": "done",
-      "retries": 0,
-      "deps": [
-        "faz-2-remote-mtls"
-      ],
-      "previous_strategy_hashes": [],
-      "wall_clock_started_at": "2026-07-15T19:24:22.387523+03:00"
+      "checkpoint": "644e5da3131c0a34b8dae8e1b37426c14d42ffd4",
+      "wall_clock_started_at": "2026-08-04",
+      "impl_subagent": "mcp-developer",
+      "impl_tier": "opus",
+      "verified_by": "orchestrator (opus) — verify subagent hit session limit + tier-downgraded to haiku, so verified in main context",
+      "ac_pass": "7/8 PASS (AC1-AC7), 1 BLOCKED (AC8 operator-gated real PSMP), 0 FAIL",
+      "commits": ["0c9d210", "94917df", "5dbd6ef", "4f2e407", "72c4d37", "cb4760e", "c12dd2f", "7ff8c0a"]
     }
   },
-  "tier_note": "operator chose Sonnet 4.6 (no 'Sonnet 5' exists); verification quality lower than Opus for crypto phases",
-  "result": "COMPLETE \u2014 all 4 phases done, 96 rust + 49 frontend tests pass"
+  "remote_sync_disabled": false,
+  "result": "partial_operator_gated"
 }
