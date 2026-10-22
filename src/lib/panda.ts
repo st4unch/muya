@@ -41,8 +41,10 @@ export type PandaScene =
   | "cookie"
   | "bamboo"
   | "dance"
-  | "traveller"
-  | "business";
+  | "traveller";
+
+/** Short one-off reactions: clicking the panda plays a click one, pointing at it a hover one. */
+export type PandaReaction = "giggle" | "startle" | "heart" | "sneeze" | "dizzy" | "peekaboo" | "aww" | "notice" | "hop";
 
 /** busy = an agent works · idle = nothing runs but someone was here lately · asleep = neither for SLEEP_AFTER_MS */
 export type PandaMood = "busy" | "idle" | "asleep";
@@ -73,15 +75,13 @@ export const SCENE_MS: Record<PandaScene, number> = {
   bamboo: 7_167, // 2 × 3.58 s
   dance: 7_333, // 2 × 3.67 s
   traveller: 6_667, // 2 × 3.33 s
-  business: 8_667, // 2 × 4.33 s
 };
 
 // Weighted pools. Working: the teacher (pointing at what Claude is doing) and the gamer most,
-// then the kung-fu cookie run and the bamboo splits, the fan dance, the traveller and the
-// businessman. Idle but awake: waves, flips, bows, rolls down a hill, snacks, and (rarely) the
-// fart. Asleep: sleeps. "celebrate" is not in a pool: it plays once when the agents finish.
+// then the kung-fu cookie run and the bamboo splits, the fan dance and the traveller. Idle but
+// awake: waves, flips, bows, rolls down a hill, snacks, and (rarely) the fart. Asleep: sleeps. "celebrate" is not in a pool: it plays once when the agents finish.
 const POOLS: Record<PandaMood, [PandaScene, number][]> = {
-  busy: [["teacher", 3], ["gaming", 3], ["cookie", 2], ["bamboo", 2], ["dance", 1], ["traveller", 1], ["business", 1]],
+  busy: [["teacher", 3], ["gaming", 3], ["cookie", 2], ["bamboo", 2], ["dance", 1], ["traveller", 1]],
   idle: [["wave", 3], ["flip", 2], ["bow", 2], ["roll", 2], ["bamboo_eat", 2], ["tofu_eat", 1], ["manti", 1], ["fart", 1]],
   asleep: [["sleep", 1]],
 };
@@ -102,6 +102,45 @@ export function nextScene(mood: PandaMood, prev: PandaScene, rnd: () => number =
     if ((r -= w) < 0) return s;
   }
   return pool[pool.length - 1][0];
+}
+
+/** Each reaction's length (its animation, once). */
+export const REACTION_MS: Record<PandaReaction, number> = {
+  giggle: 2_167,
+  startle: 1_600,
+  heart: 2_433,
+  sneeze: 2_400,
+  dizzy: 2_767,
+  peekaboo: 2_167,
+  aww: 1_900,
+  notice: 1_600,
+  hop: 1_200,
+};
+
+export const CLICK_REACTIONS: readonly PandaReaction[] = ["giggle", "startle", "heart", "sneeze", "dizzy", "peekaboo", "aww"];
+export const HOVER_REACTIONS: readonly PandaReaction[] = ["notice", "hop"];
+
+/** Pointing at the panda again within this long does not make it react again. */
+export const HOVER_COOLDOWN_MS = 8_000;
+
+/** The next reaction from a shuffled bag: every one in `pool` plays before any repeats, and the
+ *  first of a new round is never the one just played. Returns the pick and the bag left over. */
+export function nextReaction(
+  pool: readonly PandaReaction[],
+  bag: readonly PandaReaction[],
+  last: PandaReaction | undefined,
+  rnd: () => number = Math.random,
+): [PandaReaction, PandaReaction[]] {
+  let left = bag.filter((r) => pool.includes(r));
+  if (!left.length) {
+    left = [...pool];
+    for (let i = left.length - 1; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1));
+      [left[i], left[j]] = [left[j], left[i]];
+    }
+    if (left.length > 1 && left[0] === last) left.push(left.shift()!);
+  }
+  return [left[0], left.slice(1)];
 }
 
 /** What the teacher's board says: Claude's spinner verb ("Thinking…"), else the first part of

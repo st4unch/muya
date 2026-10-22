@@ -5,7 +5,7 @@ import json, os, re, sys
 import numpy as np
 from PIL import Image
 
-PANDA_ONLY = {"traveller", "business", "fart", "roll"}
+PANDA_ONLY = {"traveller", "fart", "roll"}
 out = {}
 for name in sorted(os.listdir("frames")):
     rml = open(f"scene_{name}/scene.rml").read()

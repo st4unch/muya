@@ -721,7 +721,7 @@ def dumpling(parent, x, y, opacity=1):
     rect(n, 0, 0, 40, 30, "FFFFF1D6", "dough", stroke=5, radius=11)
     return n
 
-# ---------------------------------------------------------------- 14. traveller / 15. business
+# ---------------------------------------------------------------- 14. traveller
 def scenery(back, n=4, seed=1):
     """bamboo stalks that scroll past behind a walking panda"""
     rnd = random.Random(seed); out = []
@@ -744,90 +744,6 @@ def scroll_tracks(la, trees, end, span=1400, x0=-600):
             nxt = pts[i + 1][1] if i + 1 < len(pts) else x
             fixed.append((f, x, "hold" if nxt > x else "lin"))
         la.append(keyframes(tid, 13, fixed))
-
-def collar_and_tie(world, ids_out):
-    """shirt collar and tie under the chin (follow the body)"""
-    n = el("Node", world, x=PIV[0], y=PIV[1], name="tie", id=nid())
-    world.remove(n); world.insert(0, n)
-    k = el("Shape", n, x=0, y=-128, name="knot", id=nid())
-    el("Ellipse", k, width=30, height=24, name="Path", id=nid()); solid(k, "Fill", "FFC93C3C"); solid(k, "Stroke", INK, thickness=5)
-    t = el("Shape", n, x=0, y=-124, name="blade", id=nid())
-    p = el("PointsPath", t, isClosed="true", name="Path", id=nid())
-    for vx, vy in ((-11, 0), (11, 0), (20, 80), (0, 104), (-20, 80)):
-        el("StraightVertex", p, x=vx, y=vy)
-    solid(t, "Fill", "FFE04A4A"); solid(t, "Stroke", INK, thickness=6, join="round")
-    for sx_ in (-1, 1):                                  # collar points
-        c = el("Shape", n, x=0, y=-134, name="collar", id=nid())
-        q = el("PointsPath", c, isClosed="true", name="Path", id=nid())
-        for vx, vy in ((0, 0), (sx_ * 44, -6), (sx_ * 26, 22)):
-            el("StraightVertex", q, x=vx, y=vy)
-        solid(c, "Fill", "FFFFFFFF"); solid(c, "Stroke", INK, thickness=5, join="round")
-    ids_out.append(n.get("id"))
-
-def body_follow(la, node_id, keys):
-    """a prop pinned to the body pivot: same move, tilt and squash"""
-    la.append(keyframes(node_id, 13, [(f, PIV[0] + p["dx"], e) for f, p, e in keys]))
-    la.append(keyframes(node_id, 14, [(f, PIV[1] + p["dy"], e) for f, p, e in keys]))
-    la.append(keyframes(node_id, 15, [(f, p["rot"] * RAD, e) for f, p, e in keys]))
-    la.append(keyframes(node_id, 16, [(f, p["sx"] / 100, e) for f, p, e in keys]))
-    la.append(keyframes(node_id, 17, [(f, p["sy"] / 100, e) for f, p, e in keys]))
-
-def phone(n):
-    rect(n, 0, 0, 22, 8, "FF2A2560", "speaker", stroke=0, radius=3)
-    rect(n, 0, 6, 34, 50, "FF9FD8F2", "screen", stroke=0, radius=6)
-    rect(n, 0, 4, 46, 78, "FF2A2560", "phone", stroke=6, radius=10)
-
-def briefcase(n):
-    """hangs from the paw: the handle at the pivot, the case below"""
-    rect(n, 0, 6, 40, 26, "00000000", "handle", stroke=8, radius=10)
-    rect(n, -30, 46, 10, 10, "FFE6C35C", "latch", stroke=3, radius=2)
-    rect(n, 30, 46, 10, 10, "FFE6C35C", "latch2", stroke=3, radius=2)
-    rect(n, 0, 70, 130, 94, "FF8B5A2B", "case", stroke=7, radius=14)
-
-EAR = (-6, -40)                        # inner-space spot beside the left side of the face
-def business():
-    def pose(**k):
-        p = P(armR1=-12, armR2=4, **k)
-        return p
-    def on_phone(**k):
-        p = pose(lenAL=118, **k)
-        r1, r2 = G.ik("armL", (EAR[0], EAR[1] + 30), elbow_out=1); p["armL1"], p["armL2"] = r1, r2
-        return p
-    def watch(**k):
-        p = pose(**k)
-        r1, r2 = G.ik("armL", (120, 175), elbow_out=1); p["armL1"], p["armL2"] = r1, r2
-        return p
-    keys = [(0, pose(), "io"), (16, pose(), "io"), (34, on_phone(head=-6), "out")]
-    f = 34
-    for i in range(8):                 # talks: mouth, nods, a little bounce
-        f += 10
-        keys.append((f, on_phone(head=-6 + (5 if i % 2 else -2), hy=(6 if i % 2 else 0), mouth="open" if i % 2 == 0 else "grin"), "io"))
-    keys += [(f + 14, on_phone(head=-4, eyes="happy", mouth="open"), "io"), (f + 30, pose(), "io")]
-    f += 30
-    keys += [(f + 16, watch(head=10, hy=10), "out"), (f + 46, watch(head=10, hy=10), "io"), (f + 56, watch(head=6, eyes="shut"), "io"),
-             (f + 70, pose(eyes="happy", mouth="open", head=-3), "io"), (f + 100, pose(eyes="happy", head=-3), "io"), (f + 116, pose(), "hold")]
-
-    def props(world, front, back, ids):
-        pr = {"tie": []}
-        collar_and_tie(world, pr["tie"])
-        held = []
-        def ph(n):
-            held.append(n.get("id")); phone(n)
-        held_food("armL", ph, y=40)
-        cs = []
-        def cs_(n):
-            cs.append(n.get("id")); briefcase(n)
-        held_food("armR", cs_, y=6)
-        pr["phone"], pr["case"] = held[0], cs[0]
-        return pr
-
-    def extra(la, ids, pr, end):
-        body_follow(la, pr["tie"][0], keys)
-        upright_track(la, pr["case"], "armR", keys)
-        upright_track(la, pr["phone"], "armL", keys, extra_deg=-12)
-        talk = [k for k in keys if k[1]["lenAL"] == 118]
-        show(la, pr["phone"], [(0, 0), (talk[0][0] - 10, 1), (talk[-1][0] + 8, 0)])
-    return build("business", keys, props, extra)
 
 def straw_hat(head):
     """a straw sun hat on the head node (head space: the top of the head is near y -230)"""
@@ -905,7 +821,7 @@ def traveller():
 
 SCENES = {"wave": wave, "sleep": sleep, "gaming": gaming, "celebrate": celebrate, "teacher": teacher,
           "flip": flip, "bow": bow, "roll": roll, "fart": fart, "dance": dance,
-          "bamboo_eat": bamboo_eat, "tofu_eat": tofu_eat, "manti": manti, "traveller": traveller, "business": business}
+          "bamboo_eat": bamboo_eat, "tofu_eat": tofu_eat, "manti": manti, "traveller": traveller}
 
 if __name__ == "__main__":
     names = sys.argv[1].split(",") if len(sys.argv) > 1 else list(SCENES)

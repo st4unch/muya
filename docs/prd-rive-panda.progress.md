@@ -27,3 +27,10 @@ started: 2026-10-20
 - Rive web Layout minX/minY/maxX/maxY bound the canvas area drawn into, not the artboard part shown: cropping = full-artboard canvas inside an overflow-hidden box.
 - @rive-app/canvas-lite is CommonJS: under Vite dev the API is the module's `default`.
 - Under the app CSP without 'wasm-unsafe-eval' the runtime draws nothing (proved 0/17 vs 17/17 in WebKit with the exact header).
+
+## 2026-10-22 — business removed, click/hover reactions
+- Operator: drop the businessman; let the panda react to the mouse, differently each time.
+- `tools/panda-studio/reactions.py`: 7 click (giggle, startle, heart, sneeze, dizzy, peekaboo, aww) + 2 hover (notice, hop) one-offs. A "spin" (sx mirror) was dropped: edge-on frames read as paper (the operator rejected that look before); "flex" became "aww" because the big head hides the shoulders.
+- `src/lib/panda.ts`: `PandaReaction`, `REACTION_MS`, `nextReaction` (shuffled bag: all play before any repeats, never twice in a row); hover cooldown 8 s.
+- `RailPanda.tsx`: the panda box is a button ("Poke the panda", Enter/Space too); a reaction pauses the rotation, then the scene starts over.
+- Verified: 512 tests, build, WebKit mock UI dark + light: 7 clicks → 7 different reactions, hover → notice/hop, no console errors.

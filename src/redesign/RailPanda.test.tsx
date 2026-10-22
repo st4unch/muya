@@ -1,7 +1,7 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import RailPanda from "./RailPanda";
-import { SCENE_MS, SLEEP_AFTER_MS, setPandaEnabled } from "../lib/panda";
+import { CLICK_REACTIONS, HOVER_REACTIONS, REACTION_MS, SCENE_MS, SLEEP_AFTER_MS, setPandaEnabled } from "../lib/panda";
 
 const rive = vi.hoisted(() => {
   const cleanup = vi.fn();
@@ -150,5 +150,32 @@ describe("RailPanda", () => {
     Object.defineProperty(document, "hidden", { configurable: true, get: () => false });
     act(() => document.dispatchEvent(new Event("visibilitychange")));
     expect(panda()).not.toBeNull();
+  });
+
+  it("a click plays a reaction, a different one each time, then the scene carries on", () => {
+    vi.useFakeTimers();
+    render(<RailPanda busy={false} />);
+    const button = screen.getByRole("button", { name: "Poke the panda" });
+    const seen: string[] = [];
+    for (let i = 0; i < CLICK_REACTIONS.length; i++) {
+      fireEvent.click(button);
+      seen.push(panda()!.getAttribute("data-scene")!);
+    }
+    expect(new Set(seen)).toEqual(new Set(CLICK_REACTIONS));
+    act(() => vi.advanceTimersByTime(Math.max(...Object.values(REACTION_MS))));
+    expect(panda()?.getAttribute("data-scene")).toBe("wave");
+  });
+
+  it("pointing at it makes it notice you, not again right away", () => {
+    vi.useFakeTimers();
+    render(<RailPanda busy={false} />);
+    const button = screen.getByRole("button", { name: "Poke the panda" });
+    fireEvent.pointerEnter(button);
+    const first = panda()!.getAttribute("data-scene")!;
+    expect(HOVER_REACTIONS).toContain(first);
+    act(() => vi.advanceTimersByTime(REACTION_MS[first as keyof typeof REACTION_MS]));
+    expect(panda()?.getAttribute("data-scene")).toBe("wave");
+    fireEvent.pointerEnter(button);
+    expect(panda()?.getAttribute("data-scene")).toBe("wave");
   });
 });

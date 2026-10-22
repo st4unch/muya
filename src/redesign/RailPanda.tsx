@@ -4,9 +4,10 @@
 // own rigged panda, animated in Rive (tools/panda-studio; artwork credits in
 // resources/THIRD_PARTY_LICENSES.txt): when an agent starts, the teacher points at a board that
 // shows what Claude is doing ("Thinking…"), then gaming, the kung-fu cookie run, the bamboo
-// splits, the fan dance, the traveller and the businessman take turns. When the work is done
-// the panda celebrates once; with nothing running it waves, flips, bows, rolls down a hill and
-// snacks; after 5 quiet minutes it sleeps on its bamboo branch.
+// splits, the fan dance and the traveller take turns. When the work is done the panda
+// celebrates once; with nothing running it waves, flips, bows, rolls down a hill and snacks;
+// after 5 quiet minutes it sleeps against its bamboo stalk. Click it and it reacts, a different
+// way each time (giggles, jumps, a heart, a sneeze...); point at it and it notices you.
 //
 // Each scene (RivePanda) loads the runtime and its file only while shown. Only the current scene
 // is mounted, and nothing is mounted while the window is hidden, so the panda costs nothing
@@ -14,7 +15,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import RivePanda, { type Crop, type RiveSrc, type Size } from "./RivePanda";
-import { PANDA_EVENT, SCENE_MS, SLEEP_AFTER_MS, firstScene, nextScene, pandaEnabled, pandaMood, type PandaMood, type PandaScene } from "../lib/panda";
+import {
+  CLICK_REACTIONS, HOVER_COOLDOWN_MS, HOVER_REACTIONS, PANDA_EVENT, REACTION_MS, SCENE_MS, SLEEP_AFTER_MS, firstScene, nextReaction, nextScene,
+  pandaEnabled, pandaMood, type PandaMood, type PandaReaction, type PandaScene,
+} from "../lib/panda";
 
 // Rive scenes, fetched only when shown. `size` is the artboard; `crop` is the square of it the
 // rail shows (the panda and its props), measured from rendered frames by
@@ -36,7 +40,18 @@ const SCENES: Record<PandaScene, { load: RiveSrc; size: Size; crop: Crop }> = {
   bamboo: { load: () => import("../assets/panda/rive/bamboo.riv?url"), size: [1000, 1150], crop: [-40, 91, 1039, 1171] },
   dance: { load: () => import("../assets/panda/rive/dance.riv?url"), size: [1000, 1100], crop: [115, 310, 884, 1078] },
   traveller: { load: () => import("../assets/panda/rive/traveller.riv?url"), size: [1100, 1100], crop: [53, 243, 947, 1138] },
-  business: { load: () => import("../assets/panda/rive/business.riv?url"), size: [1000, 1100], crop: [53, 243, 947, 1138] },
+};
+
+const REACTIONS: Record<PandaReaction, { load: RiveSrc; size: Size; crop: Crop }> = {
+  giggle: { load: () => import("../assets/panda/rive/giggle.riv?url"), size: [1000, 1100], crop: [105, 274, 913, 1081] },
+  startle: { load: () => import("../assets/panda/rive/startle.riv?url"), size: [1000, 1100], crop: [-32, 43, 1031, 1106] },
+  heart: { load: () => import("../assets/panda/rive/heart.riv?url"), size: [1000, 1100], crop: [7, 86, 997, 1076] },
+  sneeze: { load: () => import("../assets/panda/rive/sneeze.riv?url"), size: [1000, 1100], crop: [95, 251, 927, 1083] },
+  dizzy: { load: () => import("../assets/panda/rive/dizzy.riv?url"), size: [1000, 1100], crop: [71, 215, 934, 1078] },
+  peekaboo: { load: () => import("../assets/panda/rive/peekaboo.riv?url"), size: [1000, 1100], crop: [89, 255, 910, 1075] },
+  aww: { load: () => import("../assets/panda/rive/aww.riv?url"), size: [1000, 1100], crop: [106, 309, 893, 1096] },
+  notice: { load: () => import("../assets/panda/rive/notice.riv?url"), size: [1000, 1100], crop: [118, 290, 900, 1071] },
+  hop: { load: () => import("../assets/panda/rive/hop.riv?url"), size: [1000, 1100], crop: [45, 201, 947, 1103] },
 };
 
 const SPIN = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"];
@@ -124,6 +139,30 @@ export default function RailPanda({ busy, status }: { busy: boolean; status?: st
   const [scene, setScene] = useState<PandaScene>(() => firstScene(mood));
   const boxRef = useRef<HTMLDivElement>(null);
 
+  // A reaction plays over the rotation, then the current scene starts over. Shuffled bags keep
+  // every click different until all have played.
+  const [reaction, setReaction] = useState<{ name: PandaReaction; n: number } | null>(null);
+  const bags = useRef({ click: [] as PandaReaction[], hover: [] as PandaReaction[], last: undefined as PandaReaction | undefined, hoverAt: 0, n: 0 });
+  const react = (pool: readonly PandaReaction[], kind: "click" | "hover") => {
+    const b = bags.current;
+    const [name, rest] = nextReaction(pool, b[kind], b.last);
+    b[kind] = rest;
+    b.last = name;
+    setReaction({ name, n: ++b.n });
+  };
+  const poke = () => react(CLICK_REACTIONS, "click");
+  const notice = () => {
+    const b = bags.current;
+    if (reaction || Date.now() - b.hoverAt < HOVER_COOLDOWN_MS) return;
+    b.hoverAt = Date.now();
+    react(HOVER_REACTIONS, "hover");
+  };
+  useEffect(() => {
+    if (!reaction) return;
+    const t = window.setTimeout(() => setReaction(null), REACTION_MS[reaction.name]);
+    return () => window.clearTimeout(t);
+  }, [reaction]);
+
   // A change of mood starts over with that mood's first scene (during render, so the old
   // mood's scene never shows for a frame).
   const [shownMood, setShownMood] = useState(mood);
@@ -134,11 +173,12 @@ export default function RailPanda({ busy, status }: { busy: boolean; status?: st
 
   // Take turns while the panda is on screen (a remounted scene starts its animation over).
   const showing = enabled && fits && !hidden;
+  const reacting = reaction !== null;
   useEffect(() => {
-    if (!showing) return;
+    if (!showing || reacting) return;
     const t = window.setTimeout(() => setScene((s) => nextScene(mood, s)), SCENE_MS[scene]);
     return () => window.clearTimeout(t);
-  }, [showing, mood, scene]);
+  }, [showing, mood, scene, reacting]);
 
   useEffect(() => {
     const on = () => setEnabled(pandaEnabled());
@@ -164,10 +204,38 @@ export default function RailPanda({ busy, status }: { busy: boolean; status?: st
   if (!enabled) return <div style={{ flexGrow: 1 }} />;
 
   const label = LABEL[mood];
+  const shown = reaction ? REACTIONS[reaction.name] : SCENES[scene];
   return (
     <div ref={boxRef} style={{ flexGrow: 1, minHeight: 0, width: 64, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", overflow: "hidden" }}>
-      {fits && !hidden && scene === "teacher" && status && <Board text={status} />}
-      {fits && !hidden && <RivePanda key={scene} load={SCENES[scene].load} size={SCENES[scene].size} crop={SCENES[scene].crop} label={label} mood={mood} scene={scene} width={62} />}
+      {fits && !hidden && !reaction && scene === "teacher" && status && <Board text={status} />}
+      {fits && !hidden && (
+        <div
+          className="rp-poke"
+          role="button"
+          tabIndex={0}
+          aria-label="Poke the panda"
+          onClick={poke}
+          onPointerEnter={notice}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              poke();
+            }
+          }}
+          style={{ cursor: "pointer", borderRadius: 8 }}
+        >
+          <RivePanda
+            key={reaction ? `r${reaction.n}` : scene}
+            load={shown.load}
+            size={shown.size}
+            crop={shown.crop}
+            label={label}
+            mood={mood}
+            scene={reaction ? reaction.name : scene}
+            width={62}
+          />
+        </div>
+      )}
     </div>
   );
 }

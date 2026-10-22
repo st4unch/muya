@@ -5,7 +5,7 @@ Muya's rail panda (src/redesign/RailPanda.tsx) plays one `.riv` per scene from
 [Rive CLI](https://rive.app/docs/cli/getting-started): no editor, no hand-drawn frames.
 
 ```
-./build_all.sh            # rebuild all 17 scenes and copy them into the app
+./build_all.sh            # rebuild all 25 scenes (16 + 9 reactions) and copy them into the app
 python3 scenes2.py wave   # rebuild one scene into scene_wave/
 python3 render.py scene_wave 2    # -> videos/wave.mp4 (2 loops, white background)
 python3 crops.py          # rail crop squares, measured from frames/ (run render.py first)
@@ -21,7 +21,8 @@ afterwards: the app files must keep a transparent background.
 |---|---|
 | `art/panda.rml` | The artwork as RML: the panda's head (every expression), torso, belly, paws and the bamboo, converted from the artist's SVG by the Rive editor (artboards "Kungfu Panda" and "Faces"). |
 | `gen_panda.py` | The rig and the first two scenes. Each arm and leg is ONE tube path skinned to a 2-bone chain (rubber hose: no visible elbow or knee). The paws ride the tip bone, and the feet always point at the floor. A pivoted body node handles moving, tilting and squashing. The thigh and upper-arm bones can stretch (bone `length`). There is FK (`tip`, `body_to_root`), 2-bone IK (`ik`), poses (`P(...)` relative to rest, in degrees) and keyframes with cubic easing. Faces: `eyes = open/shut/happy`, `mouth = grin/open`. It also builds the "bamboo" (splits that shatter two stalks) and "cookie" (parkour, flying kick, catch, eat) scenes. |
-| `scenes2.py` | The other 15 scenes, one project each (`scene_<name>/scene.rml`). `build(name, keys, props, extra, size, origin)` adds the panda, props in front of or behind it, and extra tracks. |
+| `reactions.py` | The click and hover reactions (giggle, startle, heart, sneeze, dizzy, peekaboo, aww; notice, hop): short one-offs that start and end in the same relaxed pose. `REACTIONS` in `RailPanda.tsx` and `CLICK_REACTIONS` / `HOVER_REACTIONS` in `src/lib/panda.ts` list them. |
+| `scenes2.py` | The other 14 scenes, one project each (`scene_<name>/scene.rml`). `build(name, keys, props, extra, size, origin)` adds the panda, props in front of or behind it, and extra tracks. |
 | `svg_clean.py` | Turns the 4.1.12 jointed panda SVG into named parts for import (only needed to redo the art). |
 | `rivecall.mjs`, `riveexport.mjs` | Call the Rive editor's MCP over HTTP: upload an SVG; export a `.rev`. Used to redo the art. |
 

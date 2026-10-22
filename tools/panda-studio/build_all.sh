@@ -5,7 +5,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 RIVE=$(command -v rive || echo "$HOME/.rive/bin/rive")
 OUT=../../src/assets/panda/rive
-python3 scenes2.py                                      # wave sleep gaming ... business
+python3 scenes2.py                                      # wave sleep gaming ... traveller
+python3 reactions.py                                    # click and hover reactions (giggle ... hop)
 python3 gen_panda.py bamboo - scene_bamboo 1000 654      # the bamboo splits
 python3 gen_panda.py cookie - scene_cookie 1100 0 cam    # the cookie run (the view follows the panda)
 mkdir -p "$OUT"
