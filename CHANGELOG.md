@@ -8,7 +8,6 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 - **Every session in the Agents list has a small × in its top-right corner** that closes it in one click (it still asks first when there are unsaved changes).
-- **Click the panda in the sidebar and it gets angry:** it frowns, goes red, shakes its fists, stomps, steam puffs from its ears and a vein pops, then it turns away with a "hmph". Point at it and it looks up and waves.
 
 ### Changed
 - **With more than 20 sessions open, the Agents list shows each one on a single line**, so long lists stay easy to scan. Waiting and working sessions keep their colour; hover a row to see what it is doing.

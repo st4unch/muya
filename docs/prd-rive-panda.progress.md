@@ -41,3 +41,6 @@ started: 2026-10-20
 - The rail is back to the 4.1.12 SVG set (sleeping, roll, gaming, bamboo, tofu, manti, fart). Removed: the Rive runtime (@rive-app/canvas-lite), the .riv scenes, RivePanda, the teacher's board status, CSP 'wasm-unsafe-eval'.
 - Added: click → angry.svg (3.2 s), hover → hello.svg (2 s, 8 s cooldown), built by tools/panda-svg/scenes3.py on the 4.1.12 rig.
 - tools/panda-studio kept for later (README says it is unused).
+
+## 2026-10-22 — abandoned
+- Operator: "vazgeçtim bu sevdadan, 4.1.12'de olduğu gibi kalsın". The rail panda is exactly the 4.1.12 set again (no mouse reactions). tools/panda-studio (Rive) and tools/panda-svg were removed from the repo; restore them from commits bdeda33 / dd13b87 if ever needed.

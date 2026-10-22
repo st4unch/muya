@@ -27,15 +27,6 @@ export function setPandaEnabled(on: boolean): void {
 
 export type PandaScene = "sleeping" | "roll" | "gaming" | "bamboo" | "tofu" | "manti" | "fart";
 
-/** One-off reactions to the mouse: a click makes the panda angry, pointing at it says hello. */
-export type PandaReaction = "angry" | "hello";
-
-/** Each reaction's length (its animation, played once). */
-export const REACTION_MS: Record<PandaReaction, number> = { angry: 3_200, hello: 2_000 };
-
-/** Pointing at the panda again within this long does not make it wave again. */
-export const HOVER_COOLDOWN_MS = 8_000;
-
 /** How long each scene stays before the next one (about two loops of its animation). */
 export const SCENE_MS: Record<PandaScene, number> = {
   sleeping: 40_000,

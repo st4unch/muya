@@ -1,7 +1,7 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import RailPanda from "./RailPanda";
-import { HOVER_COOLDOWN_MS, REACTION_MS, SCENE_MS, setPandaEnabled } from "../lib/panda";
+import { SCENE_MS, setPandaEnabled } from "../lib/panda";
 
 const panda = () => screen.queryByRole("img");
 
@@ -61,40 +61,5 @@ describe("RailPanda", () => {
     Object.defineProperty(document, "hidden", { configurable: true, get: () => false });
     act(() => document.dispatchEvent(new Event("visibilitychange")));
     expect(panda()).not.toBeNull();
-  });
-
-  it("gets angry when clicked, every click, then carries on with its scene", () => {
-    vi.useFakeTimers();
-    render(<RailPanda busy={false} />);
-    const button = screen.getByRole("button", { name: "Poke the panda" });
-    fireEvent.click(button);
-    expect(panda()?.getAttribute("data-scene")).toBe("angry");
-    const first = panda();
-    fireEvent.click(button);
-    expect(panda()?.getAttribute("data-scene")).toBe("angry");
-    expect(panda()).not.toBe(first); // restarted, not left running
-    act(() => vi.advanceTimersByTime(REACTION_MS.angry));
-    expect(panda()?.getAttribute("data-scene")).toBe("sleeping");
-  });
-
-  it("waves when the pointer arrives, not again right away", () => {
-    vi.useFakeTimers();
-    render(<RailPanda busy />);
-    const button = screen.getByRole("button", { name: "Poke the panda" });
-    fireEvent.pointerEnter(button);
-    expect(panda()?.getAttribute("data-scene")).toBe("hello");
-    act(() => vi.advanceTimersByTime(REACTION_MS.hello));
-    expect(panda()?.getAttribute("data-scene")).toBe("gaming");
-    fireEvent.pointerEnter(button);
-    expect(panda()?.getAttribute("data-scene")).toBe("gaming");
-    act(() => vi.advanceTimersByTime(HOVER_COOLDOWN_MS));
-    fireEvent.pointerEnter(button);
-    expect(panda()?.getAttribute("data-scene")).toBe("hello");
-  });
-
-  it("Enter pokes it too", () => {
-    render(<RailPanda busy={false} />);
-    fireEvent.keyDown(screen.getByRole("button", { name: "Poke the panda" }), { key: "Enter" });
-    expect(panda()?.getAttribute("data-scene")).toBe("angry");
   });
 });

@@ -172,8 +172,8 @@ function build() {
     "Simple License (https://lottiefiles.com/page/license) and shrunk for the sidebar:",
     "  Panda sleeping on bamboo — bilal shehzad (LottieFiles)",
     "  Cute Panda Playing Game — Abdul Latif (LottieFiles)",
-    "The bamboo, tofu, mantı, fart, hill-roll, angry and hello scenes reuse the Playing Game",
-    "panda's head and give it a jointed body redrawn in the same style.",
+    "The bamboo, tofu, mantı, fart and hill-roll scenes reuse the Playing Game panda's head",
+    "and give it a jointed body redrawn in the same style.",
     "",
   ];
   if (mpl.length) {
