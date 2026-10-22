@@ -38,23 +38,24 @@ fn release_agent_session(name: String) {
     crate::broker::release_agent_session(&name);
 }
 
+mod agent_files;
 mod agent_ops;
 mod agent_ssh;
 mod agents;
 mod app_location;
 mod app_prefs;
-mod file_history;
 mod askpass;
 mod bg_service;
 mod bridge;
 mod bridge_exec;
 mod bridge_mcp;
 mod bridge_remote;
-mod claude_settings;
 mod broker;
+mod claude_settings;
 mod credstore;
 mod cyberark;
 mod debuglog;
+mod file_history;
 mod fs;
 mod history;
 mod local_guard;
@@ -63,6 +64,7 @@ mod metrics;
 mod opencode;
 mod pm;
 mod pty;
+mod schedules;
 mod sessions;
 mod slash_commands;
 mod spotlight;
@@ -71,10 +73,8 @@ mod statusline;
 mod term_history;
 #[cfg(test)]
 mod testutil;
-mod agent_files;
 mod titlebar;
 mod validate;
-mod schedules;
 mod vault;
 mod watcher;
 mod workspace_roots;
@@ -154,7 +154,50 @@ pub fn run_scheduler() {
     std::panic::set_hook(Box::new(|info| {
         eprintln!("PANIC: {info}");
     }));
+    raise_open_file_limit();
     bg_service::run()
+}
+
+/// Lift the open-file soft limit to what the system allows.
+///
+/// An app started from Finder or the Dock gets launchd's soft limit of 256 open
+/// files. Muya holds a `/dev/ptmx` per terminal tab plus WebKit, sockets and logs,
+/// so a busy day ran out and new tabs failed with "pty spawn failed: Too many open
+/// files (os error 24)". macOS refuses a soft limit above `kern.maxfilesperproc`
+/// (and above OPEN_MAX when the hard limit is unlimited), hence the clamp.
+pub fn raise_open_file_limit() {
+    #[cfg(unix)]
+    unsafe {
+        let mut lim = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) != 0 {
+            return;
+        }
+        let mut target = lim.rlim_max.min(10_240);
+        #[cfg(target_os = "macos")]
+        {
+            let mut per_proc: libc::c_int = 0;
+            let mut size = std::mem::size_of::<libc::c_int>();
+            let name = c"kern.maxfilesperproc";
+            if libc::sysctlbyname(
+                name.as_ptr(),
+                &mut per_proc as *mut _ as *mut libc::c_void,
+                &mut size,
+                std::ptr::null_mut(),
+                0,
+            ) == 0
+                && per_proc > 0
+            {
+                target = target.min(per_proc as libc::rlim_t);
+            }
+        }
+        if target > lim.rlim_cur {
+            lim.rlim_cur = target;
+            let _ = libc::setrlimit(libc::RLIMIT_NOFILE, &lim);
+        }
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -164,6 +207,7 @@ pub fn run() {
         log::error!("PANIC: {info}");
         eprintln!("PANIC: {info}");
     }));
+    raise_open_file_limit();
     tauri::Builder::default()
         .plugin(
             tauri_plugin_log::Builder::new()
@@ -605,9 +649,9 @@ pub fn run() {
 
 #[cfg(test)]
 mod window_close_tests {
-    use tauri::Manager;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use tauri::Manager;
 
     /// The red close button sends CloseRequested. The mock runtime then removes the
     /// window and, with none left, stops the app — unless the handler prevented the
@@ -640,8 +684,34 @@ mod window_close_tests {
 
     #[test]
     fn close_hides_while_keep_running_is_on_and_quits_when_off() {
-        assert!(survives_close(true), "on: the window hides, Muya keeps running");
-        assert!(!survives_close(false), "off: closing the window quits, as before");
+        assert!(
+            survives_close(true),
+            "on: the window hides, Muya keeps running"
+        );
+        assert!(
+            !survives_close(false),
+            "off: closing the window quits, as before"
+        );
         crate::app_prefs::set_keep_running_for_test(true);
+    }
+}
+
+#[cfg(test)]
+mod fd_limit_tests {
+    /// A Finder launch starts at 256; startup must lift it well clear of that.
+    #[test]
+    fn raises_a_finder_sized_soft_limit() {
+        unsafe {
+            let mut lim = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            assert_eq!(libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim), 0);
+            lim.rlim_cur = 256;
+            assert_eq!(libc::setrlimit(libc::RLIMIT_NOFILE, &lim), 0);
+            super::raise_open_file_limit();
+            assert_eq!(libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim), 0);
+            assert!(lim.rlim_cur >= 4096, "soft limit still {}", lim.rlim_cur);
+        }
     }
 }

@@ -15,6 +15,7 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 - **The right-click menu no longer runs off the bottom of the window.** On the last sessions of a long list, "Close agent" was cut off and could not be clicked; the menu now moves up to stay fully on screen.
+- **New terminals no longer fail with "pty spawn failed: Too many open files" after a long day.** Opened from Finder or the Dock, Muya was held to macOS's limit of 256 open files; it now raises that at start. Closing a tab also cleans up its shell properly instead of leaving a dead process behind for as long as Muya runs.
 
 ## [4.1.12] - 2026-10-18
 

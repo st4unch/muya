@@ -617,11 +617,22 @@ pub fn kill_all(manager: &PtyManager) {
 
 /// Kill a PTY's child and forget the session. Split from the command so tests
 /// can drive it without a Tauri `State`.
+///
+/// The killed shell must also be waited on, or every closed tab leaves a
+/// `<defunct>` zombie behind for the life of the app (54 seen after three days).
+/// `reap` can't do it: the session is already out of the map when the reader
+/// thread hits EOF. Wait on a short-lived thread so closing a tab never blocks.
 fn pty_kill_inner(manager: &PtyManager, id: &str) {
-    if let Ok(mut sessions) = manager.sessions.lock() {
-        if let Some(mut h) = sessions.remove(id) {
-            let _ = h.child.kill();
-        }
+    let handle = manager
+        .sessions
+        .lock()
+        .ok()
+        .and_then(|mut map| map.remove(id));
+    if let Some(mut h) = handle {
+        let _ = h.child.kill();
+        std::thread::spawn(move || {
+            let _ = h.child.wait();
+        });
     }
 }
 
@@ -985,6 +996,46 @@ mod tests {
             manager.sessions.lock().unwrap().is_empty(),
             "kill must release it"
         );
+    }
+
+    /// A shell that outlives SIGHUP (one running claude, say) gets SIGKILLed by
+    /// portable-pty without a wait. Closing its tab must still reap it, not leave
+    /// a <defunct> zombie for the life of the app.
+    #[test]
+    fn closing_a_tab_reaps_a_shell_that_ignores_hangup() {
+        let manager = PtyManager::default();
+        let ch: Channel<InvokeResponseBody> = Channel::new(|_| Ok(()));
+        let id = spawn_process(
+            &manager,
+            ch,
+            "/bin/sh",
+            &["-c".to_string(), "trap '' HUP; sleep 30".to_string()],
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("spawn");
+        std::thread::sleep(Duration::from_millis(300));
+        let pid = manager.sessions.lock().unwrap()[&id]
+            .child
+            .process_id()
+            .expect("pid");
+        pty_kill_inner(&manager, &id);
+        assert!(
+            manager.sessions.lock().unwrap().is_empty(),
+            "kill must release it"
+        );
+        // ...and reap it: no <defunct> zombie left behind.
+        let gone = (0..40).any(|_| {
+            std::thread::sleep(Duration::from_millis(50));
+            let out = std::process::Command::new("ps")
+                .args(["-o", "stat=", "-p", &pid.to_string()])
+                .output()
+                .expect("ps");
+            String::from_utf8_lossy(&out.stdout).trim().is_empty()
+        });
+        assert!(gone, "killed shell {pid} must be reaped, not left a zombie");
     }
 
     #[test]
