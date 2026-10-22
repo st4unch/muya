@@ -6,6 +6,8 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.1.13] - 2026-10-22
+
 ### Added
 - **Every session in the Agents list has a small × in its top-right corner** that closes it in one click (it still asks first when there are unsaved changes).
 
