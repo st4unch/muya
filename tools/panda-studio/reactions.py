@@ -2,8 +2,9 @@
 
 python3 reactions.py giggle [FFFFFFFF]  -> scene_giggle/scene.rml   (2nd arg = preview background)
 
-Each one starts and ends in the same relaxed pose (arms down, smiling), lasts 1-2 s, and stays
-inside the usual 1000 x 1100 frame so the rail's crop needs no special case.
+Each one starts and ends in the same relaxed pose (arms down, smiling) and lasts 1-2 s. All of
+them share ONE rail crop at the idle scenes' scale (FRAME), so clicking never resizes the panda:
+props sit beside the head and jumps stay low enough to fit it (check_frame.py verifies).
 Root-space landmarks (measured on a marker grid): eyes (71,-50) and (261,-50), mouth (163,20),
 belly (166,230), top of the head about y -310.
 """
@@ -12,6 +13,10 @@ from shapely.geometry import Polygon
 import gen_panda as G
 from gen_panda import el, solid, nid, keyframes, P, GUARD, CROUCH, LAND
 from scenes2 import build, poly_shape
+
+# The rail crop every reaction shares (artboard px): the idle scenes' scale (wave is
+# [124, 299, 896, 1070]), centred on the panda, feet near the bottom.
+FRAME = (96, 280, 904, 1088)
 
 SMILE = P(GUARD, armL1=0, armL2=0, armR1=0, armR2=0)
 HAPPY = P(SMILE, eyes="happy")
@@ -44,21 +49,21 @@ def giggle():
 
 def startle():
     """jumps out of its skin, a '!' pops over its head, then laughs it off"""
-    UP = P(SMILE, armL1=135, armR1=-135, armL2=25, armR2=-25, lenAL=96, lenAR=96, mouth="open", hy=-14)
+    UP = P(SMILE, armL1=120, armR1=-120, armL2=20, armR2=-20, lenAL=92, lenAR=92, mouth="open", hy=-8)
     keys = [(0, SMILE, "io"), (6, P(SMILE, sy=94, sx=104, dy=10, mouth="open"), "out"),
-            (16, P(UP, dy=-150, sy=108, sx=95, legL1=18, legR1=-18, legL2=-30, legR2=30), "io"),
-            (26, P(UP, dy=-165), "in"), (38, P(LAND, mouth="open"), "back"),
+            (16, P(UP, dy=-22, sy=102, sx=98, legL1=18, legR1=-18, legL2=-30, legR2=30), "io"),
+            (26, P(UP, dy=-26), "in"), (38, P(LAND, mouth="open"), "back"),
             (54, P(HAPPY, head=8), "io"), (76, P(HAPPY, head=-4, mouth="open"), "io"), (96, SMILE, "hold")]
 
     def props(world, front, back, ids):
-        n = el("Node", front, x=330, y=-360, scaleX=0, scaleY=0, rotation=0.2, name="bang", id=nid())
+        n = el("Node", front, x=480, y=-200, scaleX=0, scaleY=0, rotation=0.25, name="bang", id=nid())
         G.rect(n, 0, -20, 26, 80, YELLOW, "bar", stroke=7, radius=13)
         G.ellipse(n, 0, 48, 28, 28, YELLOW, stroke=7)
         return {"bang": n.get("id")}
 
     def extra(la, ids, pr, end):
-        pop(la, pr["bang"], 12, 50, peak=1.3)
-        la.append(keyframes(pr["bang"], 14, [(0, -360, "hold"), (12, -330, "out"), (26, -500, "io"), (50, -470, "hold")]))
+        pop(la, pr["bang"], 12, 50, peak=1.25, rest=1.0)
+        la.append(keyframes(pr["bang"], 14, [(0, -190, "hold"), (12, -190, "out"), (26, -240, "io"), (50, -225, "hold")]))
     return build("startle", keys, props, extra)
 
 def heart_poly(s):
@@ -80,23 +85,23 @@ def heart():
     keys += [(128, P(CLASP, mouth="open"), "io"), (146, SMILE, "hold")]
 
     def props(world, front, back, ids):
-        n = el("Node", front, x=166, y=-380, scaleX=0, scaleY=0, name="heart", id=nid())
-        poly_shape(n, heart_poly(5.2), RED, "heart")
-        small = el("Node", front, x=360, y=-300, scaleX=0, scaleY=0, name="heart2", id=nid())
-        poly_shape(small, heart_poly(2.8), RED, "heart2")
+        n = el("Node", front, x=470, y=-190, scaleX=0, scaleY=0, name="heart", id=nid())
+        poly_shape(n, heart_poly(3.4), RED, "heart")
+        small = el("Node", front, x=-140, y=-170, scaleX=0, scaleY=0, name="heart2", id=nid())
+        poly_shape(small, heart_poly(2.2), RED, "heart2")
         return {"h": n.get("id"), "h2": small.get("id")}
 
     def extra(la, ids, pr, end):
-        pop(la, pr["h"], 16, 120, peak=1.25)
-        la.append(keyframes(pr["h"], 14, [(0, -380, "hold"), (16, -380, "io"), (120, -470, "hold")]))
+        pop(la, pr["h"], 16, 120, peak=1.2)
+        la.append(keyframes(pr["h"], 14, [(0, -190, "hold"), (16, -190, "io"), (120, -250, "hold")]))
         pop(la, pr["h2"], 46, 120, peak=1.2)
-        la.append(keyframes(pr["h2"], 14, [(0, -300, "hold"), (46, -300, "io"), (120, -420, "hold")]))
+        la.append(keyframes(pr["h2"], 14, [(0, -170, "hold"), (46, -170, "io"), (120, -230, "hold")]))
     return build("heart", keys, props, extra)
 
 def sneeze():
     """ah... ah... ahh-CHOO! then rubs its nose"""
     def ah(n):
-        return P(SMILE, hy=-10 - 4 * n, head=-4 - 2 * n, sy=101 + n, eyes="shut", mouth="open", rot=-2 - n)
+        return P(SMILE, hy=-6 - 2 * n, head=-4 - 2 * n, sy=100 + n * 0.5, eyes="shut", mouth="open", rot=-2 - n)
     CHOO = P(SMILE, hy=14, head=6, sy=92, sx=106, dy=10, rot=7, eyes="shut", mouth="open", armL1=25, armR1=-25, armL2=-20, armR2=20)
     RUB = reach(P(SMILE, eyes="happy", head=-4), right=(175, -12), lenAR=96)
     keys = [(0, SMILE, "io"), (12, ah(0), "io"), (20, P(SMILE, eyes="shut"), "io"), (32, ah(1), "io"), (40, P(SMILE, eyes="shut", hy=-4), "io"),
@@ -142,19 +147,19 @@ def dizzy():
             pts_x, pts_y = [], []
             for f in range(10, 116, 4):
                 a = (f - 10) * 0.11 + k * 2 * math.pi / 3
-                pts_x.append((f, 166 + 150 * math.cos(a), "lin"))
-                pts_y.append((f, -330 + 40 * math.sin(a), "lin"))
+                pts_x.append((f, 166 + 190 * math.cos(a), "lin"))
+                pts_y.append((f, -270 + 28 * math.sin(a), "lin"))
             la.append(keyframes(sid, 13, [(0, 166, "hold")] + pts_x))
-            la.append(keyframes(sid, 14, [(0, -330, "hold")] + pts_y))
+            la.append(keyframes(sid, 14, [(0, -270, "hold")] + pts_y))
             for prop in (16, 17):
-                la.append(keyframes(sid, prop, [(0, 0, "hold"), (10, 0, "back"), (20, 0.62, "io"), (106, 0.62, "in"), (116, 0, "hold")]))
+                la.append(keyframes(sid, prop, [(0, 0, "hold"), (10, 0, "back"), (20, 0.5, "io"), (106, 0.5, "in"), (116, 0, "hold")]))
             la.append(keyframes(sid, 15, [(0, 0, "hold"), (10, 0, "lin"), (116, 6, "hold")]))
     return build("dizzy", keys, props, extra)
 
 def peekaboo():
     """hides its eyes behind its paws, then pops out: boo!"""
     HIDE = reach(SMILE, (80, -55), (252, -55), lenAL=104, lenAR=104, mouth="grin", hy=8)
-    BOO = P(HAPPY, armL1=105, armR1=-105, armL2=30, armR2=-30, lenAL=96, lenAR=96, mouth="open", dy=-30, sy=104)
+    BOO = P(HAPPY, armL1=105, armR1=-105, armL2=30, armR2=-30, lenAL=96, lenAR=96, mouth="open", dy=-14, sy=101)
     keys = [(0, SMILE, "io"), (16, HIDE, "io"), (30, P(HIDE, head=6), "io"), (44, P(HIDE, head=-6), "io"),
             (58, P(HIDE, head=0, sy=96, dy=8), "io"), (66, BOO, "back"), (96, P(BOO, dy=0, sy=100), "io"),
             (112, P(HAPPY, mouth="open"), "io"), (130, SMILE, "hold")]
@@ -182,8 +187,8 @@ def notice():
 def hop():
     """the pointer arrives: a small happy hop"""
     keys = [(0, SMILE, "io"), (8, P(SMILE, sy=93, sx=105, dy=10, eyes="happy"), "out"),
-            (18, P(HAPPY, dy=-70, sy=106, sx=96, armL1=40, armR1=-40, mouth="open"), "io"),
-            (28, P(LAND, eyes="happy", armL1=10, armR1=-10), "back"), (36, P(HAPPY, dy=-30, sy=103), "io"),
+            (18, P(HAPPY, dy=-20, sy=102, sx=98, armL1=40, armR1=-40, mouth="open"), "io"),
+            (28, P(LAND, eyes="happy", armL1=10, armR1=-10), "back"), (36, P(HAPPY, dy=-16, sy=101), "io"),
             (44, P(HAPPY, sy=97, dy=4), "back"), (58, HAPPY, "io"), (72, SMILE, "hold")]
     return build("hop", keys)
 

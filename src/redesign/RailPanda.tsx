@@ -42,16 +42,20 @@ const SCENES: Record<PandaScene, { load: RiveSrc; size: Size; crop: Crop }> = {
   traveller: { load: () => import("../assets/panda/rive/traveller.riv?url"), size: [1100, 1100], crop: [53, 243, 947, 1138] },
 };
 
+// Every reaction shares one crop at the idle scenes' scale, so poking the panda never resizes it
+// (tools/panda-studio/reactions.py FRAME; check_frame.py proves each reaction fits).
+const REACT_CROP: Crop = [96, 280, 904, 1088];
+const oneCrop = (load: RiveSrc) => ({ load, size: [1000, 1100] as Size, crop: REACT_CROP });
 const REACTIONS: Record<PandaReaction, { load: RiveSrc; size: Size; crop: Crop }> = {
-  giggle: { load: () => import("../assets/panda/rive/giggle.riv?url"), size: [1000, 1100], crop: [105, 274, 913, 1081] },
-  startle: { load: () => import("../assets/panda/rive/startle.riv?url"), size: [1000, 1100], crop: [-32, 43, 1031, 1106] },
-  heart: { load: () => import("../assets/panda/rive/heart.riv?url"), size: [1000, 1100], crop: [7, 86, 997, 1076] },
-  sneeze: { load: () => import("../assets/panda/rive/sneeze.riv?url"), size: [1000, 1100], crop: [95, 251, 927, 1083] },
-  dizzy: { load: () => import("../assets/panda/rive/dizzy.riv?url"), size: [1000, 1100], crop: [71, 215, 934, 1078] },
-  peekaboo: { load: () => import("../assets/panda/rive/peekaboo.riv?url"), size: [1000, 1100], crop: [89, 255, 910, 1075] },
-  aww: { load: () => import("../assets/panda/rive/aww.riv?url"), size: [1000, 1100], crop: [106, 309, 893, 1096] },
-  notice: { load: () => import("../assets/panda/rive/notice.riv?url"), size: [1000, 1100], crop: [118, 290, 900, 1071] },
-  hop: { load: () => import("../assets/panda/rive/hop.riv?url"), size: [1000, 1100], crop: [45, 201, 947, 1103] },
+  giggle: oneCrop(() => import("../assets/panda/rive/giggle.riv?url")),
+  startle: oneCrop(() => import("../assets/panda/rive/startle.riv?url")),
+  heart: oneCrop(() => import("../assets/panda/rive/heart.riv?url")),
+  sneeze: oneCrop(() => import("../assets/panda/rive/sneeze.riv?url")),
+  dizzy: oneCrop(() => import("../assets/panda/rive/dizzy.riv?url")),
+  peekaboo: oneCrop(() => import("../assets/panda/rive/peekaboo.riv?url")),
+  aww: oneCrop(() => import("../assets/panda/rive/aww.riv?url")),
+  notice: oneCrop(() => import("../assets/panda/rive/notice.riv?url")),
+  hop: oneCrop(() => import("../assets/panda/rive/hop.riv?url")),
 };
 
 const SPIN = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"];

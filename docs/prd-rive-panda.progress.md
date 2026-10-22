@@ -34,3 +34,4 @@ started: 2026-10-20
 - `src/lib/panda.ts`: `PandaReaction`, `REACTION_MS`, `nextReaction` (shuffled bag: all play before any repeats, never twice in a row); hover cooldown 8 s.
 - `RailPanda.tsx`: the panda box is a button ("Poke the panda", Enter/Space too); a reaction pauses the rotation, then the scene starts over.
 - Verified: 512 tests, build, WebKit mock UI dark + light: 7 clicks → 7 different reactions, hover → notice/hop, no console errors.
+- Fix (operator: "küçülüyor"): per-reaction crops made the panda shrink up to ~27% on click. All reactions now share one crop at the idle scale (FRAME [96,280,904,1088]); props moved beside the head, jumps lowered; check_frame.py verifies every frame fits.
