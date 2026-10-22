@@ -35,8 +35,6 @@ export interface ControlScreenProps {
   railActive: RailItem;
   /** Some agent (any workspace) is working — the rail panda gets busy. */
   railBusy?: boolean;
-  /** What the working agent is doing, for the rail panda's board. */
-  railStatus?: string;
   onRailNavigate: (item: RailItem) => void;
 
   agents: AgentVM[];
@@ -170,7 +168,7 @@ export function ControlScreen(props: ControlScreenProps) {
           onToggleInspector={layout.toggleInspector}
         />
       }
-      rail={<Rail active={props.railActive} onNavigate={props.onRailNavigate} busy={props.railBusy} status={props.railStatus} />}
+      rail={<Rail active={props.railActive} onNavigate={props.onRailNavigate} busy={props.railBusy} />}
       footer={<Footer {...props.footer} />}
     >
       {layout.agentsOpen && filesMode && (

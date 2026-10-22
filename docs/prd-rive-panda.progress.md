@@ -35,3 +35,9 @@ started: 2026-10-20
 - `RailPanda.tsx`: the panda box is a button ("Poke the panda", Enter/Space too); a reaction pauses the rotation, then the scene starts over.
 - Verified: 512 tests, build, WebKit mock UI dark + light: 7 clicks → 7 different reactions, hover → notice/hop, no console errors.
 - Fix (operator: "küçülüyor"): per-reaction crops made the panda shrink up to ~27% on click. All reactions now share one crop at the idle scale (FRAME [96,280,904,1088]); props moved beside the head, jumps lowered; check_frame.py verifies every frame fits.
+
+## 2026-10-22 — reverted to the 4.1.12 panda
+- Operator: "4.1.12'dekiler daha iyi, bu şekilde kalsın; mouse aksiyonlarını buna ekleyelim, tıklandığında kızsın."
+- The rail is back to the 4.1.12 SVG set (sleeping, roll, gaming, bamboo, tofu, manti, fart). Removed: the Rive runtime (@rive-app/canvas-lite), the .riv scenes, RivePanda, the teacher's board status, CSP 'wasm-unsafe-eval'.
+- Added: click → angry.svg (3.2 s), hover → hello.svg (2 s, 8 s cooldown), built by tools/panda-svg/scenes3.py on the 4.1.12 rig.
+- tools/panda-studio kept for later (README says it is unused).

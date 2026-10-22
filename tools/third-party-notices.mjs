@@ -168,13 +168,12 @@ function build() {
     // Not packages: artwork shipped in the app (src/assets), credited by hand.
     "Artwork",
     "-------",
-    "The sidebar panda is a rigged character animated in Rive (tools/panda-studio). Its head,",
-    "body and paws come from free LottieFiles animations, used under the Lottie Simple License",
-    "(https://lottiefiles.com/page/license):",
-    "  Cute Panda Playing Game — Abdul Latif (LottieFiles)",
+    "The sidebar panda animations are free LottieFiles animations, used under the Lottie",
+    "Simple License (https://lottiefiles.com/page/license) and shrunk for the sidebar:",
     "  Panda sleeping on bamboo — bilal shehzad (LottieFiles)",
-    "The arms and legs are redrawn as bendable limbs in the same style; the props (bamboo,",
-    "cookie, tofu, mantı, fans, bags, board) are drawn for Muya.",
+    "  Cute Panda Playing Game — Abdul Latif (LottieFiles)",
+    "The bamboo, tofu, mantı, fart, hill-roll, angry and hello scenes reuse the Playing Game",
+    "panda's head and give it a jointed body redrawn in the same style.",
     "",
   ];
   if (mpl.length) {

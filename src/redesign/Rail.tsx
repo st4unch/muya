@@ -23,8 +23,6 @@ export interface RailProps {
   onNavigate: (item: RailItem) => void;
   /** Some agent is working — the panda gets busy too. */
   busy?: boolean;
-  /** What the working agent is doing ("Thinking…"): the panda's teacher points at it. */
-  status?: string;
 }
 
 const ITEMS: { item: RailItem; label: string; Icon: typeof ControlRailIcon }[] = [
@@ -38,7 +36,7 @@ const ITEMS: { item: RailItem; label: string; Icon: typeof ControlRailIcon }[] =
   { item: "schedules", label: "Schedules", Icon: SchedulesRailIcon },
 ];
 
-export function Rail({ active, onNavigate, busy = false, status }: RailProps) {
+export function Rail({ active, onNavigate, busy = false }: RailProps) {
   return (
     <nav
       aria-label="Main navigation"
@@ -85,7 +83,7 @@ export function Rail({ active, onNavigate, busy = false, status }: RailProps) {
           </button>
         );
       })}
-      <RailPanda busy={busy} status={status} />
+      <RailPanda busy={busy} />
       <button
         type="button"
         aria-label="Settings"

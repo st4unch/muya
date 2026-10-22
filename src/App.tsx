@@ -71,7 +71,6 @@ import { AutoAllowSuggest } from "./redesign/AutoAllowSuggest";
 import { historyKeyOf } from "./lib/termHistory";
 import { branchSource, workingTreeSource } from "./lib/reviewSources";
 import { listVersions, versionsSource } from "./lib/fileVersions";
-import { boardText } from "./lib/panda";
 import type { ReviewSource } from "./components/ReviewChanges";
 
 // Types matching the user's workflow model
@@ -1365,7 +1364,6 @@ export default function App() {
   modelRef.current = model;
   const agentVMs = model.agents;
   const anyWorking = agentVMs.some((a) => a.status === "working");
-  const railStatus = boardText(agentVMs.find((a) => a.status === "working"));
   // The agent list shows the picked workspace only (palette, bell and footer stay global).
   const scopedAgentVMs = useMemo(() => {
     const tabByKey = new Map(openTerminals.map((t) => [t.key, t]));
@@ -2538,7 +2536,7 @@ export default function App() {
         </div>
         <div style={{ flexGrow: 1, minHeight: 0, display: "flex" }}>
           <div className="rd-root" style={{ display: "contents" }}>
-            <Rail active={railActive} onNavigate={navigateRail} busy={anyWorking} status={railStatus} />
+            <Rail active={railActive} onNavigate={navigateRail} busy={anyWorking} />
           </div>
           <AppFrameBody>
             <div className={pageClass("sessions")}>
@@ -2638,7 +2636,6 @@ export default function App() {
             footer={footerVM}
             railActive={controlMode === "files" ? "files" : "control"}
             railBusy={anyWorking}
-            railStatus={railStatus}
             onRailNavigate={navigateRail}
             agents={scopedAgentVMs}
             selectedAgentKey={selectedAgentKey}
@@ -2705,7 +2702,6 @@ export default function App() {
           onRenameAgent={renameTerminal}
           railActive="control"
           railBusy={anyWorking}
-          railStatus={railStatus}
           onRailNavigate={navigateRail}
           footer={footerVM}
           panels={gridPanels}

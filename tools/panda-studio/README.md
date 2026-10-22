@@ -1,5 +1,9 @@
 # panda-studio — Muya's rigged panda, animated in Rive
 
+> **Not used by the app.** On 2026-10-22 the operator chose to keep the 4.1.12 SVG panda
+> (tools/panda-svg). This Rive rig and its 25 scenes stay here for later; the .riv files and the
+> Rive runtime were removed from the app.
+
 Muya's rail panda (src/redesign/RailPanda.tsx) plays one `.riv` per scene from
 `src/assets/panda/rive/`. This folder builds those files from text, with the
 [Rive CLI](https://rive.app/docs/cli/getting-started): no editor, no hand-drawn frames.
