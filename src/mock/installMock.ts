@@ -574,6 +574,7 @@ const mockSession = (id: string, name: string, cwd: string, days: number, mb: nu
   cwd,
   name,
   lastModified: Date.now() - days * MOCK_DAY,
+  lastMessageAt: Date.now() - days * MOCK_DAY,
   sizeBytes: Math.round(mb * 1024 * 1024),
   extraBytes: Math.round(extraMb * 1024 * 1024),
   path: `/Users/you/.claude/projects/${cwd.replace(/\//g, "-")}/${id}.jsonl`,

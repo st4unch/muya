@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { LAST_ACTIVE_KEY, RECENT_MS, TOUCH_EVERY_MS, isRecent, readLastActive, touchActive, writeLastActive } from "./recentActivity";
+import { LAST_ACTIVE_KEY, LAUNCH_GRACE_MS, RECENT_MS, TOUCH_EVERY_MS, isRecent, readLastActive, touchActive, writeLastActive } from "./recentActivity";
 
 const HOUR = 60 * 60 * 1000;
 const NOW = 1_800_000_000_000;
@@ -21,6 +21,20 @@ describe("recentActivity", () => {
     expect(a).toEqual({ a: NOW });
     expect(touchActive(a, [{ key: "a", status: "working" }], NOW + TOUCH_EVERY_MS - 1)).toBe(a);
     expect(touchActive(a, [{ key: "a", status: "waiting" }], NOW + TOUCH_EVERY_MS)).toEqual({ a: NOW + TOUCH_EVERY_MS });
+  });
+
+  it("does not count the resume right after launch as activity", () => {
+    const launched = NOW - 10_000;
+    expect(touchActive({}, [{ key: "a", status: "working" }], NOW, {}, launched)).toEqual({});
+    expect(touchActive({}, [{ key: "a", status: "working" }], launched + LAUNCH_GRACE_MS, {}, launched)).toEqual({ a: launched + LAUNCH_GRACE_MS });
+    // a real last message still seeds during the grace
+    expect(touchActive({}, [{ key: "a", status: "idle" }], NOW, { a: NOW - HOUR }, launched)).toEqual({ a: NOW - HOUR });
+  });
+
+  it("drops the v1 map, which held launch-time stamps", () => {
+    localStorage.setItem("muya.lastActive", JSON.stringify({ a: NOW }));
+    expect(readLastActive()).toEqual({});
+    expect(localStorage.getItem("muya.lastActive")).toBeNull();
   });
 
   it("seeds from a newer transcript time and ignores an older one", () => {

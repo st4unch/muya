@@ -6,6 +6,9 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **Recent** no longer lists every open session after a restart. It now goes by the last message in each conversation, not by Muya reopening it at launch.
+
 ## [4.1.14] - 2026-10-25
 
 ### Added

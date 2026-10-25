@@ -66,7 +66,9 @@ export function useAgentModel(args: {
   screensRef.current = screens;
   const lastModesRef = useRef<Record<string, ScreenMode | undefined>>({});
   const lastActiveRef = useRef<LastActive>(readLastActive());
-  /** Claude transcript times by session id, read once at launch (seeds "Recent"). */
+  const launchedAtRef = useRef(Date.now());
+  /** Last real message time per Claude session id, read once at launch (seeds "Recent").
+   *  Not the file mtime: resuming the saved tabs at launch rewrites every transcript. */
   const [transcriptTimes, setTranscriptTimes] = useState<Record<string, number>>({});
 
   useEffect(() => {
@@ -76,11 +78,11 @@ export function useAgentModel(args: {
 
   useEffect(() => {
     let cancelled = false;
-    invoke<{ sessionId: string; lastModified: number }[]>("list_session_history")
+    invoke<{ sessionId: string; lastMessageAt?: number | null }[]>("list_session_history")
       .then((list) => {
         if (cancelled || !Array.isArray(list)) return;
         const byId: Record<string, number> = {};
-        for (const s of list) if (s?.sessionId && typeof s.lastModified === "number") byId[s.sessionId] = s.lastModified;
+        for (const s of list) if (s?.sessionId && typeof s.lastMessageAt === "number") byId[s.sessionId] = s.lastMessageAt;
         setTranscriptTimes(byId);
       })
       .catch(() => {
@@ -117,7 +119,7 @@ export function useAgentModel(args: {
       const at = t.sessionId ? transcriptTimes[t.sessionId] : undefined;
       if (at) seeds[t.key] = at;
     }
-    lastActiveRef.current = touchActive(lastActiveRef.current, built, now, seeds);
+    lastActiveRef.current = touchActive(lastActiveRef.current, built, now, seeds, launchedAtRef.current);
     const lastActive = lastActiveRef.current;
     return built.map((a) => ({ ...a, recent: isRecent(a.status, lastActive[a.key], now) }));
   }, [tabs, sessionStatus, screens, liveCwds, branchByCwd, answered, now, transcriptTimes]);

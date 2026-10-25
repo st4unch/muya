@@ -10,12 +10,16 @@ import type { AgentVM } from "./types";
 export const RECENT_MS = 6 * 60 * 60 * 1000;
 /** A working/waiting agent re-stamps at most this often (keeps storage writes rare). */
 export const TOUCH_EVERY_MS = 60_000;
-export const LAST_ACTIVE_KEY = "muya.lastActive";
+/** v2: v1 (4.1.14) stored the launch-time resume as activity for every tab. */
+export const LAST_ACTIVE_KEY = "muya.lastActive.v2";
+/** Right after launch every saved tab is resumed: that is not the operator using it. */
+export const LAUNCH_GRACE_MS = 90_000;
 
 export type LastActive = Record<string, number>;
 
 export function readLastActive(): LastActive {
   try {
+    localStorage.removeItem("muya.lastActive"); // v1, see LAST_ACTIVE_KEY
     const v = JSON.parse(localStorage.getItem(LAST_ACTIVE_KEY) ?? "{}");
     if (!v || typeof v !== "object" || Array.isArray(v)) return {};
     const out: LastActive = {};
@@ -34,15 +38,18 @@ export function writeLastActive(map: LastActive): void {
   }
 }
 
-/** Fold the agents' current state (and transcript times, by tab key) into `prev`.
- *  Working/waiting agents are stamped `now`; closed tabs are dropped once any tab is
- *  known. Returns the SAME object when nothing changed (callers compare by identity). */
+/** Fold the agents' current state (and last-message times, by tab key) into `prev`.
+ *  Working/waiting agents are stamped `now`, except within LAUNCH_GRACE_MS of
+ *  `launchedAt`; closed tabs are dropped once any tab is known. Returns the SAME object
+ *  when nothing changed (callers compare by identity). */
 export function touchActive(
   prev: LastActive,
   agents: Pick<AgentVM, "key" | "status">[],
   now: number,
   seeds: LastActive = {},
+  launchedAt = 0,
 ): LastActive {
+  const settled = now - launchedAt >= LAUNCH_GRACE_MS;
   let next: LastActive | null = null;
   const set = (k: string, t: number) => {
     next ??= { ...prev };
@@ -51,7 +58,7 @@ export function touchActive(
   for (const a of agents) {
     const had = prev[a.key] ?? 0;
     const seed = seeds[a.key] ?? 0;
-    if (a.status !== "idle" && now - had >= TOUCH_EVERY_MS) set(a.key, now);
+    if (settled && a.status !== "idle" && now - had >= TOUCH_EVERY_MS) set(a.key, now);
     else if (seed > had) set(a.key, seed);
   }
   if (agents.length > 0) {
