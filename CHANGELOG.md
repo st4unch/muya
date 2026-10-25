@@ -6,6 +6,9 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- The agent list has a **Recent** tab next to Waiting and Working: it shows the sessions that worked, waited or had their conversation updated in the last 6 hours. It remembers across restarts.
+
 ## [4.1.13] - 2026-10-22
 
 ### Added
