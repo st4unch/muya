@@ -59,7 +59,7 @@ export const previewAgents: AgentVM[] = [
     mode: "default",
     kind: "opencode", agentRunning: true,
   },
-  { key: "iptv-2a", name: "iptv-2a", status: "idle", path: "~/Documents/iptv", mode: "default", kind: "shell", agentRunning: true },
+  { key: "iptv-2a", name: "iptv-2a", status: "idle", path: "~/Documents/iptv", mode: "default", kind: "shell", agentRunning: true, recent: true },
   { key: "numbat-c3", name: "numbat-c3", status: "idle", path: "~/Documents/numbat", mode: "default", kind: "shell", agentRunning: true },
   { key: "skills-envanter", name: "skills-envanter", status: "idle", path: "control-plane", mode: "default", kind: "shell", agentRunning: true },
   { key: "serbest", name: "serbest", status: "idle", path: "~", mode: "default", kind: "shell", agentRunning: true },

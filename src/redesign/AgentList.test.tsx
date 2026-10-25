@@ -31,6 +31,24 @@ describe("AgentList", () => {
     expect(screen.queryByText("IDLE")).not.toBeInTheDocument();
   });
 
+  it("filter=recent shows only agents active in the last 6 hours", () => {
+    const onFilterChange = vi.fn();
+    const agents = previewAgents.map((a) => (a.status === "idle" ? a : { ...a, recent: true }));
+    const { rerender } = render(
+      <AgentList agents={agents} selectedKey={null} filter="all" onFilterChange={onFilterChange} onSelectAgent={vi.fn()} onNewAgent={vi.fn()} onReorder={vi.fn()} />,
+    );
+    const recentCount = agents.filter((a) => a.recent).length;
+    fireEvent.click(screen.getByRole("tab", { name: `Recent ${recentCount}` }));
+    expect(onFilterChange).toHaveBeenCalledWith("recent");
+
+    rerender(
+      <AgentList agents={agents} selectedKey={null} filter="recent" onFilterChange={onFilterChange} onSelectAgent={vi.fn()} onNewAgent={vi.fn()} onReorder={vi.fn()} />,
+    );
+    expect(screen.getByText("iptv-2a")).toBeInTheDocument();
+    expect(screen.queryByText("serbest")).not.toBeInTheDocument();
+    expect(screen.getByText("WORKING")).toBeInTheDocument();
+  });
+
   it("selecting a card calls onSelectAgent with its key", () => {
     const onSelectAgent = vi.fn();
     render(

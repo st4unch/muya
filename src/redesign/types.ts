@@ -53,6 +53,8 @@ export interface AgentVM {
    *  the composer and header offer: text typed into a shell runs as a command, and
    *  "/compact" or a permission-mode switch mean nothing there. */
   agentRunning: boolean;
+  /** Active in the last 6 hours (or working/waiting now): the list's "Recent" filter. */
+  recent?: boolean;
 }
 
 export interface ChangeVM {

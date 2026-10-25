@@ -19,6 +19,8 @@ export interface AgentTab {
   sshServerId?: string;
   isClaude?: boolean;
   agent?: "claude" | "opencode";
+  /** The Claude session running in it, once known (its transcript time seeds "Recent"). */
+  sessionId?: string;
 }
 
 export interface StatusStamp {

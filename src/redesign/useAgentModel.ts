@@ -6,7 +6,9 @@
 // Status-change timestamps ("waiting for 1m") are recorded here, on the transition.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import type { ScreenMode, ScreenState } from "../lib/screenState";
+import { isRecent, readLastActive, touchActive, writeLastActive, type LastActive } from "./recentActivity";
 import type { AgentVM } from "./types";
 import {
   buildAgents,
@@ -63,10 +65,30 @@ export function useAgentModel(args: {
   const screensRef = useRef(screens);
   screensRef.current = screens;
   const lastModesRef = useRef<Record<string, ScreenMode | undefined>>({});
+  const lastActiveRef = useRef<LastActive>(readLastActive());
+  /** Claude transcript times by session id, read once at launch (seeds "Recent"). */
+  const [transcriptTimes, setTranscriptTimes] = useState<Record<string, number>>({});
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    invoke<{ sessionId: string; lastModified: number }[]>("list_session_history")
+      .then((list) => {
+        if (cancelled || !Array.isArray(list)) return;
+        const byId: Record<string, number> = {};
+        for (const s of list) if (s?.sessionId && typeof s.lastModified === "number") byId[s.sessionId] = s.lastModified;
+        setTranscriptTimes(byId);
+      })
+      .catch(() => {
+        /* no history — Recent still learns from working/waiting */
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const reportSessionStatus = useCallback((byKey: Record<string, SessionStatus | undefined>) => {
@@ -90,8 +112,23 @@ export function useAgentModel(args: {
       stampsRef.current = next;
       built = buildAgents({ ...input, stamps: next });
     }
-    return built;
-  }, [tabs, sessionStatus, screens, liveCwds, branchByCwd, answered, now]);
+    const seeds: LastActive = {};
+    for (const t of tabs) {
+      const at = t.sessionId ? transcriptTimes[t.sessionId] : undefined;
+      if (at) seeds[t.key] = at;
+    }
+    lastActiveRef.current = touchActive(lastActiveRef.current, built, now, seeds);
+    const lastActive = lastActiveRef.current;
+    return built.map((a) => ({ ...a, recent: isRecent(a.status, lastActive[a.key], now) }));
+  }, [tabs, sessionStatus, screens, liveCwds, branchByCwd, answered, now, transcriptTimes]);
+
+  // Keep "last active" across launches; written only when the map actually changed.
+  const savedLastActiveRef = useRef<LastActive | null>(null);
+  useEffect(() => {
+    if (savedLastActiveRef.current === lastActiveRef.current) return;
+    savedLastActiveRef.current = lastActiveRef.current;
+    writeLastActive(lastActiveRef.current);
+  }, [agents]);
 
   // Persist the wait clocks. A stored stamp is dropped only after this page has seen
   // that agent WAITING and then not waiting — before its first parse it merely looks idle.

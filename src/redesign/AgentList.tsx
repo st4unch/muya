@@ -10,7 +10,7 @@ import { InlineRename } from "./InlineRename";
 import { ChevronDownIcon, SplitPaneIcon } from "./icons";
 import type { AgentStatus, AgentVM } from "./types";
 
-export type AgentFilter = "all" | "waiting" | "working";
+export type AgentFilter = "all" | "waiting" | "working" | "recent";
 
 export interface AgentListProps {
   agents: AgentVM[];
@@ -59,8 +59,9 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
 
   const waitingCount = agents.filter((a) => a.status === "waiting").length;
   const workingCount = agents.filter((a) => a.status === "working").length;
+  const recentCount = agents.filter((a) => a.recent).length;
 
-  const matches = (a: AgentVM) => filter === "all" || a.status === filter;
+  const matches = (a: AgentVM) => filter === "all" || (filter === "recent" ? !!a.recent : a.status === filter);
   // Grouped terminals are listed under their group, not again in a status section.
   const grouped = new Set(splitGroups.flatMap((g) => g.keys));
   const byKey = new Map(agents.map((a) => [a.key, a]));
@@ -231,6 +232,7 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
           ["all", "All"],
           ["waiting", `Waiting ${waitingCount}`],
           ["working", `Working ${workingCount}`],
+          ["recent", `Recent ${recentCount}`],
         ] as const).map(([value, label]) => {
           const active = filter === value;
           return (
@@ -249,6 +251,9 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
                 background: active ? "var(--bg-segment-active)" : "transparent",
                 color: active ? "var(--text-strong)" : "var(--text-tertiary)",
                 fontSize: 12,
+                padding: "0 4px",
+                minWidth: 0,
+                whiteSpace: "nowrap",
                 boxShadow: active ? "var(--shadow-segment-active)" : undefined,
               }}
             >
