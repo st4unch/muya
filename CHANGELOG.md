@@ -6,6 +6,8 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.1.16] - 2026-10-26
+
 ### Added
 - An agent can open a new session **split next to its own terminal** (`open_session` with `split: true`) instead of in a separate tab.
 
