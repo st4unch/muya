@@ -44,6 +44,9 @@ export interface ControlScreenProps {
   onSelectAgent: (key: string) => void;
   onNewAgent: () => void;
   onReorderAgents: (fromKey: string, toKey: string) => void;
+  /** Drag-to-group (AgentList): a session dropped onto another, or onto a split's header. */
+  onGroupAgents?: (fromKey: string, toKey: string) => void;
+  onGroupInto?: (fromKey: string, groupId: string) => void;
 
   /** null = the selected agent's terminal is shown; set = a file replaces it. */
   openFile: FileVM | null;
@@ -200,6 +203,8 @@ export function ControlScreen(props: ControlScreenProps) {
         onSelectAgent={props.onSelectAgent}
         onNewAgent={props.onNewAgent}
         onReorder={props.onReorderAgents}
+        onGroup={props.onGroupAgents}
+        onGroupInto={props.onGroupInto}
         splitGroups={props.splitGroups}
         onToggleGroup={props.onToggleGroup}
         onSelectGroup={props.onSelectGroup}

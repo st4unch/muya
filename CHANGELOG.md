@@ -6,6 +6,9 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Drag a session onto another to put them side by side.** In the agent list, drop a session onto the middle of another session and the two become a split, shown right away, even when they work in different workspaces. Drop onto a split's header to add a session to it. Dropping between sessions still reorders, and dragging a session out of a split to a spot between other sessions takes it out.
+
 ## [4.1.17] - 2026-10-26
 
 ### Changed

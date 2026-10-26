@@ -63,6 +63,19 @@ export function splitForOpenSession(
   return addToGroup(groups, anchor, newKey, newId);
 }
 
+/** Drag-to-group: `from` was dropped onto `to`. `from` leaves its own group (a group left
+ *  with one dissolves) and joins `to`'s group, or the two start group `newId`. Null when
+ *  nothing would change or `to`'s group is full. */
+export function joinGroup(groups: readonly SplitGroup[], from: string, to: string, newId: string): SplitGroup[] | null {
+  if (from === to) return null;
+  const target = groupOf(groups, to);
+  if (target?.keys.includes(from)) return null;
+  if (target && target.keys.length >= MAX_SPLIT) return null;
+  const without = removeFromGroups(groups, from);
+  // `to`'s group may have been the one `from` left — look it up again.
+  return addToGroup(without, to, from, newId);
+}
+
 /** A pane closed (or its tab closed): the terminal leaves its group; a group left with
  *  one terminal dissolves. */
 export function removeFromGroups(groups: readonly SplitGroup[], key: string): SplitGroup[] {

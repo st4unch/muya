@@ -5,7 +5,7 @@
 // segmented control, and supports HTML5 drag-and-drop reordering + ⌘1–7.
 
 import { AgentKindIcon } from "./AgentKindIcon";
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { InlineRename } from "./InlineRename";
 import { ChevronDownIcon, SplitPaneIcon } from "./icons";
 import type { AgentStatus, AgentVM } from "./types";
@@ -20,6 +20,10 @@ export interface AgentListProps {
   onSelectAgent: (key: string) => void;
   onNewAgent: () => void;
   onReorder: (fromKey: string, toKey: string) => void;
+  /** A session dropped onto the middle of another: group the two into a split. */
+  onGroup?: (fromKey: string, toKey: string) => void;
+  /** A session dropped onto a split's header row: it joins that split. */
+  onGroupInto?: (fromKey: string, groupId: string) => void;
   /** Double-click a session to rename it in place (terminal, Claude, opencode alike). */
   onRenameAgent?: (key: string, name: string) => void;
   /** Right-click a session: the caller opens its actions menu at the pointer. */
@@ -47,15 +51,32 @@ export interface AgentListProps {
 /** Past this many sessions every row is one line, so a long list stays scannable. */
 export const COMPACT_AFTER = 20;
 
+/** Where a drag would land: between rows (reorder) or onto a row (group into a split). */
+export type DropMode = "reorder" | "group";
+
+/** The middle half of a row groups, its top and bottom quarters reorder. */
+export function dropModeAt(clientY: number, rect: { top: number; height: number }): DropMode {
+  const y = clientY - rect.top;
+  return y > rect.height * 0.25 && y < rect.height * 0.75 ? "group" : "reorder";
+}
+
+/** The outline a row shows while something is dragged over it. */
+export function dropStyle(mode: DropMode | null): CSSProperties {
+  if (mode === "reorder") return { outline: "2px dashed var(--accent)", outlineOffset: -2 };
+  if (mode === "group") return { outline: "2px solid var(--accent)", outlineOffset: -2, background: "var(--bg-selected)" };
+  return {};
+}
+
 const GROUPS: { status: AgentStatus; label: string; color: string }[] = [
   { status: "waiting", label: "WAITING FOR YOU", color: "var(--warning-label)" },
   { status: "working", label: "WORKING", color: "var(--success)" },
   { status: "idle", label: "IDLE", color: "var(--text-muted)" },
 ];
 
-export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelectAgent, onNewAgent, onReorder, width, resizeHandle, filesSection, filesFill = false, onRenameAgent, onAgentContextMenu, onCloseAgent, pinnedKeys, splitGroups = [], onToggleGroup, onSelectGroup }: AgentListProps) {
+export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelectAgent, onNewAgent, onReorder, onGroup, onGroupInto, width, resizeHandle, filesSection, filesFill = false, onRenameAgent, onAgentContextMenu, onCloseAgent, pinnedKeys, splitGroups = [], onToggleGroup, onSelectGroup }: AgentListProps) {
   const dragKeyRef = useRef<string | null>(null);
-  const [dragOverKey, setDragOverKey] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState<{ key: string; mode: DropMode } | null>(null);
+  const overMode = (key: string): DropMode | null => (dragOver?.key === key ? dragOver.mode : null);
 
   const waitingCount = agents.filter((a) => a.status === "waiting").length;
   const workingCount = agents.filter((a) => a.status === "working").length;
@@ -110,25 +131,51 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
       onDragStart: () => {
         dragKeyRef.current = key;
       },
-      onDragOver: (e: React.DragEvent) => {
+      onDragOver: (e: React.DragEvent<HTMLElement>) => {
         e.preventDefault();
-        setDragOverKey(key);
+        const mode = onGroup && dragKeyRef.current !== key ? dropModeAt(e.clientY, e.currentTarget.getBoundingClientRect()) : "reorder";
+        setDragOver((d) => (d?.key === key && d.mode === mode ? d : { key, mode }));
       },
       onDragLeave: (e: React.DragEvent<HTMLElement>) => {
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
-          setDragOverKey((k) => (k === key ? null : k));
+          setDragOver((d) => (d?.key === key ? null : d));
         }
       },
-      onDrop: (e: React.DragEvent) => {
+      onDrop: (e: React.DragEvent<HTMLElement>) => {
         e.preventDefault();
-        setDragOverKey(null);
+        setDragOver(null);
         const from = dragKeyRef.current;
         dragKeyRef.current = null;
-        if (from && from !== key) onReorder(from, key);
+        if (!from || from === key) return;
+        if (onGroup && dropModeAt(e.clientY, e.currentTarget.getBoundingClientRect()) === "group") onGroup(from, key);
+        else onReorder(from, key);
       },
       onDragEnd: () => {
         dragKeyRef.current = null;
-        setDragOverKey(null);
+        setDragOver(null);
+      },
+    };
+  }
+
+  /** A split's header row only takes drops that join the split. */
+  function groupDropProps(groupId: string, keys: string[]) {
+    const id = `group:${groupId}`;
+    if (!onGroupInto) return {};
+    return {
+      onDragOver: (e: React.DragEvent) => {
+        if (!dragKeyRef.current || keys.includes(dragKeyRef.current)) return;
+        e.preventDefault();
+        setDragOver((d) => (d?.key === id ? d : { key: id, mode: "group" }));
+      },
+      onDragLeave: (e: React.DragEvent<HTMLElement>) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragOver((d) => (d?.key === id ? null : d));
+      },
+      onDrop: (e: React.DragEvent) => {
+        e.preventDefault();
+        setDragOver(null);
+        const from = dragKeyRef.current;
+        dragKeyRef.current = null;
+        if (from && !keys.includes(from)) onGroupInto(from, groupId);
       },
     };
   }
@@ -175,7 +222,7 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
                     />
                   </div>
                 ) : agent.status === "idle" || compact ? (
-                  <IdleRow key={agent.key} agent={agent} selected={compact && agent.key === selectedKey} closable={closable} onSelect={() => onSelectAgent(agent.key)} dragOver={dragOverKey === agent.key} dragProps={{ ...dragProps(agent.key), ...rowExtras(agent.key) }} />
+                  <IdleRow key={agent.key} agent={agent} selected={compact && agent.key === selectedKey} closable={closable} onSelect={() => onSelectAgent(agent.key)} dragOver={overMode(agent.key)} dragProps={{ ...dragProps(agent.key), ...rowExtras(agent.key) }} />
                 ) : (
                   <AgentCard
                     key={agent.key}
@@ -183,7 +230,7 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
                     selected={agent.key === selectedKey}
                     closable={closable}
                     onSelect={() => onSelectAgent(agent.key)}
-                    dragOver={dragOverKey === agent.key}
+                    dragOver={overMode(agent.key)}
                     dragProps={{ ...dragProps(agent.key), ...rowExtras(agent.key) }}
                   />
                   );
@@ -286,6 +333,8 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
                   selected={!!selectedKey && g.keys.includes(selectedKey)}
                   onToggle={() => onToggleGroup?.(g.id)}
                   onSelect={() => onSelectGroup?.(g.id)}
+                  dragOver={overMode(`group:${g.id}`)}
+                  dropProps={groupDropProps(g.id, g.keys)}
                 />
                 {!g.collapsed && (
                   <div role="group" aria-label={`${g.members[0].name} split`} style={{ display: "flex", flexDirection: "column", gap: 4, paddingLeft: 14, marginLeft: 10, borderLeft: "1px solid var(--border)" }}>
@@ -316,7 +365,7 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
 
       <div style={{ padding: "10px 16px", borderTop: "1px solid var(--border)", fontSize: 12, color: "var(--text-muted)", display: "flex", flexDirection: "column", gap: 4 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-          <span>Drag to reorder</span>
+          <span>Drag to reorder · onto a session to split</span>
           <span style={{ fontFamily: "var(--font-mono)" }}>⌘1–9</span>
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
@@ -334,7 +383,7 @@ interface CardProps {
   /** Leave room for the × in the top-right corner. */
   closable?: boolean;
   onSelect: () => void;
-  dragOver: boolean;
+  dragOver: DropMode | null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   dragProps: any;
 }
@@ -356,9 +405,8 @@ function AgentCard({ agent, selected, closable, onSelect, dragOver, dragProps }:
         padding: closable ? "10px 30px 10px 12px" : "10px 12px",
         borderRadius: 10,
         border,
-        outlineOffset: dragOver ? -2 : undefined,
-        outline: dragOver ? "2px dashed var(--accent)" : undefined,
         background,
+        ...dropStyle(dragOver),
         color: "var(--text)",
         display: "flex",
         flexDirection: "column",
@@ -384,7 +432,7 @@ function AgentCard({ agent, selected, closable, onSelect, dragOver, dragProps }:
 }
 
 /** One-line row: idle sessions, and every session once the list is compact. */
-function IdleRow({ agent, selected, closable, onSelect, dragOver, dragProps }: { agent: AgentVM; selected?: boolean; closable?: boolean; onSelect: () => void; dragOver: boolean; dragProps: CardProps["dragProps"] }) {
+function IdleRow({ agent, selected, closable, onSelect, dragOver, dragProps }: { agent: AgentVM; selected?: boolean; closable?: boolean; onSelect: () => void; dragOver: DropMode | null; dragProps: CardProps["dragProps"] }) {
   const waiting = agent.status === "waiting";
   const idle = agent.status === "idle";
   return (
@@ -400,9 +448,8 @@ function IdleRow({ agent, selected, closable, onSelect, dragOver, dragProps }: {
         padding: closable ? "8px 30px 8px 12px" : "8px 12px",
         borderRadius: 8,
         border: waiting ? "1px solid var(--warning-border)" : selected ? "1px solid var(--border-selected)" : "1px solid transparent",
-        outline: dragOver ? "2px dashed var(--accent)" : undefined,
-        outlineOffset: dragOver ? -2 : undefined,
         background: waiting ? "var(--warning-bg)" : selected ? "var(--bg-selected)" : "transparent",
+        ...dropStyle(dragOver),
         color: "var(--text)",
         display: "flex",
         alignItems: "center",
@@ -427,12 +474,13 @@ function IdleRow({ agent, selected, closable, onSelect, dragOver, dragProps }: {
 
 /** One split group in the list: chevron (expand / collapse), the split icon, the first
  *  terminal's name and the pane count; its dot is the most urgent member status. */
-function GroupRow({ members, collapsed, selected, onToggle, onSelect }: { members: AgentVM[]; collapsed: boolean; selected: boolean; onToggle: () => void; onSelect: () => void }) {
+function GroupRow({ members, collapsed, selected, onToggle, onSelect, dragOver = null, dropProps }: { members: AgentVM[]; collapsed: boolean; selected: boolean; onToggle: () => void; onSelect: () => void; dragOver?: DropMode | null; dropProps?: Record<string, unknown> }) {
   const waiting = members.some((a) => a.status === "waiting");
   const working = members.some((a) => a.status === "working");
   const dot = waiting ? "var(--warning)" : working ? "var(--success)" : "var(--text-faint)";
   return (
     <div
+      {...dropProps}
       style={{
         display: "flex",
         alignItems: "center",
@@ -440,6 +488,7 @@ function GroupRow({ members, collapsed, selected, onToggle, onSelect }: { member
         borderRadius: 8,
         border: selected ? "1px solid var(--border-selected)" : "1px solid transparent",
         background: selected ? "var(--bg-selected)" : "transparent",
+        ...dropStyle(dragOver),
       }}
     >
       <button

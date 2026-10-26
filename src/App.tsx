@@ -4,7 +4,7 @@ import { pickNextActiveKey, newSshTabKey, addSshSession, canResumeTab, resumeCom
 import { loadResumeOnLaunch } from "./lib/startup";
 import { terminalIsVisible } from "./lib/terminalVisibility";
 import { appModalOpen } from "./lib/modalOpen";
-import { addToGroup, asSplitGroups, canSplit, groupOf, neighbourAfterClose, removeFromGroups, resolveGroups, splitForOpenSession, type SplitGroup } from "./lib/controlSplit";
+import { addToGroup, asSplitGroups, canSplit, groupOf, joinGroup, neighbourAfterClose, removeFromGroups, resolveGroups, splitForOpenSession, type SplitGroup } from "./lib/controlSplit";
 import type { SplitPaneVM } from "./redesign/SplitArea";
 import { belongsTo, inScope, workspaceOf, workspaceShortcut } from "./lib/workspaceScope";
 import { asNotifications, detectEvents, MAX_NOTIFICATIONS, type AgentNotification } from "./lib/agentNotifications";
@@ -2100,6 +2100,23 @@ export default function App() {
     if (!activeTerminalKey || !g.keys.includes(activeTerminalKey)) activateTerminal(g.keys[0]);
     else setControlMode("agents");
   };
+  // Drag-to-group (PRD drag-to-group): `from` dropped onto `to` joins its split, which
+  // then shows at once with `to` focused.
+  const groupAgents = (from: string, to: string) => {
+    const next = joinGroup(splitGroups, from, to, `split-group-${Date.now().toString(36)}`);
+    if (!next) return;
+    setSplitGroups(next);
+    activateTerminal(to);
+  };
+  const groupInto = (from: string, groupId: string) => {
+    const g = splitGroups.find((x) => x.id === groupId);
+    if (g) groupAgents(from, g.keys[0]);
+  };
+  // Dragging a split member between ungrouped sessions takes it out of its split.
+  const reorderOrUngroup = (from: string, to: string) => {
+    if (groupOf(splitGroups, from) && !groupOf(splitGroups, to)) setSplitGroups(removeFromGroups(splitGroups, from));
+    reorderAgents(from, to);
+  };
   const toggleSplitGroup = (id: string) =>
     setCollapsedGroups(collapsedGroups.includes(id) ? collapsedGroups.filter((x) => x !== id) : [...collapsedGroups, id]);
   const splitPaneVMs: SplitPaneVM[] = splitPanes.map((k) => ({ key: k, agent: agentVMs.find((a) => a.key === k) ?? null }));
@@ -2658,7 +2675,9 @@ export default function App() {
             onAgentFilterChange={setAgentFilter}
             onSelectAgent={selectAgent}
             onNewAgent={() => setNewAgentOpen(true)}
-            onReorderAgents={reorderAgents}
+            onReorderAgents={reorderOrUngroup}
+            onGroupAgents={groupAgents}
+            onGroupInto={groupInto}
             mode={controlMode}
             splitPanes={splitPaneVMs}
             splitGroups={splitGroups.map((g) => ({ ...g, collapsed: collapsedGroups.includes(g.id) }))}

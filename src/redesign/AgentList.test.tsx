@@ -1,6 +1,6 @@
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { render, screen, fireEvent, createEvent, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { AgentList, COMPACT_AFTER } from "./AgentList";
+import { AgentList, COMPACT_AFTER, dropModeAt } from "./AgentList";
 import { previewAgents } from "./previewFixture";
 
 describe("AgentList", () => {
@@ -69,6 +69,52 @@ describe("AgentList", () => {
     fireEvent.dragOver(to);
     fireEvent.drop(to);
     expect(onReorder).toHaveBeenCalledWith("muya-all", "opencode-review");
+  });
+
+  it("dropModeAt: the middle half groups, the edges reorder", () => {
+    const rect = { top: 100, height: 40 };
+    expect(dropModeAt(120, rect)).toBe("group");
+    expect(dropModeAt(105, rect)).toBe("reorder");
+    expect(dropModeAt(135, rect)).toBe("reorder");
+  });
+
+  it("a drop on the middle of a row groups instead of reordering; an edge drop still reorders", () => {
+    const onReorder = vi.fn();
+    const onGroup = vi.fn();
+    render(
+      <AgentList agents={previewAgents} selectedKey={null} filter="all" onFilterChange={vi.fn()} onSelectAgent={vi.fn()} onNewAgent={vi.fn()} onReorder={onReorder} onGroup={onGroup} />,
+    );
+    const from = screen.getByText("muya-all").closest("button")!;
+    const to = screen.getByText("opencode-review").closest("button")!;
+    to.getBoundingClientRect = () => ({ top: 0, height: 40, bottom: 40, left: 0, right: 200, width: 200, x: 0, y: 0, toJSON: () => ({}) });
+    // jsdom's drag events ignore clientY in their init, so set it on the event.
+    const at = (make: typeof createEvent.drop, y: number) => {
+      const ev = make(to);
+      Object.defineProperty(ev, "clientY", { value: y });
+      fireEvent(to, ev);
+    };
+    fireEvent.dragStart(from);
+    at(createEvent.dragOver, 20);
+    at(createEvent.drop, 20);
+    expect(onGroup).toHaveBeenCalledWith("muya-all", "opencode-review");
+    expect(onReorder).not.toHaveBeenCalled();
+    fireEvent.dragStart(from);
+    at(createEvent.drop, 2);
+    expect(onReorder).toHaveBeenCalledWith("muya-all", "opencode-review");
+  });
+
+  it("a drop on a split's header joins that split", () => {
+    const onGroupInto = vi.fn();
+    const [a, b, c] = previewAgents;
+    render(
+      <AgentList agents={previewAgents} selectedKey={null} filter="all" onFilterChange={vi.fn()} onSelectAgent={vi.fn()} onNewAgent={vi.fn()} onReorder={vi.fn()} onGroupInto={onGroupInto} splitGroups={[{ id: "g1", keys: [a.key, b.key], collapsed: false }]} />,
+    );
+    const header = screen.getByTitle("Show this split").parentElement!;
+    const from = screen.getAllByText(c.name)[0].closest("button")!;
+    fireEvent.dragStart(from);
+    fireEvent.dragOver(header);
+    fireEvent.drop(header);
+    expect(onGroupInto).toHaveBeenCalledWith(c.key, "g1");
   });
 
   it("⌘1 selects the first agent in list order", () => {

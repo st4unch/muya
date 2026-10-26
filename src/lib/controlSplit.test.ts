@@ -1,6 +1,6 @@
 // Created by Claude — Classification: INTERNAL
 import { describe, expect, it } from "vitest";
-import { addToGroup, asSplitGroups, canSplit, groupOf, MAX_SPLIT, neighbourAfterClose, removeFromGroups, resolveGroups, splitForOpenSession, splitLayout, type SplitGroup } from "./controlSplit";
+import { addToGroup, asSplitGroups, canSplit, groupOf, joinGroup, MAX_SPLIT, neighbourAfterClose, removeFromGroups, resolveGroups, splitForOpenSession, splitLayout, type SplitGroup } from "./controlSplit";
 
 describe("splitLayout", () => {
   it.each([
@@ -98,5 +98,24 @@ describe("splitForOpenSession", () => {
     expect(splitForOpenSession([], "sess-1", ids, new Set(["tab-b"]), "aopen:1", "g1")).toBeNull();
     const full: SplitGroup[] = [{ id: "g0", keys: ["tab-a", ...Array.from({ length: MAX_SPLIT - 1 }, (_, i) => `t${i}`)] }];
     expect(splitForOpenSession(full, "sess-1", ids, open, "aopen:1", "g1")).toBeNull();
+  });
+});
+
+describe("joinGroup", () => {
+  const g = (id: string, ...keys: string[]): SplitGroup => ({ id, keys });
+  it("pairs two ungrouped sessions in a new group, target first", () => {
+    expect(joinGroup([], "b", "a", "n")).toEqual([g("n", "a", "b")]);
+  });
+  it("joins the target's existing group", () => {
+    expect(joinGroup([g("x", "a", "c")], "b", "a", "n")).toEqual([g("x", "a", "c", "b")]);
+  });
+  it("moves a session between groups and dissolves the group it leaves", () => {
+    expect(joinGroup([g("x", "a", "b"), g("y", "c", "d")], "b", "c", "n")).toEqual([g("y", "c", "d", "b")]);
+  });
+  it("refuses a full target group, the same group and itself", () => {
+    const full = g("x", ...Array.from({ length: MAX_SPLIT }, (_, i) => `k${i}`));
+    expect(joinGroup([full], "z", "k0", "n")).toBeNull();
+    expect(joinGroup([g("x", "a", "b")], "b", "a", "n")).toBeNull();
+    expect(joinGroup([], "a", "a", "n")).toBeNull();
   });
 });
