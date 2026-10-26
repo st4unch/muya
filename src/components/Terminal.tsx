@@ -12,6 +12,7 @@ import { stepTerminalFont, useTerminalPrefs } from "../lib/terminalPrefs";
 import { parseClaudeScreen, readScreenLines, type ScreenState } from "../lib/screenState";
 import { isMuyaChannelWarning } from "../lib/channelPrompt";
 import { applyLaunchFlags } from "../lib/statusline";
+import { AGENT_BASE_COMMAND } from "../lib/agent";
 import { appModalOpen } from "../lib/modalOpen";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -436,7 +437,7 @@ function Terminal({
       // Cmd+Shift+C → launch claude session
       if (e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey && e.type === "keydown" && e.key.toLowerCase() === "c" && ptyId) {
         const id = ptyId;
-        void applyLaunchFlags("claude --dangerously-skip-permissions")
+        void applyLaunchFlags(AGENT_BASE_COMMAND.claude)
           .then((cmd) => invoke("pty_write", { id, data: `${cmd}\r` }))
           .catch(() => {});
         e.preventDefault();

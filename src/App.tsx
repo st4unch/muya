@@ -4,7 +4,7 @@ import { pickNextActiveKey, newSshTabKey, addSshSession, canResumeTab, resumeCom
 import { loadResumeOnLaunch } from "./lib/startup";
 import { terminalIsVisible } from "./lib/terminalVisibility";
 import { appModalOpen } from "./lib/modalOpen";
-import { addToGroup, asSplitGroups, canSplit, groupOf, neighbourAfterClose, removeFromGroups, resolveGroups, type SplitGroup } from "./lib/controlSplit";
+import { addToGroup, asSplitGroups, canSplit, groupOf, neighbourAfterClose, removeFromGroups, resolveGroups, splitForOpenSession, type SplitGroup } from "./lib/controlSplit";
 import type { SplitPaneVM } from "./redesign/SplitArea";
 import { belongsTo, inScope, workspaceOf, workspaceShortcut } from "./lib/workspaceScope";
 import { asNotifications, detectEvents, MAX_NOTIFICATIONS, type AgentNotification } from "./lib/agentNotifications";
@@ -720,7 +720,7 @@ export default function App() {
   };
 
   /** Select an agent and show it. If the tab was restored from a previous run, resume
-   *  ITS OWN Claude session (with --dangerously-skip-permissions) instead of leaving an
+   *  ITS OWN Claude session (in auto permission mode) instead of leaving an
    *  empty shell. Runs once per tab — the flag clears after the command is sent. */
   const activateTerminal = (key: string) => {
     pickTab(key);
@@ -1147,10 +1147,10 @@ export default function App() {
   // command-building `launchAgent` uses for the "+ New Agent" button (buildAgentCommand
   // + singleQuote) so an MCP-triggered open and a UI-clicked one behave identically.
   useEffect(() => {
-    const un = listen<{ name: string; cwd?: string; initialMessage?: string; agent?: AgentKind }>(
+    const un = listen<{ name: string; cwd?: string; initialMessage?: string; agent?: AgentKind; splitWith?: string | null }>(
       "muya://open-agent-session",
       (e) => {
-        const { name, cwd, initialMessage, agent } = e.payload;
+        const { name, cwd, initialMessage, agent, splitWith } = e.payload;
         const ws = cwd || selectedRoot || workspaces[0];
         if (!ws) return; // no workspace to run in — nothing sensible to open
         // Only Claude can be told its own name on the command line; opencode has no
@@ -1170,6 +1170,14 @@ export default function App() {
         // closeTerminal uses the prefix to know it must release the broker's ownership
         // registry entry (PRD close-session) when this tab closes, by any means.
         const key = `aopen:${Date.now()}:${Math.random().toString(36).slice(2, 7)}`;
+        // split: true → join the caller's terminal's split group; otherwise (or when that
+        // can't be done) a plain tab, as before.
+        if (splitWith) {
+          const terminals = new Set(openTerminalsRef.current.filter((t) => t.kind === "terminal").map((t) => t.key));
+          const { groups, set } = splitGroupsApiRef.current;
+          const next = splitForOpenSession(groups, splitWith, sessionIdToKeyRef.current, terminals, key, `split-group-${key}`);
+          if (next) set(next);
+        }
         openTerminal({ key, name, kind: "terminal", cwd: ws, initialCommand, autoAcceptTrust: true });
         showControl();
       },
@@ -1334,7 +1342,7 @@ export default function App() {
       name: cwd?.split("/").pop() || "Claude",
       kind: "terminal",
       cwd,
-      initialCommand: "claude --dangerously-skip-permissions",
+      initialCommand: AGENT_BASE_COMMAND.claude,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -2051,6 +2059,9 @@ export default function App() {
     () => resolveGroups(rawSplitGroups, new Set(openTerminals.filter((t) => t.kind === "terminal").map((t) => t.key))),
     [rawSplitGroups, openTerminals],
   );
+  // The open_session listener (registered once, above) reads the live groups through this.
+  const splitGroupsApiRef = useRef({ groups: splitGroups, set: setSplitGroups });
+  splitGroupsApiRef.current = { groups: splitGroups, set: setSplitGroups };
   const activeGroup = groupOf(splitGroups, activeTerminalKey);
   const splitPanes = activeGroup?.keys ?? [];
   const splitFocusKey = activeGroup ? activeTerminalKey : null;
@@ -2447,7 +2458,7 @@ export default function App() {
           name: cwd.split("/").pop() ?? "Claude",
           kind: "terminal",
           cwd,
-          initialCommand: "claude --dangerously-skip-permissions",
+          initialCommand: AGENT_BASE_COMMAND.claude,
         });
         showControl();
       }}

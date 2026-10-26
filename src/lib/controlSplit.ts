@@ -47,6 +47,22 @@ export function addToGroup(groups: readonly SplitGroup[], source: string, clone:
   return groups.map((x) => (x === g ? { ...x, keys: [...x.keys, clone] } : x));
 }
 
+/** `open_session(split: true)`: the groups with `newKey` joined to the caller's terminal
+ *  (`splitWith` = the caller's Claude session id), or null — unknown id, its tab not an
+ *  open terminal, or its group full — in which case the session opens as a plain tab. */
+export function splitForOpenSession(
+  groups: readonly SplitGroup[],
+  splitWith: string | null | undefined,
+  sessionIdToKey: Readonly<Record<string, string>>,
+  openTerminalKeys: ReadonlySet<string>,
+  newKey: string,
+  newId: string,
+): SplitGroup[] | null {
+  const anchor = splitWith ? sessionIdToKey[splitWith] : undefined;
+  if (!anchor || !openTerminalKeys.has(anchor)) return null;
+  return addToGroup(groups, anchor, newKey, newId);
+}
+
 /** A pane closed (or its tab closed): the terminal leaves its group; a group left with
  *  one terminal dissolves. */
 export function removeFromGroups(groups: readonly SplitGroup[], key: string): SplitGroup[] {

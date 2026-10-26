@@ -2,9 +2,9 @@ import { describe, it, expect } from "vitest";
 import { buildAgentCommand, singleQuote, detectAgent, buildResumeCommand, tabAgent, AGENT_BASE_COMMAND } from "./agent";
 
 describe("buildAgentCommand", () => {
-  it("defaults to claude --dangerously-skip-permissions", () => {
+  it("defaults to claude --permission-mode auto", () => {
     expect(buildAgentCommand({ command: "", prompt: "", files: [] })).toBe(
-      "claude --dangerously-skip-permissions"
+      "claude --permission-mode auto"
     );
   });
 
@@ -69,7 +69,7 @@ describe("buildResumeCommand", () => {
   it("uses each CLI's own resume flag", () => {
     // The flags are not interchangeable — each CLI rejects the other's.
     expect(buildResumeCommand("claude", "abc")).toBe(
-      "claude --resume 'abc' --dangerously-skip-permissions"
+      "claude --resume 'abc' --permission-mode auto"
     );
     expect(buildResumeCommand("opencode", "ses_1")).toBe("opencode --session 'ses_1' --auto");
   });
@@ -123,7 +123,7 @@ describe("buildAgentCommand — per-agent prompt placement", () => {
       prompt: "fix the migration",
       files: [],
     });
-    expect(cmd).toBe("claude --dangerously-skip-permissions 'fix the migration'");
+    expect(cmd).toBe("claude --permission-mode auto 'fix the migration'");
     expect(cmd).not.toContain("--prompt");
   });
 

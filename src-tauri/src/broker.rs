@@ -339,6 +339,10 @@ struct BrokerReq {
     /// "opencode". Absent means Claude, so every existing caller keeps working.
     #[serde(default)]
     agent: Option<String>,
+    /// `open_session`: the caller's own session id — open the new session as a split
+    /// pane next to that session's terminal. Absent means a normal tab.
+    #[serde(rename = "splitWith", default)]
+    split_with: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1086,7 +1090,7 @@ fn session_pairs(sessions: &[crate::agents::AgentSession]) -> Vec<(String, Strin
 
 /// `open_session` (PRD `agent-session-open`): the local analog of `ssh_open` — no
 /// server, no credentials, no session-id minting. Just tells the app to open a new
-/// terminal tab running `claude --dangerously-skip-permissions --name <name>`
+/// terminal tab running `claude --permission-mode auto --name <name>`
 /// (optionally with an initial prompt). The new Claude process registers itself
 /// with `claude agents --json` on its own — Muya's `list_sessions`/`send_to_session`
 /// (backed by that same registry, see `running_sessions` above) can address it by
@@ -1104,6 +1108,7 @@ fn build_open_session_payload(req: &BrokerReq) -> Result<(String, serde_json::Va
         "cwd": req.cwd,
         "initialMessage": req.initial_message,
         "agent": agent,
+        "splitWith": req.split_with.as_deref().map(str::trim).filter(|s| !s.is_empty()),
     });
     Ok((name, payload))
 }
@@ -2094,6 +2099,21 @@ mod tests {
         let (_, payload) = build_open_session_payload(&req).unwrap();
         assert!(payload["cwd"].is_null());
         assert!(payload["initialMessage"].is_null());
+        assert!(payload["splitWith"].is_null());
+    }
+
+    #[test]
+    fn open_session_payload_carries_split_anchor_and_drops_a_blank_one() {
+        let req = BrokerReq {
+            op: "open_session".into(),
+            name: Some("worker".into()),
+            split_with: Some(" abc-123 ".into()),
+            ..Default::default()
+        };
+        let (_, payload) = build_open_session_payload(&req).unwrap();
+        assert_eq!(payload["splitWith"], "abc-123");
+        let blank = BrokerReq { split_with: Some("  ".into()), ..req };
+        assert!(build_open_session_payload(&blank).unwrap().1["splitWith"].is_null());
     }
 
     #[test]

@@ -4,7 +4,7 @@
 // terminal — otherwise the next ⌘W would kill a running Claude session (L19).
 // Only when no tab of the same kind remains do we fall back to whatever's left.
 
-import { AGENT_BASE_COMMAND, isSafeSessionId, tabAgent, type AgentKind } from "./agent";
+import { AGENT_BASE_COMMAND, CLAUDE_DEFAULT_PERMISSION_FLAG, isSafeSessionId, tabAgent, type AgentKind } from "./agent";
 
 export interface TabLike {
   key: string;
@@ -80,7 +80,7 @@ export function canResumeTab(t: {
  *  home folder). `sessionCwd` — the shell's live folder recorded when the session was
  *  first seen — is where it must resume. Quoted: paths may contain spaces or quotes. */
 export function resumeCommand(t: { sessionId: string; sessionCwd?: string }, quote: (s: string) => string): string {
-  const resume = `claude --resume ${quote(t.sessionId)} --dangerously-skip-permissions`;
+  const resume = `claude --resume ${quote(t.sessionId)} ${CLAUDE_DEFAULT_PERMISSION_FLAG}`;
   return t.sessionCwd ? `cd ${quote(t.sessionCwd)} && ${resume}` : resume;
 }
 
@@ -160,7 +160,7 @@ export function splitClone(
   const key = `split-${opts.id}`;
   const agent = opts.agentRunning ? tabAgent(t) : null;
   if (agent === "claude" && t.sessionId && isSafeSessionId(t.sessionId)) {
-    const fork = `claude --resume ${quote(t.sessionId)} --fork-session --dangerously-skip-permissions`;
+    const fork = `claude --resume ${quote(t.sessionId)} --fork-session ${CLAUDE_DEFAULT_PERMISSION_FLAG}`;
     return {
       key,
       name: `${t.name} (fork)`,

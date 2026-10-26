@@ -22,8 +22,12 @@ export function singleQuote(s: string): string {
  * them in one table is what stops a copy-paste from silently producing a terminal
  * that opens and immediately dies.
  */
+/** How Muya launches/resumes Claude unless the operator picks another mode in New Agent:
+ *  auto mode (a classifier approves safe actions) rather than skipping every check. */
+export const CLAUDE_DEFAULT_PERMISSION_FLAG = "--permission-mode auto";
+
 export const AGENT_BASE_COMMAND: Record<AgentKind, string> = {
-  claude: "claude --dangerously-skip-permissions",
+  claude: `claude ${CLAUDE_DEFAULT_PERMISSION_FLAG}`,
   opencode: "opencode --auto",
 };
 
@@ -55,7 +59,7 @@ export function detectAgent(command: string | undefined | null): AgentKind | nul
 /**
  * Build the initial command for a new agent. Files become `@path` references,
  * combined with the prompt and passed as one quoted positional arg to the base
- * command (default `claude --dangerously-skip-permissions`).
+ * command (default `claude --permission-mode auto`).
  */
 export function buildAgentCommand(spec: AgentCommandSpec): string {
   const refs = spec.files.map((f) => `@${f}`).join(" ");
@@ -85,7 +89,7 @@ export function buildResumeCommand(agent: AgentKind, sessionId: string): string 
   const id = singleQuote(sessionId);
   return agent === "opencode"
     ? `opencode --session ${id} --auto`
-    : `claude --resume ${id} --dangerously-skip-permissions`;
+    : `claude --resume ${id} ${CLAUDE_DEFAULT_PERMISSION_FLAG}`;
 }
 
 /** Session ids land in a shell command, so only plain id characters are accepted. */

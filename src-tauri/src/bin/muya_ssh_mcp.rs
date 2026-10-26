@@ -187,14 +187,15 @@ fn tools_list() -> Value {
             },
             {
                 "name": "open_session",
-                "description": "Open a NEW local agent session as a terminal tab in Muya (the local analog of ssh_open — no server, no credentials) and, optionally, hand it a first message right away. Use this to spin up a session to work on something in parallel, then message it — WITHOUT asking the operator first. The new session runs with --dangerously-skip-permissions, same as Muya's own \"+ New Agent\" button. `agent` picks which CLI to run: \"claude\" (default) or \"opencode\" — use opencode when the user asks for it by name, or to run a second opinion alongside a Claude session. `name` is the session name — for Claude it also becomes the CLI's own --name; opencode has no equivalent flag, so for opencode it names the Muya tab, which is what you address with send_to_session either way. Pass a short, descriptive one. `cwd` defaults to the operator's current workspace when omitted. If you pass `initial_message`, it's given to the new session as its first prompt directly on launch (reliable even before the session is fully up) — prefer this over opening the session and then immediately calling send_to_session, which may not find it yet. For follow-up messages after the session is running, use send_to_session(target: name, deliver: \"muya\") — the new session runs with bypassed permission prompts, and Claude Code's own SendMessage holds messages to a bypass-mode session for the operator's approval unless the sender also bypasses, so deliver:\"muya\" is the reliable path here.",
+                "description": "Open a NEW local agent session as a terminal tab in Muya (the local analog of ssh_open — no server, no credentials) and, optionally, hand it a first message right away. Use this to spin up a session to work on something in parallel, then message it — WITHOUT asking the operator first. The new session runs in Claude Code's auto permission mode (--permission-mode auto: a classifier approves safe actions), same as Muya's own \"+ New Agent\" default. `agent` picks which CLI to run: \"claude\" (default) or \"opencode\" — use opencode when the user asks for it by name, or to run a second opinion alongside a Claude session. `name` is the session name — for Claude it also becomes the CLI's own --name; opencode has no equivalent flag, so for opencode it names the Muya tab, which is what you address with send_to_session either way. Pass a short, descriptive one. `cwd` defaults to the operator's current workspace when omitted. If you pass `initial_message`, it's given to the new session as its first prompt directly on launch (reliable even before the session is fully up) — prefer this over opening the session and then immediately calling send_to_session, which may not find it yet. For follow-up messages after the session is running, use send_to_session(target: name, deliver: \"muya\") — Claude Code's own SendMessage can hold a message to another session for the operator's approval, so deliver:\"muya\" (typed straight into its terminal) is the reliable path here.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "name": { "type": "string", "description": "Name for the new session (used later with send_to_session; also the CLI --name for claude)." },
                         "agent": { "type": "string", "enum": ["claude", "opencode"], "description": "Which agent CLI to launch. Defaults to claude." },
                         "cwd": { "type": "string", "description": "Working directory for the new session. Defaults to the operator's current workspace." },
-                        "initial_message": { "type": "string", "description": "Optional first message/prompt to give the new session immediately on launch." }
+                        "initial_message": { "type": "string", "description": "Optional first message/prompt to give the new session immediately on launch." },
+                        "split": { "type": "boolean", "description": "Open the new session as a split pane next to YOUR OWN terminal (same split group, side by side) instead of a separate tab. Falls back to a normal tab if your terminal can't be found or its split group is full (8 panes)." }
                     },
                     "required": ["name"],
                     "additionalProperties": false
@@ -785,6 +786,13 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
             }
             if let Some(m) = &initial_message {
                 op["initialMessage"] = json!(m);
+            }
+            // The split anchors on the CALLER's own terminal, so the app needs its id.
+            if args.get("split").and_then(Value::as_bool) == Some(true) {
+                let me = own_session_id();
+                if !me.is_empty() {
+                    op["splitWith"] = json!(me);
+                }
             }
             let resp = app_call(&op).map_err(|e| (-32000, e))?;
             if resp.get("ok").and_then(Value::as_bool) == Some(true) {

@@ -24,11 +24,11 @@ describe("NewAgentModal", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("defaults to Claude bypass and forwards the spec on Launch", async () => {
+  it("defaults to Claude auto mode and forwards the spec on Launch", async () => {
     const user = userEvent.setup();
     const { onLaunch } = setup();
     expect(screen.getByRole("tab", { name: "Claude Code" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByLabelText("Permission mode")).toHaveDisplayValue("Bypass permissions");
+    expect(screen.getByLabelText("Permission mode")).toHaveDisplayValue("Auto");
     expect(screen.getByPlaceholderText("/path/to/project")).toHaveValue("/w/proj");
 
     await user.type(screen.getByPlaceholderText("feature/my-task"), "feature/x");
@@ -39,7 +39,7 @@ describe("NewAgentModal", () => {
         type: "claude",
         workspace: "/w/proj",
         branch: "feature/x",
-        command: "claude --dangerously-skip-permissions",
+        command: "claude --permission-mode auto",
         prompt: "",
         files: [],
       }),
@@ -87,7 +87,7 @@ describe("NewAgentModal", () => {
     await user.click(box);
     await user.click(screen.getByRole("button", { name: "Launch agent" }));
     expect(onLaunch).toHaveBeenCalledWith(
-      expect.objectContaining({ command: "claude --dangerously-load-development-channels server:muya-mcp --dangerously-skip-permissions" }),
+      expect.objectContaining({ command: "claude --dangerously-load-development-channels server:muya-mcp --permission-mode auto" }),
     );
   });
 
@@ -139,7 +139,7 @@ describe("NewAgentModal", () => {
     await user.type(screen.getByLabelText("Initial prompt (optional)"), "fix it");
     await user.click(screen.getByRole("button", { name: /Advanced/ }));
     const cmd = screen.getByLabelText("Command that will run");
-    expect(cmd).toHaveValue("claude --dangerously-skip-permissions 'fix it'");
+    expect(cmd).toHaveValue("claude --permission-mode auto 'fix it'");
     fireEvent.change(cmd, { target: { value: "claude agents" } });
     await user.click(screen.getByRole("button", { name: "Launch agent" }));
     expect(onLaunch).toHaveBeenCalledWith(expect.objectContaining({ command: "claude agents", prompt: "", files: [] }));

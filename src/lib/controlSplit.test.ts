@@ -1,6 +1,6 @@
 // Created by Claude — Classification: INTERNAL
 import { describe, expect, it } from "vitest";
-import { addToGroup, asSplitGroups, canSplit, groupOf, MAX_SPLIT, neighbourAfterClose, removeFromGroups, resolveGroups, splitLayout, type SplitGroup } from "./controlSplit";
+import { addToGroup, asSplitGroups, canSplit, groupOf, MAX_SPLIT, neighbourAfterClose, removeFromGroups, resolveGroups, splitForOpenSession, splitLayout, type SplitGroup } from "./controlSplit";
 
 describe("splitLayout", () => {
   it.each([
@@ -81,5 +81,22 @@ describe("asSplitGroups", () => {
   it("keeps well-formed groups only", () => {
     expect(asSplitGroups([{ id: "g", keys: ["a", 1, "b"] }, { id: 2 }, null, "x"])).toEqual([{ id: "g", keys: ["a", "b"] }]);
     expect(asSplitGroups("nope")).toBeNull();
+  });
+});
+
+describe("splitForOpenSession", () => {
+  const ids = { "sess-1": "tab-a" };
+  const open = new Set(["tab-a", "tab-b"]);
+  it("joins the new tab to the caller's terminal, starting or extending its group", () => {
+    expect(splitForOpenSession([], "sess-1", ids, open, "aopen:1", "g1")).toEqual([{ id: "g1", keys: ["tab-a", "aopen:1"] }]);
+    const g: SplitGroup[] = [{ id: "g0", keys: ["tab-b", "tab-a"] }];
+    expect(splitForOpenSession(g, "sess-1", ids, open, "aopen:1", "g1")).toEqual([{ id: "g0", keys: ["tab-b", "tab-a", "aopen:1"] }]);
+  });
+  it("returns null without an id, for an unknown id, a closed tab or a full group", () => {
+    expect(splitForOpenSession([], undefined, ids, open, "aopen:1", "g1")).toBeNull();
+    expect(splitForOpenSession([], "other", ids, open, "aopen:1", "g1")).toBeNull();
+    expect(splitForOpenSession([], "sess-1", ids, new Set(["tab-b"]), "aopen:1", "g1")).toBeNull();
+    const full: SplitGroup[] = [{ id: "g0", keys: ["tab-a", ...Array.from({ length: MAX_SPLIT - 1 }, (_, i) => `t${i}`)] }];
+    expect(splitForOpenSession(full, "sess-1", ids, open, "aopen:1", "g1")).toBeNull();
   });
 });

@@ -125,7 +125,17 @@ function kindOf(tab: AgentTab): AgentVM["kind"] {
 export function deriveMode(tab: AgentTab, screen: ScreenState | undefined, lastMode?: ScreenMode): PermissionMode {
   if (screen?.modeDetected) return screen.mode;
   if (lastMode) return lastMode;
-  return tab.initialCommand?.includes("--dangerously-skip-permissions") ? "bypass" : "default";
+  return modeFromCommand(tab.initialCommand);
+}
+
+/** The permission mode a launch command asks for (before the footer is on screen). */
+export function modeFromCommand(cmd: string | undefined): PermissionMode {
+  if (!cmd) return "default";
+  if (cmd.includes("--dangerously-skip-permissions")) return "bypass";
+  const m = /--permission-mode[ =](\w+)/.exec(cmd)?.[1];
+  if (m === "auto" || m === "acceptEdits" || m === "plan") return m;
+  if (m === "bypassPermissions") return "bypass";
+  return "default";
 }
 
 export function buildAgents(input: AgentModelInput): AgentVM[] {

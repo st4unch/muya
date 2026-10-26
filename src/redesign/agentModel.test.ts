@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  modeFromCommand,
   ANSWERED_GRACE_MS,
   agentIsRunning,
   abbreviateHome,
@@ -197,5 +198,15 @@ describe("relativeTo", () => {
     expect(relativeTo("/r/proj/", "/r/proj/b.md")).toBe("b.md");
     expect(relativeTo("/r/proj", "/r/project-other/x")).toBe("/r/project-other/x");
     expect(relativeTo("", "/x/y")).toBe("/x/y");
+  });
+});
+
+describe("modeFromCommand", () => {
+  it("reads the launch flag before the footer is on screen", () => {
+    expect(modeFromCommand("claude --permission-mode auto")).toBe("auto");
+    expect(modeFromCommand("claude --resume 'x' --permission-mode=plan")).toBe("plan");
+    expect(modeFromCommand("claude --dangerously-skip-permissions")).toBe("bypass");
+    expect(modeFromCommand("claude --permission-mode manual")).toBe("default");
+    expect(modeFromCommand(undefined)).toBe("default");
   });
 });

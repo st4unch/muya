@@ -24,7 +24,7 @@ const TYPES: { value: AgentType; label: string }[] = [
 
 /** Claude permission modes. Flags verified against `claude --help`
  *  (--permission-mode choices: acceptEdits, auto, bypassPermissions, manual, dontAsk, plan;
- *  bypass keeps its long-standing dedicated flag so the default command is unchanged). */
+ *  bypass keeps its dedicated flag; auto is the default, matching AGENT_BASE_COMMAND). */
 export type ClaudeMode = "manual" | "acceptEdits" | "plan" | "auto" | "bypass";
 
 export const CLAUDE_MODES: { value: ClaudeMode; label: string; hint: string; flag: string }[] = [
@@ -108,7 +108,7 @@ export default function NewAgentModal({
   const id = (s: string) => `${uid}-${s}`;
 
   const [type, setType] = useState<AgentType>("claude");
-  const [mode, setMode] = useState<ClaudeMode>("bypass");
+  const [mode, setMode] = useState<ClaudeMode>("auto");
   const [autoApprove, setAutoApprove] = useState(true);
   const [agentsManager, setAgentsManager] = useState(false);
   const [channels, setChannels] = useState(false);

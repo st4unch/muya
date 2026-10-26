@@ -91,12 +91,12 @@ describe("canResumeTab: restore must not depend on the volatile isClaude flag", 
 describe("resumeCommand: resume where the session actually ran", () => {
   it("cds into the recorded session folder first", () => {
     expect(resumeCommand({ sessionId: "abc-123", sessionCwd: "/tmp/muya live's demo" }, singleQuote)).toBe(
-      `cd '/tmp/muya live'\\''s demo' && claude --resume 'abc-123' --dangerously-skip-permissions`,
+      `cd '/tmp/muya live'\\''s demo' && claude --resume 'abc-123' --permission-mode auto`,
     );
   });
   it("falls back to the tab's own folder when none was recorded (older saved tabs)", () => {
     expect(resumeCommand({ sessionId: "abc-123" }, singleQuote)).toBe(
-      "claude --resume 'abc-123' --dangerously-skip-permissions",
+      "claude --resume 'abc-123' --permission-mode auto",
     );
   });
 });
@@ -120,7 +120,7 @@ describe("reopen closed tabs (⌘⇧T)", () => {
   it("a Claude tab resumes its own conversation in its session folder", () => {
     const s = reopenSpec({ key: "claude-1", name: "api", kind: "terminal", cwd: "/p", sessionId: "abc", sessionCwd: "/p/sub", initialCommand: "claude" }, q, 7);
     expect(s.key).toBe("reopen-7");
-    expect(s.initialCommand).toBe("cd '/p/sub' && claude --resume 'abc' --dangerously-skip-permissions");
+    expect(s.initialCommand).toBe("cd '/p/sub' && claude --resume 'abc' --permission-mode auto");
     expect(s.sessionId).toBe("abc");
     expect(s.cwd).toBe("/p");
   });
@@ -147,19 +147,19 @@ describe("splitClone", () => {
       key: `split-${id}`,
       name: "api (fork)",
       cwd: "/w/api",
-      initialCommand: "cd '/w/api' && claude --resume 'abc-1' --fork-session --dangerously-skip-permissions",
+      initialCommand: "cd '/w/api' && claude --resume 'abc-1' --fork-session --permission-mode auto",
       agent: "claude",
       isClaude: true,
     });
   });
   it("starts a fresh Claude when there is no conversation yet", () => {
     const c = splitClone({ name: "api", cwd: "/w", isClaude: true }, { agentRunning: true, id }, q);
-    expect(c.initialCommand).toBe("claude --dangerously-skip-permissions");
+    expect(c.initialCommand).toBe("claude --permission-mode auto");
     expect(c.cwd).toBe("/w");
   });
   it("never builds a fork from an unsafe session id", () => {
     const c = splitClone({ name: "x", sessionId: "a;rm -rf", agent: "claude" }, { agentRunning: true, id }, q);
-    expect(c.initialCommand).toBe("claude --dangerously-skip-permissions");
+    expect(c.initialCommand).toBe("claude --permission-mode auto");
   });
   it("starts a fresh opencode", () => {
     expect(splitClone({ name: "o", agent: "opencode" }, { agentRunning: true, id }, q).initialCommand).toBe("opencode --auto");

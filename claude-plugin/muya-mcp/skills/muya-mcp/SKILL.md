@@ -96,18 +96,23 @@ server** — read this before running anything:
 
 ## open_session / close_session
 
-- `open_session(name, cwd?, initial_message?)` opens a brand-new local Claude session as a
+- `open_session(name, agent?, cwd?, initial_message?, split?)` opens a brand-new local Claude session as a
   Muya terminal tab — the local analog of `ssh_open`, but no server/credentials involved.
-  It runs `claude --dangerously-skip-permissions --name <name>`, same trust level as
-  Muya's own "+ New Agent" button.
+  It runs `claude --permission-mode auto --name <name>`, the same default as Muya's own
+  "+ New Agent" button: a classifier approves safe actions, risky ones still stop and ask.
+  So a session you opened can sit waiting on a prompt — check `list_sessions`
+  (`waitingFor`) when it seems stuck, and ask the operator before answering a risky one.
+- Pass `split: true` to open it as a split pane next to YOUR OWN terminal (side by side,
+  same split group) instead of a separate tab — use it when the operator wants to watch
+  both sessions at once. It falls back to a normal tab if your terminal can't be found
+  or its group already has 8 panes.
 - **Give it `initial_message` instead of opening-then-`send_to_session`-immediately** — a
   freshly opened session isn't reliably discoverable by name for a few seconds, but
   `initial_message` is handed to it directly on launch and always lands.
 - **For any FOLLOW-UP message, use `send_to_session(target: name, deliver: "muya")`** —
-  not `"auto"`. The new session runs bypassing permission prompts, and Claude Code's own
-  `SendMessage` holds a message to a bypass-mode session for the operator's approval
-  unless the sender also self-identifies as bypassing — `deliver:"muya"` sidesteps that
-  gate entirely and is the only way to guarantee unattended delivery here.
+  not `"auto"`. Claude Code's own `SendMessage` can hold a message to another session
+  for the operator's approval — `deliver:"muya"` types it straight into the terminal and
+  is the only way to guarantee unattended delivery here.
 - `close_session(target)` — **you may only close a session you yourself opened with
   `open_session`.** Closing the operator's own main session, or one they opened by hand
   ("+ New Agent"), is refused. Always close a session you opened once you're done with it.
