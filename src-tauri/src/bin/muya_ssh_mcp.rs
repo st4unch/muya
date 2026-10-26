@@ -802,11 +802,27 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
             }
             let resp = app_call(&op).map_err(|e| (-32000, e))?;
             if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                // A reminder for the opener: the new session is its job to follow, not
+                // the operator's.
+                let follow = if args.get("unattended").and_then(Value::as_bool) == Some(false) {
+                    format!(
+                        " The operator drives '{name}'; check on it with read_session if you \
+                         depend on its result."
+                    )
+                } else {
+                    format!(
+                        " Don't lose track of it: '{name}' runs unattended and will type a short \
+                         report into YOUR terminal when it finishes or gets stuck. Until then it is \
+                         your job to follow it, not the operator's — if no report arrives, check it \
+                         with read_session / list_sessions (waitingFor), answer what it needs with \
+                         send_to_session, and close_session it once its work is done."
+                    )
+                };
                 Ok(tool_ok(
                     format!(
                         "Opening a new session named '{name}' in a Muya terminal. Use \
                          send_to_session(target: \"{name}\", deliver: \"muya\") for any follow-up \
-                         messages once it's running."
+                         messages once it's running.{follow}"
                     ),
                     Some(json!({ "name": name })),
                 ))

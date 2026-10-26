@@ -107,6 +107,9 @@ server** — read this before running anything:
   nobody is watching, and reports back to YOU with `send_to_session(deliver: "muya")`
   when it finishes or gets stuck — so expect its summary typed into your terminal. Pass
   `unattended: false` only when the operator wants to drive the new session themselves.
+- **Following it is your job, not the operator's.** If no report arrives, check it with
+  `read_session` / `list_sessions` (`waitingFor`), unblock it with `send_to_session`, and
+  `close_session` it when its work is done.
 - Pass `split: true` to open it as a split pane next to YOUR OWN terminal (side by side,
   same split group) instead of a separate tab — use it when the operator wants to watch
   both sessions at once. It falls back to a normal tab if your terminal can't be found
