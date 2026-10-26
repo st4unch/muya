@@ -7,7 +7,7 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
-- **Sessions an agent opens run on their own.** A Claude session opened through `open_session` no longer stops to ask you questions or to approve a plan. It decides by itself and, when it finishes or gets stuck, writes a short report into the terminal of the session that opened it. An agent can still open a session you drive yourself (`unattended: false`).
+- **Sessions an agent opens run on their own.** A Claude session opened through `open_session` no longer stops to ask you questions or to approve a plan. It decides by itself and, when it finishes or gets stuck, writes a short report into the terminal of the session that opened it. An agent can still open a session you drive yourself (`unattended: false`). The agent that opened it is reminded that following it is its job, not yours.
 
 ### Fixed
 - **Clean up sessions** no longer says "no session is larger than 50 MB" when big sessions exist but are open. It now says how many match and that they are left alone because they are open or were just used.
