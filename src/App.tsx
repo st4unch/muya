@@ -33,7 +33,7 @@ import ScheduledPromptModal, { type ScheduledPrompt } from "./components/Schedul
 import SettingsModal from "./components/SettingsModal";
 import { useStatusFields, useStatusData } from "./redesign/useStatusFields";
 import { applyLaunchFlags, hasChannelFlag, withChannel } from "./lib/statusline";
-import { buildAgentCommand, singleQuote, detectAgent, AGENT_BASE_COMMAND, type AgentKind } from "./lib/agent";
+import { buildAgentCommand, singleQuote, detectAgent, unattendedFlags, AGENT_BASE_COMMAND, type AgentKind } from "./lib/agent";
 import { invoke } from "@tauri-apps/api/core";
 import { copyToClipboard } from "./lib/clipboard";
 import { viewerKindFor } from "./lib/format";
@@ -1147,10 +1147,10 @@ export default function App() {
   // command-building `launchAgent` uses for the "+ New Agent" button (buildAgentCommand
   // + singleQuote) so an MCP-triggered open and a UI-clicked one behave identically.
   useEffect(() => {
-    const un = listen<{ name: string; cwd?: string; initialMessage?: string; agent?: AgentKind; splitWith?: string | null }>(
+    const un = listen<{ name: string; cwd?: string; initialMessage?: string; agent?: AgentKind; splitWith?: string | null; openedBy?: string | null; unattended?: boolean }>(
       "muya://open-agent-session",
       (e) => {
-        const { name, cwd, initialMessage, agent, splitWith } = e.payload;
+        const { name, cwd, initialMessage, agent, splitWith, openedBy, unattended } = e.payload;
         const ws = cwd || selectedRoot || workspaces[0];
         if (!ws) return; // no workspace to run in — nothing sensible to open
         // Only Claude can be told its own name on the command line; opencode has no
@@ -1159,7 +1159,7 @@ export default function App() {
         const kind: AgentKind = agent === "opencode" ? "opencode" : "claude";
         const base =
           kind === "claude"
-            ? `${AGENT_BASE_COMMAND.claude} --name ${singleQuote(name)}`
+            ? `${AGENT_BASE_COMMAND.claude}${unattended === false ? "" : ` ${unattendedFlags(openedBy)}`} --name ${singleQuote(name)}`
             : AGENT_BASE_COMMAND.opencode;
         const initialCommand = buildAgentCommand({
           command: base,

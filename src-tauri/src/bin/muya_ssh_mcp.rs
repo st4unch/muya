@@ -195,7 +195,8 @@ fn tools_list() -> Value {
                         "agent": { "type": "string", "enum": ["claude", "opencode"], "description": "Which agent CLI to launch. Defaults to claude." },
                         "cwd": { "type": "string", "description": "Working directory for the new session. Defaults to the operator's current workspace." },
                         "initial_message": { "type": "string", "description": "Optional first message/prompt to give the new session immediately on launch." },
-                        "split": { "type": "boolean", "description": "Open the new session as a split pane next to YOUR OWN terminal (same split group, side by side) instead of a separate tab. Falls back to a normal tab if your terminal can't be found or its split group is full (8 panes)." }
+                        "split": { "type": "boolean", "description": "Open the new session as a split pane next to YOUR OWN terminal (same split group, side by side) instead of a separate tab. Falls back to a normal tab if your terminal can't be found or its split group is full (8 panes)." },
+                        "unattended": { "type": "boolean", "description": "Default true: the new Claude session runs with nobody watching — it can't ask the operator questions or ask for plan approval (AskUserQuestion/EnterPlanMode/ExitPlanMode are disabled), decides on its own, and is told to report back to YOU with send_to_session when it finishes or gets stuck. Pass false only when the operator wants to drive the new session themselves." }
                     },
                     "required": ["name"],
                     "additionalProperties": false
@@ -787,12 +788,17 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
             if let Some(m) = &initial_message {
                 op["initialMessage"] = json!(m);
             }
-            // The split anchors on the CALLER's own terminal, so the app needs its id.
-            if args.get("split").and_then(Value::as_bool) == Some(true) {
-                let me = own_session_id();
-                if !me.is_empty() {
+            // The split anchors on the CALLER's own terminal, and an unattended session
+            // reports back to the caller — both need its id.
+            let me = own_session_id();
+            if !me.is_empty() {
+                op["openedBy"] = json!(me);
+                if args.get("split").and_then(Value::as_bool) == Some(true) {
                     op["splitWith"] = json!(me);
                 }
+            }
+            if let Some(u) = args.get("unattended").and_then(Value::as_bool) {
+                op["unattended"] = json!(u);
             }
             let resp = app_call(&op).map_err(|e| (-32000, e))?;
             if resp.get("ok").and_then(Value::as_bool) == Some(true) {
@@ -1517,8 +1523,13 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                 ))
             }
         }
-        "schedules_list" | "schedule_create" | "schedule_update" | "schedule_set_enabled" | "schedule_delete"
-        | "schedule_run_now" | "schedule_history" => {
+        "schedules_list"
+        | "schedule_create"
+        | "schedule_update"
+        | "schedule_set_enabled"
+        | "schedule_delete"
+        | "schedule_run_now"
+        | "schedule_history" => {
             // Every schedule tool is one broker op with the same name; the app does the
             // validation, so a bad field comes back as a readable tool error.
             let mut req = json!({ "op": name });
@@ -1533,7 +1544,16 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
             }
             if name == "schedule_create" || name == "schedule_update" {
                 let mut fields = serde_json::Map::new();
-                for k in ["name", "prompt", "folder", "schedule", "enabled", "timeoutMin", "bypass", "chrome"] {
+                for k in [
+                    "name",
+                    "prompt",
+                    "folder",
+                    "schedule",
+                    "enabled",
+                    "timeoutMin",
+                    "bypass",
+                    "chrome",
+                ] {
                     if let Some(v) = args.get(k) {
                         fields.insert(k.to_string(), v.clone());
                     }
@@ -1544,10 +1564,19 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
             if resp.get("ok").and_then(Value::as_bool) == Some(true) {
                 let result = resp.get("result").cloned().unwrap_or(Value::Null);
                 let text = serde_json::to_string_pretty(&result).unwrap_or_default();
-                let structured = if result.is_object() { Some(result) } else { None };
+                let structured = if result.is_object() {
+                    Some(result)
+                } else {
+                    None
+                };
                 Ok(tool_ok(text, structured))
             } else {
-                Ok(tool_error(resp.get("error").and_then(Value::as_str).unwrap_or("schedule request failed").to_string()))
+                Ok(tool_error(
+                    resp.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("schedule request failed")
+                        .to_string(),
+                ))
             }
         }
         other => Ok(tool_error(format!("unknown tool: {other}"))),

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildAgentCommand, singleQuote, detectAgent, buildResumeCommand, tabAgent, AGENT_BASE_COMMAND } from "./agent";
+import { buildAgentCommand, singleQuote, detectAgent, buildResumeCommand, tabAgent, unattendedFlags, AGENT_BASE_COMMAND } from "./agent";
 
 describe("buildAgentCommand", () => {
   it("defaults to claude --permission-mode auto", () => {
@@ -137,5 +137,18 @@ describe("buildAgentCommand — per-agent prompt placement", () => {
     expect(buildAgentCommand({ command: AGENT_BASE_COMMAND.opencode, prompt: "", files: [] })).toBe(
       "opencode --auto"
     );
+  });
+});
+
+describe("unattendedFlags", () => {
+  it("disables the waiting tools and names the opener to report to", () => {
+    const f = unattendedFlags("abc-123");
+    expect(f.startsWith("--disallowedTools AskUserQuestion,EnterPlanMode,ExitPlanMode --append-system-prompt '")).toBe(true);
+    expect(f).toContain('send_to_session(target: "abc-123", deliver: "muya")');
+  });
+  it("names no target without an opener id", () => {
+    const f = unattendedFlags(null);
+    expect(f).not.toContain("send_to_session");
+    expect(f).toContain("final answer");
   });
 });

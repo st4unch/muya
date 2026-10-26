@@ -96,12 +96,17 @@ server** — read this before running anything:
 
 ## open_session / close_session
 
-- `open_session(name, agent?, cwd?, initial_message?, split?)` opens a brand-new local Claude session as a
+- `open_session(name, agent?, cwd?, initial_message?, split?, unattended?)` opens a brand-new local Claude session as a
   Muya terminal tab — the local analog of `ssh_open`, but no server/credentials involved.
   It runs `claude --permission-mode auto --name <name>`, the same default as Muya's own
   "+ New Agent" button: a classifier approves safe actions, risky ones still stop and ask.
   So a session you opened can sit waiting on a prompt — check `list_sessions`
   (`waitingFor`) when it seems stuck, and ask the operator before answering a risky one.
+- **Unattended by default.** A Claude session you open can't ask the operator questions or
+  ask for plan approval (AskUserQuestion/EnterPlanMode/ExitPlanMode are disabled), is told
+  nobody is watching, and reports back to YOU with `send_to_session(deliver: "muya")`
+  when it finishes or gets stuck — so expect its summary typed into your terminal. Pass
+  `unattended: false` only when the operator wants to drive the new session themselves.
 - Pass `split: true` to open it as a split pane next to YOUR OWN terminal (side by side,
   same split group) instead of a separate tab — use it when the operator wants to watch
   both sessions at once. It falls back to a normal tab if your terminal can't be found

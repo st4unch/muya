@@ -343,6 +343,13 @@ struct BrokerReq {
     /// pane next to that session's terminal. Absent means a normal tab.
     #[serde(rename = "splitWith", default)]
     split_with: Option<String>,
+    /// `open_session`: the caller's own session id — an unattended session reports to it.
+    #[serde(rename = "openedBy", default)]
+    opened_by: Option<String>,
+    /// `open_session`: run the new session with nobody watching (no questions, no plan
+    /// approval). Absent means true.
+    #[serde(default)]
+    unattended: Option<bool>,
 }
 
 // ---------------------------------------------------------------------------
@@ -817,9 +824,21 @@ async fn handle_request(app: &AppHandle, line: &str) -> String {
         "run_operation" => handle_run_operation(app, &req).await,
         op if op.starts_with("schedule") => {
             let (app, op) = (app.clone(), op.to_string());
-            let (key, fields, enabled, limit) = (req.schedule.clone(), req.fields.clone(), req.enabled, req.limit.map(|n| n as usize));
+            let (key, fields, enabled, limit) = (
+                req.schedule.clone(),
+                req.fields.clone(),
+                req.enabled,
+                req.limit.map(|n| n as usize),
+            );
             let res = tauri::async_runtime::spawn_blocking(move || {
-                crate::schedules::agent_op(&app, &op, key.as_deref(), fields.as_ref(), enabled, limit)
+                crate::schedules::agent_op(
+                    &app,
+                    &op,
+                    key.as_deref(),
+                    fields.as_ref(),
+                    enabled,
+                    limit,
+                )
             })
             .await
             .unwrap_or_else(|e| Err(e.to_string()));
@@ -1109,6 +1128,8 @@ fn build_open_session_payload(req: &BrokerReq) -> Result<(String, serde_json::Va
         "initialMessage": req.initial_message,
         "agent": agent,
         "splitWith": req.split_with.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+        "openedBy": req.opened_by.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+        "unattended": req.unattended.unwrap_or(true),
     });
     Ok((name, payload))
 }
@@ -2112,8 +2133,32 @@ mod tests {
         };
         let (_, payload) = build_open_session_payload(&req).unwrap();
         assert_eq!(payload["splitWith"], "abc-123");
-        let blank = BrokerReq { split_with: Some("  ".into()), ..req };
+        let blank = BrokerReq {
+            split_with: Some("  ".into()),
+            ..req
+        };
         assert!(build_open_session_payload(&blank).unwrap().1["splitWith"].is_null());
+    }
+
+    #[test]
+    fn open_session_payload_is_unattended_by_default_and_names_the_opener() {
+        let req = BrokerReq {
+            op: "open_session".into(),
+            name: Some("worker".into()),
+            opened_by: Some(" abc-123 ".into()),
+            ..Default::default()
+        };
+        let (_, payload) = build_open_session_payload(&req).unwrap();
+        assert_eq!(payload["openedBy"], "abc-123");
+        assert_eq!(payload["unattended"], true);
+        let attended = BrokerReq {
+            unattended: Some(false),
+            opened_by: Some(" ".into()),
+            ..req
+        };
+        let (_, payload) = build_open_session_payload(&attended).unwrap();
+        assert_eq!(payload["unattended"], false);
+        assert!(payload["openedBy"].is_null());
     }
 
     #[test]

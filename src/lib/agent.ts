@@ -31,6 +31,26 @@ export const AGENT_BASE_COMMAND: Record<AgentKind, string> = {
   opencode: "opencode --auto",
 };
 
+/** Tools that stop and wait for the operator: the question survey and plan approval. */
+export const UNATTENDED_DISALLOWED_TOOLS = ["AskUserQuestion", "EnterPlanMode", "ExitPlanMode"];
+
+/**
+ * Extra Claude flags for a session another agent opened with open_session and nobody
+ * watches: the waiting tools are removed, and the session is told why and whom to
+ * report to. Must come before `--name` — `--disallowedTools` is variadic and would
+ * swallow a trailing prompt.
+ */
+export function unattendedFlags(openedBy?: string | null): string {
+  const reportTo = openedBy
+    ? `When you finish, or if you get stuck and cannot go on, report to the session that opened you with send_to_session(target: "${openedBy}", deliver: "muya"): a short summary of what you did, or what blocks you.`
+    : "Put a short summary of what you did, or what blocks you, in your final answer.";
+  const prompt =
+    "You were opened by another Claude session through Muya and run unattended: the operator is not watching this terminal. " +
+    "Do not ask the operator questions and do not ask for plan approval; make reasonable decisions yourself and keep going. " +
+    reportTo;
+  return `--disallowedTools ${UNATTENDED_DISALLOWED_TOOLS.join(",")} --append-system-prompt ${singleQuote(prompt)}`;
+}
+
 /** Display name for an agent, for buttons/labels/tooltips. */
 export const AGENT_LABEL: Record<AgentKind, string> = {
   claude: "Claude",
