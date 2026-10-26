@@ -33,7 +33,7 @@ import ScheduledPromptModal, { type ScheduledPrompt } from "./components/Schedul
 import SettingsModal from "./components/SettingsModal";
 import { useStatusFields, useStatusData } from "./redesign/useStatusFields";
 import { applyLaunchFlags, hasChannelFlag, withChannel } from "./lib/statusline";
-import { buildAgentCommand, singleQuote, detectAgent, unattendedFlags, AGENT_BASE_COMMAND, type AgentKind } from "./lib/agent";
+import { buildAgentCommand, singleQuote, detectAgent, unattendedFlags, openedByNote, AGENT_BASE_COMMAND, type AgentKind } from "./lib/agent";
 import { invoke } from "@tauri-apps/api/core";
 import { copyToClipboard } from "./lib/clipboard";
 import { viewerKindFor } from "./lib/format";
@@ -1157,13 +1157,17 @@ export default function App() {
         // --name for its TUI, so there the Muya tab name IS the name — which is what
         // send_to_session addresses anyway, since delivery types into the PTY.
         const kind: AgentKind = agent === "opencode" ? "opencode" : "claude";
+        // The opener's tab name, so the new session (and the operator) can see who it answers to.
+        const openerKey = openedBy ? sessionIdToKeyRef.current[openedBy] : undefined;
+        const openerName = openerKey ? openTerminalsRef.current.find((t) => t.key === openerKey)?.name : undefined;
+        const headless = kind === "claude" && unattended !== false;
         const base =
           kind === "claude"
-            ? `${AGENT_BASE_COMMAND.claude}${unattended === false ? "" : ` ${unattendedFlags(openedBy)}`} --name ${singleQuote(name)}`
+            ? `${AGENT_BASE_COMMAND.claude}${headless ? ` ${unattendedFlags(openedBy, openerName)}` : ""} --name ${singleQuote(name)}`
             : AGENT_BASE_COMMAND.opencode;
         const initialCommand = buildAgentCommand({
           command: base,
-          prompt: initialMessage ?? "",
+          prompt: headless && initialMessage ? `${openedByNote(openerName)} ${initialMessage}` : initialMessage ?? "",
           files: [],
         });
         // "aopen:" (not "ssh:"/"new:") marks this tab as MCP-opened via open_session —

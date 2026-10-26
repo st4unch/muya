@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildAgentCommand, singleQuote, detectAgent, buildResumeCommand, tabAgent, unattendedFlags, AGENT_BASE_COMMAND } from "./agent";
+import { buildAgentCommand, singleQuote, detectAgent, buildResumeCommand, tabAgent, unattendedFlags, openedByNote, AGENT_BASE_COMMAND } from "./agent";
 
 describe("buildAgentCommand", () => {
   it("defaults to claude --permission-mode auto", () => {
@@ -150,5 +150,13 @@ describe("unattendedFlags", () => {
     const f = unattendedFlags(null);
     expect(f).not.toContain("send_to_session");
     expect(f).toContain("final answer");
+  });
+});
+
+describe("opener name", () => {
+  it("names the opener session in the prompt and the visible note", () => {
+    expect(unattendedFlags("abc-123", "main")).toContain('ask session "main" that opened you, not the operator');
+    expect(openedByNote("main")).toBe('[Opened by session "main". If anything goes wrong, ask session "main", not the operator.]');
+    expect(openedByNote()).toContain("another session");
   });
 });

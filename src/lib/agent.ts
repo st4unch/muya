@@ -40,15 +40,23 @@ export const UNATTENDED_DISALLOWED_TOOLS = ["AskUserQuestion", "EnterPlanMode", 
  * report to. Must come before `--name` — `--disallowedTools` is variadic and would
  * swallow a trailing prompt.
  */
-export function unattendedFlags(openedBy?: string | null): string {
+export function unattendedFlags(openedBy?: string | null, openerName?: string | null): string {
+  const who = openerName ? `session "${openerName}"` : "another Claude session";
   const reportTo = openedBy
-    ? `When you finish, or if you get stuck and cannot go on, report to the session that opened you with send_to_session(target: "${openedBy}", deliver: "muya"): a short summary of what you did, or what blocks you.`
+    ? `If you hit any problem or need a decision you can't make, ask ${who} that opened you, not the operator: send_to_session(target: "${openedBy}", deliver: "muya"). When you finish, report there too with a short summary of what you did.`
     : "Put a short summary of what you did, or what blocks you, in your final answer.";
   const prompt =
-    "You were opened by another Claude session through Muya and run unattended: the operator is not watching this terminal. " +
+    `You were opened by ${who} through Muya and run unattended: the operator is not watching this terminal. ` +
     "Do not ask the operator questions and do not ask for plan approval; make reasonable decisions yourself and keep going. " +
     reportTo;
   return `--disallowedTools ${UNATTENDED_DISALLOWED_TOOLS.join(",")} --append-system-prompt ${singleQuote(prompt)}`;
+}
+
+/** The visible first line of an unattended session's prompt, so the operator sees who
+ *  it answers to. */
+export function openedByNote(openerName?: string | null): string {
+  const who = openerName ? `session "${openerName}"` : "another session";
+  return `[Opened by ${who}. If anything goes wrong, ask ${who}, not the operator.]`;
 }
 
 /** Display name for an agent, for buttons/labels/tooltips. */
