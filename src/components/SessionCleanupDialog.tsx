@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ModalShell, Segmented, Switch, ghostBtn, helperStyle, inputStyle, primaryBtn, rowStyle, rowsBox } from "./modalKit";
-import { ageDays, cleanupCandidates, formatBytes, sessionBytes, type StoredSession } from "../lib/sessionStorage";
+import { ageDays, cleanupCandidates, formatBytes, heldBackSessions, sessionBytes, type StoredSession } from "../lib/sessionStorage";
 import { shortCwd } from "../lib/format";
 
 interface Result {
@@ -69,6 +69,11 @@ export default function SessionCleanupDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [history, liveIds, olderOn, olderDays, largerOn, largerMb],
   );
+  const heldBack = useMemo(
+    () => heldBackSessions(history, { olderDays: olderOn ? olderDays : null, largerMb: largerOn ? largerMb : null }, liveIds, now),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [history, liveIds, olderOn, olderDays, largerOn, largerMb],
+  );
   const shown = tab === "cleanup" ? candidates : archived;
   const picked = shown.filter((s) => !unticked.has(s.path));
   const pickedBytes = picked.reduce((n, s) => n + sessionBytes(s), 0);
@@ -107,7 +112,9 @@ export default function SessionCleanupDialog({
       ? "Nothing archived yet."
       : rulesOff
         ? "Turn on a rule above to pick sessions."
-        : `No session is ${[olderOn ? `unused for ${olderDays}+ days` : "", largerOn ? `larger than ${largerMb} MB` : ""].filter(Boolean).join(" or ")}. Running sessions and ones used in the last 10 minutes are left out — loosen the rules to see more.`;
+        : heldBack.length > 0
+          ? `${heldBack.length === 1 ? "1 session matches" : `${heldBack.length} sessions match`} (${formatBytes(heldBack.reduce((n, s) => n + sessionBytes(s), 0))}) but ${heldBack.length === 1 ? "it is" : "they are"} open in Muya or used in the last 10 minutes, so ${heldBack.length === 1 ? "it is" : "they are"} left alone. Close ${heldBack.length === 1 ? "it" : "them"} to archive.`
+          : `No session is ${[olderOn ? `unused for ${olderDays}+ days` : "", largerOn ? `larger than ${largerMb} MB` : ""].filter(Boolean).join(" or ")}. Running sessions and ones used in the last 10 minutes are left out — loosen the rules to see more.`;
   const idleReason = shown.length === 0 ? (tab === "archived" ? "Nothing archived yet" : "Nothing to clean up with these rules") : picked.length === 0 ? "Tick the sessions to clean up" : "";
   const btn = (base: React.CSSProperties) => ({ ...base, cursor: busy || !picked.length ? "not-allowed" : "pointer" });
 

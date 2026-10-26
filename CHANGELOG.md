@@ -6,6 +6,9 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **Clean up sessions** no longer says "no session is larger than 50 MB" when big sessions exist but are open. It now says how many match and that they are left alone because they are open or were just used.
+
 ## [4.1.16] - 2026-10-26
 
 ### Added

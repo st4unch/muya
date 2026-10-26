@@ -58,6 +58,12 @@ export interface CleanupFilter {
 /** Written to this recently = in use; the backend refuses to move it (history.rs IN_USE_MS). */
 export const IN_USE_MS = 10 * 60 * 1000;
 
+const matchesRule = (s: StoredSession, f: CleanupFilter, now: number) =>
+  (f.olderDays !== null && ageDays(s, now) >= f.olderDays) || (f.largerMb !== null && sessionBytes(s) > f.largerMb * MB);
+
+const inUse = (s: StoredSession, liveIds: ReadonlySet<string>, now: number) =>
+  liveIds.has(s.sessionId) || now - s.lastModified < IN_USE_MS;
+
 /** Sessions matching ANY enabled rule, never a live or just-used one, biggest first. */
 export function cleanupCandidates(
   list: readonly StoredSession[],
@@ -67,13 +73,20 @@ export function cleanupCandidates(
 ): StoredSession[] {
   if (f.olderDays === null && f.largerMb === null) return [];
   return list
-    .filter((s) => !liveIds.has(s.sessionId) && now - s.lastModified >= IN_USE_MS)
-    .filter(
-      (s) =>
-        (f.olderDays !== null && ageDays(s, now) >= f.olderDays) ||
-        (f.largerMb !== null && sessionBytes(s) > f.largerMb * MB),
-    )
+    .filter((s) => !inUse(s, liveIds, now) && matchesRule(s, f, now))
     .sort((a, b) => sessionBytes(b) - sessionBytes(a));
+}
+
+/** Sessions a rule matches but that are left alone because they are open or just used —
+ *  so an empty list can say "2 match, but they're open" instead of "none match". */
+export function heldBackSessions(
+  list: readonly StoredSession[],
+  f: CleanupFilter,
+  liveIds: ReadonlySet<string>,
+  now: number,
+): StoredSession[] {
+  if (f.olderDays === null && f.largerMb === null) return [];
+  return list.filter((s) => inUse(s, liveIds, now) && matchesRule(s, f, now));
 }
 
 export function formatBytes(n: number): string {

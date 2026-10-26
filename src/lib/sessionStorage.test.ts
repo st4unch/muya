@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cleanupCandidates, formatBytes, storageSummary, type StoredSession } from "./sessionStorage";
+import { cleanupCandidates, formatBytes, heldBackSessions, storageSummary, type StoredSession } from "./sessionStorage";
 
 const DAY = 86_400_000;
 const MB = 1024 * 1024;
@@ -53,5 +53,15 @@ describe("formatBytes", () => {
     expect(formatBytes(3.5 * MB)).toBe("3.5 MB");
     expect(formatBytes(201 * MB)).toBe("201 MB");
     expect(formatBytes(2.4 * 1024 * MB)).toBe("2.4 GB");
+  });
+});
+
+describe("heldBackSessions", () => {
+  it("returns the sessions a rule matches that are open or just used", () => {
+    const busy = { ...s("busy", 0, 80), lastModified: now - 60_000 };
+    const list = [s("live", 1, 400), busy, s("idle", 5, 90), s("small", 1, 1)];
+    const held = heldBackSessions(list, { olderDays: null, largerMb: 50 }, new Set(["live"]), now).map((x) => x.sessionId);
+    expect(held).toEqual(["live", "busy"]);
+    expect(heldBackSessions(list, { olderDays: null, largerMb: null }, new Set(["live"]), now)).toEqual([]);
   });
 });
