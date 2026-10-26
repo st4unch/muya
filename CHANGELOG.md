@@ -6,6 +6,12 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- An agent can open a new session **split next to its own terminal** (`open_session` with `split: true`) instead of in a separate tab.
+
+### Changed
+- New Claude sessions now start in **Auto** permission mode instead of Bypass. Muya applies this when it launches, resumes or splits a session, and New Agent now selects Auto by default. In Auto, safe actions are approved automatically and risky ones still ask. Bypass is still available in New Agent.
+
 ## [4.1.15] - 2026-10-25
 
 ### Fixed
