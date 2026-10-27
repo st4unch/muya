@@ -1093,11 +1093,14 @@ export default function App() {
     const webview = getCurrentWebview();
     const un = webview.onDragDropEvent(async (event) => {
       const p = event.payload;
-      if (p.type === "enter" || p.type === "over") { setDropActive(true); return; }
+      // Only a drag that carries files/folders shows the hint. Drags without paths
+      // (text, a link, anything from inside the webview) used to show it too (L80).
+      if (p.type === "enter") { setDropActive(p.paths.length > 0); return; }
+      if (p.type === "over") return;
       if (p.type === "leave") { setDropActive(false); return; }
       if (p.type === "drop") {
         setDropActive(false);
-        for (const path of p.paths) {
+        for (const path of p.paths) { // empty for a drag without files
           try {
             const kind = await invoke<string>("path_kind", { path });
             if (kind === "dir") {

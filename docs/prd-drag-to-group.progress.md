@@ -18,5 +18,7 @@ started: 2026-10-26
 
 - Verified: tsc clean, npm tests pass; mock mode (dark + light) Playwright drag of documents-44 onto opencode-review shows a solid accent outline while hovering the middle, and the drop creates the split and shows both panes at once; no page errors.
 - Not seen in the real app.
+- 2026-10-27 operator: in 4.1.18 dragging showed the "Drop to open" file overlay and did nothing. Cause: Tauri's native drag handler (dragDropEnabled) takes every drag over the window and never passes it to WebKit, so HTML5 dragover/drop never fire (wry wkwebview/drag_drop.rs, tauri-runtime-wry returns true). Fix: AgentList drags with pointer events + elementFromPoint (data-drop-key), with a ghost label; the OS drop hint only shows when the native drag carries paths (L80).
+- Verified in a real debug build (WKWebView, fake HOME) driven with cua-driver: drag → split made, both panes shown, no "Drop to open"; mid-drag ghost + outline visible. Mock dark/light still pass; tsc clean, npm 525 passed.
 
 ## Dersler

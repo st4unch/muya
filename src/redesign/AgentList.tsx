@@ -2,7 +2,7 @@
 //
 // Left agent panel on Control (PROMPT.md §3). Groups agents into
 // PINNED / WAITING FOR YOU / WORKING / IDLE (empty groups hidden), filters via the
-// segmented control, and supports HTML5 drag-and-drop reordering + ⌘1–7.
+// segmented control, and supports pointer drag (reorder / group into a split) + ⌘1–9.
 
 import { AgentKindIcon } from "./AgentKindIcon";
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
@@ -125,59 +125,84 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
     title: onRenameAgent ? "Double-click to rename" : undefined,
   });
 
+  // Pointer-driven drag, not HTML5 drag-and-drop: in the Tauri app the native layer
+  // takes every drag over the window for OS file drops (dragDropEnabled), so the webview
+  // never sees dragover/drop and the "Drop to open" hint shows instead (L80).
+  // Rows mark themselves with data-drop-key; the target is found with elementFromPoint.
+  const ghostRef = useRef<HTMLDivElement | null>(null);
+  const ghostPos = useRef("");
+  const [draggingKey, setDraggingKey] = useState<string | null>(null);
+
+  /** What the pointer is over: a row (reorder or group by height) or a split header. */
+  function dropTargetAt(from: string, x: number, y: number): { key: string; mode: DropMode } | null {
+    const el = document.elementFromPoint?.(x, y)?.closest<HTMLElement>("[data-drop-key]");
+    const key = el?.dataset.dropKey;
+    if (!el || !key) return null;
+    if (key.startsWith("group:")) {
+      const members = (el.dataset.dropMembers ?? "").split("\n");
+      return onGroupInto && !members.includes(from) ? { key, mode: "group" } : null;
+    }
+    if (key === from) return null;
+    return { key, mode: onGroup ? dropModeAt(y, el.getBoundingClientRect()) : "reorder" };
+  }
+
   function dragProps(key: string) {
     return {
-      draggable: true,
-      onDragStart: () => {
-        dragKeyRef.current = key;
-      },
-      onDragOver: (e: React.DragEvent<HTMLElement>) => {
-        e.preventDefault();
-        const mode = onGroup && dragKeyRef.current !== key ? dropModeAt(e.clientY, e.currentTarget.getBoundingClientRect()) : "reorder";
-        setDragOver((d) => (d?.key === key && d.mode === mode ? d : { key, mode }));
-      },
-      onDragLeave: (e: React.DragEvent<HTMLElement>) => {
-        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
-          setDragOver((d) => (d?.key === key ? null : d));
-        }
-      },
-      onDrop: (e: React.DragEvent<HTMLElement>) => {
-        e.preventDefault();
-        setDragOver(null);
-        const from = dragKeyRef.current;
-        dragKeyRef.current = null;
-        if (!from || from === key) return;
-        if (onGroup && dropModeAt(e.clientY, e.currentTarget.getBoundingClientRect()) === "group") onGroup(from, key);
-        else onReorder(from, key);
-      },
-      onDragEnd: () => {
-        dragKeyRef.current = null;
-        setDragOver(null);
+      "data-drop-key": key,
+      onPointerDown: (e: React.PointerEvent<HTMLElement>) => {
+        if (e.button !== 0) return;
+        const startX = e.clientX;
+        const startY = e.clientY;
+        let dragging = false;
+        let target: { key: string; mode: DropMode } | null = null;
+        const move = (ev: PointerEvent) => {
+          if (!dragging) {
+            if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < 5) return;
+            dragging = true;
+            setDraggingKey(key);
+          }
+          ghostPos.current = `translate(${ev.clientX + 12}px, ${ev.clientY + 8}px)`;
+          if (ghostRef.current) ghostRef.current.style.transform = ghostPos.current;
+          target = dropTargetAt(key, ev.clientX, ev.clientY);
+          const t = target;
+          setDragOver((d) => (t === null ? null : d?.key === t.key && d.mode === t.mode ? d : t));
+        };
+        const finish = (drop: boolean, x = 0, y = 0) => {
+          window.removeEventListener("pointermove", move);
+          window.removeEventListener("pointerup", up);
+          window.removeEventListener("pointercancel", cancel);
+          window.removeEventListener("keydown", esc);
+          if (!dragging) return;
+          setDraggingKey(null);
+          setDragOver(null);
+          // The click that follows this pointerup must not select the row.
+          const swallow = (c: Event) => c.stopPropagation();
+          window.addEventListener("click", swallow, { capture: true, once: true });
+          setTimeout(() => window.removeEventListener("click", swallow, { capture: true }), 0);
+          if (!drop) return;
+          const t = dropTargetAt(key, x, y) ?? target;
+          if (!t) return;
+          if (t.key.startsWith("group:")) onGroupInto?.(key, t.key.slice("group:".length));
+          else if (t.mode === "group" && onGroup) onGroup(key, t.key);
+          else onReorder(key, t.key);
+        };
+        const up = (ev: PointerEvent) => finish(true, ev.clientX, ev.clientY);
+        const cancel = () => finish(false);
+        const esc = (ev: KeyboardEvent) => {
+          if (ev.key === "Escape") finish(false);
+        };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up);
+        window.addEventListener("pointercancel", cancel);
+        window.addEventListener("keydown", esc);
       },
     };
   }
 
   /** A split's header row only takes drops that join the split. */
   function groupDropProps(groupId: string, keys: string[]) {
-    const id = `group:${groupId}`;
     if (!onGroupInto) return {};
-    return {
-      onDragOver: (e: React.DragEvent) => {
-        if (!dragKeyRef.current || keys.includes(dragKeyRef.current)) return;
-        e.preventDefault();
-        setDragOver((d) => (d?.key === id ? d : { key: id, mode: "group" }));
-      },
-      onDragLeave: (e: React.DragEvent<HTMLElement>) => {
-        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragOver((d) => (d?.key === id ? null : d));
-      },
-      onDrop: (e: React.DragEvent) => {
-        e.preventDefault();
-        setDragOver(null);
-        const from = dragKeyRef.current;
-        dragKeyRef.current = null;
-        if (from && !keys.includes(from)) onGroupInto(from, groupId);
-      },
-    };
+    return { "data-drop-key": `group:${groupId}`, "data-drop-members": keys.join("\n") };
   }
 
   const compact = agents.length > COMPACT_AFTER;
@@ -362,6 +387,16 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
       </div>
 
       {filesSection}
+
+      {draggingKey && (
+        <div
+          ref={ghostRef}
+          aria-hidden
+          style={{ position: "fixed", left: 0, top: 0, transform: ghostPos.current, zIndex: 10000, pointerEvents: "none", padding: "4px 10px", borderRadius: 6, background: "var(--bg-panel)", border: "1px solid var(--border-selected)", color: "var(--text-strong)", fontSize: 12, maxWidth: 220, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", boxShadow: "var(--shadow-popover)" }}
+        >
+          {byKey.get(draggingKey)?.name ?? ""}
+        </div>
+      )}
 
       <div style={{ padding: "10px 16px", borderTop: "1px solid var(--border)", fontSize: 12, color: "var(--text-muted)", display: "flex", flexDirection: "column", gap: 4 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
