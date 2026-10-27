@@ -6,8 +6,13 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.1.19] - 2026-10-27
+
 ### Fixed
 - **Dragging a session in the agent list works in the app.** In 4.1.18, dragging a session showed the "Drop to open" file screen and nothing happened on release. The list now drags on its own: a small label follows the pointer, the row under it is outlined, and releasing reorders or makes the split. The "Drop to open" screen now shows only when you drag files or folders in from Finder.
+
+### Changed
+- The README now describes dragging sessions into a split and unattended `open_session` sessions.
 
 ## [4.1.18] - 2026-10-27
 

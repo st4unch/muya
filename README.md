@@ -72,6 +72,7 @@ Two things worth knowing straight away:
 | Resume a session after restarting Muya | Click its tab — Muya reconnects it to the same conversation |
 | Run a prompt on a timer (daily report, nightly check) | **Schedules** — pick a folder, a prompt and a time; results land in History |
 | Split a terminal in place | **⌘⇧D** — up to 8 panes; a running Claude session is forked into the new pane |
+| Put two existing sessions side by side | Drag one session onto the **middle** of another in the agent list; drop on a split's header to add to it. Drop between sessions to reorder |
 | Check nobody is editing the same file twice | **Queue** — collisions are flagged automatically |
 | Push or merge an agent's work | **Queue** — shows ahead/behind, trial-merges first, cleans up the worktree after |
 
@@ -102,7 +103,7 @@ The left rail has nine screens: Control, Files, Sessions, Branches, Queue, Kanba
 | **Agents list** | Every agent grouped as *waiting* / *working* / *idle*, with pinned agents on top and a SPLITS group for split panes. Double-click a name to rename it. Workspaces scope the list, the grid, ⌘K and notifications. ⌘1–9 jumps to an agent, ⌥⌘1–9 to a workspace (⌥⌘0 = all). |
 | **Real terminals** | PTY-backed (`portable-pty` + xterm.js, 24-bit color). One persistent terminal per session — survives switching screens and layouts. Shift+Enter inserts a newline without submitting. |
 | **Claude and opencode** | New Agent starts Claude Code or opencode. Optionally give the agent its own `git worktree` (auto-created, `.env` copied). |
-| **Split and Grid** | ⌘⇧D splits a terminal in place (up to 8 panes; a running Claude session is forked). **Grid** shows several sessions side by side, each panel with its own session picker and a full-screen button. |
+| **Split and Grid** | ⌘⇧D splits a terminal in place (up to 8 panes; a running Claude session is forked). Dragging a session onto another in the agent list puts the two in one split. **Grid** shows several sessions side by side, each panel with its own session picker and a full-screen button. |
 | **Session header + message box** | See what the agent is doing, send it a message, pick a slash command or skill from **/ Commands**. |
 | **Terminal look** | Font size (⌘+ / ⌘− / ⌘0), 9 color schemes, line and letter spacing (the **Aa** button). |
 | **Notifications** | A bell when an agent finishes or waits for input; kept across restarts. |
@@ -239,6 +240,10 @@ Agent: open_session(name: "api-tests", initial_message: "…")
        send_to_session(...) → answers a prompt it got stuck on
        close_session(...)   → tidies up when finished
 ```
+
+A session opened this way runs **unattended**: it cannot stop to ask you questions or wait for plan
+approval. When it gets stuck it asks the session that opened it, and reports back there when done.
+Pass `split: true` to show it next to the opener, or `unattended: false` to keep it interactive.
 
 An agent may only close sessions **it** opened — your own session and any tab you opened by hand are
 off limits.
