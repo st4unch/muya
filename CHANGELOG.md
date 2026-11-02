@@ -6,6 +6,9 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Removed
+- **The animated panda in the sidebar.** Measured in WebKit, it alone kept about a third of one CPU core busy whenever it was on screen (about 5% without it), and that load also made screen switches stutter. The menu bar icon stays.
+
 ### Changed
 - **Less CPU while Muya sits idle.** Muya asked the `claude` CLI for the session list from several places on separate timers, each ask a new process taking up to a second and a half. The answer is now shared for 5 seconds and the file-tree list asks every 20 seconds instead of 8. Tools that agents call (list, send to, close a session) still always get a fresh list.
 - Background session tabs check their screen for "working / needs a decision" once a second instead of three times; the open tab is unchanged.

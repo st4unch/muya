@@ -1379,7 +1379,6 @@ export default function App() {
   const modelRef = useRef(model);
   modelRef.current = model;
   const agentVMs = model.agents;
-  const anyWorking = agentVMs.some((a) => a.status === "working");
   // The agent list shows the picked workspace only (palette, bell and footer stay global).
   const scopedAgentVMs = useMemo(() => {
     const tabByKey = new Map(openTerminals.map((t) => [t.key, t]));
@@ -2592,7 +2591,7 @@ export default function App() {
         </div>
         <div style={{ flexGrow: 1, minHeight: 0, display: "flex" }}>
           <div className="rd-root" style={{ display: "contents" }}>
-            <Rail active={railActive} onNavigate={navigateRail} busy={anyWorking} />
+            <Rail active={railActive} onNavigate={navigateRail} />
           </div>
           <AppFrameBody>
             <div className={pageClass("sessions")}>
@@ -2691,7 +2690,6 @@ export default function App() {
             {...headerProps}
             footer={footerVM}
             railActive={controlMode === "files" ? "files" : "control"}
-            railBusy={anyWorking}
             onRailNavigate={navigateRail}
             agents={scopedAgentVMs}
             selectedAgentKey={selectedAgentKey}
@@ -2762,7 +2760,6 @@ export default function App() {
         <GridScreen
           onRenameAgent={renameTerminal}
           railActive="control"
-          railBusy={anyWorking}
           onRailNavigate={navigateRail}
           footer={footerVM}
           panels={gridPanels}

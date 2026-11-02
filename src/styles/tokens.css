@@ -81,9 +81,6 @@
 
   --shadow-popover: 0 12px 40px rgba(0, 0, 0, 0.35);
 
-  /* The rail panda (docs/prd-rail-panda.md): a thin light edge so its navy outline
-     doesn't sink into the dark rail. */
-  --panda-halo: drop-shadow(0 0 1.2px rgba(255, 255, 255, 0.55));
 
   --warning: #F2B34B;
   --warning-label: #F2B34B;
@@ -156,7 +153,6 @@
 
   --shadow-popover: 0 12px 32px rgba(0, 0, 0, 0.14);
 
-  --panda-halo: none;
 
   --warning: #D9921A;
   --warning-label: #9A6400;
