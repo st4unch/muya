@@ -6,6 +6,10 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Drag a session out of a split.** Drag a session from a split to empty space in the agent list and it leaves the split. While you drag, the list is outlined and the label reads "· out of split".
+- **Focus one pane of a split.** Each pane's title row has a focus button: that pane fills the terminal area while the others keep running. The same button (now a restore icon) brings the split back. Picking another session also ends the focus.
+
 ## [4.1.19] - 2026-10-27
 
 ### Fixed

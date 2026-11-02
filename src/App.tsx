@@ -2072,6 +2072,21 @@ export default function App() {
   const activeGroup = groupOf(splitGroups, activeTerminalKey);
   const splitPanes = activeGroup?.keys ?? [];
   const splitFocusKey = activeGroup ? activeTerminalKey : null;
+  // Split focus (PRD split-ungroup-focus): one pane shown alone until restored. It ends
+  // as soon as another terminal becomes the active one.
+  const [zoomedPane, setZoomedPane] = useState<string | null>(null);
+  const zoomed = zoomedPane && zoomedPane === activeTerminalKey && splitPanes.includes(zoomedPane) ? zoomedPane : null;
+  useEffect(() => {
+    if (zoomedPane && zoomedPane !== activeTerminalKey) setZoomedPane(null);
+  }, [zoomedPane, activeTerminalKey]);
+  const toggleZoom = (key: string) => {
+    if (zoomed === key) {
+      setZoomedPane(null);
+      return;
+    }
+    setZoomedPane(key);
+    if (key !== activeTerminalKey) activateTerminal(key);
+  };
   const focusPane = (key: string) => {
     if (key !== activeTerminalKey) activateTerminal(key);
   };
@@ -2115,6 +2130,7 @@ export default function App() {
     const g = splitGroups.find((x) => x.id === groupId);
     if (g) groupAgents(from, g.keys[0]);
   };
+  const ungroupAgent = (key: string) => setSplitGroups(removeFromGroups(splitGroups, key));
   // Dragging a split member between ungrouped sessions takes it out of its split.
   const reorderOrUngroup = (from: string, to: string) => {
     if (groupOf(splitGroups, from) && !groupOf(splitGroups, to)) setSplitGroups(removeFromGroups(splitGroups, from));
@@ -2348,7 +2364,7 @@ export default function App() {
   // suspended and the panel was blank (caught live, 2026-09-30 — see L54).
   const gridVisibleKeys = new Set(view === "control" && screen === "grid" ? gridPanels.map((p) => p.key) : []);
   // Split Control: every pane's terminal is on screen (the Files rail still covers them).
-  const splitVisibleKeys = new Set(controlVisible && splitPanes.length > 1 ? splitPanes : []);
+  const splitVisibleKeys = new Set(controlVisible && splitPanes.length > 1 ? (zoomed ? [zoomed] : splitPanes) : []);
 
   // Bell: a log of agent events ("waiting for you", "finished"). Entries stay until the
   // operator clears them; the dot means "something new since you last opened the bell".
@@ -2689,6 +2705,9 @@ export default function App() {
             splitFocusKey={splitFocusKey}
             onFocusPane={focusPane}
             onClosePane={closeSplitPane}
+            splitZoomedKey={zoomed}
+            onToggleZoom={toggleZoom}
+            onUngroup={ungroupAgent}
             onSplit={addSplitPane}
             splitDisabled={!canSplit(splitGroups, activeTerminalKey)}
             openFiles={openFilesVM}

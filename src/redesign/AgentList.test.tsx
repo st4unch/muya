@@ -131,8 +131,22 @@ describe("AgentList", () => {
     pointerDrag(screen.getAllByText(c.name)[0].closest("button")!, header);
     expect(onGroupInto).toHaveBeenCalledWith(c.key, "g1");
     onGroupInto.mockClear();
-    pointerDrag(screen.getAllByText(a.name)[0].closest("button")!, header);
+    pointerDrag(document.querySelector<HTMLElement>(`[data-drop-key="${a.key}"]`)!, header);
     expect(onGroupInto).not.toHaveBeenCalled();
+  });
+
+  it("a split member dropped on empty list space leaves its split; an ungrouped one does nothing", () => {
+    const onUngroup = vi.fn();
+    const [a, b, c] = previewAgents;
+    render(
+      <AgentList agents={previewAgents} selectedKey={null} filter="all" onFilterChange={vi.fn()} onSelectAgent={vi.fn()} onNewAgent={vi.fn()} onReorder={vi.fn()} onUngroup={onUngroup} splitGroups={[{ id: "g1", keys: [a.key, b.key], collapsed: false }]} />,
+    );
+    const empty = document.querySelector<HTMLElement>('[data-drop-key="ungroup"]')!;
+    pointerDrag(document.querySelector<HTMLElement>(`[data-drop-key="${a.key}"]`)!, empty);
+    expect(onUngroup).toHaveBeenCalledWith(a.key);
+    onUngroup.mockClear();
+    pointerDrag(document.querySelector<HTMLElement>(`[data-drop-key="${c.key}"]`)!, empty);
+    expect(onUngroup).not.toHaveBeenCalled();
   });
 
   it("rows are not HTML5-draggable (the Tauri webview would show the file-drop hint)", () => {

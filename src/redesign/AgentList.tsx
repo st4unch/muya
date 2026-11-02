@@ -24,6 +24,8 @@ export interface AgentListProps {
   onGroup?: (fromKey: string, toKey: string) => void;
   /** A session dropped onto a split's header row: it joins that split. */
   onGroupInto?: (fromKey: string, groupId: string) => void;
+  /** A split member dropped on empty list space: it leaves its split. */
+  onUngroup?: (key: string) => void;
   /** Double-click a session to rename it in place (terminal, Claude, opencode alike). */
   onRenameAgent?: (key: string, name: string) => void;
   /** Right-click a session: the caller opens its actions menu at the pointer. */
@@ -67,13 +69,16 @@ export function dropStyle(mode: DropMode | null): CSSProperties {
   return {};
 }
 
+/** Drop-target key of the list's empty space. */
+const UNGROUP = "ungroup";
+
 const GROUPS: { status: AgentStatus; label: string; color: string }[] = [
   { status: "waiting", label: "WAITING FOR YOU", color: "var(--warning-label)" },
   { status: "working", label: "WORKING", color: "var(--success)" },
   { status: "idle", label: "IDLE", color: "var(--text-muted)" },
 ];
 
-export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelectAgent, onNewAgent, onReorder, onGroup, onGroupInto, width, resizeHandle, filesSection, filesFill = false, onRenameAgent, onAgentContextMenu, onCloseAgent, pinnedKeys, splitGroups = [], onToggleGroup, onSelectGroup }: AgentListProps) {
+export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelectAgent, onNewAgent, onReorder, onGroup, onGroupInto, onUngroup, width, resizeHandle, filesSection, filesFill = false, onRenameAgent, onAgentContextMenu, onCloseAgent, pinnedKeys, splitGroups = [], onToggleGroup, onSelectGroup }: AgentListProps) {
   const dragKeyRef = useRef<string | null>(null);
   const [dragOver, setDragOver] = useState<{ key: string; mode: DropMode } | null>(null);
   const overMode = (key: string): DropMode | null => (dragOver?.key === key ? dragOver.mode : null);
@@ -133,11 +138,13 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
   const ghostPos = useRef("");
   const [draggingKey, setDraggingKey] = useState<string | null>(null);
 
-  /** What the pointer is over: a row (reorder or group by height) or a split header. */
+  /** What the pointer is over: a row (reorder or group by height), a split header, or
+   *  the list's empty space ("ungroup": takes a split member out of its split). */
   function dropTargetAt(from: string, x: number, y: number): { key: string; mode: DropMode } | null {
     const el = document.elementFromPoint?.(x, y)?.closest<HTMLElement>("[data-drop-key]");
     const key = el?.dataset.dropKey;
     if (!el || !key) return null;
+    if (key === UNGROUP) return onUngroup && grouped.has(from) ? { key, mode: "reorder" } : null;
     if (key.startsWith("group:")) {
       const members = (el.dataset.dropMembers ?? "").split("\n");
       return onGroupInto && !members.includes(from) ? { key, mode: "group" } : null;
@@ -182,7 +189,8 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
           if (!drop) return;
           const t = dropTargetAt(key, x, y) ?? target;
           if (!t) return;
-          if (t.key.startsWith("group:")) onGroupInto?.(key, t.key.slice("group:".length));
+          if (t.key === UNGROUP) onUngroup?.(key);
+          else if (t.key.startsWith("group:")) onGroupInto?.(key, t.key.slice("group:".length));
           else if (t.mode === "group" && onGroup) onGroup(key, t.key);
           else onReorder(key, t.key);
         };
@@ -336,6 +344,7 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
       </div>
 
       <div
+        data-drop-key={UNGROUP}
         style={{
           flex: filesFill ? "0 1 auto" : "1 1 0",
           maxHeight: filesFill ? "50%" : undefined,
@@ -345,6 +354,7 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
           flexDirection: "column",
           gap: 4,
           minHeight: filesSection && !filesFill ? 120 : 0,
+          ...(dragOver?.key === UNGROUP ? { ...dropStyle("reorder"), borderRadius: 8 } : {}),
         }}
       >
         {groupsShown.length > 0 && (
@@ -395,6 +405,7 @@ export function AgentList({ agents, selectedKey, filter, onFilterChange, onSelec
           style={{ position: "fixed", left: 0, top: 0, transform: ghostPos.current, zIndex: 10000, pointerEvents: "none", padding: "4px 10px", borderRadius: 6, background: "var(--bg-panel)", border: "1px solid var(--border-selected)", color: "var(--text-strong)", fontSize: 12, maxWidth: 220, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", boxShadow: "var(--shadow-popover)" }}
         >
           {byKey.get(draggingKey)?.name ?? ""}
+          {dragOver?.key === UNGROUP ? " · out of split" : ""}
         </div>
       )}
 

@@ -214,6 +214,15 @@ export function MaximizeIcon({ size = 14, ...p }: IconProps) {
   );
 }
 
+/** Arrows pointing inwards: undo a maximize. */
+export function MinimizeIcon({ size = 14, ...p }: IconProps) {
+  return (
+    <svg {...base(size, 2, p)}>
+      <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" />
+    </svg>
+  );
+}
+
 export function CheckIcon({ size = 18, ...p }: IconProps) {
   return (
     <svg {...base(size, 2, p)}>

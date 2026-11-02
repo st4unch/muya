@@ -7,6 +7,7 @@
 
 import { useEffect, useRef } from "react";
 import { splitLayout } from "../lib/controlSplit";
+import { MaximizeIcon, MinimizeIcon } from "./icons";
 import type { AgentVM } from "./types";
 
 export interface SplitPaneVM {
@@ -20,6 +21,10 @@ export interface SplitAreaProps {
   focusedKey: string | null;
   onFocusPane: (key: string) => void;
   onClosePane: (key: string) => void;
+  /** The pane shown alone (focus), or null for the whole split. */
+  zoomedKey?: string | null;
+  /** A pane's focus / restore button. */
+  onToggleZoom?: (key: string) => void;
 }
 
 function dotColor(agent: AgentVM): string {
@@ -28,7 +33,11 @@ function dotColor(agent: AgentVM): string {
   return "var(--text-faint)";
 }
 
-export function SplitArea({ panes, focusedKey, onFocusPane, onClosePane }: SplitAreaProps) {
+export function SplitArea({ panes: allPanes, focusedKey, onFocusPane, onClosePane, zoomedKey = null, onToggleZoom }: SplitAreaProps) {
+  // Focus: only the zoomed pane is rendered, so the other terminals go back to the hidden
+  // pool (still running) and return to their panes on restore.
+  const zoomed = allPanes.some((p) => p.key === zoomedKey) ? zoomedKey : null;
+  const panes = zoomed ? allPanes.filter((p) => p.key === zoomed) : allPanes;
   const { cols, rows } = splitLayout(panes.length);
   // A click inside a pane makes it the focused one. Native listener, not React's
   // onMouseDown: each terminal is a portal of the app root that is only *moved* into its
@@ -103,6 +112,21 @@ export function SplitArea({ panes, focusedKey, onFocusPane, onClosePane }: Split
               >
                 {agent ? agent.name : "Starting…"}
               </span>
+              {onToggleZoom && (
+                <button
+                  type="button"
+                  aria-label={zoomed ? "Restore split" : `Focus pane ${agent?.name ?? ""}`.trim()}
+                  title={zoomed ? "Back to the split" : "Show only this pane (the others keep running)"}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleZoom(key);
+                  }}
+                  className="rd-icon-btn"
+                  style={{ width: 20, height: 20, border: "none", background: "transparent", color: zoomed ? "var(--accent)" : "var(--text-muted)", borderRadius: 5, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+                >
+                  {zoomed ? <MinimizeIcon size={12} /> : <MaximizeIcon size={12} />}
+                </button>
+              )}
               <button
                 type="button"
                 aria-label={`Close pane ${agent?.name ?? ""}`.trim()}
