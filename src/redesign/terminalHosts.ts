@@ -84,12 +84,25 @@ export function adoptHosts(hosts: Map<string, HTMLElement>, pool: HTMLElement, r
   for (const [key, host] of hosts) {
     const slot = slots.get(key);
     const target = slot ?? pool;
-    if (host.parentElement !== target) moveHost(host, target, !!slot);
+    const moving = host.parentElement !== target;
+    if (moving) moveHost(host, target, !!slot);
     if (slot) {
       adopted.add(key);
-      if (getComputedStyle(slot).position === "static") slot.style.position = "relative";
+      // Only on a move: this runs on every App render, and getComputedStyle forces a
+      // style pass over the whole page each time.
+      if (moving && getComputedStyle(slot).position === "static") slot.style.position = "relative";
       host.style.setProperty("--term-pad", slot.dataset.terminalPad ?? DEFAULT_TERM_PAD);
+      if (moving) fadeIn(host);
     }
   }
   return adopted;
+}
+
+/** Arrival on screen: a short fade instead of a hard cut. Opacity only (composited, no
+ *  layout), and none at all when macOS "Reduce motion" is on. */
+export const FADE_MS = 140;
+function fadeIn(el: HTMLElement): void {
+  const view = el.ownerDocument.defaultView;
+  if (!el.animate || view?.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+  el.animate([{ opacity: 0.55 }, { opacity: 1 }], { duration: FADE_MS, easing: "ease-out" });
 }

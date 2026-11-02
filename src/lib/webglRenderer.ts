@@ -13,6 +13,33 @@ export interface WebglLease {
   release(): void;
 }
 
+/** Hidden renderers kept alive so switching back is instant. Visible ones don't count;
+ *  visible (grid ≤ 9) + warm stays under WebKit's cap of 16 live contexts. */
+export const WARM_HIDDEN = 6;
+/** Parked (hidden but live) leases, most recent last. */
+const warm: WebglLease[] = [];
+
+/** Hidden tab: keep its renderer alive, suspending the oldest parked one past the cap.
+ *  Building a renderer (context, shaders, glyph atlas, full redraw) on every show was
+ *  the visible stutter when switching terminals. */
+export function parkWebgl(lease: WebglLease): void {
+  unparkWebgl(lease);
+  if (!lease.live) return;
+  warm.push(lease);
+  while (warm.length > WARM_HIDDEN) warm.shift()!.suspend();
+}
+
+/** Shown again (or gone): stop counting it as parked. */
+export function unparkWebgl(lease: WebglLease): void {
+  const i = warm.indexOf(lease);
+  if (i >= 0) warm.splice(i, 1);
+}
+
+/** Parked count, for tests. */
+export function parkedWebglCount(): number {
+  return warm.length;
+}
+
 /** Attach WebGL to a visible, laid-out `term`; null if WebGL is unavailable. `onLost`
  *  fires only for a loss we didn't cause (GPU reset, WebKit's 16-context eviction). */
 export function acquireWebgl(
@@ -43,26 +70,30 @@ export function acquireWebgl(
         gl.getExtension("WEBGL_lose_context")?.loseContext();
     }
   };
-  addon.onContextLoss(() => {
-    if (state !== "live") return;
-    state = "released";
-    addon.dispose();
-    onLost();
-  });
-  return {
+  const lease: WebglLease = {
     get live() {
       return state === "live";
     },
     suspend() {
+      unparkWebgl(lease);
       if (state !== "live") return;
       state = "suspended";
       loseContexts();
     },
     release() {
+      unparkWebgl(lease);
       if (state === "released") return;
       state = "released";
       addon.dispose();
       loseContexts();
     },
   };
+  addon.onContextLoss(() => {
+    unparkWebgl(lease);
+    if (state !== "live") return;
+    state = "released";
+    addon.dispose();
+    onLost();
+  });
+  return lease;
 }

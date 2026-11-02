@@ -63,7 +63,13 @@ vi.mock("../lib/webglRenderer", () => ({
     lostHandlers.push(onLost);
     return lease;
   }),
+  parkWebgl: vi.fn((l: Lease) => parked.push(l)),
+  unparkWebgl: vi.fn((l: Lease) => {
+    const i = parked.indexOf(l);
+    if (i >= 0) parked.splice(i, 1);
+  }),
 }));
+const parked: Lease[] = [];
 
 import Terminal, { mouseTrackingChange } from "./Terminal";
 import { LETTER_DEFAULT, LINE_DEFAULT, setTerminalPrefs } from "../lib/terminalPrefs";
@@ -86,6 +92,7 @@ const frame = () =>
 describe("Terminal: WebGL lease follows visibility", () => {
   beforeEach(() => {
     leases.length = 0;
+    parked.length = 0;
     lostHandlers.length = 0;
     focus.mockClear();
   });
@@ -97,14 +104,27 @@ describe("Terminal: WebGL lease follows visibility", () => {
     expect(leases).toHaveLength(0);
   });
 
-  it("suspends on hide (renderer kept) and takes a fresh context on show", async () => {
+  it("parks its renderer on hide and reuses it on show — no new context per switch", async () => {
     const { rerender } = render(<Terminal active />);
     await waitFor(() => expect(leases).toHaveLength(1));
 
     rerender(<Terminal active={false} />);
-    expect(leases[0].suspend).toHaveBeenCalledTimes(1);
+    expect(parked).toEqual([leases[0]]);
+    expect(leases[0].suspend).not.toHaveBeenCalled();
     expect(leases[0].release).not.toHaveBeenCalled();
 
+    rerender(<Terminal active />);
+    expect(parked).toEqual([]);
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    expect(leases).toHaveLength(1);
+    expect(leases[0].release).not.toHaveBeenCalled();
+  });
+
+  it("takes a fresh context on show when the pool suspended its parked renderer", async () => {
+    const { rerender } = render(<Terminal active />);
+    await waitFor(() => expect(leases).toHaveLength(1));
+    rerender(<Terminal active={false} />);
+    leases[0].suspend(); // evicted: more than WARM_HIDDEN tabs were parked after it
     rerender(<Terminal active />);
     await waitFor(() => expect(leases).toHaveLength(2));
     expect(leases[0].release).toHaveBeenCalledTimes(1);

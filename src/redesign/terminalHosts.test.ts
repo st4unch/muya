@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { adoptHosts, createHost, DEFAULT_TERM_PAD } from "./terminalHosts";
 
 function setup() {
@@ -96,5 +96,40 @@ describe("adoptHosts", () => {
     expect(host.parentElement).toBe(s2);
     expect(document.activeElement).toBe(input);
     expect(events).toEqual(["blur", "focus"]);
+  });
+});
+
+describe("adoptHosts fade", () => {
+  it("fades a host in when it moves into a slot, not on later renders or into the pool", () => {
+    const { pool, screen } = setup();
+    const host = createHost("a");
+    const animate = vi.fn();
+    host.animate = animate as never;
+    const hosts = new Map([["a", host]]);
+    const s = slot("a");
+    screen.append(s);
+    adoptHosts(hosts, pool);
+    expect(animate).toHaveBeenCalledTimes(1);
+    adoptHosts(hosts, pool); // same slot, next render
+    expect(animate).toHaveBeenCalledTimes(1);
+    s.remove();
+    adoptHosts(hosts, pool); // back to the pool: no fade
+    expect(animate).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fade when Reduce motion is on", () => {
+    const { pool, screen } = setup();
+    const host = createHost("a");
+    const animate = vi.fn();
+    host.animate = animate as never;
+    const mm = window.matchMedia;
+    window.matchMedia = ((q: string) => ({ matches: q.includes("reduce") })) as never;
+    try {
+      screen.append(slot("a"));
+      adoptHosts(new Map([["a", host]]), pool);
+      expect(animate).not.toHaveBeenCalled();
+    } finally {
+      window.matchMedia = mm;
+    }
   });
 });

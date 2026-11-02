@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
-import { acquireWebgl, type WebglLease } from "../lib/webglRenderer";
+import { acquireWebgl, parkWebgl, unparkWebgl, type WebglLease } from "../lib/webglRenderer";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { X, ChevronUp, ChevronDown } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
@@ -388,13 +388,7 @@ function Terminal({
     // very first fit above can use a fallback-font cell size and mis-measure cols/rows.
     // Refit once the font is actually ready — a no-op if it already was.
     void document.fonts?.ready.then(() => {
-      if (disposed) return;
-      try {
-        fit.fit();
-        if (ptyId) void invoke("pty_resize", { id: ptyId, cols: term.cols, rows: term.rows });
-      } catch {
-        /* element unmounted or hidden by the time fonts resolved */
-      }
+      if (!disposed) syncSize();
     });
 
     // Reset keystroke buffer for this new PTY session.
@@ -522,15 +516,27 @@ function Terminal({
     // element is hidden (0×0) — fitting then would shrink the PTY to ~0 and corrupt a
     // full-screen TUI. Shared by the ResizeObserver, the post-spawn sync, and (via
     // syncRef) the `active` effect when a hidden tab is re-shown.
+    // Size last sent to the PTY: each resize makes Claude redraw its whole screen.
+    let sentSize = "";
+    let shown = false;
     const syncSize = () => {
       if (el.offsetWidth === 0 || el.offsetHeight === 0) return;
+      // Parked in the hidden pool: keep the size it had on screen. Fitting to the pool
+      // resized (and redrew) the terminal twice on every switch. A terminal that was
+      // never on screen still takes the pool's size, so it starts at a sane one.
+      const parked = el.closest("[data-terminal-pool]") !== null;
+      if (parked && shown) return;
+      if (!parked) shown = true;
       try {
         fit.fit();
       } catch {
         return;
       }
-      if (ptyId)
+      const size = `${term.cols}x${term.rows}`;
+      if (ptyId && size !== sentSize) {
+        sentSize = size;
         void invoke("pty_resize", { id: ptyId, cols: term.cols, rows: term.rows });
+      }
     };
     syncRef.current = syncSize;
 
@@ -639,14 +645,16 @@ function Terminal({
     };
   }, [cwd, sshServerId]);
 
-  // Show: fresh GPU renderer first (it measures the laid-out element), then fit — a
-  // resize while hidden never reached the PTY. Hide: free the GPU context.
+  // Show: reuse the parked GPU renderer, or build a fresh one (it measures the laid-out
+  // element), then fit — a resize while hidden never reached the PTY. Hide: park the
+  // renderer; the pool suspends the oldest parked ones (parkWebgl).
   useEffect(() => {
     if (!active) {
-      webglRef.current?.suspend();
+      if (webglRef.current) parkWebgl(webglRef.current);
       gpuLossesRef.current = 0;
       return;
     }
+    if (webglRef.current) unparkWebgl(webglRef.current);
     // Focus now, not in the rAF: keys typed during the renderer swap would be lost.
     // Only the SELECTED terminal (the one given a focusToken): when a split or the grid
     // shows several at once, each one focusing itself left the keyboard in whichever

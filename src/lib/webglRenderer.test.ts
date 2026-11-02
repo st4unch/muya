@@ -22,7 +22,7 @@ vi.mock("@xterm/addon-webgl", () => ({
   },
 }));
 
-import { acquireWebgl } from "./webglRenderer";
+import { acquireWebgl, parkWebgl, parkedWebglCount, unparkWebgl, WARM_HIDDEN } from "./webglRenderer";
 
 /** A term whose loadAddon appends one WebGL canvas, like the real addon does. */
 function fakeTerm() {
@@ -110,5 +110,55 @@ describe("acquireWebgl lease", () => {
     addons[0].fireLoss(); // xterm fires this ~3s after the context goes
     expect(onLost).not.toHaveBeenCalled();
     expect(addons[0].dispose).not.toHaveBeenCalled();
+  });
+});
+
+describe("parked renderers (warm pool)", () => {
+  beforeEach(() => {
+    addons.length = 0;
+    loadThrows = false;
+  });
+
+  it("keeps the last WARM_HIDDEN hidden renderers live and suspends the oldest past it", () => {
+    const leases = Array.from({ length: WARM_HIDDEN + 1 }, () => {
+      const { term, lose } = fakeTerm();
+      return { lease: acquireWebgl(term, () => {})!, lose };
+    });
+    for (const { lease } of leases) parkWebgl(lease);
+    expect(parkedWebglCount()).toBe(WARM_HIDDEN);
+    expect(leases[0].lease.live).toBe(false);
+    expect(leases[0].lose).toHaveBeenCalledTimes(1);
+    for (const { lease, lose } of leases.slice(1)) {
+      expect(lease.live).toBe(true);
+      expect(lose).not.toHaveBeenCalled();
+    }
+    for (const { lease } of leases) lease.release();
+    expect(parkedWebglCount()).toBe(0);
+  });
+
+  it("unpark on show and release on unmount take a lease out of the pool", () => {
+    const a = acquireWebgl(fakeTerm().term, () => {})!;
+    const b = acquireWebgl(fakeTerm().term, () => {})!;
+    parkWebgl(a);
+    parkWebgl(b);
+    expect(parkedWebglCount()).toBe(2);
+    unparkWebgl(a);
+    expect(parkedWebglCount()).toBe(1);
+    expect(a.live).toBe(true);
+    b.release();
+    expect(parkedWebglCount()).toBe(0);
+    a.release();
+  });
+
+  it("parking twice counts once; a suspended lease is not parked", () => {
+    const a = acquireWebgl(fakeTerm().term, () => {})!;
+    parkWebgl(a);
+    parkWebgl(a);
+    expect(parkedWebglCount()).toBe(1);
+    a.suspend();
+    expect(parkedWebglCount()).toBe(0);
+    parkWebgl(a);
+    expect(parkedWebglCount()).toBe(0);
+    a.release();
   });
 });

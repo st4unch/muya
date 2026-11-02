@@ -2519,7 +2519,7 @@ export default function App() {
     </div>
   );
 
-  const pageClass = (v: View) => `flex-1 flex overflow-hidden ${view !== v ? "hidden" : ""}`;
+  const pageClass = (v: View) => `flex-1 flex overflow-hidden ${view !== v ? "hidden" : "muya-page-in"}`;
 
   return (
     <div id="vs-ctrl-plane" style={{ width: "100vw", height: "100vh", overflow: "hidden", background: "var(--bg-app)", color: "var(--text)" }}>
@@ -2537,7 +2537,7 @@ export default function App() {
       )}
 
       {/* The terminal pool: hosts parked here while no screen shows them. */}
-      <div ref={poolRef} aria-hidden style={POOL_STYLE} />
+      <div ref={poolRef} aria-hidden data-terminal-pool="" style={POOL_STYLE} />
       {openTerminals.map((tm) =>
         createPortal(
           tm.kind === "terminal" ? (
