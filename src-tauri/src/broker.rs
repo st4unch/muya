@@ -1093,7 +1093,7 @@ pub(crate) fn resolve_target(target: &str, sessions: &[(String, String)]) -> Tar
 
 /// Running sessions as `(id, name)` pairs plus the full records, for the tools below.
 pub(crate) fn running_sessions() -> Result<Vec<crate::agents::AgentSession>, String> {
-    let all = crate::agents::list_agent_sessions_sync(Some(true))?;
+    let all = crate::agents::list_agent_sessions_fresh(Some(true))?;
     Ok(all
         .into_iter()
         .filter(|s| s.status != "stopped" && !s.id.is_empty())

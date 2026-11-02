@@ -342,7 +342,9 @@ function Terminal({
         } catch {
           /* buffer read raced a dispose */
         }
-      }, 300);
+        // Background tabs still need their status (working / needs a decision) for the
+        // agent list, but not 3× a second: 13 busy sessions parsed their screens nonstop.
+      }, activeRef.current ? 300 : 1000);
     };
 
     // Claude Code asks once per session before loading Muya's channel (CHANNEL_FLAG in

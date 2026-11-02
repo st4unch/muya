@@ -49,10 +49,17 @@ function useTouchedFiles(sessionId?: string, cwd?: string) {
     setError(undefined);
     if (!sessionId) return;
     let alive = true;
-    const load = () =>
+    const load = () => {
+      if (document.hidden) return; // window in the background: nobody sees the list
       invoke<TouchedFile[]>("session_touched_files", { cwd: cwd ?? "", sessionId })
-        .then((f) => alive && (setFiles(f), setError(undefined)))
+        .then((f) => {
+          if (!alive) return;
+          // Unchanged list (the usual case) → keep the old array: no re-render.
+          setFiles((prev) => (JSON.stringify(prev) === JSON.stringify(f) ? prev : f));
+          setError(undefined);
+        })
         .catch((e) => alive && setError(String(e)));
+    };
     load();
     const t = setInterval(load, POLL_MS);
     return () => {

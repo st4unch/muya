@@ -40,7 +40,7 @@ struct RawAgent {
 }
 
 /// Mirrors the frontend `AgentSession` TypeScript interface (camelCase via serde).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSession {
     pub id: String,
@@ -414,9 +414,42 @@ pub async fn list_agent_sessions(include_all: Option<bool>) -> Result<Vec<AgentS
         .map_err(|e| format!("agents task join failed: {e}"))?
 }
 
+/// How long one `claude agents --json` answer is reused. The UI list, the per-tab
+/// session probe and the MCP broker all ask within seconds of each other; each call
+/// is a Node start (~0.25 s CPU), which was most of Muya's idle CPU.
+const AGENTS_TTL: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Cached answers, `[live, all]`. The lock is held while a fetch runs, so callers
+/// arriving together wait for that one subprocess instead of starting their own.
+/// Errors are not cached.
+static AGENTS_CACHE: Mutex<[Option<(Instant, Vec<AgentSession>)>; 2]> = Mutex::new([None, None]);
+
 pub(crate) fn list_agent_sessions_sync(
     include_all: Option<bool>,
 ) -> Result<Vec<AgentSession>, String> {
+    let slot = usize::from(include_all.unwrap_or(false));
+    let mut cache = AGENTS_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, list)) = &cache[slot] {
+        if at.elapsed() < AGENTS_TTL {
+            return Ok(list.clone());
+        }
+    }
+    let list = fetch_agent_sessions(include_all)?;
+    cache[slot] = Some((Instant::now(), list.clone()));
+    Ok(list)
+}
+
+/// Like `list_agent_sessions_sync`, but always asks `claude` and refreshes the cache.
+/// For MCP tools (send/close/list session): a session opened a second ago must be found.
+pub(crate) fn list_agent_sessions_fresh(include_all: Option<bool>) -> Result<Vec<AgentSession>, String> {
+    let slot = usize::from(include_all.unwrap_or(false));
+    let mut cache = AGENTS_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let list = fetch_agent_sessions(include_all)?;
+    cache[slot] = Some((Instant::now(), list.clone()));
+    Ok(list)
+}
+
+fn fetch_agent_sessions(include_all: Option<bool>) -> Result<Vec<AgentSession>, String> {
     let mut cmd = Command::new(claude_bin());
     cmd.args(["agents", "--json"]);
     if include_all.unwrap_or(false) {
@@ -651,6 +684,24 @@ mod tests {
         assert_eq!(s[0].name, "proj (aaaa)");
         assert_eq!(s[1].name, "proj (bbbb)");
         assert_eq!(s[2].name, "unique"); // no collision → untouched
+    }
+
+    /// Live: a second ask within the TTL is served from the cache — no second `claude` start.
+    #[test]
+    #[ignore = "machine-specific: needs live claude CLI"]
+    fn live_second_call_within_ttl_is_cached() {
+        let t0 = Instant::now();
+        let first = list_agent_sessions_sync(Some(true)).expect("first call");
+        let cold = t0.elapsed();
+        let t1 = Instant::now();
+        let second = list_agent_sessions_sync(Some(true)).expect("second call");
+        let warm = t1.elapsed();
+        println!("cold {cold:?}, warm {warm:?}");
+        assert_eq!(first.len(), second.len());
+        assert!(warm < std::time::Duration::from_millis(5), "warm call took {warm:?}");
+        let t2 = Instant::now();
+        list_agent_sessions_fresh(Some(true)).expect("fresh call");
+        assert!(t2.elapsed() > warm, "fresh call must ask claude again");
     }
 
     /// Live smoke test against the local `claude` install — prints mapped sessions.

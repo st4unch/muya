@@ -72,7 +72,10 @@ export function useAgentModel(args: {
   const [transcriptTimes, setTranscriptTimes] = useState<Record<string, number>>({});
 
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 30_000);
+    // Hidden window: skip the tick (it re-renders App); the next visible one catches up.
+    const t = setInterval(() => {
+      if (!document.hidden) setNow(Date.now());
+    }, 30_000);
     return () => clearInterval(t);
   }, []);
 

@@ -6,6 +6,11 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **Less CPU while Muya sits idle.** Muya asked the `claude` CLI for the session list from several places on separate timers, each ask a new process taking up to a second and a half. The answer is now shared for 5 seconds and the file-tree list asks every 20 seconds instead of 8. Tools that agents call (list, send to, close a session) still always get a fresh list.
+- Background session tabs check their screen for "working / needs a decision" once a second instead of three times; the open tab is unchanged.
+- Fewer needless redraws: the touched-files panel, branch list and file-collision check no longer redraw the window when nothing changed, and the touched-files panel stops polling while the window is hidden.
+
 ## [4.1.20] - 2026-11-02
 
 ### Added

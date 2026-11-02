@@ -333,10 +333,11 @@ export default function App() {
         .catch((e) => console.warn("[apex] list_agent_sessions failed:", e));
     };
     load();
-    // 8s (was 3s): `list_agent_sessions` spawns a `claude` subprocess each call; 3s
-    // was needless churn. The subprocess now also runs on the blocking pool so it
-    // never starves the tokio worker pool that fs commands share (L31).
-    const t = setInterval(load, 8000);
+    // 20s (was 8s, before that 3s): `list_agent_sessions` spawns a `claude` subprocess
+    // (~0.25s CPU) and this list only feeds file-tree badges and worktree branches —
+    // live per-tab status comes from the session probe and the screen parse. The
+    // subprocess runs on the blocking pool so it never starves fs commands (L31).
+    const t = setInterval(load, 20000);
     return () => {
       active = false;
       clearInterval(t);
@@ -1598,7 +1599,10 @@ export default function App() {
       for (const repo of repoList) {
         invoke<GitBranchState[]>("list_branches", { repo })
           .then((b) => {
-            if (active) setBranchMap((prev) => ({ ...prev, [repo]: b }));
+            // Same branches (the usual case) → keep the old map: no app re-render.
+            if (active)
+              setBranchMap((prev) =>
+                JSON.stringify(prev[repo]) === JSON.stringify(b) ? prev : { ...prev, [repo]: b });
           })
           .catch(() => {});
       }
@@ -1632,7 +1636,8 @@ export default function App() {
         "pm_collisions",
         { paths: trackedPaths }
       )
-        .then(setCollisionReport)
+        // Same report (the usual case) → keep the old object: no app re-render.
+        .then((r) => setCollisionReport((prev) => (JSON.stringify(prev) === JSON.stringify(r) ? prev : r)))
         .catch(() => {});
     };
     load();
