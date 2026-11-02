@@ -43,7 +43,7 @@ ApexMissionControl-*.zip
 *-arm64.app.tar.gz.sig
 
 # Local release scripts (build/sign/notarize/publish) — machine-local, not committed
-scripts/
+scripts/*
 
 # Tauri externalBin staged sidecars (built by build-sign-notarize.sh)
 src-tauri/binaries/
@@ -63,3 +63,6 @@ src-tauri/doc/
 .claude/agent-memory/
 docs/handoff-*.md
 docs/security-audit-report-*.md
+
+# Load test harness (committed, unlike the release scripts above)
+!scripts/loadtest/

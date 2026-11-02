@@ -32,6 +32,10 @@ export type TermTheme = "dark" | "light";
  * in `cwd`; respawns when `cwd` changes. From here the user can run `claude`,
  * `claude attach <id>`, `claude --resume <id>`, git, etc.
  */
+/** How long a hidden tab's output is held before one write (see writeOutput). */
+export const HIDDEN_FLUSH_MS = 150;
+/** Held output above this is written at once, so a build log can't pile up. */
+const HIDDEN_FLUSH_BYTES = 256 * 1024;
 const MOUSE_SEQ = [0x1b, 0x5b, 0x3f, 0x31, 0x30, 0x30]; // ESC [ ? 1 0 0
 
 /**
@@ -119,6 +123,8 @@ function Terminal({
   // Set by the lifecycle effect to its `syncSize` (fit xterm + push size to the PTY).
   // The `active` effect calls it on show without reaching into the other effect's scope.
   const syncRef = useRef<() => void>(() => {});
+  // Set by the lifecycle effect: writes output held back while this tab was hidden.
+  const flushRef = useRef<() => void>(() => {});
   // WebGL renderer lease — live while visible, suspended while hidden (acquireWebgl).
   const webglRef = useRef<WebglLease | null>(null);
   const activeRef = useRef(active);
@@ -540,6 +546,43 @@ function Terminal({
     };
     syncRef.current = syncSize;
 
+    // Output of a hidden tab is held and written in one go every HIDDEN_FLUSH_MS. WebKit
+    // pays per term.write, not per byte: 24 hidden terminals at 50 small writes a
+    // second dropped the whole window to 40 fps, the same bytes in 5 writes a second
+    // kept 69 (scripts/loadtest). The visible tab still writes every chunk at once.
+    let held: Uint8Array[] = [];
+    let heldBytes = 0;
+    let heldTimer: number | undefined;
+    const flushHeld = () => {
+      if (heldTimer !== undefined) window.clearTimeout(heldTimer);
+      heldTimer = undefined;
+      if (!held.length || disposed) return;
+      let out = held[0];
+      if (held.length > 1) {
+        out = new Uint8Array(heldBytes);
+        let at = 0;
+        for (const b of held) {
+          out.set(b, at);
+          at += b.length;
+        }
+      }
+      held = [];
+      heldBytes = 0;
+      term.write(out);
+    };
+    flushRef.current = flushHeld;
+    const writeOutput = (bytes: Uint8Array) => {
+      if (activeRef.current) {
+        flushHeld();
+        term.write(bytes);
+        return;
+      }
+      held.push(bytes);
+      heldBytes += bytes.length;
+      if (heldBytes >= HIDDEN_FLUSH_BYTES) flushHeld();
+      else if (heldTimer === undefined) heldTimer = window.setTimeout(flushHeld, HIDDEN_FLUSH_MS);
+    };
+
     const channel = new Channel<PtyMsg>();
     channel.onmessage = (msg) => {
       // Output can still arrive after the component unmounts (StrictMode double-mount
@@ -552,11 +595,12 @@ function Terminal({
           const bytes = new Uint8Array(msg);
           const mode = mouseTrackingChange(bytes);
           if (mode !== undefined) mouseTrackingActive = mode;
-          term.write(bytes);
+          writeOutput(bytes);
           scheduleScreenParse();
           checkChannelWarning(bytes);
         } else if (msg && msg.type === "exit") {
           mouseTrackingActive = false;
+          flushHeld();
           term.write("\r\n\x1b[2m[process exited — close or reselect a session]\x1b[0m\r\n");
         }
       } catch {
@@ -630,6 +674,8 @@ function Terminal({
     return () => {
       disposed = true;
       if (screenTimer !== undefined) window.clearTimeout(screenTimer);
+      if (heldTimer !== undefined) window.clearTimeout(heldTimer);
+      flushRef.current = () => {};
       cancelAnimationFrame(rendererRaf);
       syncRef.current = () => {};
       webglRef.current?.release();
@@ -655,6 +701,7 @@ function Terminal({
       return;
     }
     if (webglRef.current) unparkWebgl(webglRef.current);
+    flushRef.current();
     // Focus now, not in the rAF: keys typed during the renderer swap would be lost.
     // Only the SELECTED terminal (the one given a focusToken): when a split or the grid
     // shows several at once, each one focusing itself left the keyboard in whichever

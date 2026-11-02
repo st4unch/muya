@@ -203,18 +203,26 @@ const writes: { id: string; tab?: string; data: string }[] = [];
   /** Feed raw text into a tab's terminal as PTY output (Playwright checks of screen handling). */
   feed: (tabKey: string, chunks: string[]) => {
     const id = [...ptyTabById.entries()].reverse().find(([, t]) => t.key === tabKey)?.[0];
-    const channel = id ? ptyChannelById.get(id) : undefined;
-    const internals = (window as unknown as { __TAURI_INTERNALS__?: { runCallback?: (id: number, data: unknown) => void } }).__TAURI_INTERNALS__;
-    const cid = (channel as { id?: number } | undefined)?.id;
-    if (!internals?.runCallback || typeof cid !== "number") return null;
-    for (const c of chunks) {
-      const index = channelNextIndex.get(cid) ?? 0;
-      channelNextIndex.set(cid, index + 1);
-      internals.runCallback(cid, { index, message: new TextEncoder().encode(c).buffer });
-    }
-    return id;
+    return id && feedPty(id, chunks) ? id : null;
   },
+  /** Every live mock pty id (load tests flood all of them). */
+  ptyIds: () => [...ptyChannelById.keys()],
+  /** Feed raw text into one pty by id; false when it has no channel. */
+  feedPty: (id: string, chunks: string[]) => feedPty(id, chunks),
 };
+
+function feedPty(id: string, chunks: string[]): boolean {
+  const channel = ptyChannelById.get(id);
+  const internals = (window as unknown as { __TAURI_INTERNALS__?: { runCallback?: (id: number, data: unknown) => void } }).__TAURI_INTERNALS__;
+  const cid = (channel as { id?: number } | undefined)?.id;
+  if (!internals?.runCallback || typeof cid !== "number") return false;
+  for (const c of chunks) {
+    const index = channelNextIndex.get(cid) ?? 0;
+    channelNextIndex.set(cid, index + 1);
+    internals.runCallback(cid, { index, message: new TextEncoder().encode(c).buffer });
+  }
+  return true;
+}
 
 function spawnMockPty(payload: Record<string, unknown> | undefined): string {
   // Terminals mount in tab order, so the Nth spawn belongs to tab N (modulo, because

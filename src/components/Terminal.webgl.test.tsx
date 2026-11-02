@@ -5,6 +5,7 @@ import { act, render, waitFor } from "@testing-library/react";
 
 // xterm itself is irrelevant here: any method is a no-op returning a disposable.
 const focus = vi.fn();
+const termWrites: (string | Uint8Array)[] = [];
 const xterms: { options: Record<string, unknown> }[] = [];
 vi.mock("@xterm/xterm", () => ({
   Terminal: class {
@@ -14,6 +15,9 @@ vi.mock("@xterm/xterm", () => ({
     options: Record<string, unknown> = {};
     buffer = { active: { getLine: () => undefined } };
     focus = focus;
+    write = (d: string | Uint8Array) => {
+      termWrites.push(d);
+    };
     constructor(opts: Record<string, unknown> = {}) {
       this.options = { ...opts };
       xterms.push(this);
@@ -37,14 +41,17 @@ vi.mock("@xterm/addon-search", () => ({ SearchAddon: class {} }));
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(async (cmd: string) => (cmd === "pty_spawn" ? "pty-1" : null)),
   Channel: class {
-    onmessage = () => {};
+    onmessage: (m: unknown) => void = () => {};
+    constructor() {
+      channels.push(this);
+    }
   },
 }));
 
 type Lease = {
   live: boolean;
-  suspend: ReturnType<typeof vi.fn>;
-  release: ReturnType<typeof vi.fn>;
+  suspend: ReturnType<typeof vi.fn<() => void>>;
+  release: ReturnType<typeof vi.fn<() => void>>;
 };
 const leases: Lease[] = [];
 const lostHandlers: (() => void)[] = [];
@@ -71,7 +78,8 @@ vi.mock("../lib/webglRenderer", () => ({
 }));
 const parked: Lease[] = [];
 
-import Terminal, { mouseTrackingChange } from "./Terminal";
+const channels: { onmessage: (m: unknown) => void }[] = [];
+import Terminal, { HIDDEN_FLUSH_MS, mouseTrackingChange } from "./Terminal";
 import { LETTER_DEFAULT, LINE_DEFAULT, setTerminalPrefs } from "../lib/terminalPrefs";
 
 // jsdom has no ResizeObserver; the terminal only uses it to refit on resize.
@@ -193,6 +201,36 @@ describe("Terminal: WebGL lease follows visibility", () => {
     await waitFor(() => expect(leases).toHaveLength(1));
     unmount();
     expect(leases[0].release).toHaveBeenCalled();
+  });
+});
+
+// Load test finding: WebKit pays per term.write, so a hidden tab's output is held and
+// written in one go; the visible tab still writes each chunk at once.
+describe("Terminal: output of a hidden tab is batched", () => {
+  const chunk = (s: string) => {
+    const buf = new ArrayBuffer(s.length); // ASCII only; same realm as Terminal's instanceof
+    new Uint8Array(buf).set([...s].map((c) => c.charCodeAt(0)));
+    return buf;
+  };
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  it("holds hidden output, writes it once, and flushes on show", async () => {
+    channels.length = 0;
+    const { rerender } = render(<Terminal active={false} />);
+    const ch = channels[channels.length - 1];
+    termWrites.length = 0;
+    ch.onmessage(chunk("ab"));
+    ch.onmessage(chunk("cd"));
+    expect(termWrites).toHaveLength(0);
+    await wait(HIDDEN_FLUSH_MS + 50);
+    expect(termWrites).toHaveLength(1);
+    expect(String.fromCharCode(...(termWrites[0] as Uint8Array))).toBe("abcd");
+
+    ch.onmessage(chunk("ef"));
+    rerender(<Terminal active />);
+    expect(termWrites).toHaveLength(2); // shown: held output is written right away
+    ch.onmessage(chunk("gh"));
+    expect(termWrites).toHaveLength(3); // visible: no holding
   });
 });
 
