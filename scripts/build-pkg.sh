@@ -162,6 +162,13 @@ productbuild --distribution "$DIST" --package-path "$WORK" \
 ok "installer signed (asks: all users / only me)"
 
 # --- notarize -----------------------------------------------------------------
+# Same fallback as build-sign-notarize.sh: with a locked keychain (screen locked)
+# the profile is unreadable, so read the raw API key's path and IDs from notary.env.
+NOTARY_ENV="${MUYA_NOTARY_ENV:-$HOME/.config/muya-release/notary.env}"
+if [ -z "${NOTARY_KEY:-}" ] && [ -f "$NOTARY_ENV" ]; then
+  # shellcheck disable=SC1090
+  . "$NOTARY_ENV"
+fi
 NOTARY_ARGS=()
 if xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1; then
   NOTARY_ARGS=(--keychain-profile "$PROFILE")
