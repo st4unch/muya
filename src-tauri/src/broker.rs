@@ -2512,6 +2512,26 @@ mod tests {
         assert!(usage_from_status(&[], None, now).unwrap_err().contains("no usage data"));
     }
 
+    /// Read-only: run the parser over a REAL status dir (`MUYA_REAL_STATUS_DIR`).
+    #[test]
+    #[ignore = "needs MUYA_REAL_STATUS_DIR pointing at a live muya-status-<pid> dir"]
+    fn live_usage_from_a_real_status_dir() {
+        let dir = std::env::var("MUYA_REAL_STATUS_DIR").expect("MUYA_REAL_STATUS_DIR");
+        let files: Vec<(Value, u64)> = std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".json"))
+            .filter_map(|e| {
+                let m = e.metadata().ok()?.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
+                Some((serde_json::from_slice(&std::fs::read(e.path()).ok()?).ok()?, m))
+            })
+            .collect();
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let v = usage_from_status(&files, None, now).unwrap();
+        println!("LIVE_USAGE {}", serde_json::to_string_pretty(&v).unwrap());
+        assert!(v["windows"].as_object().is_some_and(|w| !w.is_empty()));
+    }
+
     #[test]
     fn open_session_defaults_to_claude_and_rejects_an_unknown_agent() {
         // Absent ⇒ claude: every caller written before opencode existed must keep
