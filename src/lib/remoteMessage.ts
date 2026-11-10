@@ -31,10 +31,10 @@ export const SUBMIT_DELAY_MS = 150;
 
 /** What `muya://deliver-message` types into a session's terminal, in order — the
  *  fallback for sessions that did not load Muya's channel. `raw` (answering a prompt
- *  menu) goes verbatim and is never submitted; a chat message — from another session
+ *  menu) goes verbatim and is not submitted unless `submit` (compact_session's /compact line); a chat message — from another session
  *  or a bridge peer — is typed, then submitted. */
-export function deliveryWrites(p: { text: string; from?: string; raw?: boolean; remote?: RemoteSender }): string[] {
-  if (p.raw) return [p.text];
+export function deliveryWrites(p: { text: string; from?: string; raw?: boolean; submit?: boolean; remote?: RemoteSender }): string[] {
+  if (p.raw) return p.submit ? [p.text, SUBMIT] : [p.text];
   const line = p.remote ? remoteMessageLine(p.remote, p.text) : `[message${p.from ? ` from ${p.from}` : ""} via Muya] ${p.text}`;
   return [line, SUBMIT];
 }

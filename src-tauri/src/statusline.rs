@@ -358,6 +358,35 @@ pub fn statusline_settings_path() -> Option<String> {
         .then(|| d.join("settings.json").to_string_lossy().into_owned())
 }
 
+/// Every captured status JSON with its file mtime (unix secs) — for the `usage`
+/// MCP tool (PRD `mcp-compact-session` §usage). Skips anything that is not a plain
+/// small `pty-N.json` file.
+pub(crate) fn all_status() -> Vec<(Value, u64)> {
+    let Some(d) = dir() else { return vec![] };
+    let Ok(rd) = fs::read_dir(d) else { return vec![] };
+    rd.flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let id = name.strip_suffix(".json")?;
+            if !valid_pty_id(id) {
+                return None;
+            }
+            let meta = fs::symlink_metadata(e.path()).ok()?;
+            if !meta.is_file() || meta.len() > MAX_JSON_BYTES {
+                return None;
+            }
+            let mtime = meta
+                .modified()
+                .ok()?
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()?
+                .as_secs();
+            let v: Value = serde_json::from_slice(&fs::read(e.path()).ok()?).ok()?;
+            Some((v, mtime))
+        })
+        .collect()
+}
+
 /// The latest status JSON Claude produced in this PTY, or None.
 #[tauri::command]
 pub fn statusline_get(pty_id: String) -> Option<Value> {

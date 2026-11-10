@@ -1239,15 +1239,15 @@ export default function App() {
   // for answering an interactive screen (a permission prompt, trust-folder dialog)
   // where any extra characters would be typed into the menu itself.
   useEffect(() => {
-    const un = listen<{ sessionId: string; text: string; from?: string; raw?: boolean; remote?: RemoteSender }>(
+    const un = listen<{ sessionId: string; text: string; from?: string; raw?: boolean; submit?: boolean; remote?: RemoteSender }>(
       "muya://deliver-message",
       (e) => {
-        const { sessionId, text, from, raw, remote } = e.payload;
+        const { sessionId, text, from, raw, submit, remote } = e.payload;
         const key = sessionIdToKeyRef.current[sessionId];
         const ptyId = key ? terminalPtyIdsRef.current[key] : undefined;
         if (!ptyId) return; // target tab not open here
         // Only sessions without Muya's channel get here (channel delivery happens in Rust).
-        const [first, ...rest] = deliveryWrites({ text, from, raw, remote });
+        const [first, ...rest] = deliveryWrites({ text, from, raw, submit, remote });
         void invoke("pty_write", { id: ptyId, data: first }).catch(() => {});
         // Enter as its own keypress once the text has landed, or it stays in the prompt.
         for (const data of rest) setTimeout(() => void invoke("pty_write", { id: ptyId, data }).catch(() => {}), SUBMIT_DELAY_MS);

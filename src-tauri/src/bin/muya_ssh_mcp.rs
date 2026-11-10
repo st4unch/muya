@@ -248,6 +248,30 @@ fn tools_list() -> Value {
                 }
             },
             {
+                "name": "compact_session",
+                "description": "Run Claude Code's /compact in ANOTHER running Claude session (types `/compact [instructions]` + Enter into its terminal) so a long-running worker can keep going with a summarised context instead of being closed. Refused unless the target is an IDLE Claude session: a session that is working, stuck on a prompt (waitingFor), an opencode session, or your own session is rejected with a clear reason. `target` is a session name or id (from list_sessions), resolved exactly like send_to_session — if ambiguous you get the candidates back and should ask the user which one. Fire-and-forget: success means the command was typed, not that compaction finished — poll list_sessions (working → idle) or read_session. Works on any local Claude session, not only ones you opened.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "target": { "type": "string", "description": "Target session name or id (from list_sessions)." },
+                        "instructions": { "type": "string", "description": "Optional focus for the summary (e.g. \"keep the API design decisions\"). Single line, max 500 chars; newlines/control characters are stripped." }
+                    },
+                    "required": ["target"],
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "usage",
+                "description": "Read Claude Code's usage limits — what /usage shows: the 5-hour and weekly (7-day) rate-limit windows with % used (0-100) and reset time (unix seconds), plus the spend limit when the account has one. Limits are per ACCOUNT, so with no `target` you get the freshest data from any Muya Claude session; pass `target` (session name or id) to read what that specific session last reported. Data comes from the status-line JSON Muya captures per tab (no screen scraping, nothing typed into any session), so it is as fresh as the session's last status refresh (see ageSeconds) and exists only after a session's first API response, for claude.ai Pro/Max/Ultra accounts. Returns an error explaining why when nothing has been captured.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "target": { "type": "string", "description": "Optional session name or id (from list_sessions). Omit for the freshest account-wide data." }
+                    },
+                    "additionalProperties": false
+                }
+            },
+            {
                 "name": "bridge_listen",
                 "description": "Remote Claude bridge (talk to a Claude session on ANOTHER Mac over mutually-authenticated TLS). Start or stop listening for already-paired peers on this machine. The side that listens is the 'server'; the other side dials it. Messages from paired peers are typed into the session that calls this. Never binds all interfaces. Call it after a Muya restart on the server side; bridge_invite starts it for you during pairing.",
                 "inputSchema": {
@@ -1004,6 +1028,58 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                         .and_then(Value::as_str)
                         .unwrap_or("close failed")
                         .to_string(),
+                ))
+            }
+        }
+        "compact_session" => {
+            let target = match args.get("target").and_then(Value::as_str) {
+                Some(t) if !t.trim().is_empty() => t.to_string(),
+                _ => return Ok(tool_error("missing required argument 'target'")),
+            };
+            let instructions = args.get("instructions").and_then(Value::as_str).map(str::to_string);
+            let resp = app_call(&json!({
+                "op": "compact_session",
+                "target": target,
+                "instructions": instructions,
+                "sessionId": own_session_id(),
+            }))
+            .map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                let tgt = resp.get("target").cloned().unwrap_or(Value::Null);
+                let name = tgt.get("name").and_then(Value::as_str).unwrap_or(&target);
+                let typed = resp.get("typed").and_then(Value::as_str).unwrap_or("/compact");
+                Ok(tool_ok(
+                    format!("Typed `{typed}` into '{name}'. Compaction runs in the background — list_sessions shows it working, then idle."),
+                    Some(json!({ "typed": typed, "target": tgt })),
+                ))
+            } else {
+                Ok(tool_error(
+                    resp.get("error").and_then(Value::as_str).unwrap_or("compact failed").to_string(),
+                ))
+            }
+        }
+        "usage" => {
+            let target = args.get("target").and_then(Value::as_str).map(str::to_string);
+            let resp = app_call(&json!({ "op": "usage", "target": target })).map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                let line = |k: &str, label: &str| -> Option<String> {
+                    let w = resp.get("windows")?.get(k)?;
+                    let pct = w.get("usedPercentage")?.as_f64()?;
+                    let reset = w.get("resetsAt").and_then(Value::as_u64).map(|r| format!(", resets at unix {r}")).unwrap_or_default();
+                    Some(format!("{label}: {pct:.1}% used{reset}"))
+                };
+                let mut parts: Vec<String> = [("fiveHour", "5-hour"), ("sevenDay", "7-day"), ("spendLimit", "spend")]
+                    .iter()
+                    .filter_map(|(k, l)| line(k, l))
+                    .collect();
+                if parts.is_empty() {
+                    parts.push("no active limit windows".to_string());
+                }
+                let age = resp.get("ageSeconds").and_then(Value::as_u64).unwrap_or(0);
+                Ok(tool_ok(format!("{} (as of {age}s ago)", parts.join("; ")), Some(resp)))
+            } else {
+                Ok(tool_error(
+                    resp.get("error").and_then(Value::as_str).unwrap_or("usage failed").to_string(),
                 ))
             }
         }

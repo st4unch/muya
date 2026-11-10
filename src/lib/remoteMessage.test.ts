@@ -32,5 +32,6 @@ describe("deliveryWrites", () => {
 
   it("types raw keys verbatim and never adds Enter", () => {
     expect(deliveryWrites({ text: "2", raw: true })).toEqual(["2"]);
+    expect(deliveryWrites({ text: "/compact", raw: true, submit: true })).toEqual(["/compact", SUBMIT]);
   });
 });
