@@ -1,6 +1,6 @@
 ---
 name: muya-mcp
-description: How to use the `muya-mcp` MCP server's tools well — SSH (ssh_open/ssh_run/ssh_scp/ssh_session_*/ssh_add_server/ssh_update_server/ssh_list_psmp_profiles), cross-session messaging (list_sessions/read_session/send_to_session), opening/closing local sessions (open_session/close_session), secrets (add_secret/get_secret/update_secret/list_secrets), operator-pinned operations (list_operations/run_operation), Kanban tracking (track_plan), and scheduled headless Claude prompts (schedules_list/schedule_create/schedule_update/schedule_set_enabled/schedule_delete/schedule_run_now/schedule_history). Use whenever the muya-mcp server is connected and the task involves SSH, another running Claude session, spinning up a parallel session, a stored credential, or an operator-approved operation — or when unsure which muya-mcp tool fits.
+description: How to use the `muya-mcp` MCP server's tools well — SSH (ssh_open/ssh_run/ssh_scp/ssh_session_*/ssh_add_server/ssh_update_server/ssh_list_psmp_profiles), cross-session messaging (list_sessions/read_session/send_to_session), opening/closing/compacting local sessions (open_session/close_session/compact_session), Claude usage limits (usage), secrets (add_secret/get_secret/update_secret/list_secrets), operator-pinned operations (list_operations/run_operation), Kanban tracking (track_plan), and scheduled headless Claude prompts (schedules_list/schedule_create/schedule_update/schedule_set_enabled/schedule_delete/schedule_run_now/schedule_history). Use whenever the muya-mcp server is connected and the task involves SSH, another running Claude session, spinning up a parallel session, a stored credential, or an operator-approved operation — or when unsure which muya-mcp tool fits.
 ---
 
 # muya-mcp — Muya's agent tool surface
@@ -33,6 +33,8 @@ a group** — you need real names/aliases, and guessing is never allowed (see be
 | Answer a permission/trust prompt another session is stuck on | `send_to_session(deliver: "keys")` |
 | Spin up a NEW parallel session and message it, without asking the operator | `open_session` |
 | Close a session I opened with `open_session` | `close_session` |
+| Shrink a long-running worker's context without closing it | `compact_session` (idle Claude sessions only) |
+| Check the account's 5-hour / weekly usage limits (what `/usage` shows) | `usage` |
 | Store/read/rotate a credential | `add_secret` / `get_secret` / `update_secret` / `list_secrets` |
 | Run an operator-pinned command (aws/kubectl/git...) that uses a secret I never see | `list_operations` → `run_operation` |
 | Put a plan/PRD on the operator's Kanban board | `track_plan` |
@@ -93,6 +95,18 @@ server** — read this before running anything:
   or `"y\n"`.
 - `read_session` is read-only and has no native equivalent — use it to check on a session
   before deciding whether messaging it is even necessary.
+
+## compact_session / usage
+
+- `compact_session(target, instructions?)` types `/compact [instructions]` + Enter into another
+  **Claude** session. Refused (with the reason) when the target is working, stuck on a prompt
+  (`waitingFor`), an opencode session, or YOU. Works on any local Claude session, not only ones you
+  opened. Fire-and-forget: poll `list_sessions` until it goes working → idle before sending more work.
+  `instructions` is one line, max 500 chars (newlines/control chars are stripped).
+- `usage(target?)` returns the 5-hour / 7-day (and spend) limit windows: `usedPercentage` (0-100),
+  `resetsAt` (unix secs), `capturedAt`/`ageSeconds`. Limits are per account, so omit `target` for the
+  freshest data. It reads the status-line JSON Muya already captures — nothing is typed into any
+  session. Errors out (with why) before a session's first API response or on non-subscription accounts.
 
 ## open_session / close_session
 

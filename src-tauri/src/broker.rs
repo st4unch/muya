@@ -33,7 +33,7 @@ use std::sync::{Arc, LazyLock, Mutex as StdMutex};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
@@ -239,6 +239,9 @@ pub struct ServerMeta {
 #[derive(Deserialize, Default)]
 struct BrokerReq {
     op: String,
+    /// `compact_session`: optional focus text appended after `/compact`.
+    #[serde(default)]
+    instructions: Option<String>,
     #[serde(default)]
     alias: Option<String>,
     /// The remote command for `run` (a SINGLE argv element passed to ssh; AC9).
@@ -628,6 +631,8 @@ async fn handle_request(app: &AppHandle, line: &str) -> String {
         .await
         .to_string(),
         "close_session" => handle_close_session(app, &req).await,
+        "compact_session" => handle_compact_session(app, &req).await,
+        "usage" => handle_usage(&req).await,
         "session_open" => handle_session_open(app, &servers, &req).await,
         "session_exec" => handle_session_exec(app, &req).await,
         "session_close" => handle_session_close(app, &req).await,
@@ -1385,6 +1390,209 @@ async fn handle_close_session(app: &AppHandle, req: &BrokerReq) -> String {
     }
     release_agent_session(&name);
     json!({"ok": true, "name": name}).to_string()
+}
+
+
+/// Cap on `compact_session` instructions (chars).
+const COMPACT_INSTRUCTIONS_MAX: usize = 500;
+
+/// Make `instructions` safe to type after `/compact`: one line, no control chars
+/// (an ESC could drive the TUI, a newline would submit a half line), whitespace
+/// collapsed, capped at `COMPACT_INSTRUCTIONS_MAX` chars. Empty ⇒ `None`.
+fn sanitize_compact_instructions(raw: &str) -> Option<String> {
+    let spaced: String = raw
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let collapsed = spaced.split_whitespace().collect::<Vec<_>>().join(" ");
+    let capped: String = collapsed.chars().take(COMPACT_INSTRUCTIONS_MAX).collect();
+    let capped = capped.trim().to_string();
+    if capped.is_empty() {
+        None
+    } else {
+        Some(capped)
+    }
+}
+
+/// Why `/compact` must NOT be typed into this session right now (None ⇒ go).
+fn compact_refusal(
+    name: &str,
+    agent: &str,
+    status: &str,
+    waiting_for: Option<&str>,
+    is_self: bool,
+) -> Option<String> {
+    if is_self {
+        return Some("you cannot compact your own session — ask the operator to run /compact".to_string());
+    }
+    if agent != "claude" {
+        return Some(format!(
+            "'{name}' is a {agent} session — compact_session only works on Claude sessions"
+        ));
+    }
+    if let Some(w) = waiting_for.filter(|w| !w.is_empty()) {
+        return Some(format!(
+            "'{name}' is stuck waiting on: {w} — answer it first (send_to_session deliver:\"keys\"), then compact"
+        ));
+    }
+    match status {
+        "idle" => None,
+        "working" => Some(format!(
+            "'{name}' is busy (working) — wait until list_sessions shows it idle, then compact"
+        )),
+        "waiting-for-input" => Some(format!(
+            "'{name}' is waiting for input — answer it first, then compact"
+        )),
+        other => Some(format!("'{name}' is not idle (status: {other}) — cannot compact")),
+    }
+}
+
+/// The exact line typed into the target: `/compact` or `/compact <instructions>`.
+fn compact_line(instructions: Option<&str>) -> String {
+    match instructions.and_then(sanitize_compact_instructions) {
+        Some(i) => format!("/compact {i}"),
+        None => "/compact".to_string(),
+    }
+}
+
+/// `compact_session`: type `/compact[ instructions]` + Enter into another Claude
+/// session's terminal (PRD `mcp-compact-session`). Resolves like send_to_session.
+async fn handle_compact_session(app: &AppHandle, req: &BrokerReq) -> String {
+    let target = match req.target.as_deref() {
+        Some(t) if !t.trim().is_empty() => t.to_string(),
+        _ => return err_resp("`compact_session` requires a `target` (session name or id)"),
+    };
+    let from = req.session_id.clone().unwrap_or_default();
+    let line = compact_line(req.instructions.as_deref());
+
+    let resolved = tokio::task::spawn_blocking(move || -> Result<crate::agents::AgentSession, String> {
+        let sessions = running_sessions()?;
+        let pairs = session_pairs(&sessions);
+        match resolve_target(&target, &pairs) {
+            TargetMatch::None => Err(format!("no running session matches '{target}'")),
+            TargetMatch::Many(idxs) => Err(format!(
+                "'{target}' matches {} sessions ({}) — ask the operator which one and pass its exact name or id",
+                idxs.len(),
+                idxs.iter().map(|i| pairs[*i].1.clone()).collect::<Vec<_>>().join(", ")
+            )),
+            TargetMatch::One(i) => Ok(sessions[i].clone()),
+        }
+    })
+    .await;
+    let s = match resolved {
+        Ok(Ok(v)) => v,
+        Ok(Err(e)) => return err_resp(e),
+        Err(e) => return err_resp(format!("resolve task failed: {e}")),
+    };
+    let is_self = !from.is_empty() && s.id == from;
+    if let Some(why) = compact_refusal(&s.name, &s.agent, &s.status, s.waiting_for.as_deref(), is_self) {
+        return err_resp(why);
+    }
+    let payload = json!({ "sessionId": s.id, "text": line, "raw": true, "submit": true });
+    if let Err(e) = app.emit("muya://deliver-message", payload) {
+        return err_resp(format!("failed to deliver: {e}"));
+    }
+    json!({
+        "ok": true,
+        "typed": line,
+        "target": { "id": s.id, "name": s.name, "cwd": s.worktree },
+    })
+    .to_string()
+}
+
+/// One rate-limit window from the statusline JSON, or None when absent / already
+/// past its reset (Claude drops expired windows itself, but a stale file may not).
+fn usage_window(v: &Value, now: u64) -> Option<Value> {
+    let used = v.get("used_percentage")?.as_f64()?;
+    let resets = v.get("resets_at").and_then(Value::as_u64);
+    if resets.is_some_and(|r| r <= now) {
+        return None;
+    }
+    let mut o = json!({ "usedPercentage": used, "resetsAt": resets });
+    for (k, out) in [("used_usd", "usedUsd"), ("limit_usd", "limitUsd")] {
+        if let Some(x) = v.get(k).and_then(Value::as_f64) {
+            o[out] = json!(x);
+        }
+    }
+    if let Some(p) = v.get("period").and_then(Value::as_str) {
+        o["period"] = json!(p);
+    }
+    Some(o)
+}
+
+/// Pick the newest captured status that carries `rate_limits` (optionally only the
+/// one whose `session_id` is `want_session`) and map it to the tool's shape.
+/// Pure: `files` = (status JSON, file mtime secs), `now` = unix secs.
+fn usage_from_status(files: &[(Value, u64)], want_session: Option<&str>, now: u64) -> Result<Value, String> {
+    let best = files
+        .iter()
+        .filter(|(v, _)| v.get("rate_limits").is_some_and(Value::is_object))
+        .filter(|(v, _)| want_session.is_none_or(|w| v.get("session_id").and_then(Value::as_str) == Some(w)))
+        .max_by_key(|(_, m)| *m);
+    let Some((v, mtime)) = best else {
+        return Err(match want_session {
+            Some(_) => "no usage data captured for that session yet — rate limits appear after its first API response, and only for claude.ai subscription accounts".to_string(),
+            None => "no usage data captured yet — rate limits appear after a Claude session's first API response, only for claude.ai Pro/Max/Ultra accounts, and only for sessions started in Muya with the status-line footer enabled".to_string(),
+        });
+    };
+    let rl = &v["rate_limits"];
+    let mut windows = serde_json::Map::new();
+    for (k, out) in [("five_hour", "fiveHour"), ("seven_day", "sevenDay"), ("spend_limit", "spendLimit")] {
+        if let Some(w) = rl.get(k).and_then(|w| usage_window(w, now)) {
+            windows.insert(out.to_string(), w);
+        }
+    }
+    Ok(json!({
+        "windows": windows,
+        "capturedAt": mtime,
+        "ageSeconds": now.saturating_sub(*mtime),
+        "sessionId": v.get("session_id"),
+        "note": "Limits are per account; usedPercentage is 0-100, resetsAt is unix seconds. Data is as of capturedAt (the session's last status-line refresh).",
+    }))
+}
+
+/// `usage`: Claude Code's `/usage` numbers (5-hour / weekly limits) from the
+/// status-line JSON Muya already captures per tab — no screen scraping.
+async fn handle_usage(req: &BrokerReq) -> String {
+    let want = match req.target.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+        None => None,
+        Some(t) => {
+            let t = t.to_string();
+            let r = tokio::task::spawn_blocking(move || -> Result<String, String> {
+                let sessions = running_sessions()?;
+                let pairs = session_pairs(&sessions);
+                match resolve_target(&t, &pairs) {
+                    TargetMatch::None => Err(format!("no running session matches '{t}'")),
+                    TargetMatch::Many(idxs) => Err(format!(
+                        "'{t}' matches {} sessions ({}) — pass its exact name or id",
+                        idxs.len(),
+                        idxs.iter().map(|i| pairs[*i].1.clone()).collect::<Vec<_>>().join(", ")
+                    )),
+                    TargetMatch::One(i) => Ok(sessions[i].id.clone()),
+                }
+            })
+            .await;
+            match r {
+                Ok(Ok(id)) => Some(id),
+                Ok(Err(e)) => return err_resp(e),
+                Err(e) => return err_resp(format!("resolve task failed: {e}")),
+            }
+        }
+    };
+    let files = tokio::task::spawn_blocking(crate::statusline::all_status)
+        .await
+        .unwrap_or_default();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    match usage_from_status(&files, want.as_deref(), now) {
+        Ok(mut v) => {
+            v["ok"] = json!(true);
+            v.to_string()
+        }
+        Err(e) => err_resp(e),
+    }
 }
 
 /// `ssh_session_open` (PRD `ssh-session`, Faz 2): open a persistent, headless SSH session
@@ -2258,6 +2466,72 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn compact_sanitize_makes_one_clean_capped_line() {
+        assert_eq!(sanitize_compact_instructions("  keep\nthe  API\u{1b}[31m plan "), Some("keep the API [31m plan".into()));
+        assert_eq!(sanitize_compact_instructions("\n\t \u{7}"), None);
+        let long = "é".repeat(900);
+        assert_eq!(sanitize_compact_instructions(&long).unwrap().chars().count(), COMPACT_INSTRUCTIONS_MAX);
+        assert_eq!(compact_line(None), "/compact");
+        assert_eq!(compact_line(Some("  ")), "/compact");
+        assert_eq!(compact_line(Some("focus on X\nrm -rf")), "/compact focus on X rm -rf");
+    }
+
+    #[test]
+    fn compact_refusal_only_lets_an_idle_other_claude_session_through() {
+        assert!(compact_refusal("w", "claude", "idle", None, false).is_none());
+        assert!(compact_refusal("w", "claude", "idle", Some(""), false).is_none());
+        assert!(compact_refusal("w", "claude", "idle", None, true).unwrap().contains("own session"));
+        assert!(compact_refusal("w", "opencode", "idle", None, false).unwrap().contains("opencode"));
+        assert!(compact_refusal("w", "claude", "working", None, false).unwrap().contains("busy"));
+        assert!(compact_refusal("w", "claude", "waiting-for-input", Some("permission prompt"), false).unwrap().contains("permission prompt"));
+        assert!(compact_refusal("w", "claude", "waiting-for-input", None, false).unwrap().contains("waiting"));
+        assert!(compact_refusal("w", "claude", "stopped", None, false).is_some());
+    }
+
+    #[test]
+    fn usage_picks_newest_with_limits_and_drops_expired_windows() {
+        let now = 1_000_000u64;
+        let old = json!({"session_id":"a","rate_limits":{"five_hour":{"used_percentage":10.0,"resets_at":now+100}}});
+        let new = json!({"session_id":"b","rate_limits":{
+            "five_hour":{"used_percentage":23.5,"resets_at":now+5400},
+            "seven_day":{"used_percentage":41.2,"resets_at":now-5},
+            "spend_limit":{"used_percentage":62.8,"resets_at":now+9,"used_usd":5.0,"limit_usd":8.0,"period":"monthly"}}});
+        let nolimits = json!({"session_id":"c"});
+        let files = vec![(old, now - 500), (new, now - 20), (nolimits, now - 1)];
+        let v = usage_from_status(&files, None, now).unwrap();
+        assert_eq!(v["sessionId"], "b");
+        assert_eq!(v["ageSeconds"], 20);
+        assert_eq!(v["windows"]["fiveHour"]["usedPercentage"], 23.5);
+        assert!(v["windows"].get("sevenDay").is_none(), "expired window dropped");
+        assert_eq!(v["windows"]["spendLimit"]["limitUsd"], 8.0);
+        assert_eq!(v["windows"]["spendLimit"]["period"], "monthly");
+        // Per-session filter, and clear errors when nothing matches.
+        assert_eq!(usage_from_status(&files, Some("a"), now).unwrap()["sessionId"], "a");
+        assert!(usage_from_status(&files, Some("zzz"), now).unwrap_err().contains("that session"));
+        assert!(usage_from_status(&[], None, now).unwrap_err().contains("no usage data"));
+    }
+
+    /// Read-only: run the parser over a REAL status dir (`MUYA_REAL_STATUS_DIR`).
+    #[test]
+    #[ignore = "needs MUYA_REAL_STATUS_DIR pointing at a live muya-status-<pid> dir"]
+    fn live_usage_from_a_real_status_dir() {
+        let dir = std::env::var("MUYA_REAL_STATUS_DIR").expect("MUYA_REAL_STATUS_DIR");
+        let files: Vec<(Value, u64)> = std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".json"))
+            .filter_map(|e| {
+                let m = e.metadata().ok()?.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
+                Some((serde_json::from_slice(&std::fs::read(e.path()).ok()?).ok()?, m))
+            })
+            .collect();
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let v = usage_from_status(&files, None, now).unwrap();
+        println!("LIVE_USAGE {}", serde_json::to_string_pretty(&v).unwrap());
+        assert!(v["windows"].as_object().is_some_and(|w| !w.is_empty()));
+    }
+
     #[test]
     fn open_session_defaults_to_claude_and_rejects_an_unknown_agent() {
         // Absent ⇒ claude: every caller written before opencode existed must keep
