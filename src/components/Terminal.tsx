@@ -9,6 +9,7 @@ import "@xterm/xterm/css/xterm.css";
 import { altArrowSeq } from "../lib/keys";
 import { schemeTheme } from "../theme/terminalThemes";
 import { stepTerminalFont, useTerminalPrefs } from "../lib/terminalPrefs";
+import { trustPromptKeys } from "../lib/trustPrompt";
 import { parseClaudeScreen, readScreenLines, type ScreenState } from "../lib/screenState";
 import { isMuyaChannelWarning } from "../lib/channelPrompt";
 import { applyLaunchFlags } from "../lib/statusline";
@@ -650,13 +651,27 @@ function Terminal({
                 .catch(() => {});
             }
           }, 600);
-          // 4.6s = the 600ms above (before claude's own process even starts) + a
-          // live-tested 4s for claude's own startup + the trust prompt rendering,
-          // whether or not one actually appears (empirically a no-op either way).
+          // Answer Claude's "do you trust this folder?" dialog by what the screen shows (which
+          // option is pre-selected differs between Claude Code versions — a blind Enter quit
+          // Claude 2.1.3xx, so the session never started). Looks every 400 ms for up to 30 s;
+          // an already-trusted folder never shows the dialog and nothing is sent.
           if (autoAcceptTrust) {
-            setTimeout(() => {
-              if (!disposed && ptyId) void invoke("pty_write", { id: ptyId, data: "\r" });
-            }, 4600);
+            let tries = 75;
+            const lookForTrust = () => {
+              if (disposed || !ptyId) return;
+              let keys: string | null = null;
+              try {
+                keys = trustPromptKeys(readScreenLines(term));
+              } catch {
+                /* screen not readable yet */
+              }
+              if (keys) {
+                void invoke("pty_write", { id: ptyId, data: keys }).catch(() => {});
+                return;
+              }
+              if (--tries > 0) window.setTimeout(lookForTrust, 400);
+            };
+            window.setTimeout(lookForTrust, 1500);
           }
         }
       })
