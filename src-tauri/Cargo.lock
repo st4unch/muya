@@ -2915,6 +2915,7 @@ dependencies = [
  "hkdf 0.13.0",
  "libc",
  "log",
+ "muya-switchover",
  "notify",
  "objc2",
  "objc2-foundation",
@@ -2944,6 +2945,17 @@ dependencies = [
  "tokio-rustls",
  "wiremock",
  "zeroize",
+]
+
+[[package]]
+name = "muya-switchover"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "minisign-verify",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]

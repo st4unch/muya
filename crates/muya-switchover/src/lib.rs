@@ -6,6 +6,7 @@
 pub mod manifest;
 pub mod offer;
 pub mod swap;
+pub mod sysplatform;
 pub mod verify;
 pub mod version;
 
@@ -14,3 +15,11 @@ pub mod version;
 pub const TEAM_ID: &str = "7PG95YYJ64";
 pub const CLASSIC_BUNDLE_ID: &str = "com.staunch.muya";
 pub const NATIVE_BUNDLE_ID: &str = "com.staunch.muya.native";
+
+/// Marker the freshly launched app writes so the old app knows it is safe to go.
+pub fn healthy_marker_path(support_dir: &std::path::Path) -> std::path::PathBuf {
+    support_dir.join("switchover").join("native-healthy.json")
+}
+pub fn state_path(support_dir: &std::path::Path) -> std::path::PathBuf {
+    support_dir.join("switchover").join("switch.json")
+}

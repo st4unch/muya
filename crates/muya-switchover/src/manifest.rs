@@ -45,6 +45,12 @@ impl std::fmt::Display for ManifestError {
 const ALLOWED_HOSTS: &[&str] = &["github.com", "objects.githubusercontent.com"];
 
 pub fn url_allowed(url: &str) -> bool {
+    #[cfg(feature = "e2e")]
+    if let Ok(prefix) = std::env::var("MUYA_SWITCHOVER_E2E_URL_PREFIX") {
+        if !prefix.is_empty() && url.starts_with(&prefix) {
+            return true;
+        }
+    }
     let Some(rest) = url.strip_prefix("https://") else { return false };
     let host_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let authority = &rest[..host_end];

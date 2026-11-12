@@ -582,7 +582,7 @@ fn restore_in(projects: &Path, archive: &Path, paths: &[String]) -> Housekeeping
 }
 
 /// Put one file or folder in the macOS Trash (recoverable from Finder).
-fn to_trash(path: &Path) -> Result<(), String> {
+pub(crate) fn to_trash(path: &Path) -> Result<(), String> {
     use objc2_foundation::{NSFileManager, NSString, NSURL};
     let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
     let fm = NSFileManager::defaultManager();

@@ -75,6 +75,7 @@ mod term_history;
 mod testutil;
 mod titlebar;
 mod validate;
+mod switchover;
 mod vault;
 mod watcher;
 mod workspace_roots;
@@ -474,6 +475,10 @@ pub fn run() {
             history::list_session_history,
             history::read_session_transcript,
             history::archive_sessions,
+            switchover::switchover_check,
+            switchover::switchover_preflight,
+            switchover::switchover_answer,
+            switchover::switchover_start,
             history::restore_sessions,
             history::list_archived_sessions,
             history::trash_sessions,

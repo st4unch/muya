@@ -13,3 +13,8 @@ base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"
+
+[features]
+# Test-only: lets an e2e build accept a local http manifest/zip and a test signing key
+# via env vars. NEVER enabled in release builds.
+e2e = []

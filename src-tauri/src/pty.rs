@@ -44,6 +44,13 @@ pub struct PtyManager {
     counter: AtomicU64,
 }
 
+impl PtyManager {
+    /// Terminals alive right now (they die when the app quits).
+    pub fn live_count(&self) -> usize {
+        self.sessions.lock().map(|m| m.len()).unwrap_or(0)
+    }
+}
+
 fn default_shell() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string())
 }
