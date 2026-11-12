@@ -35,6 +35,13 @@ pub fn move_to_home_trash(p: &Path) -> Result<Option<PathBuf>, String> {
     Ok(Some(dest))
 }
 
+/// gzip magic bytes: the download is a tarball, not a zip.
+fn is_gzip(p: &Path) -> bool {
+    use std::io::Read;
+    let mut b = [0u8; 2];
+    std::fs::File::open(p).and_then(|mut f| f.read_exact(&mut b)).is_ok() && b == [0x1f, 0x8b]
+}
+
 fn run(prog: &str, args: &[&str]) -> Result<String, String> {
     let out = Command::new(prog).args(args).output().map_err(|e| format!("{prog}: {e}"))?;
     if out.status.success() {
@@ -88,7 +95,12 @@ impl Platform for SysPlatform {
     fn unpack(&mut self, zip: &Path, dir: &Path) -> Result<PathBuf, String> {
         let _ = std::fs::remove_dir_all(dir);
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-        run("ditto", &["-x", "-k", &zip.to_string_lossy(), &dir.to_string_lossy()])?;
+        if is_gzip(zip) {
+            // Classic's Tauri updater archive (.app.tar.gz).
+            run("tar", &["-xzf", &zip.to_string_lossy(), "-C", &dir.to_string_lossy()])?;
+        } else {
+            run("ditto", &["-x", "-k", &zip.to_string_lossy(), &dir.to_string_lossy()])?;
+        }
         for e in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
             let p = e.map_err(|e| e.to_string())?.path();
             if p.extension().is_some_and(|x| x == "app") {
@@ -130,8 +142,8 @@ impl Platform for SysPlatform {
         let _ = std::fs::remove_file(&self.healthy_marker);
         let mut c = Command::new("open");
         c.arg("-n");
-        // Test runs only (MUYA_SWITCHOVER_PASS_ENV set): `open` starts the app from launchd, which would otherwise hand it the
-        // REAL home. Pass the synthetic user's environment through explicitly.
+        // Test runs only (MUYA_SWITCHOVER_PASS_ENV set): `open` starts the app from launchd, which would otherwise hand
+        // it the REAL home. Pass the synthetic user's environment through explicitly.
         if std::env::var_os("MUYA_SWITCHOVER_PASS_ENV").is_some() {
             for k in ["HOME", "PATH"] {
                 if let Ok(v) = std::env::var(k) {
@@ -193,6 +205,24 @@ mod tests {
         }
         assert_ne!(landed[0], landed[1]);
         assert!(landed[0].join("Contents/x").exists() && landed[1].join("Contents/x").exists());
+    }
+
+    #[test]
+    fn unpack_accepts_tar_gz_and_zip() {
+        let d = tempfile::tempdir().unwrap();
+        let app = d.path().join("src/Muya.app/Contents");
+        std::fs::create_dir_all(&app).unwrap();
+        std::fs::write(app.join("x"), b"1").unwrap();
+        let mut p = SysPlatform { state_file: d.path().join("s.json"), healthy_marker: d.path().join("h"), trash_fn: None };
+        let tgz = d.path().join("a.tar.gz");
+        assert!(Command::new("tar").args(["-czf"]).arg(&tgz).args(["-C"]).arg(d.path().join("src")).arg("Muya.app").status().unwrap().success());
+        assert!(is_gzip(&tgz));
+        let out = p.unpack(&tgz, &d.path().join("o1")).unwrap();
+        assert!(out.join("Contents/x").exists());
+        let zip = d.path().join("a.zip");
+        assert!(Command::new("ditto").args(["-c", "-k", "--keepParent"]).arg(d.path().join("src/Muya.app")).arg(&zip).status().unwrap().success());
+        assert!(!is_gzip(&zip));
+        assert!(p.unpack(&zip, &d.path().join("o2")).unwrap().join("Contents/x").exists());
     }
 
     #[test]
