@@ -128,4 +128,16 @@ describe("Settings > Beta", () => {
     click();
     await screen.findByText(/offline/);
   });
+  it("Esc closes only the offer, not Settings behind it", async () => {
+    invoke.mockImplementation(async (cmd: string) => (cmd === "switchover_check" ? { status: "show", version: "9", notes: "" } : cmd === "debug_log_get" ? { enabled: false, path: "p" } : undefined));
+    const onClose = vi.fn();
+    render(<SettingsModal open onClose={onClose} />);
+    click();
+    await screen.findByText("Try the Muya Native beta?");
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByText("Try the Muya Native beta?")).not.toBeInTheDocument());
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });

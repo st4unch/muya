@@ -135,12 +135,14 @@ export default function SettingsModal({
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
+      // The Native beta offer is open on top: its own Esc handler closes just that.
+      if (betaOffer) return;
       e.stopPropagation();
       onClose();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [open, onClose]);
+  }, [open, onClose, betaOffer]);
 
   if (!open) return null;
 
