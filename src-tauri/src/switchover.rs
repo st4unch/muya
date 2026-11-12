@@ -41,12 +41,8 @@ fn apps_dir() -> PathBuf {
 
 /// Where the new Native goes: the exact path of the running classic app (same folder, same file name), so it takes
 /// classic's place — Dock, Finder and Spotlight keep finding it where the user launches it — and classic goes to the
-/// Trash from there. The e2e build redirects to a throwaway folder instead.
+/// Trash from there (the e2e run therefore needs no redirect: its classic already sits in a throwaway folder).
 fn native_target(source: &Path) -> PathBuf {
-    #[cfg(feature = "e2e")]
-    if std::env::var("MUYA_SWITCHOVER_E2E_APPS_DIR").is_ok() {
-        return apps_dir().join(NATIVE_APP_NAME);
-    }
     source.to_path_buf()
 }
 
