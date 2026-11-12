@@ -4,6 +4,7 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { FileText, Pencil } from "lucide-react";
+import { canRenderMarkdown, formatSize, type FileProbe } from "../lib/largeFile";
 
 let hooked = false;
 function ensureSanitizeHook() {
@@ -78,6 +79,9 @@ export default function MarkdownView({
   const [html, setHtml] = useState<string>("");
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<string>("");
+  // Set when the file is too big (or not text) to render: parsing + sanitising it on the
+  // UI thread froze the window (docs/prd-large-file-open.md). The editor handles those.
+  const [tooBig, setTooBig] = useState<FileProbe | null>(null);
 
   // Load on open, and — ONLY while visible — reload when the workspace changes (an
   // agent or an external editor wrote the file). The dep is `active ? reloadTick : 0`
@@ -86,9 +90,20 @@ export default function MarkdownView({
   useEffect(() => {
     let cancelled = false;
     const load = () => {
-      invoke<string>("read_file", { path: filePath })
+      invoke<FileProbe>("file_probe", { path: filePath })
+        .then((probe) => {
+          if (cancelled) return null;
+          if (!canRenderMarkdown(probe)) {
+            setTooBig(probe);
+            setHtml("");
+            setStatus("ready");
+            return null;
+          }
+          setTooBig(null);
+          return invoke<string>("read_file", { path: filePath });
+        })
         .then((raw) => {
-          if (cancelled) return;
+          if (cancelled || raw === null) return;
           // marked → raw HTML, then DOMPurify strips scripts/handlers/js: URLs.
           const dirty = marked.parse(raw, { async: false }) as string;
           setHtml(sanitizeMarkdownHtml(dirty));
@@ -136,7 +151,23 @@ export default function MarkdownView({
         {status === "error" && (
           <p className="text-[11px] font-mono text-rose-500">Could not read file: {error}</p>
         )}
-        {status === "ready" && (
+        {status === "ready" && tooBig && (
+          <div data-testid="md-too-large" className="flex flex-col items-start gap-2">
+            <p className="text-xs font-mono text-[var(--text)]">
+              {tooBig.binary ? "This file isn’t text." : `This Markdown file is large (${formatSize(tooBig.size)}) — it is not rendered, to keep the window responsive.`}
+            </p>
+            {onEdit && !tooBig.binary && (
+              <button
+                type="button"
+                onClick={() => onEdit(filePath)}
+                className="px-2 py-1 text-xs rounded border border-indigo-700 dark:border-indigo-400 bg-indigo-600 dark:bg-indigo-500 text-white font-bold cursor-pointer hover:bg-indigo-700 dark:hover:bg-indigo-400"
+              >
+                Open as text
+              </button>
+            )}
+          </div>
+        )}
+        {status === "ready" && !tooBig && (
           <div className="md-body max-w-3xl" onClick={handleLinkClick} dangerouslySetInnerHTML={{ __html: html }} />
         )}
       </div>

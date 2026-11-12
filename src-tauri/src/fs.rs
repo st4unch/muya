@@ -69,10 +69,69 @@ pub fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
 pub fn read_file(path: String) -> Result<String, String> {
     let p = Path::new(&path);
     let meta = std::fs::metadata(p).map_err(|e| format!("stat failed: {e}"))?;
-    if meta.len() > 5_000_000 {
-        return Err("file too large (>5MB) to open in the editor".into());
+    // Keep in step with PROMPT_BYTES in src/lib/largeFile.ts: the viewers ask
+    // `file_probe` first and never call this above it.
+    if meta.len() > 8 * 1024 * 1024 {
+        return Err("file too large (>8MB) to open in the editor".into());
     }
     std::fs::read_to_string(p).map_err(|e| format!("read failed: {e}"))
+}
+
+/// What the viewers need to know BEFORE loading a file (docs/prd-large-file-open.md):
+/// its size and whether it looks binary. Reads at most 8 KB.
+#[derive(serde::Serialize, Debug, PartialEq)]
+pub struct FileProbe {
+    pub size: u64,
+    /// A NUL byte in the first 8 KB — not text.
+    pub binary: bool,
+}
+
+fn probe_file(p: &Path) -> Result<FileProbe, String> {
+    use std::io::Read;
+    let denied = |e: std::io::Error| {
+        if e.kind() == std::io::ErrorKind::PermissionDenied {
+            access_denied_message(&p.to_string_lossy())
+        } else {
+            format!("cannot open {}: {e}", p.display())
+        }
+    };
+    let meta = std::fs::metadata(p).map_err(denied)?;
+    if !meta.is_file() {
+        return Err(format!("{} is not a file", p.display()));
+    }
+    let mut head = [0u8; 8192];
+    let n = std::fs::File::open(p)
+        .and_then(|mut f| f.read(&mut head))
+        .map_err(denied)?;
+    Ok(FileProbe { size: meta.len(), binary: head[..n].contains(&0) })
+}
+
+#[tauri::command(async)]
+pub fn file_probe(path: String) -> Result<FileProbe, String> {
+    probe_file(Path::new(&path))
+}
+
+/// First `max` bytes of a text file (cut back to a character boundary), lossy for
+/// invalid UTF-8. For the read-only "Open anyway" view of a file too big to load whole.
+fn read_prefix(p: &Path, max: u64) -> Result<String, String> {
+    use std::io::Read;
+    let mut buf = Vec::new();
+    std::fs::File::open(p)
+        .and_then(|f| f.take(max).read_to_end(&mut buf))
+        .map_err(|e| format!("read failed: {e}"))?;
+    // A multi-byte character may be cut at the end: drop the incomplete tail only.
+    if let Err(e) = std::str::from_utf8(&buf) {
+        if e.error_len().is_none() {
+            buf.truncate(e.valid_up_to());
+        }
+    }
+    Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
+#[tauri::command(async)]
+pub fn read_file_prefix(path: String, max_bytes: u64) -> Result<String, String> {
+    // Hard ceiling regardless of what the webview asks for.
+    read_prefix(Path::new(&path), max_bytes.min(16 * 1024 * 1024))
 }
 
 /// Largest file `read_file_bytes` hands to the viewer (images, PDFs). The webview holds
@@ -1710,6 +1769,33 @@ pub async fn install_muya_plugin() -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn probe_reports_size_and_binary() {
+        let d = std::env::temp_dir().join(format!("muya-probe-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let t = d.join("a.txt");
+        std::fs::write(&t, "hello\nworld\n").unwrap();
+        assert_eq!(probe_file(&t).unwrap(), FileProbe { size: 12, binary: false });
+        let b = d.join("a.bin");
+        std::fs::write(&b, [1u8, 2, 0, 3]).unwrap();
+        assert_eq!(probe_file(&b).unwrap(), FileProbe { size: 4, binary: true });
+        assert!(probe_file(&d).is_err()); // a folder is not a file
+        assert!(probe_file(&d.join("missing")).is_err());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn prefix_cuts_on_a_char_boundary() {
+        let d = std::env::temp_dir().join(format!("muya-prefix-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("u.txt");
+        std::fs::write(&f, "aaş").unwrap(); // 'ş' is 2 bytes: a a 0xC5 0x9F
+        assert_eq!(read_prefix(&f, 3).unwrap(), "aa"); // cut in the middle of ş → dropped
+        assert_eq!(read_prefix(&f, 4).unwrap(), "aaş");
+        assert_eq!(read_prefix(&f, 100).unwrap(), "aaş");
+        let _ = std::fs::remove_dir_all(&d);
+    }
     #[test]
     fn branch_file_pair_sides() {
         let d = tempfile::tempdir().unwrap();

@@ -6,6 +6,9 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **Opening a big file no longer freezes Muya.** A 3 MB Markdown file froze the window for 1.5 s (5 MB: 2.8 s, longer on a slower Mac) because the whole file was parsed and drawn at once. Now the size is checked first: from 1 MB the editor shows plain text with highlighting, minimap, wrap and diff switched off (with a banner saying so); Markdown over 512 KB is not rendered (a button opens it as text); a file over 8 MB asks first — "Open anyway" shows its first 8 MB read-only, or open it in another app; a binary file is never read as text. Normal files behave as before. The old hard 5 MB limit is gone.
+
 ### Removed
 - **The animated panda in the sidebar.** Measured in WebKit, it alone kept about a third of one CPU core busy whenever it was on screen (about 5% without it), and that load also made screen switches stutter. The menu bar icon stays.
 

@@ -3,7 +3,7 @@ import { act, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useEffect } from "react";
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: async (cmd: string) => (cmd === "read_file" ? "hello" : null) }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: async (cmd: string) => (cmd === "file_probe" ? { size: 5, binary: false } : cmd === "read_file" ? "hello" : null) }));
 vi.mock("./monacoSetup", () => ({}));
 vi.mock("monaco-editor", () => ({ KeyMod: { CtrlCmd: 0 }, KeyCode: { KeyS: 0 } }));
 const focus = vi.fn();

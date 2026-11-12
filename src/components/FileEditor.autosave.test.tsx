@@ -2,7 +2,7 @@
 import { act, render, screen, fireEvent } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const invoke = vi.fn(async (cmd: string, _args?: unknown) => (cmd === "read_file" ? "hello" : null));
+const invoke = vi.fn(async (cmd: string, _args?: unknown) => (cmd === "file_probe" ? { size: 5, binary: false } : cmd === "read_file" ? "hello" : null));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (cmd: string, args: unknown) => invoke(cmd, args) }));
 vi.mock("./monacoSetup", () => ({}));
 vi.mock("monaco-editor", () => ({ KeyMod: { CtrlCmd: 0 }, KeyCode: { KeyS: 0 } }));

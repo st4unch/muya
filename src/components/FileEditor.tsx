@@ -5,6 +5,7 @@ import * as monaco from "monaco-editor";
 import { langFromPath, monacoModelPath } from "../lib/format";
 import "./monacoSetup";
 import { appModalOpen } from "../lib/modalOpen";
+import { decideOpen, formatSize, HEAD_BYTES, LARGE_EDITOR_OPTIONS, type FileProbe } from "../lib/largeFile";
 import { AUTO_SAVE_EVENT, AUTO_SAVE_MS, DRAFT_MS, loadAutoSave, snapshotVersion } from "../lib/fileVersions";
 
 /** Nobody visible holds the keyboard: it sits on the page, or in a terminal parked
@@ -12,6 +13,27 @@ import { AUTO_SAVE_EVENT, AUTO_SAVE_MS, DRAFT_MS, loadAutoSave, snapshotVersion 
 function keyboardIsFree(): boolean {
   const a = document.activeElement;
   return !a || a === document.body || !!a.closest("[aria-hidden='true']");
+}
+
+/** What the probe decided for the file on screen (docs/prd-large-file-open.md). */
+type Gate =
+  | { kind: "ok"; large: boolean; readOnly: boolean; size: number; truncated: boolean }
+  | { kind: "binary" }
+  | { kind: "prompt"; size: number };
+
+/** Probe first (cheap), then read only what the policy allows. Never reads a binary
+ *  file as text, never loads a huge one unasked. */
+async function readGated(path: string, force: boolean): Promise<{ gate: Gate; text: string }> {
+  const probe = await invoke<FileProbe>("file_probe", { path });
+  const mode = decideOpen(probe);
+  if (mode === "binary") return { gate: { kind: "binary" }, text: "" };
+  if (mode === "prompt") {
+    if (!force) return { gate: { kind: "prompt", size: probe.size }, text: "" };
+    const text = await invoke<string>("read_file_prefix", { path, maxBytes: HEAD_BYTES });
+    return { gate: { kind: "ok", large: true, readOnly: true, size: probe.size, truncated: true }, text };
+  }
+  const text = await invoke<string>("read_file", { path });
+  return { gate: { kind: "ok", large: mode === "large", readOnly: false, size: probe.size, truncated: false }, text };
 }
 
 /** Monaco-backed file editor. Loads via the backend `read_file`; Cmd/Ctrl+S saves
@@ -52,6 +74,11 @@ export default function FileEditor({
   const [head, setHead] = useState<string | null>(null);
   const [wordWrap, setWordWrap] = useState(false);
   const [minimap, setMinimap] = useState(false);
+  const [gate, setGate] = useState<Gate | null>(null);
+  const forceRef = useRef(false); // "Open anyway" was chosen for this path
+  const large = gate?.kind === "ok" && gate.large;
+  const largeRef = useRef(false);
+  largeRef.current = large;
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const valueRef = useRef(value);
   valueRef.current = value;
@@ -88,17 +115,22 @@ export default function FileEditor({
     prevPathRef.current = path;
     let cancelled = false;
     const doLoad = () => {
-      if (pathChanged) setStatus("loading");
-      invoke<string>("read_file", { path })
-        .then((c) => {
+      if (pathChanged) {
+        forceRef.current = false;
+        setGate(null);
+        setStatus("loading");
+      }
+      readGated(path, forceRef.current)
+        .then(({ gate: g, text: c }) => {
           if (cancelled) return;
+          setGate(g);
           setValue(c);
           setDirty(false);
           onDirtyChange?.(false);
           setDiskChanged(false);
           setStatus("ready");
           // The text as it is on disk now is a version (docs/prd-file-versions.md).
-          void snapshotVersion(path, c, "opened");
+          if (g.kind === "ok" && !g.large) void snapshotVersion(path, c, "opened");
         })
         .catch((e) => {
           if (cancelled) return;
@@ -127,8 +159,9 @@ export default function FileEditor({
 
   /** Manual reload from the "disk changed" badge — discards unsaved edits. */
   const reloadFromDisk = () => {
-    invoke<string>("read_file", { path })
-      .then((c) => {
+    readGated(path, forceRef.current)
+      .then(({ gate: g, text: c }) => {
+        setGate(g);
         setValue(c);
         setDirty(false);
         onDirtyChange?.(false);
@@ -137,16 +170,32 @@ export default function FileEditor({
       .catch((e) => setError(String(e)));
   };
 
+  /** "Open anyway" on the too-big prompt: the head of the file, read-only. */
+  const openAnyway = () => {
+    forceRef.current = true;
+    setStatus("loading");
+    readGated(path, true)
+      .then(({ gate: g, text: c }) => {
+        setGate(g);
+        setValue(c);
+        setStatus("ready");
+      })
+      .catch((e) => {
+        setError(String(e));
+        setStatus("error");
+      });
+  };
+
   const save = async () => {
     setSaving(true);
     try {
       // Format document before saving if a formatter is available
-      await editorRef.current?.getAction("editor.action.formatDocument")?.run();
+      if (!largeRef.current) await editorRef.current?.getAction("editor.action.formatDocument")?.run();
       lastWrittenRef.current = valueRef.current;
       await invoke("write_file", { path, content: valueRef.current });
       setDirty(false);
       onDirtyChange?.(false);
-      void snapshotVersion(path, valueRef.current, "saved");
+      if (!largeRef.current) void snapshotVersion(path, valueRef.current, "saved");
     } catch (e) {
       setError(String(e));
     } finally {
@@ -167,7 +216,7 @@ export default function FileEditor({
     const t = setTimeout(() => {
       const text = valueRef.current;
       if (!autoSave) {
-        void snapshotVersion(path, text, "draft");
+        if (!largeRef.current) void snapshotVersion(path, text, "draft");
         return;
       }
       lastWrittenRef.current = text;
@@ -178,7 +227,7 @@ export default function FileEditor({
             setDirty(false);
             onDirtyChange?.(false);
           }
-          void snapshotVersion(path, text, "saved");
+          if (!largeRef.current) void snapshotVersion(path, text, "saved");
         })
         .catch((e) => setError(String(e)));
     }, autoSave ? AUTO_SAVE_MS : DRAFT_MS);
@@ -233,12 +282,13 @@ export default function FileEditor({
               setWordWrap(next);
               editorRef.current?.updateOptions({ wordWrap: next ? "on" : "off" });
             }}
-            className={`px-2 py-0.5 rounded border cursor-pointer transition-colors ${
+            className={`px-2 py-0.5 rounded border cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-default ${
               wordWrap
                 ? "border-indigo-700 dark:border-indigo-400 bg-indigo-600 dark:bg-indigo-500 text-white font-bold shadow-sm"
                 : "border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800"
             }`}
-            title="Toggle word wrap"
+            disabled={large}
+            title={large ? "Off for large files" : "Toggle word wrap"}
           >
             Wrap
           </button>
@@ -249,24 +299,26 @@ export default function FileEditor({
               setMinimap(next);
               editorRef.current?.updateOptions({ minimap: { enabled: next } });
             }}
-            className={`px-2 py-0.5 rounded border cursor-pointer transition-colors ${
+            className={`px-2 py-0.5 rounded border cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-default ${
               minimap
                 ? "border-indigo-700 dark:border-indigo-400 bg-indigo-600 dark:bg-indigo-500 text-white font-bold shadow-sm"
                 : "border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800"
             }`}
-            title="Toggle minimap"
+            disabled={large}
+            title={large ? "Off for large files" : "Toggle minimap"}
           >
             Map
           </button>
           <button
             type="button"
             onClick={() => void toggleDiff()}
-            className={`px-2 py-0.5 rounded border cursor-pointer transition-colors ${
+            className={`px-2 py-0.5 rounded border cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-default ${
               mode === "diff"
                 ? "border-amber-300 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/25 text-amber-700 dark:text-amber-400 font-bold"
                 : "border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800"
             }`}
-            title="Show diff against HEAD"
+            disabled={large}
+            title={large ? "Off for large files" : "Show diff against HEAD"}
           >
             Diff
           </button>
@@ -281,16 +333,34 @@ export default function FileEditor({
           </button>
         </span>
       </div>
+      {gate?.kind === "ok" && gate.large && (
+        <div
+          data-testid="large-file-banner"
+          className="px-3 py-1 text-[11px] border-b border-[var(--border)] bg-[var(--bg-panel)] text-[var(--text-muted)] shrink-0"
+        >
+          <span className="text-amber-600 dark:text-amber-400 font-bold">Large file ({formatSize(gate.size)})</span>
+          {gate.truncated
+            ? ` — showing the first ${formatSize(HEAD_BYTES)}, read-only.`
+            : " — shown as plain text; highlighting, minimap, wrap and diff are off to keep the editor responsive."}
+        </div>
+      )}
       <div className="flex-1 overflow-hidden">
-        {status === "error" ? (
-          error.includes("valid UTF-8") ? (
-            // `read_file` requires UTF-8 text (Monaco can't render arbitrary binary) —
-            // this is a real file the operator can still open in whatever app owns it,
-            // not a broken path. PRD file-viewer-dispatcher AC5.
-            <div className="p-4 flex flex-col items-start gap-2">
-              <p className="text-xs font-mono text-neutral-500 dark:text-neutral-400">
-                This file isn&apos;t text — it can&apos;t be previewed here.
-              </p>
+        {gate?.kind === "prompt" ? (
+          <div data-testid="large-file-prompt" className="p-4 flex flex-col items-start gap-2">
+            <p className="text-xs font-mono text-[var(--text)]">
+              This file is large ({formatSize(gate.size)}).
+            </p>
+            <p className="text-xs font-mono text-[var(--text-muted)]">
+              Loading it all would freeze the window. Open the first {formatSize(HEAD_BYTES)} read-only, or use another app.
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={openAnyway}
+                className="px-2 py-1 text-xs rounded border border-indigo-700 dark:border-indigo-400 bg-indigo-600 dark:bg-indigo-500 text-white font-bold cursor-pointer hover:bg-indigo-700 dark:hover:bg-indigo-400"
+              >
+                Open anyway
+              </button>
               <button
                 type="button"
                 onClick={() => void import("@tauri-apps/plugin-opener").then((m) => m.openPath(path))}
@@ -299,9 +369,22 @@ export default function FileEditor({
                 Open in default app
               </button>
             </div>
-          ) : (
-            <div className="p-4 text-xs font-mono text-rose-600 dark:text-red-400">{error}</div>
-          )
+          </div>
+        ) : gate?.kind === "binary" || (status === "error" && error.includes("valid UTF-8")) ? (
+          <div data-testid="binary-file" className="p-4 flex flex-col items-start gap-2">
+            <p className="text-xs font-mono text-neutral-500 dark:text-neutral-400">
+              This file isn&apos;t text — it can&apos;t be previewed here.
+            </p>
+            <button
+              type="button"
+              onClick={() => void import("@tauri-apps/plugin-opener").then((m) => m.openPath(path))}
+              className="px-2 py-1 text-xs rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer"
+            >
+              Open in default app
+            </button>
+          </div>
+        ) : status === "error" ? (
+          <div className="p-4 text-xs font-mono text-rose-600 dark:text-red-400">{error}</div>
         ) : mode === "diff" ? (
           <DiffEditor
             // Closing the file while the diff is showing used to throw "TextModel got
@@ -333,6 +416,7 @@ export default function FileEditor({
             path={monacoModelPath(path)}
             value={value}
             theme={monacoTheme}
+            language={large ? "plaintext" : undefined}
             loading={<div className="p-4 text-xs font-mono text-neutral-400 dark:text-neutral-500">loading…</div>}
             onChange={(v) => {
               setValue(v ?? "");
@@ -363,6 +447,7 @@ export default function FileEditor({
                 invisibleCharacters: false,
                 nonBasicASCII: false,
               },
+              ...(large ? { ...LARGE_EDITOR_OPTIONS, readOnly: gate?.kind === "ok" && gate.readOnly } : {}),
             }}
           />
         )}

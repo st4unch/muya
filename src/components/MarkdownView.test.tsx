@@ -13,7 +13,7 @@ const EVIL = [
   "<iframe src=\"javascript:window.__pwned=6\"></iframe>",
 ].join("\n\n");
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async () => EVIL) }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async (cmd: string) => (cmd === "file_probe" ? { size: 100, binary: false } : EVIL)) }));
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 
@@ -44,7 +44,7 @@ describe("MarkdownView links and stripped tags", () => {
       "<style>body{display:none}</style>",
     ].join("\n\n");
     const core = await import("@tauri-apps/api/core");
-    vi.mocked(core.invoke).mockResolvedValueOnce(md);
+    vi.mocked(core.invoke).mockResolvedValueOnce({ size: 100, binary: false }).mockResolvedValueOnce(md);
     const opener = await import("@tauri-apps/plugin-opener");
     const { fireEvent } = await import("@testing-library/react");
     const { container } = render(<MarkdownView filePath="/tmp/l.md" />);
@@ -59,5 +59,23 @@ describe("MarkdownView links and stripped tags", () => {
     const js = Array.from(container.querySelectorAll("a")).find((a) => a.textContent === "js");
     if (js) fireEvent.click(js);
     expect(opener.openUrl).not.toHaveBeenCalled();
+  });
+});
+
+describe("MarkdownView — large files", () => {
+  it("does not parse a big file; offers to open it as text", async () => {
+    const core = await import("@tauri-apps/api/core");
+    const calls: string[] = [];
+    vi.mocked(core.invoke).mockImplementation((async (cmd: string) => {
+      calls.push(cmd);
+      return cmd === "file_probe" ? { size: 3 * 1024 * 1024, binary: false } : "# never read";
+    }) as never);
+    const onEdit = vi.fn();
+    const { container } = render(<MarkdownView filePath="/tmp/big.md" onEdit={onEdit} />);
+    await waitFor(() => expect(container.querySelector("[data-testid=md-too-large]")).not.toBeNull());
+    expect(calls).not.toContain("read_file");
+    expect(container.querySelector(".md-body")).toBeNull();
+    (container.querySelector("[data-testid=md-too-large] button") as HTMLButtonElement).click();
+    expect(onEdit).toHaveBeenCalledWith("/tmp/big.md");
   });
 });

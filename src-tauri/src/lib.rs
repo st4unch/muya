@@ -480,6 +480,8 @@ pub fn run() {
             agent_files::session_touched_files,
             fs::list_dir,
             fs::read_file,
+            fs::file_probe,
+            fs::read_file_prefix,
             fs::write_file,
             fs::create_file,
             fs::create_dir,
