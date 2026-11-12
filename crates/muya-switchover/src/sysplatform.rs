@@ -130,12 +130,13 @@ impl Platform for SysPlatform {
         let _ = std::fs::remove_file(&self.healthy_marker);
         let mut c = Command::new("open");
         c.arg("-n");
-        // e2e only: `open` starts the app from launchd, which would otherwise hand it the
+        // Test runs only (MUYA_SWITCHOVER_PASS_ENV set): `open` starts the app from launchd, which would otherwise hand it the
         // REAL home. Pass the synthetic user's environment through explicitly.
-        #[cfg(feature = "e2e")]
-        for k in ["HOME", "PATH"] {
-            if let Ok(v) = std::env::var(k) {
-                c.arg("--env").arg(format!("{k}={v}"));
+        if std::env::var_os("MUYA_SWITCHOVER_PASS_ENV").is_some() {
+            for k in ["HOME", "PATH"] {
+                if let Ok(v) = std::env::var(k) {
+                    c.arg("--env").arg(format!("{k}={v}"));
+                }
             }
         }
         c.arg(app);
