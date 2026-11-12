@@ -236,6 +236,8 @@ pub fn run() {
             // Native's "Switch back to classic" waits for this file before it moves
             // itself to the Trash (docs/prd-native-beta-offer.md, handshake).
             crate::switchover::ack_switched_launch();
+            #[cfg(feature = "e2e")]
+            crate::switchover::e2e_autostart(app.handle().clone());
 
             // Native menu bar. We rebuild it explicitly (instead of the default) so we
             // can add File > New File; the Edit submenu is re-added by hand because a

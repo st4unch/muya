@@ -129,7 +129,16 @@ impl Platform for SysPlatform {
     fn launch(&mut self, app: &Path, args: &[String]) -> Result<(), String> {
         let _ = std::fs::remove_file(&self.healthy_marker);
         let mut c = Command::new("open");
-        c.arg("-n").arg(app);
+        c.arg("-n");
+        // e2e only: `open` starts the app from launchd, which would otherwise hand it the
+        // REAL home. Pass the synthetic user's environment through explicitly.
+        #[cfg(feature = "e2e")]
+        for k in ["HOME", "PATH"] {
+            if let Ok(v) = std::env::var(k) {
+                c.arg("--env").arg(format!("{k}={v}"));
+            }
+        }
+        c.arg(app);
         if !args.is_empty() {
             c.arg("--args").args(args);
         }

@@ -235,6 +235,51 @@ pub fn ack_switched_launch() {
     }
 }
 
+/// e2e builds only (`--features e2e`): with `MUYA_SWITCHOVER_E2E_AUTOSTART=1` run the
+/// exact path a click on "Try it" runs (check → answer tryIt → start), because the
+/// automated run cannot click in a locked session. Never compiled into releases.
+#[cfg(feature = "e2e")]
+pub fn e2e_autostart(app: AppHandle) {
+    if std::env::var("MUYA_SWITCHOVER_E2E_AUTOSTART").as_deref() != Ok("1") {
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        let log = |m: String| {
+            if let Ok(h) = home() {
+                use std::io::Write;
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(h.join("e2e-switchover.log")) {
+                    let _ = writeln!(f, "{m}");
+                }
+            }
+        };
+        {
+            use tauri::Listener;
+            let l2 = home().ok();
+            app.listen("switchover://error", move |ev| {
+                if let Some(h) = &l2 {
+                    use std::io::Write;
+                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(h.join("e2e-switchover.log")) {
+                        let _ = writeln!(f, "error event: {}", ev.payload());
+                    }
+                }
+            });
+        }
+        match switchover_check(app.clone(), "afterUpdate".into()).await {
+            Ok(r) if r.status == "show" => {
+                log(format!("offer shown for {:?}", r.version));
+                let _ = switchover_answer(r.version.clone().unwrap_or_default(), "tryIt".into());
+                match switchover_start(app.clone()).await {
+                    Ok(()) => log("switch started".into()),
+                    Err(e) => log(format!("start failed: {e}")),
+                }
+            }
+            Ok(r) => log(format!("no offer: {} {:?}", r.status, r.reason)),
+            Err(e) => log(format!("check failed: {e}")),
+        }
+    });
+}
+
 /// The running `.app` bundle (walk up from the executable).
 fn current_bundle() -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
@@ -287,7 +332,7 @@ pub async fn switchover_start(app: AppHandle) -> Result<(), String> {
             state_file: muya_switchover::state_path(&support),
             healthy_marker: muya_switchover::healthy_marker_path(&support),
             trash_fn: Some(Box::new(|p: &Path| {
-                crate::history::to_trash(p).map(|_| None)
+                crate::history::to_trash_at(p)
             })),
         };
         let h2 = handle.clone();
