@@ -62,7 +62,8 @@ export default function NativeBetaOffer({ version, notes, onClose }: { version: 
       /* preflight unavailable: treat as nothing running */
     }
     if (pf.translocated) return setStep("translocated");
-    const n = pf.ptyLive + pf.agentRunning;
+    // Only terminals living inside this app die when it quits; agents running elsewhere on the Mac are untouched.
+    const n = pf.ptyLive;
     if (n > 0) {
       setSessions(n);
       return setStep("warn");

@@ -58,12 +58,18 @@ describe("NativeBetaOffer", () => {
     preflight = { ptyLive: 2, agentRunning: 1, translocated: false };
     render(<NativeBetaOffer version="1" notes="" onClose={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: "Try it" }));
-    await screen.findByText(/3 sessions are running/);
+    await screen.findByText(/2 sessions are running/);
     expect(invoke).not.toHaveBeenCalledWith("switchover_start");
     fireEvent.click(screen.getByRole("button", { name: "Switch now" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("switchover_start"));
   });
 
+  it("does not warn for agents running elsewhere when no terminal of this app is open", async () => {
+    preflight = { ptyLive: 0, agentRunning: 5, translocated: false };
+    render(<NativeBetaOffer version="1" notes="" onClose={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Try it" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("switchover_start"));
+  });
   it("asks to move Muya to Applications when translocated", async () => {
     preflight = { ptyLive: 0, agentRunning: 0, translocated: true };
     render(<NativeBetaOffer version="1" notes="" onClose={() => {}} />);
