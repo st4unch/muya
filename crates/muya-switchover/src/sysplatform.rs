@@ -172,6 +172,13 @@ impl Platform for SysPlatform {
         let pat = format!("{}/Contents/MacOS/", app.display());
         let _ = Command::new("pkill").args(["-f", &pat]).output();
     }
+    fn terminate_launched(&mut self, app: &Path) {
+        // Only the new bundle's main executable (its CFBundleExecutable), not a prefix match: the old app that used to
+        // live under this very path keeps running with a command line that starts with the same directory.
+        let Ok(exe) = run("/usr/libexec/PlistBuddy", &["-c", "Print :CFBundleExecutable", &app.join("Contents/Info.plist").to_string_lossy()]) else { return };
+        let pat = format!("{}/Contents/MacOS/{}( |$)", app.display(), exe.trim());
+        let _ = Command::new("pkill").args(["-f", &pat]).output();
+    }
     fn save_state(&mut self, st: &SwitchState) {
         if let Some(d) = self.state_file.parent() {
             let _ = std::fs::create_dir_all(d);

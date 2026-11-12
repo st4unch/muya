@@ -5,6 +5,10 @@
 //! existing target to Trash → install → launch → wait healthy → trash the old
 //! app. A failure before the healthy handshake rolls back; the old app is
 //! never touched until the new one proved itself.
+//!
+//! In-place (`target_app == source_app`): the new app takes the old app's exact place and name, so Dock, Finder and
+//! Spotlight keep finding it. The old app is moved to the Trash first (a running bundle may be moved), the new one is
+//! installed under the same path, and on a failed handshake the old one is put straight back.
 
 use crate::verify::{check_sha, VerifyError};
 use serde::{Deserialize, Serialize};
@@ -95,6 +99,11 @@ pub trait Platform {
     fn wait_healthy(&mut self, timeout: Duration) -> bool;
     /// Stop the app we just launched (used on rollback).
     fn terminate(&mut self, app: &Path);
+    /// Same, for an install that took the OLD app's own path: the old app is still running under that very path
+    /// (and may be the process running this code), so only the new bundle's main executable may be stopped.
+    fn terminate_launched(&mut self, app: &Path) {
+        self.terminate(app);
+    }
     fn save_state(&mut self, st: &SwitchState);
 }
 
@@ -133,9 +142,10 @@ pub fn run_swap(p: &mut dyn Platform, plan: &Plan, progress: &mut dyn FnMut(u64,
         st.trashed_previous_target = t.map(|t| t.to_string_lossy().into());
         p.save_state(&st);
     }
+    let in_place = plan.target_app == plan.source_app;
     let rollback = |p: &mut dyn Platform, st: &mut SwitchState, installed: bool| {
         if installed {
-            p.terminate(&plan.target_app);
+            if in_place { p.terminate_launched(&plan.target_app) } else { p.terminate(&plan.target_app) }
             let _ = p.trash(&plan.target_app);
         }
         if let Some(prev) = st.trashed_previous_target.clone() {
@@ -162,6 +172,14 @@ pub fn run_swap(p: &mut dyn Platform, plan: &Plan, progress: &mut dyn FnMut(u64,
     st.step = Step::NativeHealthy;
     p.save_state(&st);
 
+    // In place, the old app already went to the Trash (it was the target); there is nothing left to move.
+    if in_place {
+        let t = st.trashed_previous_target.clone().map(PathBuf::from);
+        st.trashed_source = st.trashed_previous_target.clone();
+        st.step = Step::Done;
+        p.save_state(&st);
+        return Ok(Outcome { trashed_source: t });
+    }
     // Only now does the old app go to the Trash.
     match p.trash(&plan.source_app) {
         Ok(t) => {
@@ -241,6 +259,9 @@ mod tests {
         }
         fn terminate(&mut self, _a: &Path) {
             self.log.push("terminate".into());
+        }
+        fn terminate_launched(&mut self, _a: &Path) {
+            self.log.push("terminate_launched".into());
         }
         fn save_state(&mut self, st: &SwitchState) {
             self.states.push(st.step.clone());
@@ -329,6 +350,32 @@ mod tests {
         assert!(matches!(run_swap(&mut f, &plan(), &mut |_, _| {}), Err(SwapError::Install(_))));
         assert!(f.log.contains(&"restore".to_string()));
         assert!(!f.log.contains(&"launch".to_string()));
+    }
+    fn in_place_plan() -> Plan {
+        let mut p = plan();
+        p.target_app = "/Users/u/Desktop/Muya.app".into();
+        p.source_app = "/Users/u/Desktop/Muya.app".into();
+        p
+    }
+    #[test]
+    fn in_place_takes_the_old_apps_exact_path_and_trashes_it_once() {
+        let mut f = fake();
+        f.target_exists = true;
+        let out = run_swap(&mut f, &in_place_plan(), &mut |_, _| {}).unwrap();
+        assert_eq!(f.log, ["download", "sha", "unpack", "verify", "quarantine", "trash Muya.app", "install", "launch", "wait"]);
+        assert_eq!(out.trashed_source, Some(PathBuf::from("/Trash/Muya.app")));
+        assert_eq!(f.states.last(), Some(&Step::Done));
+    }
+    #[test]
+    fn in_place_rollback_puts_the_old_app_back_and_never_uses_the_broad_terminate() {
+        let mut f = fake();
+        f.target_exists = true;
+        f.healthy = false;
+        assert_eq!(run_swap(&mut f, &in_place_plan(), &mut |_, _| {}).unwrap_err(), SwapError::NotHealthy);
+        let tail: Vec<_> = f.log.iter().rev().take(3).rev().cloned().collect();
+        assert_eq!(tail, ["terminate_launched", "trash Muya.app", "restore"]);
+        assert!(!f.log.contains(&"terminate".to_string()));
+        assert_eq!(f.states.last(), Some(&Step::RolledBack));
     }
     #[test]
     fn trash_source_failure_is_reported_not_silent() {

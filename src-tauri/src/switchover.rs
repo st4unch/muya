@@ -39,6 +39,17 @@ fn apps_dir() -> PathBuf {
     PathBuf::from("/Applications")
 }
 
+/// Where the new Native goes: the exact path of the running classic app (same folder, same file name), so it takes
+/// classic's place — Dock, Finder and Spotlight keep finding it where the user launches it — and classic goes to the
+/// Trash from there. The e2e build redirects to a throwaway folder instead.
+fn native_target(source: &Path) -> PathBuf {
+    #[cfg(feature = "e2e")]
+    if std::env::var("MUYA_SWITCHOVER_E2E_APPS_DIR").is_ok() {
+        return apps_dir().join(NATIVE_APP_NAME);
+    }
+    source.to_path_buf()
+}
+
 fn manifest_urls() -> (String, String) {
     #[cfg(feature = "e2e")]
     if let Ok(u) = std::env::var("MUYA_SWITCHOVER_E2E_MANIFEST_URL") {
@@ -170,6 +181,8 @@ pub async fn switchover_check(app: AppHandle, trigger: String) -> Result<CheckRe
     }
     let manifest = manifest.ok();
     let state = read_state();
+    // A Native from an earlier install (it lived in /Applications as "Muya Native"); a switch since then replaces
+    // classic in place, so classic's own path is never "an installed Native".
     let installed = installed_version(&apps_dir().join(NATIVE_APP_NAME));
     let classic = env!("CARGO_PKG_VERSION");
     let input = OfferInput {
@@ -319,7 +332,7 @@ pub async fn switchover_start(app: AppHandle) -> Result<(), String> {
         url: manifest.url.clone(),
         sha256: manifest.sha256.clone(),
         stage_dir: stage.clone(),
-        target_app: apps_dir().join(NATIVE_APP_NAME),
+        target_app: native_target(&source),
         source_app: source,
         expected_id: muya_switchover::NATIVE_BUNDLE_ID.into(),
         expected_team: muya_switchover::TEAM_ID.into(),
@@ -371,6 +384,14 @@ pub async fn switchover_start(app: AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_takes_the_running_classic_apps_exact_place() {
+        // Whatever folder and file name classic runs under — Desktop, a renamed copy, /Applications.
+        for p in ["/Users/u/Desktop/Muya.app", "/Applications/Muya.app", "/Volumes/X/Apps/Muya 2.app"] {
+            assert_eq!(native_target(Path::new(p)), PathBuf::from(p));
+        }
+    }
 
     #[test]
     fn answers_map_and_persist_round_trip() {
