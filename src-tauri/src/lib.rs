@@ -75,6 +75,7 @@ mod term_history;
 mod testutil;
 mod titlebar;
 mod validate;
+mod switchover;
 mod vault;
 mod watcher;
 mod workspace_roots;
@@ -231,6 +232,12 @@ pub fn run() {
             // translocated on its next launch — which resets the user's file
             // permission all over again. See fs::strip_own_quarantine.
             crate::fs::strip_own_quarantine();
+
+            // Native's "Switch back to classic" waits for this file before it moves
+            // itself to the Trash (docs/prd-native-beta-offer.md, handshake).
+            crate::switchover::ack_switched_launch();
+            #[cfg(feature = "e2e")]
+            crate::switchover::e2e_autostart(app.handle().clone());
 
             // Native menu bar. We rebuild it explicitly (instead of the default) so we
             // can add File > New File; the Edit submenu is re-added by hand because a
@@ -474,6 +481,10 @@ pub fn run() {
             history::list_session_history,
             history::read_session_transcript,
             history::archive_sessions,
+            switchover::switchover_check,
+            switchover::switchover_preflight,
+            switchover::switchover_answer,
+            switchover::switchover_start,
             history::restore_sessions,
             history::list_archived_sessions,
             history::trash_sessions,

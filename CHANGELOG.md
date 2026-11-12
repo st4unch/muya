@@ -6,6 +6,11 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.1.21] - 2026-11-12
+
+### Added
+- **Try the Muya Native beta.** After an update check, Muya offers the new native Mac version once ("Try it / Not now / Don't ask again"); the same offer lives in Settings > Beta. Muya Native replaces this app: it is downloaded, its checksum and Apple signature (developer, notarization) are verified before anything is touched, then this app moves to the Trash and Native opens with your workspaces, settings, schedules and servers. If anything fails, nothing changes. If sessions are running you are told they will be closed and can pick another time. Native has "Switch back to classic Muya" and updates itself. Nothing is sent anywhere except the GitHub download.
+
 ### Fixed
 - **Opening a big file no longer freezes Muya.** A 3 MB Markdown file froze the window for 1.5 s (5 MB: 2.8 s, longer on a slower Mac) because the whole file was parsed and drawn at once. Now the size is checked first: from 1 MB the editor shows plain text with highlighting, minimap, wrap and diff switched off (with a banner saying so); Markdown over 512 KB is not rendered (a button opens it as text); a file over 8 MB asks first — "Open anyway" shows its first 8 MB read-only, or open it in another app; a binary file is never read as text. Normal files behave as before. The old hard 5 MB limit is gone.
 

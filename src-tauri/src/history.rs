@@ -582,12 +582,20 @@ fn restore_in(projects: &Path, archive: &Path, paths: &[String]) -> Housekeeping
 }
 
 /// Put one file or folder in the macOS Trash (recoverable from Finder).
-fn to_trash(path: &Path) -> Result<(), String> {
+pub(crate) fn to_trash(path: &Path) -> Result<(), String> {
+    to_trash_at(path).map(|_| ())
+}
+
+/// Same, and says where the item landed in the Trash (None if macOS does not tell).
+pub(crate) fn to_trash_at(path: &Path) -> Result<Option<PathBuf>, String> {
+    use objc2::rc::Retained;
     use objc2_foundation::{NSFileManager, NSString, NSURL};
     let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
     let fm = NSFileManager::defaultManager();
-    fm.trashItemAtURL_resultingItemURL_error(&url, None)
-        .map_err(|e| e.localizedDescription().to_string())
+    let mut out: Option<Retained<NSURL>> = None;
+    fm.trashItemAtURL_resultingItemURL_error(&url, Some(&mut out))
+        .map_err(|e| e.localizedDescription().to_string())?;
+    Ok(out.and_then(|u| u.path()).map(|p| PathBuf::from(p.to_string())))
 }
 
 /// Move sessions out of `~/.claude/projects` into Muya's archive (running or just-used ones are skipped).

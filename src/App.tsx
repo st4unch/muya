@@ -31,6 +31,8 @@ import SchedulesPage from "./components/SchedulesPage";
 import PrdBoard from "./components/PrdBoard";
 import ScheduledPromptModal, { type ScheduledPrompt } from "./components/ScheduledPromptModal";
 import SettingsModal from "./components/SettingsModal";
+import NativeBetaOffer from "./components/NativeBetaOffer";
+import { checkNativeBetaAfterUpdate, type BetaOffer } from "./lib/nativeBeta";
 import { useStatusFields, useStatusData } from "./redesign/useStatusFields";
 import { applyLaunchFlags, hasChannelFlag, withChannel } from "./lib/statusline";
 import { buildAgentCommand, singleQuote, detectAgent, unattendedFlags, openedByNote, AGENT_BASE_COMMAND, type AgentKind } from "./lib/agent";
@@ -508,11 +510,18 @@ export default function App() {
   const [appVersion, setAppVersion] = useState("");
   const [updateAvailable, setUpdateAvailable] = useState<{ version: string; body: string } | null>(null);
   const [updateProgress, setUpdateProgress] = useState<string | null>(null);
+  // Native-beta offer: only after the update flow ended with "up to date", once per session.
+  const [betaOffer, setBetaOffer] = useState<BetaOffer | null>(null);
+  const offerNativeBeta = () => {
+    void checkNativeBetaAfterUpdate().then((o) => { if (o) setBetaOffer(o); });
+  };
   useEffect(() => {
     getVersion().then(setAppVersion).catch(() => {});
     check().then((update) => {
       if (update?.available) {
         setUpdateAvailable({ version: update.version, body: update.body ?? "" });
+      } else {
+        offerNativeBeta();
       }
     }).catch(() => {});
   }, []);
@@ -1009,6 +1018,7 @@ export default function App() {
         } else {
           setUpdateProgress("You're on the latest version.");
           setTimeout(() => { setUpdateAvailable(null); setUpdateProgress(null); }, 3000);
+          offerNativeBeta();
         }
       } catch {
         setUpdateProgress("Update check failed.");
@@ -2941,6 +2951,7 @@ export default function App() {
           />
         </Suspense>
       )}
+      {betaOffer && <NativeBetaOffer version={betaOffer.version} notes={betaOffer.notes} onClose={() => setBetaOffer(null)} />}
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} themePreference={themeMode} onThemePreferenceChange={setThemeMode} />
 
       <ScheduledPromptModal

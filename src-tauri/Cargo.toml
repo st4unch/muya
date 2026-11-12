@@ -1,6 +1,6 @@
 [package]
 name = "muya"
-version = "4.1.20"
+version = "4.1.21"
 description = "Muya — control plane for parallel Claude Code agents"
 authors = ["staunch"]
 edition = "2021"
@@ -30,10 +30,15 @@ path = "src/main.rs"
 name = "muya-ssh-mcp"
 path = "src/bin/muya_ssh_mcp.rs"
 
+[features]
+# Test-only build for the synthetic-user end-to-end run (local http manifest, test key).
+e2e = ["muya-switchover/e2e"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+muya-switchover = { path = "../crates/muya-switchover" }
 # protocol-asset: serves a runtime-allowlisted local file to the webview as
 # asset://<path> (via convertFileSrc) — needed to render images/PDFs without
 # reading their bytes through the JS/IPC boundary as text.

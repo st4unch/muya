@@ -6,6 +6,8 @@ import { ThemeMonitorIcon, ThemeMoonIcon, ThemeSunIcon } from "../redesign/icons
 import { loadResumeOnLaunch, saveResumeOnLaunch } from "../lib/startup";
 import { loadAutoApprove, saveAutoApprove } from "../lib/autoApprove";
 import { loadAutoSave, saveAutoSave } from "../lib/fileVersions";
+import NativeBetaOffer from "./NativeBetaOffer";
+import type { BetaOffer, SwitchoverCheck } from "../lib/nativeBeta";
 import { Switch, ghostBtn, groupStyle, helperStyle, inputStyle, labelStyle, rowStyle, rowsBox } from "./modalKit";
 
 /** Claude's `cleanupPeriodDays` values offered (same list as the backend, claude_settings.rs). */
@@ -52,6 +54,22 @@ export default function SettingsModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [betaOffer, setBetaOffer] = useState<BetaOffer | null>(null);
+  const [betaNote, setBetaNote] = useState("");
+  const [betaBusy, setBetaBusy] = useState(false);
+  const checkBeta = async () => {
+    setBetaBusy(true);
+    setBetaNote("");
+    try {
+      const r = await invoke<SwitchoverCheck>("switchover_check", { trigger: "settings" });
+      if (r.status === "show" && r.version) setBetaOffer({ version: r.version, notes: r.notes ?? "" });
+      else setBetaNote(r.status === "installed" ? "Native beta is installed" : "No beta available right now");
+    } catch (e) {
+      setBetaNote(String(e));
+    } finally {
+      setBetaBusy(false);
+    }
+  };
   const [loginItem, setLoginItem] = useState(false);
   const [resumeOnLaunch, setResumeOnLaunch] = useState(false);
   const [autoApprove, setAutoApprove] = useState(false);
@@ -117,12 +135,14 @@ export default function SettingsModal({
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
+      // The Native beta offer is open on top: its own Esc handler closes just that.
+      if (betaOffer) return;
       e.stopPropagation();
       onClose();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [open, onClose]);
+  }, [open, onClose, betaOffer]);
 
   if (!open) return null;
 
@@ -480,6 +500,23 @@ export default function SettingsModal({
               </div>
             </div>
           </div>
+
+          <div style={groupStyle}>
+            <span style={labelStyle}>Beta</span>
+            <div style={rowsBox}>
+              <div style={rowStyle}>
+                <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600 }}>Muya Native beta</span>
+                  <span style={helperStyle}>Try the new native Muya. It replaces this app; your data comes with you.</span>
+                  {betaNote && <span role="status" style={{ ...helperStyle, color: "var(--text-muted)", overflowWrap: "anywhere" }}>{betaNote}</span>}
+                </div>
+                <button type="button" className="st-btn" style={ghostBtn} disabled={betaBusy} onClick={() => void checkBeta()}>
+                  Try the Native beta…
+                </button>
+              </div>
+            </div>
+          </div>
+          {betaOffer && <NativeBetaOffer version={betaOffer.version} notes={betaOffer.notes} onClose={() => setBetaOffer(null)} />}
 
           {error && (
             <div role="alert" style={{ fontSize: 12, color: "var(--danger-text)", overflowWrap: "anywhere" }}>

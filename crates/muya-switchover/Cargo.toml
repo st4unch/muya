@@ -1,0 +1,20 @@
+[package]
+name = "muya-switchover"
+version = "0.1.0"
+edition = "2021"
+description = "Shared classic<->Native switch logic: manifest, offer decision, verification, swap state machine"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+minisign-verify = "0.2"
+base64 = "0.22"
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+# Test-only: lets an e2e build accept a local http manifest/zip and a test signing key
+# via env vars. NEVER enabled in release builds.
+e2e = []
