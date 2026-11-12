@@ -287,8 +287,8 @@ export default function FileEditor({
                 ? "border-indigo-700 dark:border-indigo-400 bg-indigo-600 dark:bg-indigo-500 text-white font-bold shadow-sm"
                 : "border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800"
             }`}
-            disabled={large}
-            title={large ? "Off for large files" : "Toggle word wrap"}
+            disabled={large || (gate !== null && gate.kind !== "ok")}
+            title={large || (gate !== null && gate.kind !== "ok") ? "Not available for this file" : "Toggle word wrap"}
           >
             Wrap
           </button>
@@ -304,8 +304,8 @@ export default function FileEditor({
                 ? "border-indigo-700 dark:border-indigo-400 bg-indigo-600 dark:bg-indigo-500 text-white font-bold shadow-sm"
                 : "border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800"
             }`}
-            disabled={large}
-            title={large ? "Off for large files" : "Toggle minimap"}
+            disabled={large || (gate !== null && gate.kind !== "ok")}
+            title={large || (gate !== null && gate.kind !== "ok") ? "Not available for this file" : "Toggle minimap"}
           >
             Map
           </button>
@@ -317,8 +317,8 @@ export default function FileEditor({
                 ? "border-amber-300 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/25 text-amber-700 dark:text-amber-400 font-bold"
                 : "border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800"
             }`}
-            disabled={large}
-            title={large ? "Off for large files" : "Show diff against HEAD"}
+            disabled={large || (gate !== null && gate.kind !== "ok")}
+            title={large || (gate !== null && gate.kind !== "ok") ? "Not available for this file" : "Show diff against HEAD"}
           >
             Diff
           </button>
