@@ -220,6 +220,21 @@ pub fn switchover_answer(version: String, answer: String) -> Result<(), String> 
     write_state(&offer::after_answer(read_state(), &version, a, now_unix()))
 }
 
+/// Called once at startup: when Native launched us with `--switched-from=native`
+/// (switch back to classic), write the healthy marker it is waiting for.
+pub fn ack_switched_launch() {
+    if !std::env::args().any(|a| a == "--switched-from=native") {
+        return;
+    }
+    if let Ok(support) = support_dir() {
+        let m = muya_switchover::healthy_marker_path(&support);
+        if let Some(d) = m.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let _ = std::fs::write(&m, format!("{{\"app\":\"{}\",\"version\":\"{}\"}}", muya_switchover::CLASSIC_BUNDLE_ID, env!("CARGO_PKG_VERSION")));
+    }
+}
+
 /// The running `.app` bundle (walk up from the executable).
 fn current_bundle() -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;

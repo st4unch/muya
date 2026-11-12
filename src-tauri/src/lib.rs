@@ -233,6 +233,10 @@ pub fn run() {
             // permission all over again. See fs::strip_own_quarantine.
             crate::fs::strip_own_quarantine();
 
+            // Native's "Switch back to classic" waits for this file before it moves
+            // itself to the Trash (docs/prd-native-beta-offer.md, handshake).
+            crate::switchover::ack_switched_launch();
+
             // Native menu bar. We rebuild it explicitly (instead of the default) so we
             // can add File > New File; the Edit submenu is re-added by hand because a
             // custom menu drops the platform defaults that terminal/editor copy-paste

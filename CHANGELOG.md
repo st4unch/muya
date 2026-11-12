@@ -6,6 +6,11 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.1.21] - 2026-11-12
+
+### Added
+- **Try the Muya Native beta.** After an update check, Muya offers the new native Mac version once ("Try it / Not now / Don't ask again"); the same offer lives in Settings > Beta. Muya Native replaces this app: it is downloaded, its checksum and Apple signature (developer, notarization) are verified before anything is touched, then this app moves to the Trash and Native opens with your workspaces, settings, schedules and servers. If anything fails, nothing changes. If sessions are running you are told they will be closed and can pick another time. Native has "Switch back to classic Muya" and updates itself. Nothing is sent anywhere except the GitHub download.
+
 ### Removed
 - **The animated panda in the sidebar.** Measured in WebKit, it alone kept about a third of one CPU core busy whenever it was on screen (about 5% without it), and that load also made screen switches stutter. The menu bar icon stays.
 
