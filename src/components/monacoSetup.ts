@@ -22,3 +22,13 @@ self.MonacoEnvironment = {
   },
 };
 loader.config({ monaco });
+
+// Monaco decides "too large for tokenization / folding / bracket matching" at MODEL creation
+// (300k lines or 20 MB) from the global `editor.largeFileOptimizations` setting. @monaco-editor/react
+// creates the model BEFORE the editor, so the option passed to <Editor options> comes too late.
+// Creating (and disposing) one throwaway editor with the option false writes it to the global
+// configuration; our own policy (lib/largeFile.ts) decides when a file is degraded instead.
+if (typeof document !== "undefined") {
+  const probe = document.createElement("div");
+  monaco.editor.create(probe, { largeFileOptimizations: false, automaticLayout: false }).dispose();
+}

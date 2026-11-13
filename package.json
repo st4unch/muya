@@ -10,7 +10,8 @@
     "test": "vitest run",
     "tauri": "tauri",
     "loadtest": "node scripts/loadtest/ui.mjs",
-    "loadtest:app": "node scripts/loadtest/app.mjs"
+    "loadtest:app": "node scripts/loadtest/app.mjs",
+    "perf:largefile": "node tools/largefile-perf/run.mjs --kinds json --sizes 20 --mode policy --steps open,type --budget-open-ms 1000 --budget-hl-ms 2000 --budget-type-ms 100 --expect-banner no"
   },
   "dependencies": {
     "@fontsource/ibm-plex-sans": "^5.3.0",

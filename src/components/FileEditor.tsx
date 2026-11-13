@@ -5,7 +5,7 @@ import * as monaco from "monaco-editor";
 import { langFromPath, monacoModelPath } from "../lib/format";
 import "./monacoSetup";
 import { appModalOpen } from "../lib/modalOpen";
-import { decideOpen, formatSize, HEAD_BYTES, LARGE_EDITOR_OPTIONS, type FileProbe } from "../lib/largeFile";
+import { decideOpen, formatSize, HEAD_BYTES, LARGE_BYTES, LARGE_EDITOR_OPTIONS, LONG_LINE_CHARS, longestLine, type FileProbe } from "../lib/largeFile";
 import { AUTO_SAVE_EVENT, AUTO_SAVE_MS, DRAFT_MS, loadAutoSave, snapshotVersion } from "../lib/fileVersions";
 
 /** Nobody visible holds the keyboard: it sits on the page, or in a terminal parked
@@ -17,7 +17,7 @@ function keyboardIsFree(): boolean {
 
 /** What the probe decided for the file on screen (docs/prd-large-file-open.md). */
 type Gate =
-  | { kind: "ok"; large: boolean; readOnly: boolean; size: number; truncated: boolean }
+  | { kind: "ok"; large: boolean; readOnly: boolean; size: number; truncated: boolean; longLine?: number }
   | { kind: "binary" }
   | { kind: "prompt"; size: number };
 
@@ -33,7 +33,13 @@ async function readGated(path: string, force: boolean): Promise<{ gate: Gate; te
     return { gate: { kind: "ok", large: true, readOnly: true, size: probe.size, truncated: true }, text };
   }
   const text = await invoke<string>("read_file", { path });
-  return { gate: { kind: "ok", large: mode === "large", readOnly: false, size: probe.size, truncated: false }, text };
+  // One enormous line (minified bundle) is expensive at any file size: same degraded mode.
+  const longLine = mode === "large" ? 0 : longestLine(text);
+  const tooLong = longLine > LONG_LINE_CHARS;
+  return {
+    gate: { kind: "ok", large: mode === "large" || tooLong, readOnly: false, size: probe.size, truncated: false, longLine: tooLong ? longLine : undefined },
+    text,
+  };
 }
 
 /** Monaco-backed file editor. Loads via the backend `read_file`; Cmd/Ctrl+S saves
@@ -341,7 +347,9 @@ export default function FileEditor({
           <span className="text-amber-600 dark:text-amber-400 font-bold">Large file ({formatSize(gate.size)})</span>
           {gate.truncated
             ? ` — showing the first ${formatSize(HEAD_BYTES)}, read-only.`
-            : " — shown as plain text; highlighting, minimap, wrap and diff are off to keep the editor responsive."}
+            : gate.longLine
+              ? ` — has a line ${formatSize(gate.longLine)} long (over ${formatSize(LONG_LINE_CHARS)}), so it is shown as plain text: highlighting, minimap, wrap and diff are off to keep the editor responsive.`
+              : ` — over ${formatSize(LARGE_BYTES)}, so it is shown as plain text: highlighting, minimap, wrap and diff are off to keep the editor responsive. Still editable.`}
         </div>
       )}
       <div className="flex-1 overflow-hidden">
@@ -434,6 +442,9 @@ export default function FileEditor({
             options={{
               fontSize: 12,
               fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+              // Monaco switches tokenization, folding, bracket matching… off by itself at 300k
+              // lines / 20 MB; our own policy (lib/largeFile.ts) decides that instead.
+              largeFileOptimizations: false,
               minimap: { enabled: minimap },
               wordWrap: wordWrap ? "on" : "off",
               scrollBeyondLastLine: false,

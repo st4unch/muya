@@ -4,12 +4,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const MB = 1024 * 1024;
 let probe = { size: 5, binary: false };
+let fileText = "hello";
 const calls: Array<[string, unknown]> = [];
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: async (cmd: string, args?: unknown) => {
     calls.push([cmd, args]);
     if (cmd === "file_probe") return probe;
-    if (cmd === "read_file") return "hello";
+    if (cmd === "read_file") return fileText;
     if (cmd === "read_file_prefix") return "head of a huge file";
     return null;
   },
@@ -31,7 +32,7 @@ import FileEditor from "./FileEditor";
 const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 30)); });
 
 describe("FileEditor large-file handling", () => {
-  beforeEach(() => { calls.length = 0; lastOptions = {}; lastLanguage = undefined; });
+  beforeEach(() => { fileText = "hello"; calls.length = 0; lastOptions = {}; lastLanguage = undefined; });
 
   it("a small file is untouched: no banner, normal options", async () => {
     probe = { size: 5, binary: false };
@@ -42,11 +43,25 @@ describe("FileEditor large-file handling", () => {
     expect(lastLanguage).toBeUndefined();
   });
 
-  it("3 MB opens in large-file mode: banner, plain text, features off, still editable", async () => {
-    probe = { size: 3 * MB, binary: false };
+  it("20 MB opens with the FULL editor: no banner, no feature switched off, wrap/diff enabled", async () => {
+    probe = { size: 20 * MB, binary: false };
+    const { queryByTestId, getByText } = render(<FileEditor path="/r/big.json" />);
+    await settle();
+    expect(queryByTestId("large-file-banner")).toBeNull();
+    expect(lastOptions.folding).toBeUndefined();
+    expect(lastOptions.largeFileOptimizations).toBe(false);
+    expect(lastLanguage).toBeUndefined();
+    expect((getByText("Wrap") as HTMLButtonElement).disabled).toBe(false);
+    expect((getByText("Diff") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("60 MB opens in degraded mode: banner names the size limit, plain text, features off, still editable", async () => {
+    probe = { size: 60 * MB, binary: false };
     const { getByTestId, getByText } = render(<FileEditor path="/r/big.log" />);
     await settle();
-    expect(getByTestId("large-file-banner").textContent).toContain("3.0 MB");
+    const banner = getByTestId("large-file-banner").textContent ?? "";
+    expect(banner).toContain("60.0 MB");
+    expect(banner).toContain("over 50.0 MB");
     expect(lastLanguage).toBe("plaintext");
     expect(lastOptions.folding).toBe(false);
     expect(lastOptions.minimap).toEqual({ enabled: false });
@@ -56,8 +71,19 @@ describe("FileEditor large-file handling", () => {
     expect(calls.some(([c]) => c === "file_history_snapshot")).toBe(false);
   });
 
-  it("50 MB is not loaded until asked; Open anyway shows the head read-only", async () => {
-    probe = { size: 50 * MB, binary: false };
+  it("a small file with one 3 MB line gets the degraded mode, and the banner says why", async () => {
+    probe = { size: 3 * MB, binary: false };
+    fileText = "x".repeat(3 * MB);
+    const { getByTestId } = render(<FileEditor path="/r/bundle.min.js" />);
+    await settle();
+    const banner = getByTestId("large-file-banner").textContent ?? "";
+    expect(banner).toContain("a line 3.0 MB long");
+    expect(lastLanguage).toBe("plaintext");
+    expect(lastOptions.readOnly).toBe(false);
+  });
+
+  it("200 MB is not loaded until asked; Open anyway shows the head read-only", async () => {
+    probe = { size: 200 * MB, binary: false };
     const { getByTestId, getByText, queryByTestId } = render(<FileEditor path="/r/huge.json" />);
     await settle();
     expect(getByTestId("large-file-prompt")).toBeTruthy();

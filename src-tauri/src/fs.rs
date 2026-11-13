@@ -63,16 +63,18 @@ pub fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
     Ok(entries)
 }
 
+/// Largest file `read_file` loads whole. SAME as PROMPT_BYTES in src/lib/largeFile.ts (the
+/// viewers ask `file_probe` first and never call `read_file` above it) — change them together.
+const MAX_EDIT_BYTES: u64 = 128 * 1024 * 1024;
+
 /// Read a UTF-8 text file for the editor. Rejects very large files to keep the
 /// editor responsive.
 #[tauri::command(async)]
 pub fn read_file(path: String) -> Result<String, String> {
     let p = Path::new(&path);
     let meta = std::fs::metadata(p).map_err(|e| format!("stat failed: {e}"))?;
-    // Keep in step with PROMPT_BYTES in src/lib/largeFile.ts: the viewers ask
-    // `file_probe` first and never call this above it.
-    if meta.len() > 8 * 1024 * 1024 {
-        return Err("file too large (>8MB) to open in the editor".into());
+    if meta.len() > MAX_EDIT_BYTES {
+        return Err(format!("file too large (>{} MB) to open in the editor", MAX_EDIT_BYTES / (1024 * 1024)));
     }
     std::fs::read_to_string(p).map_err(|e| format!("read failed: {e}"))
 }
