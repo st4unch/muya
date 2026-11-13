@@ -6,6 +6,9 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **Files up to 50 MB open with every editor feature.** Syntax highlighting, minimap, wrap and diff used to switch off from 1 MB, and Monaco itself dropped highlighting at 300,000 lines (a 5 MB JSON). Measured: a 20 MB JSON opens in 0.2 s, highlighted, typing stays under 20 ms. From 50 MB the file is plain text but still editable; above 128 MB it asks first (then shows the first 16 MB). A file with one line over 2 MB (a minified bundle) gets the plain-text mode at any size — it cost 25 seconds of CPU otherwise. Rendered Markdown works up to 1 MB (was 512 KB). The banner appears only when a feature is off and names the limit.
+
 ## [4.1.22] - 2026-11-13
 
 ### Fixed
