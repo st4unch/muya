@@ -15,8 +15,8 @@ export const PROMPT_BYTES = 128 * MB;
 /** Largest chunk of a file "Open anyway" reads (read-only). Rust caps read_file_prefix at 16 MB. */
 export const HEAD_BYTES = 16 * MB;
 /** Markdown above this is not parsed/sanitised/injected: marked + DOMPurify + layout cost
- *  ~0.4 s per MB on the main thread (2 MB = 0.8 s, 8 MB = 3.1 s). */
-export const MD_RENDER_MAX = 2 * MB;
+ *  ~0.4 s per MB on the main thread here (1 MB = 0.4 s, 8 MB = 3.1 s); Native's renderer ~0.75 s/MB. */
+export const MD_RENDER_MAX = 1 * MB;
 /** A single line longer than this (a minified bundle on one line) gets the large-file
  *  treatment whatever the file size: tokenizing/validating one 5 MB line costs 10 s of CPU,
  *  10 MB costs 25 s, and typing lags (140 ms at 50 MB). */
