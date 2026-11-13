@@ -289,13 +289,11 @@ pub fn e2e_autostart(app: AppHandle) {
     });
 }
 
-/// The running `.app` bundle (walk up from the executable).
+/// The running `.app` bundle, found from this process's own executable: symlinks resolved, same file name kept
+/// (Native is installed exactly here), and a translocated copy is refused with a "move it first" message.
 fn current_bundle() -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    exe.ancestors()
-        .find(|p| p.extension().is_some_and(|e| e == "app"))
-        .map(Path::to_path_buf)
-        .ok_or_else(|| "Muya is not running from an app bundle".to_string())
+    muya_switchover::target::resolve_bundle(&exe)
 }
 
 #[derive(Serialize, Clone)]
@@ -312,13 +310,8 @@ struct Progress {
 #[tauri::command]
 pub async fn switchover_start(app: AppHandle) -> Result<(), String> {
     let manifest = load_manifest(&app).await?;
+    // Resolves the real bundle, or says what to do (translocated copy → move the app first).
     let source = current_bundle()?;
-    let exe = std::env::current_exe()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    if crate::app_location::path_is_translocated(&exe) {
-        return Err("Move Muya to your Applications folder first, then try again.".into());
-    }
     let support = support_dir()?;
     let stage = home()?
         .join("Library/Caches/com.staunch.muya/switchover")

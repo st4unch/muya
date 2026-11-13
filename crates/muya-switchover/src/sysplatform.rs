@@ -31,7 +31,10 @@ pub fn move_to_home_trash(p: &Path) -> Result<Option<PathBuf>, String> {
         dest = trash.join(format!("{stem} {n}.app"));
         n += 1;
     }
-    std::fs::rename(p, &dest).map_err(|e| format!("could not move {} to the Trash: {e}", p.display()))?;
+    std::fs::rename(p, &dest).map_err(|e| {
+        let raw = format!("could not move {} to the Trash: {e}", p.display());
+        crate::target::explain_denied(p, &raw, crate::target::Op::ChangeApp)
+    })?;
     Ok(Some(dest))
 }
 
@@ -121,10 +124,11 @@ impl Platform for SysPlatform {
         path.exists()
     }
     fn trash(&mut self, path: &Path) -> Result<Option<PathBuf>, String> {
-        match &self.trash_fn {
+        let r = match &self.trash_fn {
             Some(f) => f(path),
             None => move_to_home_trash(path),
-        }
+        };
+        r.map_err(|e| crate::target::explain_denied(path, &e, crate::target::Op::ChangeApp))
     }
     fn restore(&mut self, from: &Path, to: &Path) -> Result<(), String> {
         std::fs::rename(from, to).map_err(|e| e.to_string())
@@ -134,9 +138,16 @@ impl Platform for SysPlatform {
             return Ok(());
         }
         // Different volume: copy with ditto (keeps the signature), then clean up.
-        run("ditto", &[&staged.to_string_lossy(), &dest.to_string_lossy()])?;
+        if let Err(e) = run("ditto", &[&staged.to_string_lossy(), &dest.to_string_lossy()]) {
+            // A failed copy must not leave a half-written bundle at the target: the caller puts the old app back there.
+            let _ = std::fs::remove_dir_all(dest);
+            return Err(crate::target::explain_denied(dest, &e, crate::target::Op::ChangeApp));
+        }
         let _ = std::fs::remove_dir_all(staged);
         Ok(())
+    }
+    fn check_target(&mut self, target: &Path) -> Result<(), String> {
+        crate::target::check_folder_writable(target)
     }
     fn launch(&mut self, app: &Path, args: &[String]) -> Result<(), String> {
         let _ = std::fs::remove_file(&self.healthy_marker);
@@ -249,5 +260,68 @@ mod tests {
         assert!(!p.wait_healthy(Duration::from_millis(300)));
         std::fs::write(d.path().join("h"), b"{}").unwrap();
         assert!(p.wait_healthy(Duration::from_millis(300)));
+    }
+
+    /// The real platform on a real folder: an install that fails after the old app went to the Trash puts the old
+    /// app straight back, byte for byte, and leaves no half-written bundle at the target.
+    #[test]
+    fn failed_install_restores_the_old_app_in_its_own_folder_under_its_own_name() {
+        use crate::swap::{run_swap, Plan, SwapError};
+        use crate::verify::VerifyError;
+        struct Scripted(SysPlatform);
+        impl Platform for Scripted {
+            fn download(&mut self, _u: &str, _d: &Path, _p: &mut dyn FnMut(u64, Option<u64>)) -> Result<(), String> { Ok(()) }
+            fn sha256(&mut self, _p: &Path) -> Result<String, String> { Ok("abc".into()) }
+            // A staged app that does not exist: rename and ditto both fail, like a copy that dies half way.
+            fn unpack(&mut self, _z: &Path, d: &Path) -> Result<PathBuf, String> { Ok(d.join("gone/Muya Native.app")) }
+            fn verify_app(&mut self, _a: &Path, _i: &str, _t: &str) -> Result<(), VerifyError> { Ok(()) }
+            fn drop_quarantine(&mut self, _a: &Path) -> Result<(), String> { Ok(()) }
+            fn exists(&mut self, p: &Path) -> bool { self.0.exists(p) }
+            fn trash(&mut self, p: &Path) -> Result<Option<PathBuf>, String> { self.0.trash(p) }
+            fn restore(&mut self, f: &Path, t: &Path) -> Result<(), String> { self.0.restore(f, t) }
+            fn install(&mut self, s: &Path, d: &Path) -> Result<(), String> { self.0.install(s, d) }
+            fn launch(&mut self, _a: &Path, _g: &[String]) -> Result<(), String> { panic!("must not launch") }
+            fn wait_healthy(&mut self, _t: Duration) -> bool { false }
+            fn terminate(&mut self, _a: &Path) {}
+            fn save_state(&mut self, st: &crate::swap::SwitchState) { self.0.save_state(st) }
+            fn check_target(&mut self, t: &Path) -> Result<(), String> { self.0.check_target(t) }
+        }
+        let d = tempfile::tempdir().unwrap();
+        let home = d.path().join("home");
+        std::fs::create_dir_all(home.join(".Trash")).unwrap();
+        let desktop = d.path().join("Desktop");
+        let app = desktop.join("Muya Native Yeni.app");
+        std::fs::create_dir_all(app.join("Contents")).unwrap();
+        std::fs::write(app.join("Contents/marker"), b"old build").unwrap();
+        let tmp = d.path().to_path_buf();
+        let trash_dir = home.join(".Trash");
+        let mut p = Scripted(SysPlatform {
+            state_file: d.path().join("s.json"),
+            healthy_marker: d.path().join("h"),
+            trash_fn: Some(Box::new(move |p: &Path| {
+                let dest = trash_dir.join(p.file_name().unwrap());
+                std::fs::rename(p, &dest).map_err(|e| e.to_string())?;
+                let _ = &tmp;
+                Ok(Some(dest))
+            })),
+        });
+        let plan = Plan {
+            version: "9.9.9".into(),
+            url: "https://github.com/x".into(),
+            sha256: "abc".into(),
+            stage_dir: d.path().join("stage"),
+            target_app: app.clone(),
+            source_app: app.clone(),
+            expected_id: "x".into(),
+            expected_team: "x".into(),
+            launch_args: vec![],
+            healthy_timeout: Duration::from_millis(10),
+        };
+        let e = run_swap(&mut p, &plan, &mut |_, _| {}).unwrap_err();
+        assert!(matches!(e, SwapError::Install(_)), "{e:?}");
+        assert_eq!(std::fs::read(app.join("Contents/marker")).unwrap(), b"old build", "the old app is back, same place, same name");
+        let names: Vec<_> = std::fs::read_dir(&desktop).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(names, ["Muya Native Yeni.app"], "no partial copy or probe file left in the folder");
+        assert_eq!(std::fs::read_dir(home.join(".Trash")).unwrap().count(), 0, "nothing is left in the Trash");
     }
 }

@@ -6,6 +6,13 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.1.22] - 2026-11-13
+
+### Fixed
+- **Switching to Muya Native now lands where Muya already is.** Native takes the exact place and name of the Muya you are running (Desktop, a renamed copy, an external drive, Applications) instead of always going to `/Applications`, which failed with "Permission denied" when that folder was not yours.
+- **Muya Native updates install where the app is, too.** The update finds the app you actually opened (even through a shortcut) and replaces it there, under the same name.
+- **Clear messages, nothing half-done.** Before anything is downloaded, Muya checks it may write to the app's folder. If not, it tells you which folder and what to do (move the app somewhere you own). If macOS blocks the change, the message names the setting to open (System Settings > Privacy & Security > App Management). A failed copy never leaves a broken app behind: the old one is put straight back.
+
 ## [4.1.21] - 2026-11-12
 
 ### Added

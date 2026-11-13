@@ -7,6 +7,7 @@ pub mod manifest;
 pub mod offer;
 pub mod swap;
 pub mod sysplatform;
+pub mod target;
 pub mod verify;
 pub mod version;
 

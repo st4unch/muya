@@ -105,6 +105,11 @@ pub trait Platform {
         self.terminate(app);
     }
     fn save_state(&mut self, st: &SwitchState);
+    /// Before anything is downloaded or moved: may the new app be put at `target`? An `Err` is the message shown to
+    /// the user and nothing has been touched. Default: yes (tests); the real platform probes the folder.
+    fn check_target(&mut self, _target: &Path) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -122,6 +127,8 @@ pub fn run_swap(p: &mut dyn Platform, plan: &Plan, progress: &mut dyn FnMut(u64,
         trashed_source: None,
         version: plan.version.clone(),
     };
+    // Fail early and cleanly: a folder we cannot write to is known before the first byte is downloaded.
+    p.check_target(&plan.target_app).map_err(SwapError::Install)?;
     p.save_state(&st);
 
     let zip = plan.stage_dir.join("download.zip");
@@ -204,6 +211,7 @@ mod tests {
         target_exists: bool,
         healthy: bool,
         states: Vec<Step>,
+        deny_target: bool,
     }
     impl Fake {
         fn f(&self, s: &str) -> Result<(), String> {
@@ -265,6 +273,9 @@ mod tests {
         }
         fn save_state(&mut self, st: &SwitchState) {
             self.states.push(st.step.clone());
+        }
+        fn check_target(&mut self, _t: &Path) -> Result<(), String> {
+            if self.deny_target { Err("no write access to the folder".into()) } else { Ok(()) }
         }
     }
 
@@ -382,5 +393,14 @@ mod tests {
         let mut f = fake();
         f.fail = Some("trash_source");
         assert!(matches!(run_swap(&mut f, &plan(), &mut |_, _| {}), Err(SwapError::TrashSource(_))));
+    }
+    #[test]
+    fn an_unwritable_target_folder_stops_everything_before_the_download() {
+        let mut f = fake();
+        f.deny_target = true;
+        f.target_exists = true;
+        let e = run_swap(&mut f, &in_place_plan(), &mut |_, _| {}).unwrap_err();
+        assert_eq!(e, SwapError::Install("no write access to the folder".into()));
+        assert!(f.log.is_empty(), "no download, no trash, no install: {:?}", f.log);
     }
 }
