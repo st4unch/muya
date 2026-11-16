@@ -6,10 +6,10 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Changed
-- **Files up to 50 MB open with every editor feature.** Syntax highlighting, minimap, wrap and diff used to switch off from 1 MB, and Monaco itself dropped highlighting at 300,000 lines (a 5 MB JSON). Measured: a 20 MB JSON opens in 0.2 s, highlighted, typing stays under 20 ms. From 50 MB the file is plain text but still editable; above 128 MB it asks first (then shows the first 16 MB). A file with one line over 2 MB (a minified bundle) gets the plain-text mode at any size — it cost 25 seconds of CPU otherwise. Rendered Markdown works up to 1 MB (was 512 KB). The banner appears only when a feature is off and names the limit.
+## [4.1.22] - 2026-11-16
 
-## [4.1.22] - 2026-11-13
+### Changed
+- **Big files now open with full colors and every editor feature, up to 50 MB.** Before, syntax highlighting, the minimap, word wrap and diff switched off from 1 MB. Now a 20 MB JSON opens in about 0.2 seconds, colored, and typing stays smooth. From 50 MB the file opens as plain text but you can still edit it; above 128 MB Muya asks first and then shows the first 16 MB. A file with one extremely long line (over 2 MB, like a minified script) opens as plain text at any size, because coloring it would freeze the editor. Markdown preview now works up to 1 MB (was 512 KB). A notice bar appears only when a feature is off, and it says which limit was hit.
 
 ### Fixed
 - **Switching to Muya Native now lands where Muya already is.** Native takes the exact place and name of the Muya you are running (Desktop, a renamed copy, an external drive, Applications) instead of always going to `/Applications`, which failed with "Permission denied" when that folder was not yours.
