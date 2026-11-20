@@ -40,3 +40,17 @@ fn permission_prompt_wins() {
     assert!(st.permission.is_some());
     assert_eq!(st.subagents, None);
 }
+
+#[test]
+fn operator_formats_count() {
+    let a = l(&format!("> \n  ○ general-purpose  Running muyad daemon tests\n{FOOTER}"));
+    assert_eq!(parse_subagents(&a), 1);
+    let b = l(&format!("> \n  ○ general-purpose        1m 15s · ↓ 104.9k tokens\n{FOOTER}"));
+    assert_eq!(parse_subagents(&b), 1);
+    for pre in ["* ", "✻ "] {
+        let c = l(&format!("{pre}Waiting for 2 background agents to finish\n{FOOTER}"));
+        assert_eq!(parse_subagents(&c), 2);
+    }
+    let d = l(&format!("> \n  ○ general-purpose  Failed  1m 2s\n  ○ general-purpose  Done\n{FOOTER}"));
+    assert_eq!(parse_subagents(&d), 0);
+}

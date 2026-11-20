@@ -300,8 +300,13 @@ fn parse_permission(lines: &[String]) -> Option<ScreenPermission> {
 static WAITING_AGENTS_RE: LazyLock<Regex> =
     LazyLock::new(|| re(r"(?i)\bWaiting for (\d+) background agents?\b"));
 static AGENT_ROW_RE: LazyLock<Regex> = LazyLock::new(|| {
-    re(r"^\s*[○◌◐◑◒◓]\s+[\w.-]+\s{2,}(?:Running\b|\p{Lu}\p{L}*ing\b)")
+    re(r"^\s*[○◌◐◑◒◓]\s+[\w.-]+(?:\s{2,}.*)?$")
 });
+static AGENT_RUNNING_RE: LazyLock<Regex> = LazyLock::new(|| {
+    re(r"\bRunning\b|\b\d+[hms]\b|[↓↑]\s*[\d.,]+k?\s*tokens?|^\s*\S+\s+[\w.-]+\s{2,}\p{Lu}\p{L}*ing\b")
+});
+static AGENT_DONE_RE: LazyLock<Regex> =
+    LazyLock::new(|| re(r"(?i)\b(done|failed|completed|stopped|killed)\b"));
 
 /// Number of background agents still running: "Waiting for N background agents to finish", or
 /// agent-tree rows (`○ name  Running …` / `○ name  <Verb>ing …`). Finished rows (`✓`, `Done`) and
@@ -313,7 +318,7 @@ pub fn parse_subagents(lines: &[String]) -> u32 {
     for l in &tail {
         if let Some(m) = WAITING_AGENTS_RE.captures(l) {
             waiting = waiting.max(m[1].parse().unwrap_or(1));
-        } else if AGENT_ROW_RE.is_match(l) {
+        } else if AGENT_ROW_RE.is_match(l) && AGENT_RUNNING_RE.is_match(l) && !AGENT_DONE_RE.is_match(l) {
             rows += 1;
         }
     }
