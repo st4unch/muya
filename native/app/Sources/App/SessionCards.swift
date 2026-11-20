@@ -21,7 +21,8 @@ final class CardButton: NSControl {
     required init?(coder: NSCoder) { fatalError() }
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
-    private var labelFont: NSFont { ThemeFont.mono(11, .semibold) }
+    private static let labelFontCached = ThemeFont.mono(11, .semibold)
+    private var labelFont: NSFont { Self.labelFontCached }
     private static func ap(_ dark: NSColor, _ light: NSColor) -> NSColor { NSColor(name: nil) { a in a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light } }
     private var fg: NSColor { indigo ? Self.ap(ThemeRaw.indigo300, ThemeRaw.indigo700) : Theme.dynamic(style == .danger ? .dangerText : .text) }
     override var intrinsicContentSize: NSSize {
@@ -64,7 +65,8 @@ final class CardPill: NSView {
     init(_ text: String, fg: NSColor, bg: NSColor?, border: NSColor?) { self.text = text; self.fg = fg; self.bg = bg; self.border = border; super.init(frame: .zero) }
     required init?(coder: NSCoder) { fatalError() }
     override var isFlipped: Bool { true }
-    private var attrs: [NSAttributedString.Key: Any] { [.font: ThemeFont.mono(8, .bold), .foregroundColor: fg, .kern: 0.3] }
+    private static let pillFont = ThemeFont.mono(8, .bold)
+    private var attrs: [NSAttributedString.Key: Any] { [.font: Self.pillFont, .foregroundColor: fg, .kern: 0.3] }
     override var intrinsicContentSize: NSSize { NSSize(width: ceil((text as NSString).size(withAttributes: attrs).width) + 12, height: 15) }
     override func draw(_ dirtyRect: NSRect) {
         let p = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 3, yRadius: 3)
