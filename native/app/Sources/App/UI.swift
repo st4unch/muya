@@ -179,7 +179,7 @@ final class Tile: NSView {
     private func updateBorder() {
         guard let layer else { return }
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            let waiting = !actions.isHidden
+            let waiting = actions.isWaiting
             layer.cornerRadius = showsHeader ? 10 : 0; layer.masksToBounds = showsHeader
             layer.borderWidth = showsHeader ? (waiting ? 2 : 1) : 0   // today's GridPanel: focused = 1px --border-selected; waiting = 1px --warning + 1px ring
             layer.borderColor = Theme.dynamic(waiting ? .warning : focused ? .borderSelected : .border).cgColor

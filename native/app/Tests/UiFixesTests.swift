@@ -54,6 +54,18 @@ func runUiFixesTests() {
         check(terminalHeight(working: false, composerOpen: false) == terminalHeight(working: true, composerOpen: false), "chat closed: same terminal height")
         check(terminalHeight(working: false, composerOpen: true) != terminalHeight(working: true, composerOpen: true), "chat open: strip takes its row")
     }
+    test("approval bar: only with the chat box open") {
+        check(StripVisibility.showsApproval(waiting: true, composerOpen: true), "waiting + chat open")
+        check(!StripVisibility.showsApproval(waiting: true, composerOpen: false), "waiting + chat closed: hidden")
+        check(!StripVisibility.showsApproval(waiting: false, composerOpen: true), "not waiting")
+    }
+    test("approval bar: terminal frame is unchanged by a prompt with the chat box closed") {
+        func terminalHeight(waiting: Bool, composerOpen: Bool) -> CGFloat {
+            1000 - StripVisibility.approvalHeight(waiting: waiting, composerOpen: composerOpen, full: 58)
+        }
+        check(terminalHeight(waiting: false, composerOpen: false) == terminalHeight(waiting: true, composerOpen: false), "chat closed: same terminal height")
+        check(terminalHeight(waiting: true, composerOpen: true) == 942, "chat open: bar takes its row")
+    }
     test("session origin: tooltip only for agent-opened sessions") {
         check(SessionOrigin.tooltip(openedBy: "api-work") == "Opened by api-work" && SessionOrigin.tooltip(openedBy: nil) == nil, "tooltip")
     }
