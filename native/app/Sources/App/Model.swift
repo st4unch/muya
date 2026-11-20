@@ -336,6 +336,12 @@ final class Store: @unchecked Sendable {
         case let .control(.screen(id, state)):
             DispatchQueue.main.async { [weak self] in
                 guard let self, let s = self.sessions.first(where: { $0.id == id }), let sum = ScreenSummary(json: state), sum != s.screen else { return }
+                // Root cause: a back-to-back prompt with the same tool + target keeps the same prompt id, and the
+                // tracker had it marked "answered", so the second prompt was never auto-allowed. A redrawn prompt
+                // (screen changed, still a permission prompt with the same key) is a new one.
+                if let old = s.screen, old.permission, sum.permission, old.promptKey == sum.promptKey {
+                    self.autoAllow.renew("\(id)|\(sum.promptKey)", now: Date())
+                }
                 s.screen = sum
                 self.delegate?.store(self, didUpdate: s)
                 self.evaluateAutoAllow()

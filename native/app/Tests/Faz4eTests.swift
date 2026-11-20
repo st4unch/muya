@@ -149,6 +149,31 @@ func runFaz4eTests() {
         check(off.tick(prompting: ["1"], enabled: true, now: t0.addingTimeInterval(61)).isEmpty, "turning it on starts the 2 s wait")
     }
 
+    test("auto-allow: many sessions at once, back-to-back prompts, manual answer") {
+        let t0 = Date(timeIntervalSince1970: 1000)
+        for n in [2, 5] {
+            var t = AutoAllowTracker()
+            let ids = Set((1 ... n).map { "\($0)|Bash|ls|" })
+            _ = t.tick(prompting: ids, enabled: true, now: t0)
+            check(t.tick(prompting: ids, enabled: true, now: t0.addingTimeInterval(2)) == ids.sorted(), "\(n) sessions all fire")
+            check(t.tick(prompting: ids, enabled: true, now: t0.addingTimeInterval(9)).isEmpty, "\(n): never twice")
+        }
+        var t = AutoAllowTracker()
+        _ = t.tick(prompting: ["1|Bash|ls|"], enabled: true, now: t0)
+        check(t.tick(prompting: ["1|Bash|ls|"], enabled: true, now: t0.addingTimeInterval(2)) == ["1|Bash|ls|"], "first")
+        t.renew("1|Bash|ls|", now: t0.addingTimeInterval(3))   // same id redrawn: back-to-back prompt
+        check(t.tick(prompting: ["1|Bash|ls|"], enabled: true, now: t0.addingTimeInterval(4)).isEmpty, "waits 2 s again")
+        check(t.tick(prompting: ["1|Bash|ls|"], enabled: true, now: t0.addingTimeInterval(5)) == ["1|Bash|ls|"], "second same-id prompt fires")
+        check(t.tick(prompting: ["1|Bash|pwd|"], enabled: true, now: t0.addingTimeInterval(6)).isEmpty, "different id starts waiting")
+        check(t.tick(prompting: ["1|Bash|pwd|"], enabled: true, now: t0.addingTimeInterval(8)) == ["1|Bash|pwd|"], "different id fires")
+        var m = AutoAllowTracker()
+        _ = m.tick(prompting: ["2|Edit|a|"], enabled: true, now: t0)
+        check(m.tick(prompting: [], enabled: true, now: t0.addingTimeInterval(1)).isEmpty, "answered by hand")
+        check(m.tick(prompting: [], enabled: true, now: t0.addingTimeInterval(3)).isEmpty, "never re-answered")
+        m.renew("2|Edit|a|", now: t0)   // renew on an unanswered/unknown id is a no-op
+        check(m.nextDue(now: t0) == nil, "no phantom timer")
+    }
+
     test("resume on launch: only when on, with no live terminals, safe ids, existing folders, capped, deduplicated") {
         let saved = [ResumeEntry(sessionId: "a-1", cwd: "/ok", name: "A"), ResumeEntry(sessionId: "a-1", cwd: "/ok", name: "dup"), ResumeEntry(sessionId: "b'; rm -rf ~", cwd: "/ok", name: "evil"),
                      ResumeEntry(sessionId: "c-3", cwd: "/gone", name: "C")] + (0 ..< 12).map { ResumeEntry(sessionId: "n\($0)", cwd: "/ok", name: "n\($0)") }
