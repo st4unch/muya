@@ -47,6 +47,7 @@ final class ShortcutRouter: NSObject {
             if AppShortcuts.escapeLeavesGrid(k, overlayOpen: overlayOpen, focusIsTerminalOrField: owns) { controller.setGrid(false); return nil }
             return e
         }
+        if let a = RailKeys.action(k), !overlayOpen, performRail(a) { return nil }   // ⌃⌥ arrows: the sessions rail; nothing else with ⌃⌥ is taken
         guard k.cmd, !overlayOpen else { return e }
         if k.chars == "s", !k.shift, !k.alt, !k.ctrl {
             let c = controller

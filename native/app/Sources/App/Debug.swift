@@ -370,6 +370,7 @@ extension DebugServer {
             let r = c.lastWakeResync
             return "ok wakes=\(c.wakeCount) sessions=\(r?.sessionsBefore ?? -1)->\(r?.sessionsAfter ?? -1) resync_ms=\(Int((r?.seconds ?? 0) * 1000))"
         case "ssh-reload", "ssh-unlock", "ssh-state", "ssh-form", "gallery", "gallery-close", "fonts", "composer", "rail", "dialog", "session-menu", "drop", "dump-views", "session-collapse", "mode-menu", "window-rect", "ssh-section", "resources-tab", "terminal-scheme", "toast-lift", "toast-panels", "app-activate", "status-fields", "status-footer", "footer-composer", "footer-height", "appearance-popover", "term-find", "term-menu", "term-paste-path", "term-clear-scrollback": return runTheme(cmd, arg)
+        case "rail-state", "rail-flip", "rail-key", "rail-pick", "sidebar-set", "mock-many": return runRail(cmd, arg)
         default: return runFaz4(cmd, arg) ?? runQueue(cmd, arg) ?? runP6(cmd, arg) ?? runP3(cmd, arg) ?? runSplit(cmd, arg) ?? runP4(cmd, arg) ?? runP7(cmd, arg) ?? runP12(cmd, arg) ?? runAC1921(cmd, arg) ?? runUiFixes(cmd, arg)
         }
     }

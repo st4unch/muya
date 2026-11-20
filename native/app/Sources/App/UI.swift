@@ -327,7 +327,8 @@ final class MainController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     var fieldPicker: FieldPickerController?   // P5: keeps the status field picker alive while its popover is open
     let filesHome = FilesHome()
     var filesMode = false { didSet { sidebar?.filesMode = filesMode } }   // the rail's Files item: open files + the tree on the left, the Files empty state in the middle
-    var sidebarCollapsed = false   // the header's sidebar toggle; pages hide the panel regardless
+    var sidebarCollapsed = false { didSet { railPages.setCollapsed(sidebarCollapsed) } }   // the header's sidebar toggle; pages hide the panel regardless
+    var railPages = RailPages() { didSet { if railPages != oldValue { syncRail() } } }   // Sessions / Menu page of the rail while the column is closed
     private(set) var currentPage: PageView?
     private var refreshTimer: Timer?
     /// AC24: while the window is fully hidden (occluded / minimized) nothing is drawn.

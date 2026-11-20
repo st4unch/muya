@@ -99,10 +99,33 @@ final class RailView: FillView {
     var onSelect: ((RailItem) -> Void)?
     var onSettings: (() -> Void)?
     private let size = NSSize(width: 48, height: 48)
-    init() { super.init(.bgChrome); trailing = true; setAccessibilityRole(.toolbar); setAccessibilityLabel("Main navigation") }
+    /// Sessions rail: with the Agents column closed the rail has a Sessions page and a Menu page (SessionsRail.swift).
+    var pages = RailPages() { didSet { if pages != oldValue { applyPages() } } }
+    var sessionItems: [RailSession] = [] { didSet { sessionsPane.sessions = sessionItems } }
+    var selectedID: UInt64? { didSet { sessionsPane.selectedID = selectedID } }
+    var onPickSession: ((UInt64) -> Void)? { get { sessionsPane.onPick } set { sessionsPane.onPick = newValue } }
+    var onFlip: ((RailPage) -> Void)? { get { switcher.onFlip } set { switcher.onFlip = newValue } }
+    let switcher = RailSwitcher(), sessionsPane = RailSessionsPane()
+    static let switcherHeight: CGFloat = 32
+    private var itemsTop: CGFloat { pages.collapsed ? Self.switcherHeight + 8 : 8 }
+    init() {
+        super.init(.bgChrome); trailing = true; setAccessibilityRole(.toolbar); setAccessibilityLabel("Main navigation")
+        addSubview(switcher); addSubview(sessionsPane); applyPages()
+    }
     required init?(coder: NSCoder) { fatalError() }
+    private func applyPages() {
+        switcher.isHidden = !pages.collapsed; switcher.page = pages.page
+        sessionsPane.isHidden = !pages.showsSessions
+        needsLayout = true; needsDisplay = true
+    }
+    override func layout() {
+        super.layout()
+        switcher.frame = NSRect(x: 0, y: 0, width: bounds.width - 1, height: Self.switcherHeight)
+        let top = Self.switcherHeight + 2, bottom = settingsFrame.minY - 4
+        sessionsPane.frame = NSRect(x: 0, y: top, width: bounds.width - 1, height: max(0, bottom - top))
+    }
 
-    private func frameFor(_ i: Int) -> NSRect { NSRect(x: 8, y: 8 + CGFloat(i) * 54, width: 48, height: 48) }
+    private func frameFor(_ i: Int) -> NSRect { NSRect(x: 8, y: itemsTop + CGFloat(i) * 54, width: 48, height: 48) }
     private var settingsFrame: NSRect { NSRect(x: 8, y: bounds.height - 56, width: 48, height: 48) }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -119,18 +142,18 @@ final class RailView: FillView {
                 (label as NSString).draw(at: NSPoint(x: r.midX - s.width / 2, y: r.minY + 30), withAttributes: a)
             }
         }
-        for (i, item) in RailItem.allCases.enumerated() { cell(frameFor(i), item.icon, item.rawValue, active: item == active) }
+        if !pages.showsSessions { for (i, item) in RailItem.allCases.enumerated() { cell(frameFor(i), item.icon, item.rawValue, active: item == active) } }
         cell(settingsFrame, .settingsRail, nil, active: false)
     }
     override func mouseDown(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
         if settingsFrame.contains(p) { onSettings?(); return }
-        if let i = RailItem.allCases.indices.first(where: { frameFor($0).contains(p) }) { onSelect?(RailItem.allCases[i]) }
+        if !pages.showsSessions, let i = RailItem.allCases.indices.first(where: { frameFor($0).contains(p) }) { onSelect?(RailItem.allCases[i]) }
     }
     // Accessibility: one button per item.
     override func accessibilityChildren() -> [Any]? {
         var out: [NSAccessibilityElement] = []
-        for (i, item) in RailItem.allCases.enumerated() {
+        for (i, item) in RailItem.allCases.enumerated() where !pages.showsSessions {
             let e = NSAccessibilityElement()
             e.setAccessibilityRole(.button); e.setAccessibilityLabel(item.rawValue); e.setAccessibilityParent(self)
             e.setAccessibilityFrameInParentSpace(frameFor(i)); out.append(e)

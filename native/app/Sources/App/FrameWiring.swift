@@ -71,6 +71,9 @@ extension MainController {
         agentsPanel.sessions = { [unowned self] in store.sessions }
         agentsPanel.selected = { [unowned self] in store.selected }
         agentsPanel.onSelect = { [weak self] s in self?.filesMode = false; self?.store.select(s); self?.showPage(nil); self?.window.makeFirstResponder(self?.terminal) }
+        agentsPanel.onSynced = { [weak self] in self?.syncRail() }
+        f.rail.onPickSession = { [weak self] id in self?.railPick(id) }
+        f.rail.onFlip = { [weak self] p in self?.railFlip(p) }
         agentsPanel.onClose = { [weak self] s in self?.store.close(s) }
         agentsPanel.onNew = { [weak self] in self?.newSession() }
         agentsPanel.onRename = { [weak self] s in self?.renameDialog(s) }
