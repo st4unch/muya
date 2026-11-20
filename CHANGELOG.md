@@ -10,6 +10,7 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **A Claude tab that ends badly now tells you why.** If Claude stops with an error, is killed by the system, or quits within a few seconds of a resume, the tab stays open and shows what happened: the exit code or signal name (for example SIGABRT), the last lines it printed, and two buttons: Resume (starts `claude --resume` again in the same folder) and Close. A normal `/exit`, and a plain shell tab you close with `exit`, behave exactly as before.
 - **A quiet check before Claude starts.** Muya tries `claude --version` and `node -e 0` the same way the new tab will run them. If Claude cannot run it shows the path it tried; if node is broken (for example after a Homebrew upgrade) it warns that hooks and MCP servers may fail, with the first line of the error. It only warns, never blocks, and each check gives up after 2 seconds.
 
+- **A session that only has background agents running now shows Working.** When the main turn is done but subagents are still running ("Waiting for N background agents" or the agent list under the input box), the session reads "Working · N subagents running" instead of Idle; a permission prompt still wins, and finished agents stop counting.
 ### Fixed
 - **Safer scrolling.** The font handling behind an app crash seen while scrolling the Sessions page was hardened.
 - **Switching back to a session keeps its cursor exactly where it was** after a line that fills the whole width.

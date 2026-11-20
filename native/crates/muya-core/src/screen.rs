@@ -69,6 +69,10 @@ pub struct ScreenState {
     pub activity: Option<ScreenActivity>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub busy: Option<bool>,
+    /// Background agents still running (agent tree rows or "Waiting for N background agents"),
+    /// set while Claude's own spinner may be absent. Rust-only: not part of the TypeScript parity.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subagents: Option<u32>,
     pub mode: ScreenMode,
     /// true only when a mode footer was actually seen (dialogs hide the footer).
     pub mode_detected: bool,
@@ -293,6 +297,29 @@ fn parse_permission(lines: &[String]) -> Option<ScreenPermission> {
     None
 }
 
+static WAITING_AGENTS_RE: LazyLock<Regex> =
+    LazyLock::new(|| re(r"(?i)\bWaiting for (\d+) background agents?\b"));
+static AGENT_ROW_RE: LazyLock<Regex> = LazyLock::new(|| {
+    re(r"^\s*[○◌◐◑◒◓]\s+[\w.-]+\s{2,}(?:Running\b|\p{Lu}\p{L}*ing\b)")
+});
+
+/// Number of background agents still running: "Waiting for N background agents to finish", or
+/// agent-tree rows (`○ name  Running …` / `○ name  <Verb>ing …`). Finished rows (`✓`, `Done`) and
+/// the `● main` row do not count. Only the bottom of the screen is looked at.
+pub fn parse_subagents(lines: &[String]) -> u32 {
+    let tail = tail_non_empty(lines, 14);
+    let mut rows = 0u32;
+    let mut waiting = 0u32;
+    for l in &tail {
+        if let Some(m) = WAITING_AGENTS_RE.captures(l) {
+            waiting = waiting.max(m[1].parse().unwrap_or(1));
+        } else if AGENT_ROW_RE.is_match(l) {
+            rows += 1;
+        }
+    }
+    rows.max(waiting)
+}
+
 /// True only when Claude's own footer line — one of the last few lines, carrying the mode
 /// indicator — says "esc to interrupt"; the same words elsewhere (a quoted answer) do not count.
 pub fn parse_busy(lines: &[String]) -> bool {
@@ -315,9 +342,11 @@ pub fn parse_claude_screen(lines: &[String]) -> ScreenState {
         parse_activity(lines)
     };
     let busy = permission.is_none() && parse_busy(lines);
+    let subagents = if permission.is_none() { parse_subagents(lines) } else { 0 };
     ScreenState {
         activity,
         busy: busy.then_some(true),
+        subagents: (subagents > 0).then_some(subagents),
         mode: detected.unwrap_or(ScreenMode::Default),
         mode_detected: detected.is_some(),
         permission,

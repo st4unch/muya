@@ -10,6 +10,9 @@ import Foundation
 struct ScreenSummary: Equatable {
     var activity: String?
     var busy = false
+    /// Background agents still running (daemon `subagents`); the session is working while > 0.
+    var subagents = 0
+    var working: Bool { busy || activity != nil || subagents > 0 }
     var mode = "default"
     var modeDetected = false
     var permission = false
@@ -23,6 +26,7 @@ struct ScreenSummary: Equatable {
         guard let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] else { return nil }
         if let a = obj["activity"] as? [String: Any] { activity = a["verb"] as? String }
         busy = (obj["busy"] as? Bool) ?? false
+        subagents = (obj["subagents"] as? Int) ?? 0
         mode = (obj["mode"] as? String) ?? "default"
         modeDetected = (obj["modeDetected"] as? Bool) ?? false
         permission = obj["permission"] != nil
@@ -63,7 +67,7 @@ final class SessionModel {
         if let code = exited { return ("Exited (\(code))", Token.stateExited) }
         guard let s = screen else { return ("Shell", Token.stateIdle) }
         if s.permission { return ("Needs permission", Token.statePermission) }
-        if s.busy || s.activity != nil { return ("Working" + (s.activity.map { " · \($0)" } ?? ""), Token.stateBusy) }
+        if s.working { return ("Working" + (s.activity.map { " · \($0)" } ?? (s.subagents > 0 ? " · \(s.subagents) subagent\(s.subagents == 1 ? "" : "s") running" : "")), Token.stateBusy) }
         if s.modeDetected { return ("Claude · \(s.mode)", Token.stateClaude) }
         return ("Shell", Token.stateIdle)
     }

@@ -196,7 +196,7 @@ extension MainController {
         f.header.themeButton.toolTip = "Theme: \(pref.isEmpty ? "System" : pref)"
         f.header.themeButton.setAccessibilityLabel(f.header.themeButton.toolTip)
         let sessions = store.sessions
-        let working = sessions.filter { $0.exited == nil && ($0.screen?.busy == true || $0.screen?.activity != nil) }.count
+        let working = sessions.filter { $0.exited == nil && $0.screen?.working == true }.count
         let waiting = sessions.filter { $0.screen?.permission == true }.count
         var parts = ["\(sessions.count) session\(sessions.count == 1 ? "" : "s")"]
         if working > 0 { parts.append("\(working) working") }

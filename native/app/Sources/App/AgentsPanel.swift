@@ -203,7 +203,7 @@ final class AgentsPanel: FillView {
 
     func group(of s: SessionModel) -> AgentCard.Group {
         if s.exited == nil, s.screen?.permission == true { return .waiting }
-        if s.exited == nil, s.screen?.busy == true || s.screen?.activity != nil { return .working }
+        if s.exited == nil, s.screen?.working == true { return .working }
         return .idle
     }
 
