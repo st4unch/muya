@@ -18,6 +18,8 @@ final class TileActionBar: FillView {
     private let deny = ThemedButton("Deny", style: .ghost)
     private let always = ThemedButton("Don't ask again (this project)", style: .ghost)
     var sessionID: UInt64 = 0
+    /// The session is at a permission prompt, whether or not the bar is shown (the tile border still says so).
+    private(set) var isWaiting = false
     var onAnswer: ((UInt64, Bool) -> Void)?
     var onAlways: ((UInt64) -> Void)?
 
@@ -37,7 +39,9 @@ final class TileActionBar: FillView {
     /// Shows the bar for a session that is waiting for permission; hides it otherwise. Returns whether it is shown.
     @discardableResult
     func configure(_ s: SessionModel?) -> Bool {
-        let on = s?.exited == nil && s?.screen?.permission == true && s?.screen?.approveKey != nil
+        let waiting = s?.exited == nil && s?.screen?.permission == true && s?.screen?.approveKey != nil
+        let on = StripVisibility.showsApproval(waiting: waiting, composerOpen: Tile.composerOpen)
+        isWaiting = waiting
         sessionID = s?.id ?? 0
         always.isHidden = !(on && s?.screen?.alwaysKey != nil)
         if let label = s?.screen?.alwaysLabel, !always.isHidden { always.title = GridPlan.alwaysAllowText(label); always.toolTip = label; always.setAccessibilityLabel(label) }
