@@ -1081,3 +1081,28 @@ mod client_out_tests {
         assert_eq!(ids, vec![2], "only the slow client was dropped");
     }
 }
+
+/// The last `max` lines of a screen: right-trimmed, with the empty rows under the last output dropped.
+pub fn tail_lines(lines: Vec<String>, max: usize) -> Vec<String> {
+    let mut v: Vec<String> = lines.into_iter().map(|l| l.trim_end().to_string()).collect();
+    while v.last().is_some_and(|l| l.is_empty()) {
+        v.pop();
+    }
+    let skip = v.len().saturating_sub(max);
+    v.split_off(skip)
+}
+
+#[cfg(test)]
+mod tail_tests {
+    use super::tail_lines;
+    fn s(v: &[&str]) -> Vec<String> {
+        v.iter().map(|x| x.to_string()).collect()
+    }
+    #[test]
+    fn drops_empty_rows_below_the_output_and_keeps_the_last_n() {
+        assert_eq!(tail_lines(s(&["a  ", "b", "", "  ", ""]), 20), s(&["a", "b"]));
+        assert_eq!(tail_lines(s(&["1", "2", "3", "4"]), 2), s(&["3", "4"]));
+        assert_eq!(tail_lines(s(&["", ""]), 5), Vec::<String>::new());
+        assert_eq!(tail_lines(s(&["x", "", "y"]), 5), s(&["x", "", "y"]), "blank rows between output stay");
+    }
+}

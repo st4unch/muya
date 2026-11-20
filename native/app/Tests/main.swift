@@ -441,6 +441,7 @@ runNotifyTests()
 runPaletteFilesTests()
 runP3Tests()
 runTerminalTests()
+runExitDiagTests()
 
 print("\(ran) tests, \(failures) failures")
 exit(failures == 0 ? 0 : 1)

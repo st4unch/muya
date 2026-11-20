@@ -603,3 +603,34 @@ fn connect_retry(p: impl AsRef<std::path::Path>) -> std::os::unix::net::UnixStre
         }
     }
 }
+
+/// The exit panel's data: after the process exited (status 3) the last lines it printed are still available, until the session is closed.
+#[test]
+fn the_last_lines_stay_readable_after_the_process_exited() {
+    let env = start("tail");
+    let mut app = App::connect(&env.dir.join("m.sock"));
+    app.send(Control::Spawn { argv: vec!["/bin/sh".into(), "-c".into(), "echo first; echo 'boom: library missing'; exit 3".into()], cwd: "/tmp".into(), env: vec![], cols: 80, rows: 24 });
+    let id = loop {
+        if let Control::Spawned { id, .. } = app.read_control() {
+            break id;
+        }
+    };
+    app.send(Control::Detach { id }); // a screen-only subscription: Exited keeps coming
+    let end = std::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        if let Control::Exited { id: i, status } = app.read_control() {
+            if i == id {
+                assert_eq!(status, 3);
+                break;
+            }
+        }
+        assert!(std::time::Instant::now() < end, "no exit");
+    }
+    let r = app.rpc("sessions.tail", json!({ "id": id, "lines": 20 })).unwrap();
+    let lines: Vec<String> = r["lines"].as_array().unwrap().iter().map(|l| l.as_str().unwrap().to_string()).collect();
+    assert!(lines.iter().any(|l| l == "boom: library missing"), "{lines:?}");
+    assert!(lines.last().is_some_and(|l| !l.is_empty()), "no trailing blanks: {lines:?}");
+    let r = app.rpc("sessions.tail", json!({ "id": id, "lines": 1 })).unwrap();
+    assert_eq!(r["lines"].as_array().unwrap().len(), 1);
+    assert!(app.rpc("sessions.tail", json!({ "id": 987654 })).is_err());
+}

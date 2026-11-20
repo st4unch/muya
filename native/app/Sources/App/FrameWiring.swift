@@ -30,6 +30,8 @@ extension MainController {
         f.header.onLayout = { [weak self] c in GridState.layout = c; GridState.picked = nil; self?.refreshTiles() }
         f.header.onWaitingFirst = { [weak self] in GridState.waitingFirst.toggle(); GridState.picked = nil; self?.refreshTiles() }
         f.header.onBroadcast = { [weak self] in self?.broadcastDialog() }
+        Tile.onExitResume = { [weak self] s in self?.store.relaunch(s) }
+        Tile.onExitClose = { [weak self] s in self?.store.close(s) }
         Tile.onFullscreen = { [weak self] s in self?.store.select(s); self?.setGrid(false) }
         Tile.onSend = { [weak self] s, t in self?.store.select(s); self?.store.paste(t); self?.store.sendKey("enter", mods: 0) }
         Tile.onAlways = { [weak self] id in

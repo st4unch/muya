@@ -36,6 +36,13 @@ pub struct Rpc {
 }
 
 #[derive(Deserialize)]
+struct TailParams {
+    id: u64,
+    #[serde(default)]
+    lines: Option<usize>,
+}
+
+#[derive(Deserialize)]
 struct SendCommandParams {
     /// Terminal ids the operator picked in the app.
     ids: Vec<u64>,
@@ -446,6 +453,15 @@ impl Rpc {
                 let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| format!("tokio runtime: {e}"))?;
                 let results = rt.block_on(muya_core::broker::operator_send(host, &p.ids, &p.text))?;
                 Ok(json!({ "results": results }))
+            }
+            // The last lines a session printed (works after the process exited: muyad keeps the terminal state until
+            // the session is closed). The app shows them in the exit panel of a Claude tab that ended unexpectedly.
+            "sessions.tail" => {
+                let p: TailParams = parse(params)?;
+                self.on_muyad(|m| {
+                    let lines = m.screen_lines(p.id).ok_or("no such session")?;
+                    Ok(json!({ "lines": crate::tail_lines(lines, p.lines.unwrap_or(20).clamp(1, 200)) }))
+                })
             }
             "agents.list" => {
                 let p: AgentsParams = parse_or_default(params)?;
