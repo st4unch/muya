@@ -354,6 +354,12 @@ public struct AutoAllowTracker: Sendable {
         return fire
     }
 
+    /// The prompt behind `id` was redrawn (the screen changed while the same prompt id stayed up, e.g. a second
+    /// prompt for the same tool + target right after an answered one). It counts as a new prompt: fresh 2 s wait.
+    public mutating func renew(_ id: String, now: Date) {
+        if answered.remove(id) != nil { since[id] = now }
+    }
+
     /// Seconds until the next prompt is due (nil when nothing waits), so the caller can sleep instead of poll.
     public func nextDue(now: Date) -> TimeInterval? {
         since.filter { !answered.contains($0.key) }.map { max(0, Self.delay - now.timeIntervalSince($0.value)) }.min()
