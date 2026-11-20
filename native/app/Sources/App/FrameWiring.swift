@@ -149,7 +149,7 @@ extension MainController {
             if side.isHidden != hide {
                 panelLayoutLocked = true   // the split resizes itself while the panel goes or comes: not the operator's choice, do not save it (Prefs.saveLayout)
                 side.isHidden = hide; rootSplit.adjustSubviews(); rootSplit.needsDisplay = true
-                if !hide { rootSplit.setPosition(CGFloat(PanelPrefs.agentsWidth(store.legacy) ?? (frameView.bounds.width <= 1360 ? 264 : 296)), ofDividerAt: 0) }
+                if !hide { rootSplit.setPosition(PanelPrefs.agentsWidth(store.legacy, window: rootSplit.bounds.width), ofDividerAt: 0) }
                 if hide { DispatchQueue.main.async { [weak self] in self?.unlockPanelLayout() } }
                 if !hide {   // back from the grid / a page: once the split has laid out again, the panels get their saved widths
                     DispatchQueue.main.async { [weak self] in
@@ -157,7 +157,7 @@ extension MainController {
                         defer { DispatchQueue.main.async { self.unlockPanelLayout() } }
                         guard !self.gridMode, !self.sidebarCollapsed else { return }
                         self.rootSplit.layoutSubtreeIfNeeded()
-                        if let w = PanelPrefs.agentsWidth(self.store.legacy) { self.rootSplit.setPosition(CGFloat(w), ofDividerAt: 0) }
+                        self.rootSplit.setPosition(PanelPrefs.agentsWidth(self.store.legacy, window: self.rootSplit.bounds.width), ofDividerAt: 0)
                         if let split = self.inspector.superview as? InspectorSplit, !self.inspector.isHidden,
                            let w = PrefCodec.number(self.store.legacy.get(PrefKeys.inspectorWidth), min: PrefKeys.inspectorWidthRange.min, max: PrefKeys.inspectorWidthRange.max) {
                             split.layoutSubtreeIfNeeded(); split.setPosition(max(split.bounds.width - CGFloat(w), 320), ofDividerAt: 0)

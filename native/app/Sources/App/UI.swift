@@ -362,7 +362,7 @@ final class MainController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         window.center()
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(terminal)
-        DispatchQueue.main.async { [rootSplit] in rootSplit?.setPosition(264, ofDividerAt: 0) /* agents.width default: 296, 264 at ≤1360 wide (usePanelLayout.ts); the app opens at 1120 */ }
+        DispatchQueue.main.async { [rootSplit] in rootSplit?.setPosition(CGFloat(AgentsWidth.restore(saved: nil, window: Double(rootSplit?.bounds.width ?? 1120))), ofDividerAt: 0) /* agents.width default: 296, 264 at ≤1360 wide (usePanelLayout.ts); the app opens at 1120 */ }
         // Working directories are not reported by the daemon; look at the shells now and then.
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.store.refreshDirectories() }
         refreshTimer?.tolerance = 1.5
@@ -780,7 +780,16 @@ final class MainController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     }
 
     func splitView(_ splitView: NSSplitView, constrainMinCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat { splitView === sideSplit ? 160 : 200 }
-    func splitView(_ splitView: NSSplitView, constrainMaxCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat { splitView === sideSplit ? splitView.bounds.height - 140 : 380 }
+    func splitView(_ splitView: NSSplitView, constrainMaxCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat { splitView === sideSplit ? splitView.bounds.height - 140 : CGFloat(AgentsWidth.upperBound(window: Double(splitView.bounds.width))) }
+
+    /// A window resize keeps the agents column at its width (clamped to the new window); the extra room goes to the content.
+    func splitView(_ splitView: NSSplitView, resizeSubviewsWithOldSize oldSize: NSSize) {
+        guard splitView === rootSplit, let side = splitView.arrangedSubviews.first, !side.isHidden, splitView.arrangedSubviews.count == 2, oldSize.width > 0 else { splitView.adjustSubviews(); return }
+        let b = splitView.bounds, d = splitView.dividerThickness
+        let w = CGFloat(AgentsWidth.clamp(Double(side.frame.width), window: Double(b.width)))
+        side.frame = NSRect(x: 0, y: 0, width: w, height: b.height)
+        splitView.arrangedSubviews[1].frame = NSRect(x: w + d, y: 0, width: Swift.max(0, b.width - w - d), height: b.height)
+    }
     func splitView(_ splitView: NSSplitView, canCollapseSubview subview: NSView) -> Bool { splitView === rootSplit && subview === rootSplit.arrangedSubviews.first }
 
     // MARK: Actions
