@@ -11,7 +11,8 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **A quiet check before Claude starts.** Muya tries `claude --version` and `node -e 0` the same way the new tab will run them. If Claude cannot run it shows the path it tried; if node is broken (for example after a Homebrew upgrade) it warns that hooks and MCP servers may fail, with the first line of the error. It only warns, never blocks, and each check gives up after 2 seconds.
 
 ### Fixed
-- **Scrolling can no longer close a session.** The terminal font handling that could crash the app while scrolling was hardened.
+- **Safer scrolling.** The font handling behind an app crash seen while scrolling the Sessions page was hardened.
+- **Switching back to a session keeps its cursor exactly where it was** after a line that fills the whole width.
 - **The Agents column keeps its width** instead of shrinking or jumping.
 - **The Allow/Deny bar only shows while the chat is open.**
 - **Auto-allow now handles several permission prompts at once**, including back-to-back ones.
