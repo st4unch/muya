@@ -13,6 +13,8 @@ final class PanelPrefs {
     nonisolated static func agentsWidth(_ l: LegacyStore) -> Double? {
         PrefCodec.number(l.get(PrefKeys.agentsWidth), min: PrefKeys.agentsWidthRange.min, max: PrefKeys.agentsWidthRange.max)
     }
+    /// The width to put on screen: the saved one (or the size-class default) clamped to the window (AgentsWidth).
+    nonisolated static func agentsWidth(_ l: LegacyStore, window: CGFloat) -> CGFloat { CGFloat(AgentsWidth.restore(saved: agentsWidth(l), window: Double(window))) }
 
     init(controller: MainController) {
         c = controller
@@ -27,7 +29,7 @@ final class PanelPrefs {
         // Agents panel: open/closed + width.
         if let open = PrefCodec.bool(l.get(PrefKeys.agentsOpen)) { c.sidebarCollapsed = !open }
         c.refreshFrame()
-        if let w = Self.agentsWidth(l), !c.sidebarCollapsed, c.currentPage == nil { c.rootSplit.setPosition(CGFloat(w), ofDividerAt: 0) }
+        if !c.sidebarCollapsed, c.currentPage == nil { c.rootSplit.setPosition(Self.agentsWidth(l, window: c.rootSplit.bounds.width), ofDividerAt: 0) }
         // Files section of the sidebar.
         if let open = PrefCodec.bool(l.get(PrefKeys.filesOpen)) { c.sidebar?.expanded = open }
         c.sidebar?.filesHeight = FilesHeightLogic.parse(l.get(PrefKeys.filesHeight))
@@ -96,7 +98,7 @@ final class PanelPrefs {
                     split.layoutSubtreeIfNeeded(); split.setPosition(max(split.bounds.width - CGFloat(w), 320), ofDividerAt: 0)
                     // No saved agents width: the default of the window's size class (usePanelLayout: 296, 264 at <= 1360), not whatever the resize left
                     if Self.agentsWidth(l) == nil, !c.sidebarCollapsed, c.currentPage == nil, !c.gridMode {
-                        c.rootSplit.setPosition(c.frameView.bounds.width <= 1360 ? 264 : 296, ofDividerAt: 0)
+                        c.rootSplit.setPosition(Self.agentsWidth(l, window: c.rootSplit.bounds.width), ofDividerAt: 0)
                     }
                 }
                 place()
