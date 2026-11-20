@@ -3,7 +3,9 @@
 //! snapshot and the start of live output for a new subscriber are atomic.
 
 use libghostty_vt::fmt::{Format, Formatter, FormatterOptions};
-use libghostty_vt::terminal::{Mode, ModeKind, Options, Terminal};
+use libghostty_vt::screen::CellWide;
+use libghostty_vt::style;
+use libghostty_vt::terminal::{Mode, ModeKind, Options, Point, PointCoordinate, Terminal};
 use libghostty_vt::{key, mouse};
 use muya_proto::Frame;
 use std::cell::Cell;
@@ -292,9 +294,76 @@ fn final_cursor_position(term: &Terminal) -> Vec<u8> {
         return Vec::new();
     }
     match (term.cursor_y(), term.cursor_x()) {
-        (Ok(y), Ok(x)) => format!("\x1b[{};{}H", y as u32 + 1, x as u32 + 1).into_bytes(),
+        (Ok(y), Ok(x)) => {
+            let mut out = format!("\x1b[{};{}H", y as u32 + 1, x as u32 + 1).into_bytes();
+            out.extend_from_slice(&pending_wrap_suffix(term, x, y));
+            out
+        }
         _ => Vec::new(),
     }
+}
+
+/// A CUP clears the deferred-wrap flag a full-width line leaves behind (cursor on the last column,
+/// the wrap not yet taken). The replica must keep it, or the next printed character overwrites the
+/// last column instead of wrapping and every Ink "cursor up N" after it lands a row off (Claude's
+/// input box drew over its own bottom rule). Printing the cell's own character again, in its own
+/// style, sets the flag without changing the screen; then the cursor style is put back.
+fn pending_wrap_suffix(term: &Terminal, x: u16, y: u16) -> Vec<u8> {
+    if !term.is_cursor_pending_wrap().unwrap_or(false) {
+        return Vec::new();
+    }
+    let point = Point::Active(PointCoordinate { x, y: y as u32 });
+    let Ok(cell_ref) = term.grid_ref(point) else { return Vec::new() };
+    let Ok(cell) = cell_ref.cell() else { return Vec::new() };
+    if cell.wide().map(|w| w != CellWide::Narrow).unwrap_or(true) {
+        return Vec::new();
+    }
+    let mut chars = ['\0'; 16];
+    let n = cell_ref.graphemes(&mut chars).unwrap_or(0);
+    let text: String = if n == 0 { " ".into() } else { chars[..n].iter().collect() };
+    let cell_style = cell_ref.style().unwrap_or_default();
+    let cursor_style = term.cursor_style().unwrap_or_default();
+    let mut out = sgr(&cell_style).into_bytes();
+    out.extend_from_slice(text.as_bytes());
+    out.extend_from_slice(sgr(&cursor_style).as_bytes());
+    out
+}
+
+/// A full SGR sequence for `st`: reset, then every attribute that is set.
+fn sgr(st: &style::Style) -> String {
+    let mut p: Vec<String> = vec!["0".into()];
+    for (on, code) in [
+        (st.bold, "1"),
+        (st.faint, "2"),
+        (st.italic, "3"),
+        (st.blink, "5"),
+        (st.inverse, "7"),
+        (st.invisible, "8"),
+        (st.strikethrough, "9"),
+        (st.overline, "53"),
+    ] {
+        if on {
+            p.push(code.into());
+        }
+    }
+    match st.underline {
+        style::Underline::None => {}
+        style::Underline::Single => p.push("4".into()),
+        style::Underline::Double => p.push("4:2".into()),
+        style::Underline::Curly => p.push("4:3".into()),
+        style::Underline::Dotted => p.push("4:4".into()),
+        style::Underline::Dashed => p.push("4:5".into()),
+        _ => {}
+    }
+    let color = |c: style::StyleColor, ext: &str, p: &mut Vec<String>| match c {
+        style::StyleColor::None => {}
+        style::StyleColor::Palette(i) => p.push(format!("{ext};5;{}", i.0)),
+        style::StyleColor::Rgb(c) => p.push(format!("{ext};2;{};{};{}", c.r, c.g, c.b)),
+    };
+    color(st.fg_color, "38", &mut p);
+    color(st.bg_color, "48", &mut p);
+    color(st.underline_color, "58", &mut p);
+    format!("\x1b[{}m", p.join(";"))
 }
 
 #[cfg(test)]
@@ -327,6 +396,28 @@ mod tests {
             let mut replica = term(80, 24);
             replica.vt_write(&snap);
             assert_eq!(cursor(&replica), cursor(&src), "script {script:?}");
+        }
+    }
+
+    /// Claude's input box: a full-width rule leaves the cursor in the deferred-wrap state. A replica
+    /// attached from the snapshot must behave exactly like the source for whatever comes next, or
+    /// an Ink redraw (cursor up N, erase line) lands one row off.
+    #[test]
+    fn the_snapshot_keeps_the_pending_wrap_state() {
+        for style in ["", "\x1b[2;38;5;240m", "\x1b[1;48;2;10;20;30m"] {
+        let rule = format!("{style}{}\x1b[0m", "\u{2500}".repeat(40));
+        let script = format!("{rule}\r\n\u{276f} \r\n{rule}\x1b[2A\x1b[2K\r{rule}");
+        let mut src = term(40, 10);
+        src.vt_write(script.as_bytes());
+        let snap = snapshot(&src);
+        let mut replica = term(40, 10);
+        replica.vt_write(&snap);
+        assert_eq!(cursor(&replica), cursor(&src));
+        for next in ["x", "\r\nx", "\u{131}\u{11f}\u{fc}"] {
+            src.vt_write(next.as_bytes());
+            replica.vt_write(next.as_bytes());
+            assert_eq!(cursor(&replica), cursor(&src), "after {next:?}");
+        }
         }
     }
 }

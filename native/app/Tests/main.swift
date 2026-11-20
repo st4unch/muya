@@ -183,6 +183,8 @@ test("snapshot repair re-applies the cursor position that tab stops moved") {
     check(repairSnapshotCursor(Data()) == Data(), "empty input")
     let noCup = Data("\u{1b}[3g\u{1b}[9G\u{1b}H".utf8)
     check(repairSnapshotCursor(noCup) == noCup, "no earlier CUP: untouched")
+    let own = Data("\u{1b}[3;5H\u{1b}[3g\u{1b}[9G\u{1b}H\u{1b}[3;5H\u{1b}[0m\u{2500}".utf8)
+    check(repairSnapshotCursor(own) == own, "daemon's own final CUP: untouched (keeps a pending wrap)")
     var rng = SplitMix(s: 7)
     for _ in 0 ..< 2000 { _ = repairSnapshotCursor(Data((0 ..< Int.random(in: 0 ..< 80, using: &rng)).map { _ in [0x1b, 0x5b, 0x33, 0x67, 0x48, 0x3b, 0x31, 0x41].randomElement(using: &rng)! })) }
 }
