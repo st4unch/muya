@@ -512,13 +512,25 @@ public enum ThemeFont {
         for c in candidates { if let f = c() { return f } }
         return NSFont.systemFont(ofSize: 12)
     }
+    /// Fonts are created once and shared (immutable NSFont): re-creating one per draw hammers CoreText's font cache while the
+    /// main thread scrolls. Only fonts that resolved by name are cached, so a lookup before ThemeFonts.register() is retried.
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var cache: [String: NSFont] = [:]
+    static func cached(_ key: String, named: () -> NSFont?, fallback: () -> NSFont) -> NSFont {
+        lock.lock(); defer { lock.unlock() }
+        if let f = cache[key] { return f }
+        if let f = named() { cache[key] = f; return f }
+        return fallback()
+    }
     public static func sans(_ size: CGFloat, _ weight: NSFont.Weight = .regular, postScript: String? = nil) -> NSFont {
         let ps = postScript ?? (weight >= .bold ? "IBMPlexSans-Bold" : weight >= .semibold ? "IBMPlexSans-SemiBold" : weight >= .medium ? "IBMPlexSans-Medium" : "IBMPlexSans-Regular")
-        return safe([{ NSFont(name: ps, size: size) }, { NSFont.systemFont(ofSize: size, weight: weight) as NSFont? }, { NSFont.userFont(ofSize: size) }])
+        return cached("s|\(ps)|\(size)", named: { NSFont(name: ps, size: size) },
+                      fallback: { safe([{ NSFont.systemFont(ofSize: size, weight: weight) as NSFont? }, { NSFont.userFont(ofSize: size) }]) })
     }
     public static func mono(_ size: CGFloat, _ weight: NSFont.Weight = .regular, postScript: String? = nil) -> NSFont {
         let ps = postScript ?? (weight >= .bold ? "JetBrainsMono-Bold" : "JetBrainsMono-Regular")
-        return safe([{ NSFont(name: ps, size: size) }, { NSFont.monospacedSystemFont(ofSize: size, weight: weight) as NSFont? }, { NSFont.systemFont(ofSize: size) as NSFont? }, { NSFont.userFixedPitchFont(ofSize: size) }])
+        return cached("m|\(ps)|\(size)", named: { NSFont(name: ps, size: size) },
+                      fallback: { safe([{ NSFont.monospacedSystemFont(ofSize: size, weight: weight) as NSFont? }, { NSFont.systemFont(ofSize: size) as NSFont? }, { NSFont.userFixedPitchFont(ofSize: size) }]) })
     }
     /// Sizes in use (count of occurrences across src/redesign + src/components inline styles).
     //   13px × 97
