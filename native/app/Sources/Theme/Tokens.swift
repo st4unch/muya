@@ -505,13 +505,20 @@ public enum TerminalSchemes {
 public enum ThemeFont {
     public static let sansName = "IBM Plex Sans"      // src/styles/tokens.css:103
     public static let monoName = "JetBrains Mono"     // src/styles/tokens.css:104
-    public static func sans(_ size: CGFloat, _ weight: NSFont.Weight = .regular) -> NSFont {
-        let ps = weight >= .bold ? "IBMPlexSans-Bold" : weight >= .semibold ? "IBMPlexSans-SemiBold" : weight >= .medium ? "IBMPlexSans-Medium" : "IBMPlexSans-Regular"
-        return NSFont(name: ps, size: size) ?? NSFont.systemFont(ofSize: size, weight: weight) // falls back until ThemeFonts.register() ran
+    /// A font that is never nil. The AppKit factories are imported as non-optional but can still hand back nil when the
+    /// font machinery fails (registration lost, memory pressure); a nil in an attributes dictionary aborts the process
+    /// ("attempt to insert nil object", seen as a crash while scrolling). Every lookup goes through an Optional check.
+    static func safe(_ candidates: [() -> NSFont?]) -> NSFont {
+        for c in candidates { if let f = c() { return f } }
+        return NSFont.systemFont(ofSize: 12)
     }
-    public static func mono(_ size: CGFloat, _ weight: NSFont.Weight = .regular) -> NSFont {
-        NSFont(name: weight >= .bold ? "JetBrainsMono-Bold" : "JetBrainsMono-Regular", size: size)
-            ?? NSFont.monospacedSystemFont(ofSize: size, weight: weight)
+    public static func sans(_ size: CGFloat, _ weight: NSFont.Weight = .regular, postScript: String? = nil) -> NSFont {
+        let ps = postScript ?? (weight >= .bold ? "IBMPlexSans-Bold" : weight >= .semibold ? "IBMPlexSans-SemiBold" : weight >= .medium ? "IBMPlexSans-Medium" : "IBMPlexSans-Regular")
+        return safe([{ NSFont(name: ps, size: size) }, { NSFont.systemFont(ofSize: size, weight: weight) as NSFont? }, { NSFont.userFont(ofSize: size) }])
+    }
+    public static func mono(_ size: CGFloat, _ weight: NSFont.Weight = .regular, postScript: String? = nil) -> NSFont {
+        let ps = postScript ?? (weight >= .bold ? "JetBrainsMono-Bold" : "JetBrainsMono-Regular")
+        return safe([{ NSFont(name: ps, size: size) }, { NSFont.monospacedSystemFont(ofSize: size, weight: weight) as NSFont? }, { NSFont.systemFont(ofSize: size) as NSFont? }, { NSFont.userFixedPitchFont(ofSize: size) }])
     }
     /// Sizes in use (count of occurrences across src/redesign + src/components inline styles).
     //   13px × 97

@@ -163,3 +163,19 @@ func runThemeTests() {
         check(PermissionModes.shouldContinue(before: "default", after: "acceptEdits") && !PermissionModes.shouldContinue(before: "plan", after: "plan"), "an unchanged screen stops the loop")
     }
 }
+
+func runScrollCrashTests() {
+    test("fonts are never nil, even for a missing font name (crash while scrolling: nil in attributes)") {
+        let m = ThemeFont.mono(11, .semibold, postScript: "NoSuchFont-Regular"), s = ThemeFont.sans(13, postScript: "NoSuchFont-Regular")
+        check((m as NSFont?) != nil && (s as NSFont?) != nil && m.pointSize == 11 && s.pointSize == 13, "fallback fonts")
+        check(ThemeFont.safe([{ nil }, { nil }]).pointSize > 0, "all candidates nil still gives a font")
+    }
+    test("CardButton's text path (size + draw with the label font) survives repeated redraws with a missing font") {
+        let w = NSImage(size: NSSize(width: 90, height: 22))
+        for i in 0 ..< 50 {
+            let attrs: [NSAttributedString.Key: Any] = [.font: ThemeFont.mono(11, .semibold, postScript: i % 2 == 0 ? "NoSuchFont" : "JetBrainsMono-Regular"), .foregroundColor: Theme.dynamic(.text)]
+            check(("Attach" as NSString).size(withAttributes: attrs).width > 10, "size")
+            w.lockFocus(); ("Attach" as NSString).draw(at: .zero, withAttributes: attrs); w.unlockFocus()
+        }
+    }
+}
