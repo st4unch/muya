@@ -167,6 +167,7 @@ final class AgentsPanel: FillView {
     private(set) var contentHeight: CGFloat = 0
     var wantedHeight: CGFloat { 100 + contentHeight + 8 }
     var onWantedChange: (() -> Void)?
+    var onSynced: (() -> Void)?
 
     init() {
         super.init(.bgPanel)
@@ -200,7 +201,7 @@ final class AgentsPanel: FillView {
         ("\(sessions().count)" as NSString).draw(at: NSPoint(x: 16 + w + 5, y: 23), withAttributes: [.font: ThemeFont.sans(14), .foregroundColor: Theme.dynamic(.textMuted)])
     }
 
-    private func group(of s: SessionModel) -> AgentCard.Group {
+    func group(of s: SessionModel) -> AgentCard.Group {
         if s.exited == nil, s.screen?.permission == true { return .waiting }
         if s.exited == nil, s.screen?.busy == true || s.screen?.activity != nil { return .working }
         return .idle
@@ -216,6 +217,7 @@ final class AgentsPanel: FillView {
 
     /// Rebuilds the cards when what they show changed (or `force`).
     func reloadNow(force: Bool = false) {
+        defer { onSynced?() }   // the sessions rail follows the list (SessionsRail.swift)
         let all = sessions(), sel = selected()
         let groups = all.map { group(of: $0) }
         let now = Date()

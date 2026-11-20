@@ -130,6 +130,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let view = submenu("View")
         view.addItem(withTitle: "Next Session", action: #selector(MainController.nextSession), keyEquivalent: "]").target = controller
         view.addItem(withTitle: "Previous Session", action: #selector(MainController.previousSession), keyEquivalent: "[").target = controller
+        func arrow(_ title: String, _ sel: Selector, _ key: Int) {
+            let it = view.addItem(withTitle: title, action: sel, keyEquivalent: String(UnicodeScalar(key)!)); it.keyEquivalentModifierMask = [.control, .option]; it.target = controller
+        }
+        arrow("Previous Session in List", #selector(MainController.previousListedSession), NSUpArrowFunctionKey)
+        arrow("Next Session in List", #selector(MainController.nextListedSession), NSDownArrowFunctionKey)
+        arrow("Rail: Sessions Page", #selector(MainController.railShowSessionsPage), NSLeftArrowFunctionKey)
+        arrow("Rail: Menu Page", #selector(MainController.railShowMenuPage), NSRightArrowFunctionKey)
         view.addItem(.separator())
         view.addItem(withTitle: "Command Palette", action: #selector(MainController.togglePalette), keyEquivalent: "k").target = controller
         view.addItem(withTitle: "Agents Panel", action: #selector(MainController.toggleAgentsPanel), keyEquivalent: "b").target = controller
