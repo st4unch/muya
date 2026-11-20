@@ -30,6 +30,15 @@ extension DebugServer {
         case "newagent-state": return c.newAgentSheet?.debugState() ?? "none"
         case "notifications-open": if c.notificationsPopover == nil { c.showNotifications() }; return c.notificationsPopover == nil ? "error" : "ok"
         case "popover-close": c.notificationsPopover?.close(); return "ok"
+        case "exitdiag-launch":   // exitdiag-launch <cwd> <claude command>: what Resume does
+            guard w.count == 2 else { return "error: exitdiag-launch <cwd> <command>" }
+            return c.store.launchClaude(cwd: w[0], name: "claude-demo", command: w[1]) == nil ? "error: not connected" : "ok"
+        case "exitdiag-state":
+            return c.store.sessions.map { "\($0.id):exited=\($0.exited.map(String.init) ?? "-"):verdict=\($0.exitVerdict?.title ?? "-"):tail=\($0.exitTail.count)" }.joined(separator: " ")
+        case "exitdiag-click":    // exitdiag-click resume|close on the selected session's panel
+            guard let s = c.store.selected else { return "error: no session" }
+            if arg == "resume" { c.store.relaunch(s) } else { c.store.close(s) }
+            return "ok"
         case "snap": return MainActor.assumeIsolated { DebugSnap.snapshot(c.window, to: arg) }
         case "view-windowid": return "\(c.window.windowNumber)"
 

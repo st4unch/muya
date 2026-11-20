@@ -4,6 +4,12 @@ All notable changes to Muya are documented here, newest first.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.1] - 2026-11-20
+
+### Added
+- **A Claude tab that ends badly now tells you why.** If Claude stops with an error, is killed by the system, or quits within a few seconds of a resume, the tab stays open and shows what happened: the exit code or signal name (for example SIGABRT), the last lines it printed, and two buttons: Resume (starts `claude --resume` again in the same folder) and Close. A normal `/exit`, and a plain shell tab you close with `exit`, behave exactly as before.
+- **A quiet check before Claude starts.** Muya tries `claude --version` and `node -e 0` the same way the new tab will run them. If Claude cannot run it shows the path it tried; if node is broken (for example after a Homebrew upgrade) it warns that hooks and MCP servers may fail, with the first line of the error. It only warns, never blocks, and each check gives up after 2 seconds.
+
 ## [5.0.0] - 2026-11-19
 
 ### Changed

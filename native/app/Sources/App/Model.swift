@@ -41,6 +41,11 @@ final class SessionModel {
     var name: String
     var cwd: String
     var exited: Int32?
+    /// Set for a tab Muya started with a Claude command (resume, New agent): what it ran, so its exit can be explained.
+    var claudeLaunch: ClaudeLaunch?
+    /// Set when that tab ended unexpectedly (ExitDiag.classify): the exit panel shows it with the last lines of output.
+    var exitVerdict: ExitVerdict?
+    var exitTail: [String] = []
     var screen: ScreenSummary?
     /// Optional display overrides (the dev mock mode fills them; the daemon path leaves them nil): the card's status line,
     /// the elapsed time ("4m 15s") and the agent kind ("claude" / "opencode").
@@ -344,6 +349,7 @@ final class Store: @unchecked Sendable {
             DispatchQueue.main.async { [weak self] in
                 guard let self, let s = self.sessions.first(where: { $0.id == id }) else { return }
                 s.exited = status
+                self.noteExit(s, status: status)
                 self.delegate?.store(self, didUpdate: s)
                 self.evaluateAutoAllow()
             }
@@ -386,11 +392,12 @@ final class Store: @unchecked Sendable {
         connection?.send(.resize(id: s.id, cols: UInt16(cols), rows: UInt16(rows)))
     }
 
-    func spawn(cwd: String, name: String? = nil) {
-        guard let conn = connection else { return }
+    @discardableResult
+    func spawn(cwd: String, name: String? = nil, argv: [String] = []) -> SessionModel? {
+        guard let conn = connection else { return nil }
         do {
-            let reply = try conn.request(.spawn(argv: [], cwd: cwd, env: [], cols: UInt16(grid.cols), rows: UInt16(grid.rows)), timeout: 10)
-            guard case let .spawned(id, pid) = reply else { return }
+            let reply = try conn.request(.spawn(argv: argv, cwd: cwd, env: [], cols: UInt16(grid.cols), rows: UInt16(grid.rows)), timeout: 10)
+            guard case let .spawned(id, pid) = reply else { return nil }
             let display = name ?? (cwd == home ? "Shell" : (cwd as NSString).lastPathComponent)
             names["\(id):\(pid)"] = display
             saveNames()
@@ -398,10 +405,14 @@ final class Store: @unchecked Sendable {
             sessions.last?.name = display
             delegate?.storeDidChangeSessions(self)
             select(sessions.last)
+            return sessions.last
         } catch {
             delegate?.store(self, connectionChanged: connected, message: "New session failed: \(error)")
+            return nil
         }
     }
+
+    var preflightCache = PreflightCache()
 
     // MARK: Daemon events, auto-allow, migration
 
@@ -510,6 +521,7 @@ final class Store: @unchecked Sendable {
 
     /// Opens a shell in `cwd` and types `command` into it (resume a Claude session).
     func openShell(cwd: String, name: String, typing command: String) {
+        if !mockMode, ExitDiag.isClaudeCommand(command), launchClaude(cwd: cwd, name: name, command: command) != nil { return }
         spawn(cwd: cwd, name: name)
         guard let s = selected, let conn = connection else { return }
         conn.send(.paste(id: s.id, text: command))

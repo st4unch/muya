@@ -78,6 +78,9 @@ final class Tile: NSView {
     nonisolated(unsafe) static var onChoose: ((SessionModel, NSView) -> Void)?   // the name's chevron: choose the session for this panel
     let chooser = PanelChevron()
     private var bypassPill: ThemedPill?
+    let exitPanel = ExitPanel()
+    nonisolated(unsafe) static var onExitResume: ((SessionModel) -> Void)?
+    nonisolated(unsafe) static var onExitClose: ((SessionModel) -> Void)?
     nonisolated(unsafe) static var onSend: ((SessionModel, String) -> Void)?
     nonisolated(unsafe) static var onAlways: ((UInt64) -> Void)?
     var showsHeader = false { didSet { needsLayout = true; header.isHidden = !showsHeader } }
@@ -95,6 +98,7 @@ final class Tile: NSView {
         header.wantsLayer = true
         header.isHidden = true
         addSubview(terminal)
+        addSubview(exitPanel)
         addSubview(header)
         addSubview(actions); addSubview(input)
         header.addSubview(expand); header.addSubview(chooser)
@@ -102,6 +106,8 @@ final class Tile: NSView {
         expand.onClick = { [weak self] in if let s = self?.terminal.session { Tile.onFullscreen?(s) } }
         input.onSend = { [weak self] t in if let s = self?.terminal.session { Tile.onSend?(s, t) } }
         actions.onAlways = { id in Tile.onAlways?(id) }
+        exitPanel.onResume = { [weak self] in if let s = self?.terminal.session { Tile.onExitResume?(s) } }
+        exitPanel.onClose = { [weak self] in if let s = self?.terminal.session { Tile.onExitClose?(s) } }
         actions.isHidden = true; input.isHidden = true
         actions.onAnswer = { id, approve in store.answerPrompt(session: id, approve: approve) }   // one safe path (exited sessions are skipped there)
         updateBorder()
@@ -120,6 +126,7 @@ final class Tile: NSView {
         // Today's terminal padding (Terminal.tsx --term-pad: Control 20/28, grid 14/16) minus the renderer's own 6 px; the tile paints the terminal background.
         let padX: CGFloat = showsHeader ? 10 : 22, padY: CGFloat = showsHeader ? 8 : 14
         terminal.frame = NSRect(x: padX, y: h + padY, width: max(bounds.width - 2 * padX, 0), height: max(bounds.height - h - ah - 2 * padY, 0))
+        exitPanel.frame = NSRect(x: 0, y: h, width: bounds.width, height: max(bounds.height - h - ah, 0))
         actions.frame = NSRect(x: 0, y: bounds.height - ah, width: bounds.width, height: TileActionBar.height)
         input.frame = actions.frame
         expand.plain = true
@@ -157,6 +164,7 @@ final class Tile: NSView {
             let p = ThemedPill("bypass", fg: Theme.dynamic(.dangerText), bg: Theme.dynamic(.dangerPillBg)); header.addSubview(p); bypassPill = p
         }
         actions.configure(s)
+        exitPanel.show(s)
         input.session = s
         input.isHidden = !showsHeader || !actions.isHidden || !Tile.composerOpen
         updateBorder()
