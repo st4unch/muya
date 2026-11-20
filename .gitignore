@@ -66,3 +66,10 @@ docs/security-audit-report-*.md
 
 # Load test harness (committed, unlike the release scripts above)
 !scripts/loadtest/
+build-release/
+
+# screenshots of real classic / real data (going-public scan 2026-11): local only
+docs/screenshots/
+docs/design/redesign-v0.4/diff/
+docs/design/redesign-v0.4/light/
+docs/native/release-bundle-launch.png

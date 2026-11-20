@@ -1,0 +1,11 @@
+{
+ "control": "app-{t}.png",
+ "files-tree": "files-tree-{t}.png",
+ "grid": "grid-{t}.png",
+ "sessions": "sessions-{t}.png",
+ "queue": "queue-{t}.png",
+ "kanban": "kanban-{t}.png",
+ "resources": "resources-{t}.png",
+ "ssh-servers": "ssh-servers-{t}.png",
+ "schedules": "schedules-{t}.png"
+}

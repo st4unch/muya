@@ -105,7 +105,7 @@ fn tools_list() -> Value {
         "tools": [
             {
                 "name": "ssh_list_servers",
-                "description": "List the SSH servers the operator has allowed agents to use. Returns each server's alias plus host/username/port/connectionType (and psmpProfile for PSMP servers). No passwords or credentials are ever returned. Use the returned alias with ssh_open.",
+                "description": "List every SSH server Muya knows (the operator's and agents'). Returns each server's alias plus host/username/port/connectionType, its group (as on the Servers page), agentAccess (true = you may ssh_open / ssh_run it; edit it with ssh_update_server to change its host, credential or group either way) and psmpProfile for PSMP servers. No passwords or credentials are ever returned. Use the returned alias with ssh_open.",
                 "inputSchema": { "type": "object", "additionalProperties": false }
             },
             {
@@ -229,7 +229,8 @@ fn tools_list() -> Value {
                     "properties": {
                         "target": { "type": "string", "description": "Target session name or id (from list_sessions)." },
                         "text": { "type": "string", "description": "The message to send (deliver:\"auto\"/\"muya\"), or the literal keystrokes to type (deliver:\"keys\")." },
-                        "deliver": { "type": "string", "enum": ["auto", "muya", "keys"], "description": "'auto' (default): resolve and deliver via the native SendMessage tool. 'muya': Muya types a wrapped chat message into the target terminal. 'keys': Muya types `text` in verbatim — for answering a prompt, not for chat." }
+                        "deliver": { "type": "string", "enum": ["auto", "muya", "keys"], "description": "'auto' (default): resolve and deliver via the native SendMessage tool. 'muya': Muya types a wrapped chat message into the target terminal. 'keys': Muya types `text` in verbatim — for answering a prompt, not for chat." },
+                        "idempotency_key": { "type": "string", "description": "Optional, for deliver:\"muya\"/\"keys\": a unique id for this message. If you retry the call with the SAME key (e.g. after a timeout or a Muya restart) the text is typed once, not twice." }
                     },
                     "required": ["target", "text"],
                     "additionalProperties": false
@@ -244,6 +245,50 @@ fn tools_list() -> Value {
                         "target": { "type": "string", "description": "Target session name or id (must be one YOU opened with open_session)." }
                     },
                     "required": ["target"],
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "open_terminal",
+                "description": "Open a plain SHELL tab (not a Claude session) in the native Muya app, optionally running a first command in it. Use it for builds, servers, log tails, anything that wants its own terminal next to the sessions. `name` labels the tab (default terminal-1, terminal-2, …) and is what you pass to send_terminal; `cwd` defaults to the home folder; `command` is typed in and run right away. Returns the tab's id and name. For a Claude session use open_session instead. Only the native Muya app has these terminal tools.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string", "description": "Tab name (unique; used later as send_terminal's target)." },
+                        "cwd": { "type": "string", "description": "Working directory. Defaults to the home folder." },
+                        "command": { "type": "string", "description": "Optional first command; typed into the shell followed by Enter." }
+                    },
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "send_terminal",
+                "description": "Type a command into ONE terminal tab — a shell or a Claude/agent tab — as raw text followed by Enter (a paste, so control characters are neutralised). This is NOT send_to_session's chat message: nothing is wrapped or tagged, the text lands exactly as given. `target` is a terminal name or id (open_terminal's result, or a Claude session name/id); an ambiguous name returns the candidates — ask, never guess. A terminal waiting on a permission prompt is refused (Enter there would answer the prompt) unless you pass include_waiting; to answer a prompt on purpose use send_to_session(deliver:\"keys\"). Limit 16 KiB.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "target": { "type": "string", "description": "Terminal name or id." },
+                        "command": { "type": "string", "description": "The text to type." },
+                        "enter": { "type": "boolean", "description": "Press Enter after the text. Default true." },
+                        "include_waiting": { "type": "boolean", "description": "Also type into a terminal that waits on a permission prompt. Default false." }
+                    },
+                    "required": ["target", "command"],
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "broadcast",
+                "description": "Send the same text to EVERY open terminal and session at once and get one result per target (sent / skipped / failed). `kind` limits it: \"all\" (default), \"claude\" (Claude sessions) or \"shell\" (plain shells). Default deliver:\"keys\" pastes the text + Enter raw into each tab, like send_terminal; deliver:\"muya\" instead sends it as a chat message to the Claude sessions only. Your own session is always skipped, and so is any tab waiting on a permission prompt (reported as skipped) unless you pass include_waiting. At most 64 tabs, 16 KiB of text. Think before using it: it types into every matching tab, including ones the operator is working in.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "command": { "type": "string", "description": "The text/command to send to every target." },
+                        "text": { "type": "string", "description": "Alias of command (use with deliver:\"muya\" for a chat message)." },
+                        "kind": { "type": "string", "enum": ["all", "claude", "shell"], "description": "Which tabs. Default all." },
+                        "deliver": { "type": "string", "enum": ["keys", "muya"], "description": "keys (default): raw paste + Enter. muya: chat message to Claude sessions only." },
+                        "enter": { "type": "boolean", "description": "Press Enter after the text (deliver:keys). Default true." },
+                        "include_waiting": { "type": "boolean", "description": "Also type into tabs waiting on a permission prompt. Default false." }
+                    },
                     "additionalProperties": false
                 }
             },
@@ -368,7 +413,7 @@ fn tools_list() -> Value {
             },
             {
                 "name": "ssh_add_server",
-                "description": "Register a NEW SSH server that you can then use with ssh_open / ssh_run. Provide host and login username (and optionally a label and port; port defaults to 22). For a server reached through CyberArk PSMP, pass psmpProfile = the NAME of a PSMP profile the operator already set up (see ssh_list_psmp_profiles); then host is the TARGET address and username is the TARGET account only (e.g. 'root', or a domain account like 'user#corp.local') — Muya adds the vault user and the PSMP address from the profile, so never type a full 'vault@target@host@psmp' string. You cannot create PSMP profiles. Optionally attach a stored credential BY NAME (from list_secrets) so ssh_run can authenticate non-interactively — Muya resolves and injects that secret itself; you never see its value. Omit 'credential' for a server whose password is typed by the operator each time ('prompt'). You CANNOT set raw ssh options or a jump host. Fails if a server for that host+username already exists (it will not overwrite an existing server; use ssh_update_server to fix one you added), or if host/username contain spaces or control characters, '@' (direct), or the profile's delimiters (PSMP).",
+                "description": "Register a NEW SSH server that you can then use with ssh_open / ssh_run. Provide host and login username (and optionally a label and port; port defaults to 22). For a server reached through CyberArk PSMP, pass psmpProfile = the NAME of a PSMP profile the operator already set up (see ssh_list_psmp_profiles); then host is the TARGET address and username is the TARGET account only (e.g. 'root', or a domain account like 'user#corp.local') — Muya adds the vault user and the PSMP address from the profile, so never type a full 'vault@target@host@psmp' string. You cannot create PSMP profiles. Optionally attach ANY stored credential BY NAME (from list_secrets) so ssh_run can authenticate non-interactively — Muya resolves and injects that secret itself; you never see its value. Omit 'credential' for a server whose password is typed by the operator each time ('prompt'). Optionally set group (the Servers-page group). You CANNOT set raw ssh options or a jump host. Fails if a server for that host+username already exists (it will not overwrite an existing server; use ssh_update_server to change it), or if host/username contain spaces or control characters, '@' (direct), or the profile's delimiters (PSMP).",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -377,7 +422,8 @@ fn tools_list() -> Value {
                         "username": { "type": "string", "description": "SSH login username. No spaces, control characters, or '@'." },
                         "port": { "type": "integer", "description": "SSH port. Defaults to 22.", "minimum": 1, "maximum": 65535 },
                         "credential": { "type": "string", "description": "Optional name of a stored secret (from list_secrets) to attach as this server's password. Muya injects it at connect time; you never see the value. Omit to have the operator type the password each time." },
-                        "psmpProfile": { "type": "string", "description": "Optional NAME of an operator-defined PSMP profile (from ssh_list_psmp_profiles). Makes this a PSMP server: host = target address, username = target account. Omit for a direct ssh server." }
+                        "psmpProfile": { "type": "string", "description": "Optional NAME of an operator-defined PSMP profile (from ssh_list_psmp_profiles). Makes this a PSMP server: host = target address, username = target account. Omit for a direct ssh server." },
+                        "group": { "type": "string", "description": "Optional Servers-page group name (free text; empty = Ungrouped)." }
                     },
                     "required": ["host", "username"],
                     "additionalProperties": false
@@ -385,7 +431,7 @@ fn tools_list() -> Value {
             },
             {
                 "name": "ssh_update_server",
-                "description": "Fix an SSH server YOU added earlier with ssh_add_server (servers the operator set up are refused — ask the operator to change those in Muya). Pass the alias plus only the fields to change: label, host, username, port, credential (secret name; \"\" = operator types the password), psmpProfile (profile name to route through PSMP; \"none\" = direct ssh). Same rules as ssh_add_server; it will not overwrite another server.",
+                "description": "Edit ANY SSH server, the operator's included, like the operator does on the Servers page. Pass the alias plus only the fields to change: label, host, username, port, credential (any secret name; \"\" = operator types the password; the credential is kept when host/port/user change, and every credential-to-host change is audit-logged), psmpProfile (profile name to route through PSMP; \"none\" = direct ssh), group (Servers-page group; \"\" = Ungrouped). Same validation as ssh_add_server; it will not overwrite another server.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -395,8 +441,19 @@ fn tools_list() -> Value {
                         "username": { "type": "string", "description": "New login username (PSMP: target account only)." },
                         "port": { "type": "integer", "minimum": 1, "maximum": 65535, "description": "New port." },
                         "credential": { "type": "string", "description": "Secret name to attach (from list_secrets), or \"\" to have the operator type the password." },
-                        "psmpProfile": { "type": "string", "description": "PSMP profile name to route through, or \"none\" for direct ssh." }
+                        "psmpProfile": { "type": "string", "description": "PSMP profile name to route through, or \"none\" for direct ssh." },
+                        "group": { "type": "string", "description": "Servers-page group, or \"\" for Ungrouped." }
                     },
+                    "required": ["alias"],
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "ssh_remove_server",
+                "description": "Remove an SSH server from Muya (any entry, like the operator can on the Servers page). Open terminals and sessions to it are not closed. The removal is audit-logged. The stored credential is left in the vault.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": { "alias": { "type": "string", "description": "Alias of the server to remove (from ssh_list_servers)." } },
                     "required": ["alias"],
                     "additionalProperties": false
                 }
@@ -433,12 +490,12 @@ fn tools_list() -> Value {
             },
             {
                 "name": "list_secrets",
-                "description": "List the names of stored secrets the operator has saved (name, description, kind). The secret VALUES are never returned — you reference a secret only BY NAME when running an operation. Use this to discover which credential to pick for a run_operation call.",
+                "description": "List the stored secrets (name, description, kind, group) — the operator's and agents'. The secret VALUES are never returned — you reference a secret only BY NAME when running an operation. Use this to discover which credential to pick for a run_operation call.",
                 "inputSchema": { "type": "object", "additionalProperties": false }
             },
             {
                 "name": "add_secret",
-                "description": "Store a NEW secret (e.g. a token your workflow just generated) under a name for later use by run_operation. Fails if the name already exists or the credential store is locked. The value is write-only — it is never returned to you afterwards; you reference the secret only BY NAME. Pick a descriptive name and (optionally) a description so the operator can identify it.",
+                "description": "Store a NEW secret (e.g. a token your workflow just generated) under a name for later use by run_operation. Fails if the name already exists or the credential store is locked. The value is write-only — it is never returned to you afterwards; you reference the secret only BY NAME. Pick a descriptive name and (optionally) a description and a group so the operator can identify it. Use it later as {{muya-secret:name}} (see get_secret).",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -449,7 +506,8 @@ fn tools_list() -> Value {
                             "enum": ["password", "key", "token", "api_key"],
                             "description": "The kind of secret. Use 'api_key' for API keys/tokens; defaults to 'api_key' if omitted."
                         },
-                        "description": { "type": "string", "description": "Optional operator-facing note describing the secret." }
+                        "description": { "type": "string", "description": "Optional operator-facing note describing the secret." },
+                        "group": { "type": "string", "description": "Optional vault group (free text; empty = Ungrouped), shown as cards per group in the Password Store." }
                     },
                     "required": ["name", "value"],
                     "additionalProperties": false
@@ -457,7 +515,7 @@ fn tools_list() -> Value {
             },
             {
                 "name": "get_secret",
-                "description": "Read a stored secret's VALUE by name — use when you must place a stored password/API key into a system you are configuring (a config file, an env var you set, another service). Requires the operator to have unlocked the Password Store. Prefer run_operation when you only need to USE a secret (it never exposes the value); use get_secret only when you genuinely need the value itself.",
+                "description": "Get the PLACEHOLDER for a stored secret, {{muya-secret:name}} — never the value. Put the placeholder into the text you type: ssh_send / ssh_session_exec text, send_to_session deliver:\"keys\", and run_with_secrets env/stdin; Muya swaps in the real value at that moment only, and redacts the value from anything that comes back. A placeholder is substituted only (a) into a terminal that is at a password prompt with echo off, for a configured SSH server, (b) into a session of a server that uses that secret, or (c) into run_with_secrets env/stdin. It is never put into a shell line or a command line (ssh_run refuses placeholders). Requires the Password Store to be unlocked.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -469,14 +527,34 @@ fn tools_list() -> Value {
             },
             {
                 "name": "update_secret",
-                "description": "Replace an EXISTING secret's value by name (e.g. after rotating a credential or reconfiguring a system). Fails if the name does not exist (use add_secret to create) or the store is locked. The new value is write-only — never returned.",
+                "description": "Edit ANY stored secret, the operator's included: replace its value, rename it (newName; servers that use the old name follow), change its description, kind or group. Give only the fields to change. Fails if the name does not exist (use add_secret to create) or the store is locked. Values are write-only — never returned.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "name": { "type": "string", "description": "Name of the existing secret to update." },
-                        "value": { "type": "string", "description": "The new secret value. Write-only — never returned." }
+                        "name": { "type": "string", "description": "Name of the existing secret to edit." },
+                        "value": { "type": "string", "description": "The new secret value. Write-only — never returned." },
+                        "newName": { "type": "string", "description": "Rename the secret to this (must not already exist)." },
+                        "description": { "type": "string", "description": "New note." },
+                        "kind": { "type": "string", "enum": ["password", "key", "token", "api_key"], "description": "New kind." },
+                        "group": { "type": "string", "description": "Vault group to move it to; \"\" = Ungrouped." }
                     },
-                    "required": ["name", "value"],
+                    "required": ["name"],
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "run_with_secrets",
+                "description": "Run a program on THIS Mac as the operator user (e.g. a script you wrote) with secrets available to it but not to you. command is an argv ARRAY (program + arguments, no shell string; use [\"bash\", \"script.sh\"] or [\"bash\",\"-c\",\"...\"] for a shell). Put secrets in env: {\"DB_PASSWORD\": \"{{muya-secret:prod-db}}\"} (placeholders from get_secret), or in stdin. A placeholder inside command is REFUSED (arguments are visible to ps). Muya substitutes the values only into the child's environment / stdin, returns exitCode, stdout and stderr with every secret value redacted (raw, JSON-escaped, base64, hex, URL-encoded), and audit-logs each run (command + secret names, never values). Terminal form for scripts run from a session shell: muyactl secret exec --env VAR=name -- <cmd...>.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "command": { "type": "array", "items": { "type": "string" }, "minItems": 1, "description": "Program and arguments, no shell interpolation. No placeholders here." },
+                        "cwd": { "type": "string", "description": "Absolute path of an existing folder to run in." },
+                        "env": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Extra environment variables; a value may be or contain {{muya-secret:name}}. LD_* and DYLD_* names are refused." },
+                        "stdin": { "type": "string", "description": "Optional text for the program's stdin; may contain placeholders." },
+                        "timeout": { "type": "integer", "minimum": 1, "maximum": 3600, "description": "Seconds before the run is stopped. Default 120." }
+                    },
+                    "required": ["command", "cwd"],
                     "additionalProperties": false
                 }
             },
@@ -509,7 +587,7 @@ fn tools_list() -> Value {
             },
             {
                 "name": "schedule_create",
-                "description": "Create a scheduled Claude prompt in Muya. It runs headless in `folder` on the given timing while Muya is open. Only create one when the user asked for it: with bypass on (the default) the prompt runs any command without asking, unattended, until it is turned off.",
+                "description": "Create a scheduled Claude prompt in Muya. It runs headless in `folder` on the given timing while Muya is open. Only create one when the user asked for it: with bypass on the prompt runs any command without asking, unattended, until it is turned off. You may set bypass true or false; model and effort choose the Claude model and effort level.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -530,7 +608,9 @@ fn tools_list() -> Value {
                 },
                         "enabled": { "type": "boolean", "description": "On (runs on its timer) or off (only Run now). Default true." },
                         "timeoutMin": { "type": "integer", "minimum": 1, "maximum": 1440, "description": "Stop a run after this many minutes. Default 30." },
-                        "bypass": { "type": "boolean", "description": "Skip permission prompts (--dangerously-skip-permissions). Default true; false = acceptEdits, so steps needing approval fail the run." },
+                        "bypass": { "type": "boolean", "description": "Skip permission prompts (--dangerously-skip-permissions). true or false, as you choose; default false = acceptEdits, so steps needing approval fail the run." },
+                        "model": { "type": "string", "description": "Claude model for the run (--model): opus, sonnet, haiku or a full model id. Empty = Claude's default." },
+                        "effort": { "type": "string", "enum": ["", "low", "medium", "high", "xhigh", "max"], "description": "Effort level (--effort). Empty = Claude's default." },
                         "chrome": { "type": "boolean", "description": "Load Claude in Chrome (--chrome) so the prompt can drive the user's browser, like their own sessions. Default true." }
                     },
                     "required": ["name", "prompt", "folder", "schedule"],
@@ -561,7 +641,9 @@ fn tools_list() -> Value {
                 },
                         "enabled": { "type": "boolean", "description": "On (runs on its timer) or off (only Run now). Default true." },
                         "timeoutMin": { "type": "integer", "minimum": 1, "maximum": 1440, "description": "Stop a run after this many minutes. Default 30." },
-                        "bypass": { "type": "boolean", "description": "Skip permission prompts (--dangerously-skip-permissions). Default true; false = acceptEdits, so steps needing approval fail the run." },
+                        "bypass": { "type": "boolean", "description": "Skip permission prompts (--dangerously-skip-permissions). true or false, as you choose; default false = acceptEdits, so steps needing approval fail the run." },
+                        "model": { "type": "string", "description": "Claude model for the run (--model): opus, sonnet, haiku or a full model id. Empty = Claude's default." },
+                        "effort": { "type": "string", "enum": ["", "low", "medium", "high", "xhigh", "max"], "description": "Effort level (--effort). Empty = Claude's default." },
                         "chrome": { "type": "boolean", "description": "Load Claude in Chrome (--chrome) so the prompt can drive the user's browser, like their own sessions. Default true." }
                     },
                     "required": ["schedule_ref"],
@@ -974,6 +1056,7 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                 "text": text,
                 "deliver": deliver,
                 "sessionId": own_session_id(),
+                "idempotencyKey": args.get("idempotency_key").and_then(Value::as_str),
             }))
             .map_err(|e| (-32000, e))?;
             if resp.get("ok").and_then(Value::as_bool) == Some(true) {
@@ -1008,25 +1091,6 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                     resp.get("error")
                         .and_then(Value::as_str)
                         .unwrap_or("send failed")
-                        .to_string(),
-                ))
-            }
-        }
-        "close_session" => {
-            let target = match args.get("target").and_then(Value::as_str) {
-                Some(t) if !t.trim().is_empty() => t.to_string(),
-                _ => return Ok(tool_error("missing required argument 'target'")),
-            };
-            let resp = app_call(&json!({ "op": "close_session", "target": target }))
-                .map_err(|e| (-32000, e))?;
-            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
-                let name = resp.get("name").and_then(Value::as_str).unwrap_or(&target);
-                Ok(tool_ok(format!("Closed session '{name}'."), None))
-            } else {
-                Ok(tool_error(
-                    resp.get("error")
-                        .and_then(Value::as_str)
-                        .unwrap_or("close failed")
                         .to_string(),
                 ))
             }
@@ -1080,6 +1144,133 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
             } else {
                 Ok(tool_error(
                     resp.get("error").and_then(Value::as_str).unwrap_or("usage failed").to_string(),
+                ))
+            }
+        }
+        "close_session" => {
+            let target = match args.get("target").and_then(Value::as_str) {
+                Some(t) if !t.trim().is_empty() => t.to_string(),
+                _ => return Ok(tool_error("missing required argument 'target'")),
+            };
+            let resp = app_call(&json!({ "op": "close_session", "target": target }))
+                .map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                let name = resp.get("name").and_then(Value::as_str).unwrap_or(&target);
+                Ok(tool_ok(format!("Closed session '{name}'."), None))
+            } else {
+                Ok(tool_error(
+                    resp.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("close failed")
+                        .to_string(),
+                ))
+            }
+        }
+        "open_terminal" => {
+            let mut op = json!({ "op": "open_terminal" });
+            for (arg, key) in [("name", "name"), ("cwd", "cwd"), ("command", "command")] {
+                if let Some(v) = args.get(arg).and_then(Value::as_str) {
+                    op[key] = json!(v);
+                }
+            }
+            let resp = app_call(&op).map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                let name = resp.get("name").and_then(Value::as_str).unwrap_or("");
+                Ok(tool_ok(
+                    format!(
+                        "Opened shell tab '{name}'. Type into it with send_terminal(target: \"{name}\", command: …); broadcast reaches it too."
+                    ),
+                    Some(json!({ "id": resp.get("id"), "name": name })),
+                ))
+            } else {
+                Ok(tool_error(
+                    resp.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("open_terminal failed")
+                        .to_string(),
+                ))
+            }
+        }
+        "send_terminal" => {
+            let target = match args.get("target").and_then(Value::as_str) {
+                Some(t) if !t.trim().is_empty() => t.to_string(),
+                _ => return Ok(tool_error("missing required argument 'target'")),
+            };
+            let command = match args.get("command").and_then(Value::as_str) {
+                Some(t) if !t.trim().is_empty() => t.to_string(),
+                _ => return Ok(tool_error("missing required argument 'command'")),
+            };
+            let resp = app_call(&json!({
+                "op": "send_terminal",
+                "target": target,
+                "command": command,
+                "enter": args.get("enter").and_then(Value::as_bool),
+                "includeWaiting": args.get("include_waiting").and_then(Value::as_bool),
+                "sessionId": own_session_id(),
+            }))
+            .map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                let tgt = resp.get("target").cloned().unwrap_or(Value::Null);
+                let name = tgt.get("name").and_then(Value::as_str).unwrap_or("");
+                Ok(tool_ok(
+                    format!("Typed into '{name}'."),
+                    Some(json!({ "target": tgt, "bytes": resp.get("bytes"), "enter": resp.get("enter") })),
+                ))
+            } else {
+                Ok(tool_error(
+                    resp.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("send_terminal failed")
+                        .to_string(),
+                ))
+            }
+        }
+        "broadcast" => {
+            let text = args
+                .get("command")
+                .and_then(Value::as_str)
+                .or_else(|| args.get("text").and_then(Value::as_str))
+                .unwrap_or("");
+            if text.trim().is_empty() {
+                return Ok(tool_error("missing required argument 'command' (or 'text')"));
+            }
+            let resp = app_call(&json!({
+                "op": "broadcast",
+                "command": text,
+                "kind": args.get("kind").and_then(Value::as_str),
+                "deliver": args.get("deliver").and_then(Value::as_str),
+                "enter": args.get("enter").and_then(Value::as_bool),
+                "includeWaiting": args.get("include_waiting").and_then(Value::as_bool),
+                "sessionId": own_session_id(),
+            }))
+            .map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                let empty = vec![];
+                let rows = resp.get("results").and_then(Value::as_array).unwrap_or(&empty);
+                let mut out = format!(
+                    "Broadcast: {} sent, {} skipped, of {} terminal(s).\n",
+                    resp.get("sent").and_then(Value::as_u64).unwrap_or(0),
+                    resp.get("skipped").and_then(Value::as_u64).unwrap_or(0),
+                    rows.len()
+                );
+                for r in rows {
+                    let name = r.get("name").and_then(Value::as_str).unwrap_or("?");
+                    let status = r.get("status").and_then(Value::as_str).unwrap_or("?");
+                    let why = r
+                        .get("reason")
+                        .or_else(|| r.get("error"))
+                        .and_then(Value::as_str)
+                        .map(|w| format!(" — {w}"))
+                        .unwrap_or_default();
+                    out.push_str(&format!("- {name}: {status}{why}\n"));
+                }
+                Ok(tool_ok(out, Some(resp.clone())))
+            } else {
+                Ok(tool_error(
+                    resp.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("broadcast failed")
+                        .to_string(),
                 ))
             }
         }
@@ -1362,6 +1553,9 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                     call["psmpProfile"] = json!(profile);
                 }
             }
+            if let Some(group) = args.get("group").and_then(Value::as_str) {
+                call["group"] = json!(group);
+            }
             let resp = app_call(&call).map_err(|e| (-32000, e))?;
             if resp.get("ok").and_then(Value::as_bool) == Some(true) {
                 let alias = resp.get("alias").and_then(Value::as_str).unwrap_or("");
@@ -1389,7 +1583,7 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
             let mut call = json!({ "op": "update_server", "alias": alias });
             // Present-but-empty is meaningful here ("" credential = prompt), so pass
             // every string the agent sent as is; absent fields stay unchanged.
-            for key in ["label", "host", "username", "credential", "psmpProfile"] {
+            for key in ["label", "host", "username", "credential", "psmpProfile", "group"] {
                 if let Some(v) = args.get(key).and_then(Value::as_str) {
                     call[key] = json!(v);
                 }
@@ -1410,6 +1604,55 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                         .and_then(Value::as_str)
                         .unwrap_or("update_server failed")
                         .to_string(),
+                ))
+            }
+        }
+        "ssh_remove_server" => {
+            let alias = match args.get("alias").and_then(Value::as_str) {
+                Some(a) if !a.trim().is_empty() => a.to_string(),
+                _ => return Ok(tool_error("missing required argument 'alias'")),
+            };
+            let resp = app_call(&json!({ "op": "remove_server", "alias": alias })).map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                Ok(tool_ok(format!("Removed SSH server '{alias}'."), Some(json!({ "alias": alias }))))
+            } else {
+                Ok(tool_error(
+                    resp.get("error").and_then(Value::as_str).unwrap_or("remove_server failed").to_string(),
+                ))
+            }
+        }
+        "run_with_secrets" => {
+            let command: Vec<String> = match args.get("command").and_then(Value::as_array) {
+                Some(a) if !a.is_empty() => a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect(),
+                _ => return Ok(tool_error("missing required argument 'command' (an array: program + arguments)")),
+            };
+            let cwd = match args.get("cwd").and_then(Value::as_str) {
+                Some(c) if !c.trim().is_empty() => c.to_string(),
+                _ => return Ok(tool_error("missing required argument 'cwd'")),
+            };
+            let mut call = json!({ "op": "run_with_secrets", "argv": command, "cwd": cwd });
+            if let Some(env) = args.get("env").filter(|e| e.is_object()) {
+                call["env"] = env.clone();
+            }
+            if let Some(stdin) = args.get("stdin").and_then(Value::as_str) {
+                call["stdin"] = json!(stdin);
+            }
+            if let Some(t) = args.get("timeout").and_then(Value::as_u64) {
+                call["timeoutSecs"] = json!(t);
+            }
+            let resp = app_call(&call).map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                let text = format!(
+                    "exitCode: {}{}\n--- stdout ---\n{}\n--- stderr ---\n{}",
+                    resp.get("exitCode").map(|v| v.to_string()).unwrap_or_default(),
+                    if resp.get("timedOut").and_then(Value::as_bool) == Some(true) { " (timed out)" } else { "" },
+                    resp.get("stdout").and_then(Value::as_str).unwrap_or(""),
+                    resp.get("stderr").and_then(Value::as_str).unwrap_or(""),
+                );
+                Ok(tool_ok(text, Some(resp)))
+            } else {
+                Ok(tool_error(
+                    resp.get("error").and_then(Value::as_str).unwrap_or("run_with_secrets failed").to_string(),
                 ))
             }
         }
@@ -1463,13 +1706,17 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string();
-            let resp = app_call(&json!({
+            let mut call = json!({
                 "op": "add_secret",
                 "name": secret_name,
                 "value": value,
                 "kind": kind,
                 "description": description,
-            }))
+            });
+            if let Some(g) = args.get("group").and_then(Value::as_str) {
+                call["group"] = json!(g);
+            }
+            let resp = app_call(&call)
             .map_err(|e| (-32000, e))?;
             if resp.get("ok").and_then(Value::as_bool) == Some(true) {
                 let secret = resp.get("secret").cloned().unwrap_or_else(|| json!({}));
@@ -1516,12 +1763,13 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                 Some(n) if !n.trim().is_empty() => n.to_string(),
                 _ => return Ok(tool_error("missing required argument 'name'")),
             };
-            let value = match args.get("value").and_then(Value::as_str) {
-                Some(v) if !v.is_empty() => v.to_string(),
-                _ => return Ok(tool_error("missing required argument 'value'")),
-            };
-            let resp = app_call(&json!({ "op": "update_secret", "name": name, "value": value }))
-                .map_err(|e| (-32000, e))?;
+            let mut call = json!({ "op": "update_secret", "name": name });
+            for (arg, field) in [("value", "value"), ("newName", "newName"), ("description", "description"), ("kind", "kind"), ("group", "group")] {
+                if let Some(v) = args.get(arg).and_then(Value::as_str) {
+                    call[field] = json!(v);
+                }
+            }
+            let resp = app_call(&call).map_err(|e| (-32000, e))?;
             if resp.get("ok").and_then(Value::as_bool) == Some(true) {
                 let secret = resp.get("secret").cloned().unwrap_or_else(|| json!({}));
                 let n = secret.get("name").and_then(Value::as_str).unwrap_or("");
@@ -1645,6 +1893,8 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                     "timeoutMin",
                     "bypass",
                     "chrome",
+                    "model",
+                    "effort",
                 ] {
                     if let Some(v) = args.get(k) {
                         fields.insert(k.to_string(), v.clone());

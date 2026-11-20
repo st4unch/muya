@@ -1,0 +1,17 @@
+{
+  "control": "app-{t}.png",
+  "control-inspector-activity": "inspector-activity-{t}.png",
+  "files-tree": "files-tree-{t}.png",
+  "grid": "grid-{t}.png",
+  "branches": "branches-{t}.png",
+  "kanban": "kanban-{t}.png",
+  "queue": "queue-{t}.png",
+  "sessions": "pages-sessions-{t}.png",
+  "sessions-cleanup": "pages-4e-cleanup-{t}.png",
+  "schedules": "pages-schedules-{t}.png",
+  "schedules-editor": "pages-schedule-editor-{t}.png",
+  "settings": "pages-settings-{t}.png",
+  "palette": "pages-palette-{t}.png",
+  "ssh-cyberark": "ssh-cyberark-empty-{t}.png",
+  "inspector-review-diff": "inspector-diff-{t}.png"
+}

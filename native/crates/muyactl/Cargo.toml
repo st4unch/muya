@@ -1,0 +1,11 @@
+[package]
+name = "muyactl"
+description = "Read-only status and diagnostics for muyad and muya-ptyd (PRD §5: no attach/dump in release)"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+muya-peer = { path = "../muya-peer" }
+muya-proto = { path = "../muya-proto" }
+serde_json.workspace = true

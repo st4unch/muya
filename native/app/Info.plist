@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>com.staunch.muya.dev</string>
+  <key>CFBundleName</key><string>MuyaNative</string>
+  <key>CFBundleDisplayName</key><string>Muya Native (dev)</string>
+  <key>CFBundleExecutable</key><string>MuyaNative</string>
+  <key>CFBundleIconFile</key><string>Muya</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>0.0.1</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>CFBundleURLTypes</key><array><dict>
+    <key>CFBundleURLName</key><string>Muya session link</string>
+    <key>CFBundleURLSchemes</key><array><string>muya</string></array>
+  </dict></array>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>NSSupportsAutomaticTermination</key><false/>
+  <key>NSSupportsSuddenTermination</key><false/>
+</dict>
+</plist>

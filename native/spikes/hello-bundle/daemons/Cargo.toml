@@ -1,0 +1,13 @@
+[package]
+name = "hello-daemons"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core-foundation = "0.10"
+libc = "0.2"
+security-framework = "3.7"
+
+[profile.release]
+# Function names stay for crash reports; DWARF would embed build paths.
+strip = "debuginfo"

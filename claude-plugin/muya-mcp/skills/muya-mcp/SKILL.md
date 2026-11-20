@@ -1,6 +1,6 @@
 ---
 name: muya-mcp
-description: How to use the `muya-mcp` MCP server's tools well — SSH (ssh_open/ssh_run/ssh_scp/ssh_session_*/ssh_add_server/ssh_update_server/ssh_list_psmp_profiles), cross-session messaging (list_sessions/read_session/send_to_session), opening/closing/compacting local sessions (open_session/close_session/compact_session), Claude usage limits (usage), secrets (add_secret/get_secret/update_secret/list_secrets), operator-pinned operations (list_operations/run_operation), Kanban tracking (track_plan), and scheduled headless Claude prompts (schedules_list/schedule_create/schedule_update/schedule_set_enabled/schedule_delete/schedule_run_now/schedule_history). Use whenever the muya-mcp server is connected and the task involves SSH, another running Claude session, spinning up a parallel session, a stored credential, or an operator-approved operation — or when unsure which muya-mcp tool fits.
+description: How to use the `muya-mcp` MCP server's tools well — SSH (ssh_open/ssh_run/ssh_scp/ssh_session_*/ssh_add_server/ssh_update_server/ssh_list_psmp_profiles), cross-session messaging (list_sessions/read_session/send_to_session), opening/closing local sessions (open_session/close_session), shell tabs and raw typing (open_terminal/send_terminal/broadcast), secrets (add_secret/get_secret/update_secret/list_secrets), operator-pinned operations (list_operations/run_operation), Kanban tracking (track_plan), and scheduled headless Claude prompts (schedules_list/schedule_create/schedule_update/schedule_set_enabled/schedule_delete/schedule_run_now/schedule_history). Use whenever the muya-mcp server is connected and the task involves SSH, another running Claude session, spinning up a parallel session, a stored credential, or an operator-approved operation — or when unsure which muya-mcp tool fits.
 ---
 
 # muya-mcp — Muya's agent tool surface
@@ -25,7 +25,7 @@ a group** — you need real names/aliases, and guessing is never allowed (see be
 | Do interactive remote work a human should watch (login, 2FA/OTP/RADIUS, a TUI) | `ssh_open` (opens a visible tab) + `ssh_send` for follow-up keystrokes |
 | Register a new SSH server | `ssh_add_server` |
 | Register a server behind CyberArk PSMP | `ssh_list_psmp_profiles` → `ssh_add_server(host=<target address>, username=<target account>, psmpProfile=<profile name>)` — never a `vault@target@host@psmp` string |
-| Fix a server you added (wrong account, direct instead of PSMP…) | `ssh_update_server(alias, …only the fields to change)` — operator-added servers are refused |
+| Change any server (host, port, user, credential, PSMP profile, group) | `ssh_update_server(alias, …only the fields to change)` — operator entries too; `ssh_remove_server(alias)` removes one |
 | Copy a file to/from a server | `ssh_scp` |
 | See what other Claude sessions are running | `list_sessions` |
 | Check what another session is doing, without messaging it | `read_session` |
@@ -35,7 +35,11 @@ a group** — you need real names/aliases, and guessing is never allowed (see be
 | Close a session I opened with `open_session` | `close_session` |
 | Shrink a long-running worker's context without closing it | `compact_session` (idle Claude sessions only) |
 | Check the account's 5-hour / weekly usage limits (what `/usage` shows) | `usage` |
-| Store/read/rotate a credential | `add_secret` / `get_secret` / `update_secret` / `list_secrets` |
+| Start a plain SHELL tab (build, server, log tail) | `open_terminal` |
+| Type a raw command (+ Enter) into one tab, shell or agent | `send_terminal` |
+| Send the same thing to every open tab at once | `broadcast` |
+| Store/rename/regroup/rotate a credential (any secret) | `add_secret` / `update_secret` / `list_secrets`; `get_secret` gives the `{{muya-secret:name}}` placeholder |
+| Use a secret inside a script you wrote | `run_with_secrets` (or `muyactl secret exec --env VAR=name -- cmd` in a session shell) |
 | Run an operator-pinned command (aws/kubectl/git...) that uses a secret I never see | `list_operations` → `run_operation` |
 | Put a plan/PRD on the operator's Kanban board | `track_plan` |
 | Run a Claude prompt on a timer (daily / weekdays / every N min), or check how a scheduled one went | `schedules_list` → `schedule_create` / `schedule_history` |
@@ -142,12 +146,39 @@ server** — read this before running anything:
   prompt — `open_session` auto-accepts it (Muya's workspaces are the operator's own
   trusted directories), so you don't need to do anything about that.
 
+## open_terminal / send_terminal / broadcast (native Muya app only)
+
+- `open_terminal({name?, cwd?, command?})` opens a plain **shell** tab (not Claude) and optionally runs a first
+  command. Returns `{id, name}`; names are unique, default `terminal-N`. Use `open_session` for a Claude session.
+- `send_terminal({target, command, enter?=true})` pastes the text into ONE tab and presses Enter. `target` is a tab
+  name or id (also a Claude session's name or id). It is raw text — not `send_to_session`'s tagged chat message.
+  Ambiguous name → you get candidates back, ask, never guess. `enter:false` types without running.
+- `broadcast({command|text, kind?, deliver?})` does the same to every matching tab and returns one row per tab
+  (`sent` / `skipped` / `failed`). `kind` = `all` (default) | `claude` | `shell`. `deliver:"muya"` sends a chat
+  message to Claude sessions only. Your own session is always skipped.
+- **A tab waiting on a permission prompt is refused / skipped** — Enter there would answer the prompt. Answer one
+  on purpose with `send_to_session(deliver:"keys")`; `include_waiting:true` overrides, think twice.
+- Limits: 16 KiB per call, 64 tabs per broadcast. These tools type into tabs the operator may be using; prefer
+  `open_terminal` for your own work and keep `broadcast` for things that really concern every tab.
+- The Tauri build answers "terminal tools need the native Muya app".
+
 ## Secrets & operations group
 
-- `list_secrets`/`add_secret`/`get_secret`/`update_secret` — secret **values** are only
-  ever returned by `get_secret`, and only once the operator has unlocked the Password
-  Store. Everywhere else (naming a secret for `ssh_add_server`, `run_operation`, etc.)
-  you reference it **by name only**.
+- `list_secrets` / `add_secret` / `update_secret` — you may add, rename, change the value of, regroup
+  (`group`, shown as cards in the Password Store) and re-describe **any** secret, the operator's included.
+  You never see a value: `get_secret` returns the placeholder `{{muya-secret:name}}`, and Muya redacts
+  values from anything that comes back to you.
+- A placeholder is substituted only (a) into a terminal at a password prompt with echo off, for a
+  configured SSH server, (b) into a session of a server that uses that secret (`ssh_send`,
+  `ssh_session_exec`), or (c) into the `env`/`stdin` of `run_with_secrets`. Never into a shell line or a
+  command line: `ssh_run` refuses placeholders.
+- `run_with_secrets(command: [program, args…], cwd, env: {VAR: "{{muya-secret:name}}"}, stdin?, timeout?)`
+  runs a program on this Mac with the secret in its environment only. `command` is an argv array (no shell
+  string; placeholders in it are refused because `ps` shows arguments). Output comes back with every secret
+  value redacted (raw, JSON, base64, hex, URL-encoded); each run is audit-logged by command and secret names.
+  From a session shell use `muyactl secret exec --env VAR=name -- <cmd...>` (same path).
+- Servers: `ssh_add_server` / `ssh_update_server` / `ssh_remove_server` work on any entry with a `group`
+  like the Servers page; any secret may be a server's credential, and credential-to-host changes are audit-logged.
 - Prefer `run_operation` over `get_secret` when you just need to *use* a credential (e.g.
   an operator-pinned `aws`/`kubectl`/`git` command) — it injects the secret without ever
   exposing the value to you. Reach for `get_secret` only when you must place the actual
@@ -174,7 +205,7 @@ background service). `schedules_list` says who fires the timers in `runner`: `he
   `{"kind":"interval","minutes":30}` (≥5), `{"kind":"daily","time":"09:00"}`, or
   `{"kind":"weekly","days":[0,1,2,3,4],"time":"09:00"}` (0 = Monday). Daily/weekly can run several times a
   day: add `"extraTimes":["13:00","19:00"]` (at most 6 times in total) instead of cloning the schedule. Defaults: on,
-  30 min timeout, `bypass: true` (permission prompts skipped), `chrome: true` (Claude in
+  30 min timeout, `bypass: false` (set `bypass: true` to skip permission prompts; either value is yours to choose), `model` / `effort` (e.g. `opus`, `high`; empty = Claude's default), `chrome: true` (Claude in
   Chrome loaded, so a browser task works like in the user's own sessions).
 - **Only create or turn on a schedule when the user asked for it.** With bypass on it runs
   any command, unattended, until turned off. Say what you created (name, timing, folder).

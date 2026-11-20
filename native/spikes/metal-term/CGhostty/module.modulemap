@@ -1,0 +1,6 @@
+module CGhostty [system] {
+  header "shim.h"
+  link "ghostty-vt"
+  link "c++"
+  export *
+}

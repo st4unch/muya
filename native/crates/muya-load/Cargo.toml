@@ -1,0 +1,10 @@
+[package]
+name = "muya-load"
+description = "Load test for the native daemons: ptyd + muyad with N streaming sessions and app-like clients"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+libc.workspace = true
+muya-proto = { path = "../muya-proto" }

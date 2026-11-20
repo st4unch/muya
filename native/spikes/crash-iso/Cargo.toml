@@ -1,0 +1,16 @@
+[package]
+name = "crash-iso"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+libc = "0.2"
+libghostty-vt = "0.2.2"
+# Link the pinned, reproducible build from native/scripts/ghostty-env.sh via pkg-config.
+libghostty-vt-sys = { version = "0.2.2", features = ["pkg-config"] }
+
+[profile.release]
+strip = "debuginfo"
+
+# Not a member of native/Cargo.toml (members = crates/*): its own lockfile and target dir.
+[workspace]

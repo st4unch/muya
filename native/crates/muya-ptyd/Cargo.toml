@@ -1,0 +1,16 @@
+[package]
+name = "muya-ptyd"
+description = "Owns PTYs, a memory-only output ring and a mode tracker per session (PRD §5)"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+libc.workspace = true
+muya-peer = { path = "../muya-peer" }
+muya-proto = { path = "../muya-proto" }
+
+[dev-dependencies]
+libghostty-vt = "0.2.2"
+# Link the pinned, reproducible build from native/scripts/ghostty-env.sh via pkg-config.
+libghostty-vt-sys = { version = "0.2.2", features = ["pkg-config"] }

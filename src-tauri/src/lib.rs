@@ -40,11 +40,11 @@ fn release_agent_session(name: String) {
 
 mod agent_files;
 mod agent_ops;
-mod agent_ssh;
+use muya_core::agent_ssh;
 mod agents;
 mod app_location;
 mod app_prefs;
-mod askpass;
+use muya_core::askpass;
 mod bg_service;
 mod bridge;
 mod bridge_exec;
@@ -58,10 +58,9 @@ mod debuglog;
 mod file_history;
 mod fs;
 mod history;
-mod local_guard;
+use muya_core::local_guard;
 mod login_item;
 mod metrics;
-mod opencode;
 mod pm;
 mod pty;
 mod schedules;
@@ -71,10 +70,8 @@ mod spotlight;
 mod ssh;
 mod statusline;
 mod term_history;
-#[cfg(test)]
-mod testutil;
 mod titlebar;
-mod validate;
+use muya_core::validate;
 mod switchover;
 mod vault;
 mod watcher;
@@ -353,7 +350,7 @@ pub fn run() {
             // MCP proxy in ~/.claude/.mcp.json. Both are idempotent + secret-free.
             {
                 let broker_state = app.state::<broker::BrokerState>();
-                let handle = app.handle().clone();
+                let handle = broker::TauriBrokerHost(app.handle().clone());
                 let owned_elsewhere = match tauri::async_runtime::block_on(
                     broker::enable_broker_listener(&broker_state, handle),
                 ) {

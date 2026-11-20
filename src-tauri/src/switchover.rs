@@ -334,7 +334,7 @@ pub async fn switchover_start(app: AppHandle) -> Result<(), String> {
             state_file: muya_switchover::state_path(&support),
             healthy_marker: muya_switchover::healthy_marker_path(&support),
             trash_fn: Some(Box::new(|p: &Path| {
-                crate::history::to_trash_at(p)
+                muya_core::trash::trash_item(p)
             })),
         };
         let h2 = handle.clone();

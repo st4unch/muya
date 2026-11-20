@@ -2905,32 +2905,18 @@ dependencies = [
 
 [[package]]
 name = "muya"
-version = "4.1.22"
+version = "5.0.0"
 dependencies = [
- "aes-gcm",
- "argon2",
  "chrono",
- "core-foundation",
- "dirs-next",
- "hkdf 0.13.0",
  "libc",
  "log",
+ "muya-core",
  "muya-switchover",
- "notify",
- "objc2",
- "objc2-foundation",
- "objc2-service-management",
  "portable-pty",
- "rand 0.9.4",
- "rcgen",
  "reqwest 0.12.28",
- "rustls",
- "scraper",
- "security-framework",
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "spake2-conflux",
  "sysinfo",
  "tauri",
  "tauri-build",
@@ -2942,8 +2928,42 @@ dependencies = [
  "tauri-plugin-updater",
  "tempfile",
  "tokio",
- "tokio-rustls",
  "wiremock",
+ "zeroize",
+]
+
+[[package]]
+name = "muya-core"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "argon2",
+ "chrono",
+ "core-foundation",
+ "dirs-next",
+ "hkdf 0.13.0",
+ "libc",
+ "log",
+ "notify",
+ "objc2",
+ "objc2-foundation",
+ "objc2-service-management",
+ "portable-pty",
+ "rand 0.9.4",
+ "rcgen",
+ "regex",
+ "reqwest 0.12.28",
+ "rustls",
+ "scraper",
+ "security-framework",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "spake2-conflux",
+ "sysinfo",
+ "tempfile",
+ "tokio",
+ "tokio-rustls",
  "zeroize",
 ]
 

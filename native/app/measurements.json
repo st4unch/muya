@@ -1,0 +1,1047 @@
+{
+  "sessions": 3,
+  "grid": "105x43",
+  "idle": {
+    "seconds": 20.9,
+    "cpu_pct": {
+      "app": 0.0,
+      "muyad": 0.0,
+      "ptyd": 0.0
+    },
+    "footprint_mb_peak": {
+      "app": 53.0,
+      "muyad": 5.3,
+      "ptyd": 2.3
+    },
+    "gpu_util_pct_system": {
+      "samples": [
+        37,
+        38,
+        37,
+        37,
+        36,
+        37,
+        37,
+        37,
+        36,
+        37,
+        36,
+        36,
+        37,
+        37,
+        37,
+        37,
+        37,
+        37,
+        37
+      ]
+    },
+    "renderer": {
+      "atlas_glyphs": 49,
+      "bytes_in_selected": 205,
+      "cpu_ms_max": 0,
+      "cpu_ms_p50": 0,
+      "cpu_ms_p95": 0,
+      "fps": 0,
+      "frames": 0,
+      "gpu_ms_max": 0,
+      "gpu_ms_p50": 0,
+      "gpu_ms_p95": 0,
+      "grid": "105x43",
+      "rows_rebuilt_per_frame": 0,
+      "seconds": 20.92942887498066,
+      "sessions": 3
+    }
+  },
+  "rss_mb_idle": {
+    "app": 87.8,
+    "muyad": 12.6,
+    "ptyd": 7.2
+  },
+  "stream_50mb": {
+    "seconds": 16.7,
+    "cpu_pct": {
+      "app": 129.3,
+      "muyad": 136.2,
+      "ptyd": 86.8
+    },
+    "footprint_mb_peak": {
+      "app": 159.0,
+      "muyad": 12.0,
+      "ptyd": 3.9
+    },
+    "gpu_util_pct_system": {
+      "samples": [
+        40,
+        39,
+        40,
+        39,
+        40,
+        39,
+        39,
+        39,
+        39,
+        40,
+        39,
+        39,
+        39,
+        37,
+        38
+      ]
+    },
+    "renderer": {
+      "atlas_glyphs": 61,
+      "bytes_in_selected": 75000341,
+      "cpu_ms_max": 57.19483332359232,
+      "cpu_ms_p50": 0.33729165443219244,
+      "cpu_ms_p95": 2.0220416481606662,
+      "fps": 86.76351066430048,
+      "frames": 1447,
+      "gpu_ms_max": 4.131291672820225,
+      "gpu_ms_p50": 0.2076250093523413,
+      "gpu_ms_p95": 2.067624998744577,
+      "grid": "105x43",
+      "rows_rebuilt_per_frame": 42.88251554941258,
+      "seconds": 16.677517874981277,
+      "sessions": 3
+    },
+    "bytes_through_app": 75000136,
+    "seconds_to_last_byte": 15.6,
+    "throughput_mb_s": 4.8
+  },
+  "after_stream_idle": {
+    "seconds": 11.0,
+    "cpu_pct": {
+      "app": 0.0,
+      "muyad": 0.0,
+      "ptyd": 0.0
+    },
+    "footprint_mb_peak": {
+      "app": 59.0,
+      "muyad": 11.0,
+      "ptyd": 3.9
+    },
+    "gpu_util_pct_system": {
+      "samples": [
+        37,
+        37,
+        37,
+        36,
+        37,
+        36,
+        37,
+        37,
+        36,
+        36
+      ]
+    }
+  },
+  "rss_mb_after": {
+    "app": 85.6,
+    "muyad": 18.7,
+    "ptyd": 8.7
+  },
+  "ac7": {
+    "setup": {
+      "sessions": 25,
+      "visible_tiles": 6,
+      "visible_rate_bytes_s": 1000000,
+      "hidden_rate_bytes_s": 65536,
+      "window_seconds": 30.9
+    },
+    "load_delivered_mb_s": {
+      "visible_sessions_mean": 1.01,
+      "hidden_sessions_mean": 0.01
+    },
+    "fps_per_tile": 91.3,
+    "tiles_drawing": 6,
+    "frame_ms": {
+      "p50": 0.1,
+      "p95": 0.22,
+      "max": 2.4
+    },
+    "cpu_ms": {
+      "p50": 0.05,
+      "p95": 0.17
+    },
+    "gpu_ms": {
+      "p50": 0.05,
+      "p95": 0.05
+    },
+    "frame_interval_ms": {
+      "p50": 10.0,
+      "p95": 20.0
+    },
+    "echo_ms": {
+      "n": 40,
+      "p50": 5.9,
+      "p95": 9.0,
+      "max": 9.9
+    },
+    "switch_single_view_ms": {
+      "n": 50,
+      "p50": 13.3,
+      "p95": 18.0,
+      "max": 18.2
+    },
+    "focus_change_in_grid_ms": {
+      "n": 14,
+      "p50": 13.6,
+      "p95": 28.3
+    },
+    "cpu_pct": {
+      "app": 30.4,
+      "muyad": 17.2,
+      "ptyd": 9.6
+    },
+    "app_rss_mb": {
+      "peak": 158.9,
+      "after": 181.4
+    },
+    "footprint_mb_peak": {
+      "app": 213.0,
+      "muyad": 141.0,
+      "ptyd": 29.0
+    },
+    "gpu_util_pct_system": [
+      19,
+      18,
+      19,
+      19,
+      20,
+      20,
+      19,
+      20,
+      20,
+      21,
+      21,
+      20,
+      19,
+      19,
+      18,
+      0,
+      20,
+      21,
+      20,
+      21,
+      20,
+      19,
+      21,
+      21,
+      18,
+      21,
+      21,
+      24
+    ],
+    "targets": {
+      "fps >= 55": {
+        "value": 91.3,
+        "pass": true
+      },
+      "frame p95 <= 25 ms": {
+        "value": 0.22,
+        "pass": true
+      },
+      "echo p50 <= 30 ms": {
+        "value": 5.9,
+        "pass": true
+      },
+      "switch p50 <= 50 ms": {
+        "value": 13.3,
+        "pass": true
+      },
+      "app RSS < 1 GB": {
+        "value": 158.9,
+        "pass": true
+      }
+    }
+  },
+  "ac14": {
+    "create file": {
+      "n": 10,
+      "missed": 0,
+      "ms_min": 175.7,
+      "ms_p50": 219.2,
+      "ms_max": 238.2
+    },
+    "rename": {
+      "n": 10,
+      "missed": 0,
+      "ms_min": 178.2,
+      "ms_p50": 226.4,
+      "ms_max": 242.5
+    },
+    "delete file": {
+      "n": 10,
+      "missed": 0,
+      "ms_min": 172.6,
+      "ms_p50": 213.5,
+      "ms_max": 364.7
+    },
+    "mkdir": {
+      "n": 10,
+      "missed": 0,
+      "ms_min": 170.7,
+      "ms_p50": 194.1,
+      "ms_max": 202.4
+    },
+    "create file in expanded subfolder": {
+      "n": 10,
+      "missed": 0,
+      "ms_min": 170.5,
+      "ms_p50": 183.1,
+      "ms_max": 194.6
+    },
+    "burst of 200 files": {
+      "ms": 254.7
+    },
+    "tree_stats": "reloads=122 events=540 hidden=false",
+    "target": {
+      "every change visible within 1000 ms, none missed": {
+        "worst_ms": 364.7,
+        "missed": 0,
+        "pass": true
+      }
+    }
+  },
+  "ac15": {
+    "vmmap_webkit_regions_app": 29,
+    "vmmap_webkit_regions_empty_appkit_window": 29,
+    "otool_L_webkit_lines": 0,
+    "note": "WebKit.framework regions come from AppKit itself (an empty NSWindow program shows the same count); literal `grep -c WebKit == 0` cannot hold for any regular AppKit app on this macOS.",
+    "literal_vmmap_zero": {
+      "pass": false
+    },
+    "amended_no_embedded_browser": {
+      "criteria": "not linked (otool), no WebKit/WebContent helper process, vmmap count <= empty AppKit window",
+      "pass": true
+    }
+  },
+  "ac24": {
+    "setup": {
+      "total_mb_s": 7.25,
+      "sessions": 25,
+      "visible_tiles": 6,
+      "visible_rate_bytes_s": 1000000,
+      "hidden_rate_bytes_s": 65536
+    },
+    "A_visible_grid": {
+      "seconds": 20.1,
+      "cpu_pct": {
+        "app": 24.6,
+        "muyad": 28.0,
+        "ptyd": 12.5
+      },
+      "app_rss_mb_max": 130.1,
+      "visibility": "visible=true suspended=false occlusion=false minimized=false",
+      "app_user_pct": 14.9,
+      "app_system_pct": 9.7,
+      "load_average_1m": 6.94091796875
+    },
+    "B_minimized": {
+      "seconds": 20.1,
+      "cpu_pct": {
+        "app": 0.0,
+        "muyad": 25.8,
+        "ptyd": 12.6
+      },
+      "app_rss_mb_max": 129.5,
+      "visibility": "visible=false suspended=true occlusion=false minimized=true",
+      "app_user_pct": 0.0,
+      "app_system_pct": 0.0,
+      "load_average_1m": 6.87109375,
+      "suspended_flag_set": true
+    },
+    "C_restored": {
+      "visibility": "visible=true suspended=false occlusion=false minimized=false"
+    },
+    "D_sleep_wake": {
+      "wake_reply": "ok wakes=1 sessions=25->25 resync_ms=0",
+      "visibility_while_asleep": "visible=false suspended=true occlusion=false minimized=true",
+      "sessions_before": 25,
+      "sessions_after": 25,
+      "sessions_lost": 0,
+      "statuses_equal": true,
+      "all_sessions_streaming_again_ms": 54.5,
+      "visibility_after": "visible=true suspended=false occlusion=false minimized=false"
+    },
+    "targets": {
+      "app CPU <= 5 % while minimized (25 streaming sessions)": {
+        "value": 0.0,
+        "pass": true
+      },
+      "0 sessions lost across sleep/wake": {
+        "value": 0,
+        "pass": true
+      },
+      "statuses correct after wake; visible tiles streaming within 5 s of restore": {
+        "value_ms": 54.5,
+        "pass": true
+      },
+      "drawing suspended while minimized": {
+        "value": "visible=false suspended=true occlusion=false minimized=true",
+        "pass": true
+      }
+    },
+    "note": "Re-measured after Detach (protocol minor 1). Screen was locked, so macOS sent no occlusion notification: the minimize phase drives the same handler through the debug `occlude` hook (real miniaturize also issued)."
+  },
+  "ac24_light_stream": {
+    "setup": {
+      "total_mb_s": 1.64,
+      "sessions": 25,
+      "visible_tiles": 6,
+      "visible_rate_bytes_s": 65536,
+      "hidden_rate_bytes_s": 65536
+    },
+    "A_visible_grid": {
+      "seconds": 20.2,
+      "cpu_pct": {
+        "app": 16.4,
+        "muyad": 11.3,
+        "ptyd": 5.4
+      },
+      "app_rss_mb_max": 152.1,
+      "visibility": "visible=true suspended=false occlusion=true minimized=false",
+      "app_user_pct": 9.3,
+      "app_system_pct": 7.2,
+      "load_average_1m": 13.345703125
+    },
+    "B_minimized": {
+      "seconds": 20.2,
+      "cpu_pct": {
+        "app": 4.7,
+        "muyad": 11.1,
+        "ptyd": 5.5
+      },
+      "app_rss_mb_max": 152.2,
+      "visibility": "visible=false suspended=true occlusion=false minimized=true",
+      "app_user_pct": 2.8,
+      "app_system_pct": 2.0,
+      "load_average_1m": 13.11572265625,
+      "suspended_flag_set": true
+    },
+    "C_restored": {
+      "visibility": "visible=true suspended=false occlusion=true minimized=false"
+    },
+    "D_sleep_wake": {
+      "wake_reply": "ok wakes=4 sessions=25->25 resync_ms=0",
+      "visibility_while_asleep": "visible=false suspended=true occlusion=false minimized=true",
+      "sessions_before": 25,
+      "sessions_after": 25,
+      "sessions_lost": 0,
+      "statuses_equal": true,
+      "all_sessions_streaming_again_ms": 57.6,
+      "visibility_after": "visible=false suspended=true occlusion=false minimized=true"
+    },
+    "targets": {
+      "app CPU <= 5 % while minimized (25 streaming sessions)": {
+        "value": 4.7,
+        "pass": true
+      },
+      "0 sessions lost across sleep/wake": {
+        "value": 0,
+        "pass": true
+      },
+      "statuses correct and output flowing within 5 s of wake": {
+        "value_ms": 57.6,
+        "pass": true
+      },
+      "drawing suspended while minimized": {
+        "value": "visible=false suspended=true occlusion=false minimized=true",
+        "pass": true
+      }
+    }
+  },
+  "ac8": {
+    "setup": {
+      "sessions": 100,
+      "visible_tiles": 1,
+      "visible_rate_bytes_s": 65536,
+      "hidden_rate_bytes_s": 65536,
+      "window_seconds": 30.2
+    },
+    "load_delivered_mb_s": {
+      "visible_sessions_mean": 0.07,
+      "hidden_sessions_mean": 0.002
+    },
+    "fps_per_tile": 100.0,
+    "tiles_drawing": 1,
+    "frame_ms": {
+      "p50": 0.4,
+      "p95": 0.56,
+      "max": 3.5
+    },
+    "cpu_ms": {
+      "p50": 0.27,
+      "p95": 0.4
+    },
+    "gpu_ms": {
+      "p50": 0.13,
+      "p95": 0.14
+    },
+    "frame_interval_ms": {
+      "p50": 10.0,
+      "p95": 10.2
+    },
+    "echo_ms": {
+      "n": 40,
+      "p50": 9.8,
+      "p95": 12.2,
+      "max": 16.9
+    },
+    "switch_single_view_ms": {
+      "n": 50,
+      "p50": 11.3,
+      "p95": 13.6,
+      "max": 15.5
+    },
+    "focus_change_in_grid_ms": {
+      "n": 0,
+      "p50": NaN,
+      "p95": NaN
+    },
+    "cpu_pct": {
+      "app": 12.3,
+      "muyad": 28.8,
+      "ptyd": 19.5
+    },
+    "app_rss_mb": {
+      "peak": 208.3,
+      "after": 270.7
+    },
+    "footprint_mb_peak": {
+      "app": 219.0,
+      "muyad": 520.0,
+      "ptyd": 109.0
+    },
+    "gpu_util_pct_system": [
+      21,
+      23,
+      21,
+      0,
+      0,
+      0,
+      0,
+      0,
+      14,
+      0,
+      0,
+      0,
+      0,
+      0,
+      14,
+      0,
+      18,
+      22,
+      22,
+      0,
+      0,
+      22,
+      21,
+      22,
+      21,
+      17,
+      21
+    ],
+    "targets": {
+      "fps >= 55": {
+        "value": 100.0,
+        "pass": true
+      },
+      "frame p95 <= 25 ms": {
+        "value": 0.56,
+        "pass": true
+      },
+      "echo p50 <= 30 ms": {
+        "value": 9.8,
+        "pass": true
+      },
+      "switch p50 <= 50 ms": {
+        "value": 11.3,
+        "pass": true
+      },
+      "app RSS < 1 GB": {
+        "value": 208.3,
+        "pass": true
+      }
+    }
+  },
+  "ac8_daemon": {
+    "command": "muya-load --sessions 100 --visible 1 --rate 65536 --fast 65536 --seconds 30 (debug build)",
+    "ptyd": {
+      "cpu_pct": 22,
+      "rss_mb_peak": 114
+    },
+    "muyad": {
+      "cpu_pct": 89,
+      "rss_mb_peak": 563
+    },
+    "echo_ms_p50": 0.48,
+    "tab_switch_ms_p50": 3.1,
+    "targets": {
+      "muyad RSS <= 1.5 GB": {
+        "value": 563,
+        "pass": true
+      },
+      "muyad CPU <= 150 %": {
+        "value": 89,
+        "pass": true
+      },
+      "ptyd RSS < 200 MB": {
+        "value": 114,
+        "pass": true
+      }
+    }
+  },
+  "faz4a": {
+    "transcripts": 500,
+    "transcript_mb": 94.6,
+    "turns_per_transcript": 60,
+    "baseline_idle_no_page": {
+      "app_cpu_pct": 0.0,
+      "muyad_cpu_pct": 0.0,
+      "app_rss_mb": 95.8,
+      "muyad_rss_mb": 11.6,
+      "seconds": 10
+    },
+    "list_load_seconds": 1.351,
+    "sessions_page_idle": {
+      "app_cpu_pct": 0.0,
+      "muyad_cpu_pct": 0.0,
+      "app_rss_mb": 105.5,
+      "muyad_rss_mb": 15.0,
+      "seconds": 10
+    },
+    "search_scan_seconds": 0.144,
+    "search_scan_cpu_seconds": {
+      "app": 0.02,
+      "muyad": 0.13
+    },
+    "search_scan_rss_mb_after": {
+      "app": 106.1,
+      "muyad": 15.5
+    },
+    "search_common_word_seconds": 0.441,
+    "search_common_word_hits": 200,
+    "search_common_word_cpu_seconds": {
+      "app": 0.03,
+      "muyad": 0.42
+    },
+    "cancel_ui_ms": 0.3,
+    "muyad_cpu_pct_2s_after_cancel": 0.0,
+    "sessions_page_idle_after_search": {
+      "app_cpu_pct": 0.1,
+      "muyad_cpu_pct": 0.0,
+      "app_rss_mb": 108.7,
+      "muyad_rss_mb": 15.8,
+      "seconds": 10
+    },
+    "schedules_page_idle": {
+      "app_cpu_pct": 0.1,
+      "muyad_cpu_pct": 0.0,
+      "app_rss_mb": 109.0,
+      "muyad_rss_mb": 15.8,
+      "seconds": 10
+    },
+    "back_to_terminals_idle": {
+      "app_cpu_pct": 0.0,
+      "muyad_cpu_pct": 0.1,
+      "app_rss_mb": 93.9,
+      "muyad_rss_mb": 11.3,
+      "seconds": 10
+    }
+  },
+  "ac9": {
+    "sessions": 25,
+    "runs": 5,
+    "shown_ms": {
+      "p50": 315,
+      "max": 322,
+      "all": [
+        322,
+        315,
+        310,
+        311,
+        315
+      ]
+    },
+    "first_screen_ms": {
+      "p50": 315,
+      "max": 322,
+      "all": [
+        322,
+        316,
+        311,
+        312,
+        315
+      ]
+    },
+    "screen_hash_mismatches": 0,
+    "pids_lost": 0,
+    "target_ms": 500,
+    "pass": true
+  },
+  "ac10": {
+    "turkish": {
+      "typed": 200,
+      "received": 200,
+      "dropped": 0,
+      "duplicated_or_wrong": 0,
+      "exact": true
+    },
+    "japanese": {
+      "compositions": 40,
+      "preedit_shown": 40,
+      "preedit_left_after_commit": 0,
+      "committed": 200,
+      "received": 200,
+      "exact": true
+    },
+    "ime_anchor": [
+      {
+        "name": "c1",
+        "cursor_cell": [
+          29,
+          11
+        ],
+        "want_cell": [
+          29,
+          11
+        ],
+        "expected_px": [
+          585.0,
+          442.0,
+          8.0,
+          28.0
+        ],
+        "drawn_bbox_px": [
+          585,
+          442,
+          593,
+          470
+        ],
+        "cell_ok": true,
+        "pixel_ok": true
+      },
+      {
+        "name": "c2",
+        "cursor_cell": [
+          59,
+          4
+        ],
+        "want_cell": [
+          59,
+          4
+        ],
+        "expected_px": [
+          825.0,
+          246.0,
+          8.0,
+          28.0
+        ],
+        "drawn_bbox_px": [
+          825,
+          246,
+          833,
+          274
+        ],
+        "cell_ok": true,
+        "pixel_ok": true
+      },
+      {
+        "name": "c3",
+        "cursor_cell": [
+          39,
+          7
+        ],
+        "want_cell": [
+          39,
+          7
+        ],
+        "expected_px": [
+          821.0,
+          435.0,
+          12.0,
+          43.0
+        ],
+        "drawn_bbox_px": [
+          821,
+          435,
+          833,
+          478
+        ],
+        "cell_ok": true,
+        "pixel_ok": true
+      }
+    ],
+    "accessibility_read": {
+      "source": "external",
+      "screen_locked": 0
+    },
+    "needs_operator": "real press-and-hold on a physical keyboard; real input-method candidate window",
+    "pass": true
+  },
+  "ac26": {
+    "surfaces_audited": 35,
+    "interactive_controls": 469,
+    "unlabelled_controls": 0,
+    "controls_not_keyboard_focusable": 0,
+    "keyboard_checks": 20,
+    "keyboard_failed": [],
+    "audit_source": "in-app NSAccessibility walk",
+    "external_axuielement": {
+      "usable": false,
+      "screen_locked": true,
+      "exit": 5,
+      "first_line": "TOO-FEW: only 0 interactive elements were visible; the app did not answer the Accessibility API"
+    },
+    "surfaces": [
+      {
+        "surface": "Terminals (sidebar, terminal, file tree)",
+        "interactive": 11,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 12,
+        "not_focusable": []
+      },
+      {
+        "surface": "Terminals, grid view",
+        "interactive": 10,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 8,
+        "not_focusable": []
+      },
+      {
+        "surface": "File image viewer",
+        "interactive": 12,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 16,
+        "not_focusable": []
+      },
+      {
+        "surface": "File PDF viewer",
+        "interactive": 12,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 16,
+        "not_focusable": []
+      },
+      {
+        "surface": "File text viewer",
+        "interactive": 13,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 16,
+        "not_focusable": []
+      },
+      {
+        "surface": "File source viewer",
+        "interactive": 13,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 16,
+        "not_focusable": []
+      },
+      {
+        "surface": "File binary / hex viewer",
+        "interactive": 14,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 17,
+        "not_focusable": []
+      },
+      {
+        "surface": "Sessions",
+        "interactive": 14,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 35,
+        "not_focusable": []
+      },
+      {
+        "surface": "Sessions, search results",
+        "interactive": 14,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 23,
+        "not_focusable": []
+      },
+      {
+        "surface": "Sessions, Clean up dialog",
+        "interactive": 21,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 10,
+        "not_focusable": []
+      },
+      {
+        "surface": "Sessions, transcript drawer",
+        "interactive": 16,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 24,
+        "not_focusable": []
+      },
+      {
+        "surface": "Schedules",
+        "interactive": 17,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 17,
+        "not_focusable": []
+      },
+      {
+        "surface": "Schedules, new-schedule editor",
+        "interactive": 27,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 13,
+        "not_focusable": []
+      },
+      {
+        "surface": "Scheduled Prompt sheet",
+        "interactive": 24,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 7,
+        "not_focusable": []
+      },
+      {
+        "surface": "Schedules, run history",
+        "interactive": 20,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 17,
+        "not_focusable": []
+      },
+      {
+        "surface": "Settings",
+        "interactive": 19,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 15,
+        "not_focusable": []
+      },
+      {
+        "surface": "Settings, licences sheet",
+        "interactive": 21,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 1,
+        "not_focusable": []
+      },
+      {
+        "surface": "Command palette",
+        "interactive": 13,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 14,
+        "not_focusable": []
+      },
+      {
+        "surface": "Command palette, results",
+        "interactive": 13,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 14,
+        "not_focusable": []
+      },
+      {
+        "surface": "Inspector, changes",
+        "interactive": 17,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 14,
+        "not_focusable": []
+      },
+      {
+        "surface": "Inspector, files",
+        "interactive": 16,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 13,
+        "not_focusable": []
+      },
+      {
+        "surface": "Inspector, activity",
+        "interactive": 16,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 13,
+        "not_focusable": []
+      },
+      {
+        "surface": "Queue page, queue",
+        "interactive": 11,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 14,
+        "not_focusable": []
+      },
+      {
+        "surface": "Queue page, branches",
+        "interactive": 13,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 12,
+        "not_focusable": []
+      },
+      {
+        "surface": "Queue page, kanban",
+        "interactive": 19,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 11,
+        "not_focusable": []
+      },
+      {
+        "surface": "SSH & Passwords (app, daemon without the SSH calls)",
+        "interactive": 18,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 14,
+        "not_focusable": []
+      },
+      {
+        "surface": "SSH section Servers (ssh-shots, fake daemon)",
+        "interactive": 7,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 0,
+        "not_focusable": []
+      },
+      {
+        "surface": "SSH section PSMP profiles (ssh-shots, fake daemon)",
+        "interactive": 5,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 0,
+        "not_focusable": []
+      },
+      {
+        "surface": "SSH section CyberArk (ssh-shots, fake daemon)",
+        "interactive": 4,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 0,
+        "not_focusable": []
+      },
+      {
+        "surface": "SSH section Password Store (ssh-shots, fake daemon)",
+        "interactive": 5,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 0,
+        "not_focusable": []
+      },
+      {
+        "surface": "server form (ssh-shots, fake daemon)",
+        "interactive": 11,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 0,
+        "not_focusable": []
+      },
+      {
+        "surface": "PSMP profile form (ssh-shots, fake daemon)",
+        "interactive": 8,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 0,
+        "not_focusable": []
+      },
+      {
+        "surface": "secret form (ssh-shots, fake daemon)",
+        "interactive": 6,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 0,
+        "not_focusable": []
+      },
+      {
+        "surface": "locked Password Store (ssh-shots, fake daemon)",
+        "interactive": 5,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 0,
+        "not_focusable": []
+      },
+      {
+        "surface": "not-available state (ssh-shots, fake daemon)",
+        "interactive": 4,
+        "unlabelled": 0,
+        "controls_checked_for_focus": 0,
+        "not_focusable": []
+      }
+    ],
+    "pass": true
+  }
+}

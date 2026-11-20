@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key><string>com.staunch.muya.ptyd</string>
+	<key>CFBundleName</key><string>Muya</string>
+	<key>CFBundleDisplayName</key><string>Muya</string>
+	<key>CFBundleExecutable</key><string>muya-ptyd</string>
+	<key>CFBundleVersion</key><string>1</string>
+	<key>CFBundleShortVersionString</key><string>1</string>
+	<key>NSDesktopFolderUsageDescription</key><string>Muya lets the terminals and Claude sessions you open work in your Desktop folder.</string>
+	<key>NSDocumentsFolderUsageDescription</key><string>Muya lets the terminals and Claude sessions you open work in your Documents folder.</string>
+	<key>NSDownloadsFolderUsageDescription</key><string>Muya lets the terminals and Claude sessions you open work in your Downloads folder.</string>
+	<key>NSRemovableVolumesUsageDescription</key><string>Muya lets the terminals and Claude sessions you open work on removable volumes.</string>
+	<key>NSNetworkVolumesUsageDescription</key><string>Muya lets the terminals and Claude sessions you open work on network volumes.</string>
+</dict>
+</plist>

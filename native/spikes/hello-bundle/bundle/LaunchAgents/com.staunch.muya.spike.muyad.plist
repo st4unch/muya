@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>com.staunch.muya.spike</string>
+	</array>
+	<key>BundleProgram</key>
+	<string>Contents/MacOS/muyad</string>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>com.staunch.muya.spike.muyad</string>
+	<key>ProcessType</key>
+	<string>Interactive</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>1</integer>
+</dict>
+</plist>

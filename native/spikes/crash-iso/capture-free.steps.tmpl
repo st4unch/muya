@@ -1,0 +1,24 @@
+# Zero-cost Claude screens (no prompt is sent): trust dialog, idle, permission modes via
+# Shift+Tab, at width {W}, with the claude binary given as {CLAUDE} (never resolved from PATH).
+size {W}x40
+run mkdir -p {DIR}/w{W} && cd {DIR}/w{W} && exec {CLAUDE}
+wait-for trust this folder
+snap trust-dialog-w{W}
+# Claude ignores Enter for a few seconds after drawing the dialog; `choose` presses again until
+# the dialog is gone.
+choose trust this folder
+wait 6000
+snap idle-w{W}
+key shift-tab
+wait 1500
+snap mode-next1-w{W}
+key shift-tab
+wait 1500
+snap mode-next2-w{W}
+key shift-tab
+wait 1500
+snap mode-next3-w{W}
+key ctrl-c
+wait 300
+key ctrl-c
+wait 500

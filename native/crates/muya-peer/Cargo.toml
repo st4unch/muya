@@ -1,0 +1,11 @@
+[package]
+name = "muya-peer"
+description = "Per-socket peer gate: code-signing identifier of our Team ID + PTY session check (PRD §5, D10)"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+core-foundation = "0.10"
+libc.workspace = true
+security-framework = "3.7"

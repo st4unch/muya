@@ -1,6 +1,6 @@
 [package]
 name = "muya"
-version = "4.1.22"
+version = "5.0.0"
 description = "Muya — control plane for parallel Claude Code agents"
 authors = ["staunch"]
 edition = "2021"
@@ -38,7 +38,10 @@ e2e = ["muya-switchover/e2e"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+# Tauri-free core shared with the native daemons (docs/prd-native-rewrite.md, strangler).
+muya-core = { path = "../native/crates/muya-core" }
 muya-switchover = { path = "../crates/muya-switchover" }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 # protocol-asset: serves a runtime-allowlisted local file to the webview as
 # asset://<path> (via convertFileSrc) — needed to render images/PDFs without
 # reading their bytes through the JS/IPC boundary as text.
@@ -49,26 +52,7 @@ serde_json = { version = "1", features = ["preserve_order"] }
 portable-pty = "0.9.0"
 tauri-plugin-dialog = "2.7.1"
 sysinfo = "0.38.4"
-notify = "8.2.0"
-reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
-scraper = "0.19"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "process", "io-util", "time", "sync", "net", "macros"] }
-rustls = "0.23"
-tokio-rustls = "0.26"
-dirs-next = "2"
-# Faz 2 — remote mTLS + CPace pairing
-rcgen = { version = "0.14.8", features = ["pem"] }
-# Identity keypair generation (Ed25519 via rcgen/ring)
-# PAKE: spake2-conflux 0.6.0 (RustCrypto lineage, RFC 9382 SPAKE2, actively maintained).
-# ADR R7 note: the `cpace` crate (0.1.0) exists but is unmaintained (last published ~2021,
-# very low downloads). SPAKE2 is the sister CFRG balanced PAKE (RFC 9382); the RustCrypto
-# implementation is audited and widely deployed. We use SPAKE2 and document the deviation
-# from the ADR's CPace preference — the security properties (balanced PAKE, active-MITM-
-# resistant with short PIN, offline-dictionary-proof) are identical.
-spake2-conflux = { version = "0.6.0", features = ["std"] }
-sha2 = "0.11.0"
-hkdf = "0.13.0"
-rand = "0.9"
 tauri-plugin-updater = "2.10.1"
 tauri-plugin-process = "2.3.1"
 # navigator.clipboard.writeText() is unreliable in Tauri's WKWebView (NotAllowedError —
@@ -83,32 +67,16 @@ log = "0.4"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 # Faz 3: sandbox TempDir for task execution cwd isolation
 tempfile = "3.27.0"
-# SSH/CyberArk credential store (PRD ssh-cyberark, Faz 0):
-# AES-256-GCM + Argon2id, in-memory secrets zeroized. No secret ever on disk in plaintext.
-aes-gcm = "0.10"
-argon2 = "0.5"
 zeroize = { version = "1", features = ["zeroize_derive", "serde"] }
 # SSH agent broker: getpeereid(2) peer-uid check on the owner-only broker socket.
 libc = "0.2"
-# Keychain + Touch-ID: OSX_10_15 for the modern "data protection keychain" (SecItem
-# + kSecAttrAccessControl) — the legacy file-based keychain APIs don't support the
-# biometry-gated access-control item this feature needs.
-security-framework = { version = "3.7.0", features = ["OSX_10_15"] }
-# App Translocation: resolve the ORIGINAL bundle behind a translocated launch
-# (SecTranslocateCreateOriginalPathForURL takes/returns CFURLs). Already in the tree
-# via security-framework — no new crate is downloaded.
-core-foundation = "0.10"
-objc2-service-management = "0.3.2"
-objc2 = "0.6"
-# NSString for SMAppService.agent(plistName:); already in the tree via
-# objc2-service-management. NSFileManager/NSURL/NSError: "Move to Trash" for sessions.
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString", "NSFileManager", "NSURL", "NSError"] }
 
 [dev-dependencies]
 # MockRuntime for the window-close test (lib.rs window_close_tests).
 tauri = { version = "2", features = ["test", "protocol-asset", "tray-icon", "image-png"] }
 tempfile = "3.27.0"
 wiremock = "0.6"
+sha2 = "0.11.0"
 
 
 # Smaller, faster release binary. No `panic = "abort"`: a panic on a side thread

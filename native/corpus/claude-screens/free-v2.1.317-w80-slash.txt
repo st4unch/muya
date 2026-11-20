@@ -1,0 +1,40 @@
+
+ ▐▛███▛█   Claude Code v2.1.317
+▝▜██████▀  Opus 5.5 · API Usage Billing
+ ▝▝   ▝▝   /private/tmp/muya-corpus/j1/project
+
+▎ Auto mode is now Claude Code's default permission mode.
+▎ Auto mode lets Claude handle permission prompts automatically. Claude checks
+▎ each tool call for risky actions and prompt injection before executing, runs
+▎ the ones it assesses as lower-risk, and blocks the rest.
+▎ https://code.claude.com/docs/en/permission-modes
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ❯ /add-dir                    Add a new working directory
+    /auto-mode-setup            Teach auto mode about your environment, plus
+                                optional rule tweaks
+    /autocompact                Set how full the context gets before
+                                auto-summarizing
+────────────────────────────────────────────────────────────────────────────────
+❯ /
+────────────────────────────────────────────────────────────────────────────────
+  ⏸ plan mode on (shift+tab to cycle)

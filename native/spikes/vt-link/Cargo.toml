@@ -1,0 +1,10 @@
+[package]
+name = "vt-link"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+libghostty-vt = "0.2.2"
+# Link the pinned, reproducible build from native/scripts/ghostty-env.sh via pkg-config
+# instead of letting the build script clone and build Ghostty.
+libghostty-vt-sys = { version = "0.2.2", features = ["pkg-config"] }

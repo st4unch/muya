@@ -1,0 +1,16 @@
+Dev instance, Claude Code 2.1.322 session; clipboard held a 200x200 red PNG; Cmd-V (TerminalView.paste) then a question.
+
+
+
+❯ [Image #1] what single colour fills this image? answer with one word only
+  ⎿  [Image #1]
+
+⏺ Red
+
+✻ Cogitated for 1s · done 21:36
+
+─────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+─────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Sonnet 5.5 | ░░░░░░░░░░ 7%
+  ⏵⏵ auto mode on (shift+tab to cycle)

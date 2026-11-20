@@ -4,6 +4,24 @@ All notable changes to Muya are documented here, newest first.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.0] - 2026-11-19
+
+### Changed
+- **Muya is now the native app.** The window, the terminals, the editor and the background service that keeps your sessions alive are all built natively for the Mac, and they replace the old app in the same place: the same name (`Muya`), the same folder, the same Dock icon.
+- **macOS keeps every permission you gave Muya.** The new app is signed with the same identity as the old one, so Files and Folders, Accessibility, Screen Recording, Full Disk Access and notifications stay on. You are not asked again.
+- **Updating is the button you already know.** On Muya 4.1.22 choose Restart when the update banner appears, or use Muya > Check for Updates. Your workspaces, schedules, servers, vault and saved sessions come along. macOS may show one "background item added" notice for the new background service.
+- **Muya Native beta users move to Muya.** The beta app updates itself once more and then becomes `Muya` in the same folder; the old beta app goes to the Trash. Its settings, login items and background jobs are cleaned up.
+
+### Added
+- **Return to Muya Classic (4.1.22).** In Settings > Updates and in the Muya menu. It downloads the classic 4.1.22 build, checks it is genuine (publisher, notarization and a fixed checksum), swaps it in the same place and keeps your data. Muya 4.1.22 will show the update banner again later; it never installs 5.0.0 by itself.
+
+### Fixed
+- **No leftover background jobs.** After Muya replaces or is replaced by another version, the old background service and classic's scheduler job are stopped, so nothing keeps retrying a program that is gone.
+- **The new app starts cleanly after classic's updater.** Muya starts itself once more through macOS so its background service accepts it.
+
+### Removed
+- **Side-by-side install of classic and Native.** There is now one Muya. Use Return to Muya Classic to go back.
+
 ## [Unreleased]
 
 ## [4.1.22] - 2026-11-16

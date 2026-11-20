@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key><string>@BUNDLE_ID@</string>
+	<key>CFBundleName</key><string>@NAME@</string>
+	<key>CFBundleDisplayName</key><string>@NAME@</string>
+	<key>CFBundleExecutable</key><string>muya</string>
+	<key>CFBundleIconFile</key><string>Muya</string>
+	<key>CFBundlePackageType</key><string>APPL</string>
+	<key>CFBundleShortVersionString</key><string>@VERSION@</string>
+	<key>CFBundleVersion</key><string>@BUILD@</string>
+	<key>LSMinimumSystemVersion</key><string>14.0</string>
+	<key>CFBundleURLTypes</key><array><dict>
+		<key>CFBundleURLName</key><string>Muya session link</string>
+		<key>CFBundleURLSchemes</key><array><string>muya</string></array>
+	</dict></array>
+		<key>CFBundleDocumentTypes</key>
+		<array>
+			<dict>
+				<key>CFBundleTypeExtensions</key>
+				<array>
+					<string>txt</string>
+					<string>md</string>
+					<string>json</string>
+					<string>yaml</string>
+					<string>yml</string>
+					<string>toml</string>
+					<string>ts</string>
+					<string>tsx</string>
+					<string>js</string>
+					<string>jsx</string>
+					<string>rs</string>
+					<string>py</string>
+					<string>sh</string>
+					<string>css</string>
+					<string>html</string>
+					<string>xml</string>
+					<string>csv</string>
+					<string>log</string>
+					<string>env</string>
+					<string>pem</string>
+					<string>key</string>
+					<string>crt</string>
+					<string>cer</string>
+					<string>conf</string>
+					<string>cfg</string>
+					<string>ini</string>
+					<string>properties</string>
+					<string>sql</string>
+					<string>lock</string>
+					<string>dockerfile</string>
+					<string>gitignore</string>
+				</array>
+				<key>CFBundleTypeName</key>
+				<string>Text File</string>
+				<key>CFBundleTypeRole</key>
+				<string>Editor</string>
+				<key>LSHandlerRank</key>
+				<string>Default</string>
+				<key>LSItemContentTypes</key>
+				<array>
+					<string>public.plain-text</string>
+					<string>public.json</string>
+					<string>public.html</string>
+					<string>public.xml</string>
+				</array>
+			</dict>
+		</array>
+	<key>NSDesktopFolderUsageDescription</key><string>Muya lets the terminals and Claude sessions you open work in your Desktop folder.</string>
+	<key>NSDocumentsFolderUsageDescription</key><string>Muya lets the terminals and Claude sessions you open work in your Documents folder.</string>
+	<key>NSDownloadsFolderUsageDescription</key><string>Muya lets the terminals and Claude sessions you open work in your Downloads folder.</string>
+	<key>NSRemovableVolumesUsageDescription</key><string>Muya lets the terminals and Claude sessions you open work on removable volumes.</string>
+	<key>NSNetworkVolumesUsageDescription</key><string>Muya lets the terminals and Claude sessions you open work on network volumes.</string>
+	<key>NSHighResolutionCapable</key><true/>
+	<key>NSPrincipalClass</key><string>NSApplication</string>
+	<key>NSSupportsAutomaticTermination</key><false/>
+	<key>NSSupportsSuddenTermination</key><false/>
+</dict>
+</plist>

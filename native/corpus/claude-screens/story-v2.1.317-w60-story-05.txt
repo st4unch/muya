@@ -1,0 +1,40 @@
+
+ ▐▛███▛█   Claude Code v2.1.317
+▝▜██████▀  Opus 5.5 · API Usage Billing
+ ▝▝   ▝▝   /private/tmp/muya-corpus/j28/project
+
+
+❯ tell me a story
+
+⏺ The fox crept along the frozen river at
+  dawn, listening for the faint crunch of snow.
+  Behind it the forest woke slowly, branch by
+  branch, and the cold light spread across the
+  hills.
+
+✻ Cogitated for 5s · done 8:24 PM
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts

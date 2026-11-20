@@ -1,0 +1,20 @@
+{
+ "control": "app-{t}.png",
+ "files-tree": "files-tree-{t}.png",
+ "grid": "grid-{t}.png",
+ "sessions": "sessions-{t}.png",
+ "queue": "queue-{t}.png",
+ "kanban": "kanban-{t}.png",
+ "resources": "resources-{t}.png",
+ "ssh-servers": "ssh-servers-{t}.png",
+ "schedules": "schedules-{t}.png",
+ "branches": "branches-{t}.png",
+ "ssh-cyberark": "ssh-cyberark-{t}.png",
+ "ssh-store": "ssh-store-{t}.png",
+ "resources-marketplace": "resources-marketplace-{t}.png",
+ "palette": "palette-{t}.png",
+ "new-agent": "new-agent-{t}.png",
+ "notifications": "notifications-{t}.png",
+ "sessions-cleanup": "sessions-cleanup-{t}.png",
+ "settings": "settings-{t}.png"
+}

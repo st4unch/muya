@@ -1,0 +1,29 @@
+[package]
+name = "muyad"
+description = "Muya daemon: authoritative libghostty-vt state per session, re-adopts ptyd's PTYs (PRD §5)"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+libc.workspace = true
+libghostty-vt = "0.2.2"
+# The pinned, reproducible build from native/scripts/ghostty-env.sh; build.rs fails if it is
+# missing instead of letting libghostty-vt-sys clone Ghostty (Faz 0 rule).
+libghostty-vt-sys = { version = "0.2.2", features = ["pkg-config"] }
+muya-core = { path = "../muya-core" }
+muya-peer = { path = "../muya-peer" }
+muya-proto = { path = "../muya-proto" }
+muya-switchover = { path = "../muya-switchover" }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "time", "sync"] }
+zeroize = "1"
+
+[features]
+# Test-only (native/scripts/e2e-self-update.sh): local manifest URL, test minisign key and download prefix
+# overrides via MUYA_SWITCHOVER_E2E_*. NEVER enabled in release builds.
+e2e = ["muya-switchover/e2e"]
+
+[dev-dependencies]
+tempfile = "3"
