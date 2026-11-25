@@ -29,7 +29,14 @@ KEY=${MUYA_UPDATE_KEY:-$HOME/.tauri/muya-update.key}
 [ -f "$KEY" ] || die "update signing key missing: $KEY"
 export MUYA_SIGN_IDENTITY=${MUYA_SIGN_IDENTITY:-$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application: .*(7PG95YYJ64)\)".*/\1/p' | head -1)}
 [ -n "$MUYA_SIGN_IDENTITY" ] || die "no Developer ID Application identity for Team 7PG95YYJ64"
+# The Tauri CLI comes from node_modules, which only the main checkout has: released from a worktree, $REPO has no
+# node_modules and `npx tauri` fails. Fall back to the checkout the worktree belongs to (git's common dir).
 TAURI_CLI_DIR=${TAURI_CLI_DIR:-$REPO}
+if [ ! -d "$TAURI_CLI_DIR/node_modules" ]; then
+  MAIN_CHECKOUT=$(cd "$REPO" && git rev-parse --path-format=absolute --git-common-dir 2>/dev/null | sed 's|/\.git$||')
+  [ -n "$MAIN_CHECKOUT" ] && [ -d "$MAIN_CHECKOUT/node_modules" ] && TAURI_CLI_DIR=$MAIN_CHECKOUT
+fi
+[ -d "$TAURI_CLI_DIR/node_modules" ] || die "no node_modules for the Tauri CLI (looked in $TAURI_CLI_DIR); run npm install there"
 OUT=$NATIVE/target-release/v5-release
 rm -rf "$OUT"; mkdir -p "$OUT"
 [ -z "${MUYA_E2E_ID:-}" ] || die "MUYA_E2E_ID is set: this script builds the REAL ids"
@@ -60,7 +67,7 @@ print("\n".join(bad))
 PY
 )
 [ -z "$BAD" ] || die "stray entries in the updater archive: $BAD"
-( cd "$TAURI_CLI_DIR" && TAURI_SIGNING_PRIVATE_KEY_PATH="$KEY" TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" npx tauri signer sign "$TARGZ" ) >/dev/null 2>&1 || die "signing the updater archive failed"
+( cd "$TAURI_CLI_DIR" && TAURI_SIGNING_PRIVATE_KEY_PATH="$KEY" TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" npx tauri signer sign "$TARGZ" ) >/dev/null || die "signing the updater archive failed (see the error above)"
 SIG=$(cat "$TARGZ.sig")
 # The archive must verify with the public key compiled into classic 4.1.22 (the same code the apps use).
 PUB=$(sed -n 's/.*"pubkey": "\([^"]*\)".*/\1/p' "$REPO/src-tauri/tauri.conf.json" | head -1)
