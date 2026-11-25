@@ -2905,7 +2905,7 @@ dependencies = [
 
 [[package]]
 name = "muya"
-version = "5.0.1"
+version = "5.0.2"
 dependencies = [
  "chrono",
  "libc",

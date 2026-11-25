@@ -18,8 +18,30 @@ final class ServiceState: @unchecked Sendable {
     /// A stale background service (another copy's muyad / ptyd) the user chose "Later" for; the menu entry reopens the dialog.
     var lastStale: StaleService?
     var staleDismissed = false
+    /// Automatic takeover of a service that is not this copy's (ServiceTakeover); tests may switch it off to see the dialog first.
+    var autoTakeover = true
+    /// Only a real install (the user's own HOME, a .app bundle; or a test that says what "this copy" is) has services launchd restarts.
+    /// For anything else (a dev build, a fake HOME, MUYA_SOCKET pointing at a hand-started muyad) the takeover, the stale-service check
+    /// and the socket sweep do nothing: ending that daemon would leave nobody to start it again.
+    var managedInstall = false
+    /// A takeover was started in this run: a second mismatch goes straight to the dialog instead of looping.
+    var takeoverTried = false
+    /// The restart in progress is the automatic takeover (no dialog is up; a failure must open it).
+    var takeoverRunning = false
+    var takeoverStale: StaleService?
+    var takeoverFailure: String?
     /// Starts this copy's own services in place of the stale ones (SMAppService unregister + register); nil result = fine, else why not.
     var reregister: () -> String? = { nil }
+    /// Duplicate bundles with this app's identifier / a job that cannot spawn (BundleCopies). nil = not applicable (dev build, fake HOME).
+    var bundleReport: () -> BundleReport? = { nil }
+    /// Re-registers this copy with LaunchServices and drops the others from it; nil = fine, else what failed. The agents are registered again by the caller.
+    var fixBundles: () -> String? = { nil }
+    var bundleFixTried = false
+    /// The user closed the duplicate-bundle dialog (Later / Escape): it does not come back in this launch (the "Muya" status line still says why).
+    var bundlesDismissed = false
+    /// "Use this copy's service" was pressed: the next successful connect ends the dialog; the deadline says when to give up.
+    var fixingBundles = false
+    var fixingDeadline = Date.distantPast
     /// Test hook: where the services should come from, instead of the ones inside the app bundle.
     var expectedMuyad: String?, expectedPtyd: String?
     /// This app's release, to compare with what muyad announces (nil = dev build, nothing to compare). Test hook may override.
@@ -103,7 +125,10 @@ extension Store {
         var found: StaleService?
         func consider(_ v: ServiceIdentity.Verdict, _ program: String) {
             guard v != .unknown, v != .current else { return }
-            if found == nil || ServiceIdentity.worst(found!.verdict, v) != found!.verdict { found = StaleService(verdict: v, program: program, sessions: live) }
+            if found == nil || ServiceIdentity.worst(found!.verdict, v) != found!.verdict {
+                found = StaleService(verdict: v, program: program, sessions: live, appPath: (service.expectedMuyad ?? ServiceIdentity.bundled("muyad")).map(ServiceTakeover.bundlePath(ofProgram:)),
+                                     appVersion: service.expectedProduct, daemonVersion: connection.flatMap { ServiceTakeover.productOf(serverBuild: $0.serverBuild) }, takeoverFailure: service.takeoverFailure)
+            }
         }
         if let conn = connection {
             var v = conn.peerPID.map { ServiceIdentity.verdict(pid: $0, expected: muyadWant) } ?? .unknown
@@ -118,19 +143,52 @@ extension Store {
         return found
     }
 
+    /// The automatic takeover did not work: the dialog with the one-click "Use this copy's service" (and the reason).
+    private func showTakeoverDialog(_ st: StaleService) {
+        var s = st; s.takeoverFailure = service.takeoverFailure
+        service.phase = .idle
+        setProblem(nil)
+        setProblem(.staleService(s))
+        service.onCompat?(true)
+    }
+
     private func serviceReady(status: Result<Any, ClientError>) {
         var sessions: [LiveSession] = []
         if case let .success(v) = status, let d = v as? [String: Any], let arr = d["sessions"] as? [Any] { sessions = arr.compactMap { try? Control.live($0) } }
+        if service.fixingBundles {   // "Use this copy's service" worked: the service answers
+            service.fixingBundles = false; service.bundleFixTried = false
+            NSLog("muya: bundle fix done, the background service answers")
+            progress(.finished(resumed: 0))
+            setProblem(nil)
+            service.onCompat?(false)
+            return
+        }
         if service.restarting {
             // The restart finished: the services that answer now must be this copy's. If they are not, say so instead of looping.
             service.staleAfterRestart = staleServices(sessions: sessions)
+            if service.takeoverRunning {
+                service.takeoverRunning = false
+                if let st = service.staleAfterRestart { service.takeoverFailure = service.reregisterError ?? "the other copy's service started again"; service.takeoverStale = st; service.staleAfterRestart = nil }
+            }
             setProblem(nil)
             service.onCompat?(service.speak != nil)
             finishRestart()
             return
         }
-        if !service.staleDismissed, let st = staleServices(sessions: sessions) {
-            setProblem(.staleService(st))
+        if service.managedInstall, !service.staleDismissed, let st = staleServices(sessions: sessions) {
+            if ServiceTakeover.decide(verdict: st.verdict, takeoverTried: service.takeoverTried, autoEnabled: service.autoTakeover) == .takeover {
+                service.takeoverTried = true; service.takeoverRunning = true
+                restartService()
+                if !service.restarting {   // the restart could not even start (old service too old, or it refused): ask
+                    service.takeoverRunning = false
+                    var failed = st; failed.takeoverFailure = service.phase.text; service.takeoverFailure = service.phase.text
+                    showTakeoverDialog(failed)
+                }
+                return
+            }
+            var shown = st
+            if service.takeoverTried { shown.takeoverFailure = service.takeoverFailure ?? "the other copy's service is still the one running" }
+            setProblem(.staleService(shown))
             service.onCompat?(true)
             return
         }
@@ -145,7 +203,14 @@ extension Store {
             service.restarting = false
             progress(.failed("The service did not come back within a minute. Quit Muya and open it again, or check System Settings > General > Login Items."))
         }
+        if service.fixingBundles {
+            if Date() < service.fixingDeadline { scheduleReconnect(); return }
+            service.fixingBundles = false
+            progress(.failed("The background service still did not start. Open System Settings › General › Login Items & Extensions and switch Muya off and on, then press Try again."))
+        }
         let p = ServiceProblem.classify(error, loginItemWaitsForApproval: service.waitsForApproval())
+        // The duplicate-bundle dialog is up: a plain "unreachable" must not replace it (it would flicker on every retry).
+        if case .brokenBundles? = service.problem, case .unreachable = p { scheduleReconnect(); return }
         setProblem(p)
         if case .versionSkew = p { return }
         recoverIfNeeded(error: error, problem: p)
@@ -158,9 +223,44 @@ extension Store {
         var isSocket = false
         if let e = error as? ClientError, case .socket = e { isSocket = true }
         if case .unreachable = problem {} else { return }
+        // Only a real install may repair the background service. A dev build, a fake HOME or a hand-started daemon has
+        // no launchd job of its own: re-registering agents or bundles from here would touch the INSTALLED Muya's
+        // registrations, and the "switch Muya on under Allow in the Background" text would send the user to change the
+        // installed app's setting because of a copy that never had a service. Such a build just says it is not connected.
+        guard service.managedInstall else {
+            let text = ServiceCopy.noServiceHere
+            service.statusText = text
+            delegate?.store(self, connectionChanged: false, message: text)
+            return
+        }
         service.failures += 1
         let action = ServiceRecovery.plan(isSocketError: isSocket, approvalPending: false, jobLoaded: service.jobLoaded(), failures: service.failures,
                                           attempts: service.attempts, detail: service.reregisterError)
+        // A second bundle with our identifier / a job that cannot spawn: fix at the first failure (startup), never leave "Starting…".
+        if (service.failures == 1 && service.attempts == 0) || { if case .restart = action { return true }; if case .giveUp = action { return true }; return false }(),
+           !service.fixingBundles, let report = service.bundleReport() {
+            switch BundleCopies.decide(report: report, servicesDown: true, fixTried: service.bundleFixTried) {
+            case .ok: break
+            case .reregister:
+                service.bundleFixTried = true
+                NSLog("muya: found \(report.copies.count) bundle(s) with this app's identifier (\(report.copies.map(\.path).joined(separator: ", "))), job spawnFailed=\(report.spawnFailed): re-registering this copy")
+                if let why = service.fixBundles() { service.reregisterError = why; NSLog("muya: bundle fix failed: \(why)") }
+                let dead = service.deadAgents()
+                if let why = service.reregisterAgents(dead.isEmpty ? [] : dead) { service.reregisterError = why }
+                service.statusText = ServiceCopy.starting
+                delegate?.store(self, connectionChanged: false, message: ServiceCopy.starting)
+                return
+            case .dialog:
+                var r = report; r.failure = service.reregisterError ?? "the service did not start from this copy"
+                service.statusText = ServiceCopy.bundlesStatus
+                if BundleCopies.offer(dismissed: service.bundlesDismissed) == .dialog {
+                    NSLog("muya: bundle fix did not hold, asking (\(r.failure ?? ""))")
+                    setProblem(.brokenBundles(r))
+                }
+                delegate?.store(self, connectionChanged: false, message: ServiceCopy.bundlesStatus)
+                return
+            }
+        }
         switch action {
         case .wait: break
         case .restart:
@@ -175,6 +275,21 @@ extension Store {
             setProblem(.unreachable(text))
         }
         delegate?.store(self, connectionChanged: false, message: service.statusText ?? "\(error)")
+    }
+
+    /// The dialog's "Use this copy's service" for duplicate bundles: LaunchServices + all agents registered again from this copy
+    /// (also when macOS says they are already enabled), then connect. Nothing runs (the services are down), so no session is cut.
+    func fixBundlesNow() {
+        progress(.restarting)
+        service.bundleFixTried = true
+        var why = service.fixBundles()
+        if why == nil { why = service.reregister() }
+        if let why { NSLog("muya: bundle fix failed: \(why)"); progress(.failed("Could not register this copy (\(why)). Quit Muya, move the other copy to the Trash, then sign out of macOS and in again.")); return }
+        service.sweepSockets()
+        service.fixingBundles = true
+        service.fixingDeadline = Date().addingTimeInterval(30)
+        service.failures = 0; service.attempts = 0
+        connect()
     }
 
     /// The user (or a page that found no service) asks again: start the recovery from the top and connect now.
@@ -254,11 +369,16 @@ extension Store {
             self.call("upgrade.resume_done") { _ in }
             self.service.restarting = false
             self.service.restartPlan = []
+            if let st = self.service.takeoverStale {   // the automatic takeover did not take: sessions are back, now ask
+                self.service.takeoverStale = nil
+                self.showTakeoverDialog(st)
+                return
+            }
             if let st = self.service.staleAfterRestart, case let .otherCopy(running) = st.verdict {
                 self.progress(.failed("The service came back from the same other copy of Muya (\(KeptSession.abbreviate(running, home: self.home))). Your sessions were opened again, but the old program still runs. Quit Muya, move that old copy out of the way, then sign out of macOS and in again (or run: launchctl bootout gui/$(id -u)/com.staunch.muya.muyad)." + (self.service.reregisterError.map { " Registering this copy said: \($0)." } ?? "")))
                 return
             }
-            self.service.staleDismissed = false; self.service.lastStale = nil; self.service.staleAfterRestart = nil
+            self.service.staleDismissed = false; self.service.lastStale = nil; self.service.staleAfterRestart = nil; self.service.takeoverFailure = nil
             self.progress(.finished(resumed: steps.count))
         }
     }
@@ -274,19 +394,20 @@ final class RestartDialog: ModalOverlay {
     private(set) var committed = false
     /// What the dialog says (the debug socket and the verify scripts read these).
     private(set) var bodyText = ""
+    private var restartLabel = ServiceCopy.restartButton
     private(set) var keptRows: [KeptSession] = []
     var onLater: (() -> Void)?
     var onRestart: (() -> Void)?
     var onDone: (() -> Void)?
 
-    init(info: Incompat, home: String, bodyOverride: String? = nil) {
+    init(info: Incompat, home: String, bodyOverride: String? = nil, title: String = ServiceCopy.restartTitle) {
         super.init(width: 520)
-        setAccessibilityLabel(ServiceCopy.restartTitle)
+        setAccessibilityLabel(title)
         let kept = KeptSession.rows(info.sessions, home: home)
         keptRows = kept
         bodyText = bodyOverride ?? ServiceCopy.restartBody(daemon: info.daemon, app: info.client, kept: kept.count)
         let body = Self.paragraph(bodyText)
-        var rows: [NSView] = [Self.header(icon: .bypassWarning, color: .warning, title: ServiceCopy.restartTitle), body]
+        var rows: [NSView] = [Self.header(icon: .bypassWarning, color: .warning, title: title), body]
         if !kept.isEmpty { rows.append(Self.sessionList(kept)) }
         progressLabel.maximumNumberOfLines = 0; progressLabel.preferredMaxLayoutWidth = 472
         progressLabel.isHidden = true
@@ -303,6 +424,14 @@ final class RestartDialog: ModalOverlay {
     /// A stale background service (another copy's program is running).
     convenience init(stale: StaleService, home: String) {
         self.init(info: Incompat(daemon: ProtoVersion(major: 0, minor: 0, build: ""), client: ProtoVersion(major: protoMajor, minor: protoMinor, build: ""), required: ProtoVersion(major: 0, minor: 0, build: ""), speak: ProtoVersion(major: 0, minor: 0, build: ""), sessions: stale.sessions), home: home, bodyOverride: ServiceCopy.staleBody(stale, kept: stale.sessions.filter { $0.exited == nil }.count, home: home))
+        restartLabel = ServiceCopy.staleRestartButton
+        restart.title = restartLabel; restart.setAccessibilityLabel(restartLabel)
+    }
+    /// Duplicate bundles with this app's identifier: every copy listed, one button that fixes it.
+    convenience init(bundles: BundleReport, home: String) {
+        self.init(info: Incompat(daemon: ProtoVersion(major: 0, minor: 0, build: ""), client: ProtoVersion(major: protoMajor, minor: protoMinor, build: ""), required: ProtoVersion(major: 0, minor: 0, build: ""), speak: ProtoVersion(major: 0, minor: 0, build: ""), sessions: []), home: home, bodyOverride: BundleCopies.dialogBody(bundles, home: home), title: ServiceCopy.bundlesTitle)
+        restartLabel = ServiceCopy.staleRestartButton
+        restart.title = restartLabel; restart.setAccessibilityLabel(restartLabel)
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -348,7 +477,7 @@ final class RestartDialog: ModalOverlay {
         switch p {
         case .finished: restart.title = "Done"; later.isHidden = true
         case .failed: restart.title = "Try again"; later.title = "Close"; later.isHidden = false
-        default: restart.title = ServiceCopy.restartButton; later.title = ServiceCopy.laterButton; later.isHidden = p.busy
+        default: restart.title = restartLabel; later.title = ServiceCopy.laterButton; later.isHidden = p.busy
         }
         restart.alphaValue = p.busy ? 0.5 : 1
         restart.setAccessibilityLabel(restart.title)

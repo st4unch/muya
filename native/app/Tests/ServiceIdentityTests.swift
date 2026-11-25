@@ -36,6 +36,51 @@ func runServiceIdentityTests() {
     }
 }
 
+func runServiceTakeoverTests() {
+    test("service takeover: same path and release is used; another path or release is taken over once; a failed takeover asks") {
+        check(ServiceTakeover.decide(verdict: .current, takeoverTried: false) == .use && ServiceTakeover.decide(verdict: .unknown, takeoverTried: false) == .use, "same path, same version")
+        check(ServiceTakeover.decide(verdict: .otherCopy(running: "/Applications/Muya Native.app/Contents/MacOS/muyad"), takeoverTried: false) == .takeover, "other path")
+        check(ServiceTakeover.decide(verdict: .differentBuild(daemon: "4.1.24", app: "5.0.1"), takeoverTried: false) == .takeover, "other version")
+        check(ServiceTakeover.decide(verdict: .replaced(path: "/A/muyad"), takeoverTried: false) == .takeover, "replaced in place")
+        check(ServiceTakeover.decide(verdict: .otherCopy(running: "/x"), takeoverTried: true) == .dialog && ServiceTakeover.decide(verdict: .differentBuild(daemon: nil, app: "5.0.1"), takeoverTried: true) == .dialog, "takeover failed: dialog, no loop")
+        check(ServiceTakeover.decide(verdict: .otherCopy(running: "/x"), takeoverTried: false, autoEnabled: false) == .dialog, "automatic takeover off")
+        check(ServiceTakeover.productOf(serverBuild: "0.1.0+4.1.24") == "4.1.24" && ServiceTakeover.productOf(serverBuild: "0.1.0") == nil, "product of the hello build")
+        check(ServiceTakeover.bundlePath(ofProgram: "/Applications/Muya Native.app/Contents/MacOS/muyad") == "/Applications/Muya Native.app", "bundle of a program")
+    }
+    test("a copy that manages no service never sends the user to Login Items and never repairs anything") {
+        // The text the installed app shows when macOS will not start its service names Muya's Login Items switch.
+        // A dev build, a fake HOME or a hand-started daemon has no service of its own, so it must never show that text:
+        // the user would go and change the INSTALLED Muya's setting over a copy that was never going to have one.
+        let installed = ServiceCopy.cannotStart(detail: nil, jobLoaded: true)
+        check(installed.contains("Allow in the Background"), "the installed app still explains the Login Items switch")
+        check(!ServiceCopy.noServiceHere.contains("Allow in the Background"), "an unmanaged copy does not mention Login Items")
+        check(!ServiceCopy.noServiceHere.contains("Retry"), "and does not ask for a Retry that cannot help")
+        check(!ServiceTakeover.isManagedInstall(realHome: false, appBundle: true, testSaysSo: false), "a fake HOME manages nothing")
+    }
+
+    test("service takeover: only a real installed app takes over; a dev build, a fake HOME or a plain env var does not") {
+        check(ServiceTakeover.isManagedInstall(realHome: true, appBundle: true, testSaysSo: false), "release install on the real home: protected")
+        check(!ServiceTakeover.isManagedInstall(realHome: false, appBundle: true, testSaysSo: false), "fake HOME: no takeover")
+        check(!ServiceTakeover.isManagedInstall(realHome: true, appBundle: false, testSaysSo: false), "bare dev binary: no takeover")
+        check(ServiceTakeover.isManagedInstall(realHome: false, appBundle: true, testSaysSo: true), "a test that says what this copy is")
+        // a release install: a daemon from another path or release is still taken over, and a failed takeover still asks
+        check(ServiceTakeover.decide(verdict: .otherCopy(running: "/Users/u/Desktop/Muya.app/Contents/MacOS/muyad"), takeoverTried: false) == .takeover, "release: other bundle")
+        check(ServiceTakeover.decide(verdict: .differentBuild(daemon: "4.1.24", app: "5.0.2"), takeoverTried: false) == .takeover, "release: other version")
+    }
+    test("service takeover: a job of the same bundle id but another path is foreign; the message names both copies and versions") {
+        let ours = "com.staunch.muya"
+        let parents: [String: String?] = ["com.staunch.muya.muyad": .some(ours), "com.staunch.muya.ptyd": .some(ours)]
+        let progs = ["com.staunch.muya.muyad": "/Applications/Muya Native.app/Contents/MacOS/muyad", "com.staunch.muya.ptyd": "/Users/u/Desktop/Muya.app/Contents/MacOS/muya-ptyd"]
+        let f = LegacyJobs.foreignServiceLabels(parents: parents, ourBundleID: ours, programs: progs, ourBundlePath: "/Users/u/Desktop/Muya.app")
+        check(f == ["com.staunch.muya.muyad"], "only the muyad of the other copy: \(f)")
+        check(LegacyJobs.foreignServiceLabels(parents: parents, ourBundleID: ours).isEmpty, "without paths the old rule holds")
+        check(LaunchctlPrint.program("  program = /A/Muya.app/Contents/MacOS/muyad\n") == "/A/Muya.app/Contents/MacOS/muyad", "launchctl program line")
+        let s = StaleService(verdict: .otherCopy(running: "/Applications/Muya Native.app/Contents/MacOS/muyad"), program: "muyad", sessions: [], appPath: "/Users/u/Desktop/Muya.app", appVersion: "5.0.1", daemonVersion: "4.1.24", takeoverFailure: "denied")
+        let b = ServiceCopy.staleBody(s, kept: 0, home: "/Users/u")
+        check(b.contains("~/Desktop/Muya.app (5.0.1)") && b.contains("/Applications/Muya Native.app (4.1.24)") && b.contains("could not (denied)"), b)
+    }
+}
+
 func runServiceRecoveryTests() {
     test("service identity: the daemon's announced release decides when the path cannot") {
         check(ServiceIdentity.buildVerdict(serverBuild: "0.1.0+4.1.24", product: "4.1.24") == .current, "same release")
@@ -85,5 +130,32 @@ func runServiceRecoveryTests() {
         check(!StaleSocket.sweep(plain) && FileManager.default.fileExists(atPath: plain), "a plain file is left alone")
         check(ServiceRecovery.deadAgents(muyadSocket: live, ptydSocket: d + "/gone.sock") == ["com.staunch.muya.ptyd.plist"], "only the dead agent is registered again")
         close(lfd)
+    }
+}
+
+func runBundleCopiesTests() {
+    test("duplicate bundles: re-register when the job cannot spawn or macOS points at the other copy; ask when that did not hold") {
+        let me = "/Applications/Muya.app", old = "/Users/u/proj/target/release/bundle/macos/Muya.app"
+        check(BundleCopies.decide(selfPath: me, copies: [me], resolved: me, spawnFailed: false, servicesDown: true, fixTried: false) == .ok, "one copy, healthy")
+        check(BundleCopies.decide(selfPath: me, copies: [me, old], resolved: me, spawnFailed: false, servicesDown: true, fixTried: false) == .ok, "two copies but macOS picks this one")
+        check(BundleCopies.decide(selfPath: me, copies: [me, old], resolved: old, spawnFailed: false, servicesDown: false, fixTried: false) == .ok, "services run: never touched")
+        check(BundleCopies.decide(selfPath: me, copies: [me, old], resolved: old, spawnFailed: false, servicesDown: true, fixTried: false) == .reregister, "duplicate bundle id, down: re-register")
+        check(BundleCopies.decide(selfPath: me, copies: [me, old], resolved: old, spawnFailed: true, servicesDown: true, fixTried: false) == .reregister, "spawn failed: re-register")
+        check(BundleCopies.decide(selfPath: me, copies: [me], resolved: nil, spawnFailed: true, servicesDown: true, fixTried: false) == .reregister, "moved app, BTM keeps the old path: re-register")
+        check(BundleCopies.decide(selfPath: me, copies: [me, old], resolved: old, spawnFailed: true, servicesDown: true, fixTried: true) == .dialog, "fix tried: dialog, no loop")
+        check(BundleCopies.spawnFailed(launchctlPrint: "\tlast exit code = 78: EX_CONFIG\n\tjob state = spawn failed\n") && !BundleCopies.spawnFailed(launchctlPrint: "\tstate = running\n\tlast exit code = (never exited)\n"), "launchctl print")
+        check(BundleCopies.parseMdfind("/Applications/Muya.app\n/x/y/Muya.app\nnoise\n") == ["/Applications/Muya.app", "/x/y/Muya.app"], "mdfind lines")
+    }
+    test("duplicate bundles: after Later / Escape the dialog is not offered again in this launch, the status line still says why") {
+        let me = "/Applications/Muya.app", old = "/x/Muya.app"
+        let d = BundleCopies.decide(selfPath: me, copies: [me, old], resolved: old, spawnFailed: true, servicesDown: true, fixTried: true)
+        check(d == .dialog && BundleCopies.offer(dismissed: false) == .dialog, "first time: the dialog")
+        check(d == .dialog && BundleCopies.offer(dismissed: true) == .statusOnly, "dismissed: status line only, no dialog")
+        check(ServiceCopy.bundlesStatus.contains("more than one copy of Muya"), "the status line names the problem")
+    }
+    test("duplicate bundles: the dialog lists every copy with path and version, names the one in use, and offers the one fix") {
+        let r = BundleReport(copies: [BundleCopy(path: "/Applications/Muya.app", version: "5.0.2", isSelf: true, resolved: false), BundleCopy(path: "/Users/u/proj/Muya.app", version: "4.1.24", isSelf: false, resolved: true)], spawnFailed: true, failure: "still failing")
+        let b = BundleCopies.dialogBody(r, home: "/Users/u")
+        check(b.contains("/Applications/Muya.app (5.0.2) — this copy") && b.contains("~/proj/Muya.app (4.1.24) — macOS uses it for the service") && b.contains("could not (still failing)") && b.contains("Use this copy's service"), b)
     }
 }

@@ -96,3 +96,42 @@ public enum ServiceIdentity {
         return rank(a) >= rank(b) ? a : b
     }
 }
+
+/// What the app does when the background service it is connected to is not its own (another bundle path, or another release).
+/// It never just carries on with it: it takes the service over once by itself, and asks only when that did not work.
+public enum ServiceTakeover {
+    public enum Decision: Equatable, Sendable {
+        /// The service is this copy's (or there is nothing to compare): use it.
+        case use
+        /// Not this copy's: restart the services from this copy's bundle (the restart flow keeps and reopens the sessions).
+        case takeover
+        /// A takeover was tried (it failed, or the other copy's program came back): show the dialog with the one-click fix.
+        case dialog
+    }
+
+    public static func decide(verdict: ServiceIdentity.Verdict, takeoverTried: Bool, autoEnabled: Bool = true) -> Decision {
+        switch verdict {
+        case .unknown, .current: return .use
+        case .otherCopy, .differentBuild, .replaced: return takeoverTried || !autoEnabled ? .dialog : .takeover
+        }
+    }
+
+    /// Does this app run as a real install whose services launchd restarts? Only then may it end a daemon (takeover), check the
+    /// stale-service rule or sweep sockets. A dev build, a fake HOME, or a hand-started muyad has nobody to start the daemon again.
+    /// `realHome`: HOME is the user's own home folder (passwd); `appBundle`: running from a .app; `testSaysSo`: a test hook (compiled
+    /// only into MUYA_TEST_HOOKS builds, never shipped) names what "this copy" is.
+    public static func isManagedInstall(realHome: Bool, appBundle: Bool, testSaysSo: Bool) -> Bool { (realHome && appBundle) || testSaysSo }
+
+    /// "5.0.1" from a hello build id "0.1.0+5.0.1"; nil without the stamp.
+    public static func productOf(serverBuild: String) -> String? {
+        guard let plus = serverBuild.lastIndex(of: "+") else { return nil }
+        let v = String(serverBuild[serverBuild.index(after: plus)...])
+        return v.isEmpty ? nil : v
+    }
+
+    /// The bundle a program path lives in (`/A/Muya.app/Contents/MacOS/muyad` -> `/A/Muya.app`); the path itself when it is not in one.
+    public static func bundlePath(ofProgram p: String) -> String {
+        if let r = p.range(of: ".app/") { return String(p[..<r.lowerBound]) + ".app" }
+        return p
+    }
+}

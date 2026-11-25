@@ -164,139 +164,157 @@ class ListPane: NSView, NSTableViewDataSource, NSTableViewDelegate {
 @MainActor
 final class ServersPane: ListPane, NSSearchFieldDelegate {
     private let search = NSSearchField()
-    private let connectButton = ModalButton.action("Connect", nil, #selector(connectTapped), label: "Connect to the selected server in a new terminal")
-    private let addButton = ModalButton.action("Add server…", nil, #selector(addTapped), label: "Add a server")
-    private let editButton = ModalButton.action("Edit…", nil, #selector(editTapped), label: "Edit the selected server")
-    private let deleteButton = ModalButton.action("Delete…", nil, #selector(deleteTapped), label: "Delete the selected server")
+    private let countLabel = Kit.label("", size: 13, color: Theme.dynamic(.textSecondary))
+    private let addButton = ModalButton("Add server", style: .primary, icon: .plus, height: 32, label: "Add a server")
+    private let scroll = NSScrollView()
+    private let doc = ServerCardsDocument()
     private(set) var rows: [SSHServer] = []
-
-    override var columns: [(String, String, CGFloat)] { [("name", "Name", 170), ("dest", "Server", 230), ("login", "Login", 150), ("group", "Group", 100), ("agent", "Agents", 120)] }
-    override var rowCount: Int { rows.count }
-
-    override func text(row: Int, column: String) -> String {
-        let s = rows[row]
-        switch column {
-        case "name": return s.title
-        case "dest": return s.destination + (s.connectionType == .psmp ? " via \(hub.model.profileTitle(id: s.psmpProfileId))" : "")
-        case "login": return s.credentialKind.title
-        case "group": return s.group.isEmpty ? "—" : s.group
-        default: return s.agentAdded ? "Added by agent" : (s.agentAccess ? "Allowed" : "Off")
-        }
+    private static let collapsedKey = "muya.ssh.servers.collapsed"
+    private var collapsed: Set<String> {
+        get { Set(UserDefaults.standard.stringArray(forKey: Self.collapsedKey) ?? []) }
+        set { UserDefaults.standard.set(Array(newValue).sorted(), forKey: Self.collapsedKey) }
     }
+
+    override var rowCount: Int { rows.count }
+    override func text(row: Int, column: String) -> String { "" }
 
     init(hub: SSHHubPage) {
         super.init(hub: hub, label: "Servers list")
-        search.placeholderString = "Filter servers"
-        search.setSpokenLabel("Filter servers")
+        search.placeholderString = "Search servers — label, host, username, group, tag…"
+        search.setSpokenLabel("Search servers")
         search.delegate = self
-        for b in [connectButton, addButton, editButton, deleteButton] { b.target = self }
-        for v in [FieldBox(search, width: 260), connectButton, addButton, editButton, deleteButton] as [NSView] { toolbar.addArrangedSubview(v) }
-        updateButtons()
+        addButton.onClick = { [weak self] in self?.addTapped() }
+        // Classic: row 1 = "N server(s)" on the left, "Add server" on the right; row 2 = the search field, full width.
+        toolbar.orientation = .vertical; toolbar.alignment = .leading; toolbar.spacing = 12
+        let spacer = NSView(); spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.setContentHuggingPriority(.init(1), for: .horizontal)
+        let row1 = NSStackView(views: [countLabel, spacer, addButton])
+        row1.orientation = .horizontal; row1.spacing = 8; row1.alignment = .centerY
+        let box = FieldBox(search, height: 32)
+        toolbar.addArrangedSubview(row1); toolbar.addArrangedSubview(box)
+        for v in [row1, box] as [NSView] { v.translatesAutoresizingMaskIntoConstraints = false; v.widthAnchor.constraint(equalTo: toolbar.widthAnchor).isActive = true }
+        // The cards replace the table; the shared overlay still shows loading / failed / empty.
+        scroll.drawsBackground = false; scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = false
+        scroll.scrollerStyle = .overlay; scroll.automaticallyAdjustsContentInsets = false
+        scroll.documentView = doc
+        doc.autoresizingMask = [.width]
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.setAccessibilityLabel("Servers")
+        guard let listBox = table.enclosingScrollView?.superview else { return }
+        listBox.isHidden = true
+        addSubview(scroll)
+        NSLayoutConstraint.activate([
+            scroll.topAnchor.constraint(equalTo: listBox.topAnchor), scroll.bottomAnchor.constraint(equalTo: listBox.bottomAnchor),
+            scroll.leadingAnchor.constraint(equalTo: listBox.leadingAnchor), scroll.trailingAnchor.constraint(equalTo: listBox.trailingAnchor),
+        ])
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
+    override func layout() {
+        super.layout()
+        doc.setFrameSize(NSSize(width: scroll.contentSize.width, height: doc.frame.height))
+    }
+
     override func reload() {
         rows = hub.model.visibleServers
-        let list = present(hub.model.servers, empty: hub.model.filter.isEmpty ? "No servers yet" : "No server matches the filter", retry: { [weak hub] in hub?.reloadAll() })
-        if !list { rows = [] }
-        table.reloadData()
-        updateButtons()
-    }
-
-    func updateButtons() {
         let ready = hub.model.servers.isReady
-        let sel = selectedRow != nil
+        let list = present(hub.model.servers, empty: hub.model.filter.isEmpty ? "No servers yet" : "No server matches “\(hub.model.filter)”.", retry: { [weak hub] in hub?.reloadAll() })
+        if !list { rows = [] }
+        let all = hub.model.allServers.count
+        countLabel.stringValue = ready ? "\(all) server(s)" : ""
         addButton.isEnabled = ready
-        connectButton.isEnabled = sel
-        editButton.isEnabled = sel && ready
-        deleteButton.isEnabled = sel && ready
+        scroll.isHidden = !(ready && !rows.isEmpty)
+        rebuild()
     }
 
-    override func selectionChanged() { updateButtons() }
-    override func activate() { connectTapped() }
-    var selected: SSHServer? { selectedRow.map { rows[$0] } }
+    /// Redraws the cards from the rows, keeping the scroll position.
+    private func rebuild() {
+        let keep = scroll.contentView.bounds.origin
+        let down = collapsed
+        let groups = ServerGroup.make(rows).map { g -> GroupCardView in
+            let cards: [FitCard] = down.contains(g.name) ? [] : g.items.map { s in
+                ServerCardView(ServerCardModel(server: s, line: ServerCardLine.text(s, credName: { [weak self] in self?.hub.vault.label(forId: $0) })),
+                               onConnect: { [weak self] in self?.connect(s) },
+                               onEdit: { [weak self] in self?.hub.editServer(s) },
+                               onDelete: { [weak self] in self?.delete(s) })
+            }
+            let v = GroupCardView(name: g.name, count: g.items.count, noun: "servers", collapsed: down.contains(g.name), cards: cards)
+            v.onToggle = { [weak self] in
+                guard let self else { return }
+                var c = self.collapsed
+                if c.contains(g.name) { c.remove(g.name) } else { c.insert(g.name) }
+                self.collapsed = c
+                self.rebuild()
+            }
+            return v
+        }
+        // classic keeps the PSMP profiles card at the bottom of this tab; there is no PSMP tab.
+        let card = PSMPProfilesCard(profiles: hub.model.profileList,
+                                    onAdd: { [weak self] in self?.hub.editProfile(nil) },
+                                    onEdit: { [weak self] p in self?.hub.editProfile(p) },
+                                    onDelete: { [weak self] p in self?.deleteProfile(p) })
+        doc.set(groups, psmp: hub.model.servers.isReady ? card : nil)
+        doc.layoutSubtreeIfNeeded()
+        scroll.contentView.scroll(to: keep)
+    }
+
+    var selected: SSHServer? { rows.first }
 
     func controlTextDidChange(_ obj: Notification) { hub.model.filter = search.stringValue; reload() }
 
-    @objc func connectTapped() {
-        guard let s = selected else { return }
-        switch SSHConnect.plan(s) {
-        case let .shell(cmd, name):
-            message.stringValue = "Opening \(s.destination)…"; message.textColor = Token.textSecondary
-            hub.connect(name, cmd)
-        case let .notWired(why):
-            message.stringValue = why; message.textColor = Token.statePermission
+    /// The drawn layout in one line, for the screenshot checks: which groups, how many cards, the PSMP card.
+    func cardsSummary() -> String {
+        let gs = doc.groups.map { "\($0.groupName)(\($0.itemCount))\($0.collapsed ? "-collapsed" : "")" }.joined(separator: ",")
+        return "groups=[\(gs)] cards=\(rows.count) psmp=\(doc.psmp == nil ? 0 : hub.model.profileList.count)"
+    }
+
+    #if MUYA_TEST_HOOKS
+    /// Debug socket `ssh-connect <title>`: presses that card's Connect button (what a click does).
+    func debugConnect(_ title: String) -> String {
+        connectServer(titled: title) ? "ok" : "error: no server titled '\(title)'"
+    }
+
+    /// Debug socket `ssh-group-toggle <name>`: collapses or expands that group.
+    func debugToggleGroup(_ name: String) -> String {
+        guard let g = doc.groups.first(where: { $0.groupName == name }) else { return "error: no group '\(name)'" }
+        g.onToggle?()
+        return "ok"
+    }
+    #endif
+
+    /// Presses the Connect button of the card with this title; false when there is no such card.
+    @discardableResult
+    func connectServer(titled title: String) -> Bool {
+        guard let s = rows.first(where: { $0.title == title }) else { return false }
+        connect(s)
+        return true
+    }
+
+    private func connect(_ s: SSHServer) {
+        if let why = SSHConnect.precheck(s, profiles: hub.model.profileList) { message.stringValue = why; message.textColor = Token.statePermission; return }
+        message.stringValue = "Opening \(s.destination)…"; message.textColor = Token.textSecondary
+        let size = hub.terminalSize()
+        hub.service.connect(server: s.id, cols: size.cols, rows: size.rows) { [weak self] r in
+            switch r {
+            case let .success(id): self?.message.stringValue = ""; self?.hub.focusSession(id)
+            case let .failure(e): self?.message.stringValue = e.message; self?.message.textColor = Token.danger
+            }
         }
     }
 
     @objc func addTapped() { hub.editServer(nil) }
-    @objc func editTapped() { if let s = selected { hub.editServer(s) } }
 
-    @objc func deleteTapped() {
-        guard let s = selected else { return }
+    private func delete(_ s: SSHServer) {
         confirm("Delete “\(s.title)”?", detail: "Only the saved entry is removed. Any secret in the Password Store stays.", button: "Delete", destructive: true) { [weak self] in
             self?.hub.service.delete(server: s.id) { r in
                 if case let .failure(e) = r { self?.message.stringValue = e.message; self?.message.textColor = Token.danger } else { self?.hub.reloadAll() }
             }
         }
     }
-}
 
-// MARK: PSMP profiles
-
-@MainActor
-final class PSMPPane: ListPane {
-    private let addButton = ModalButton.action("Add profile…", nil, #selector(addTapped), label: "Add a PSMP profile")
-    private let editButton = ModalButton.action("Edit…", nil, #selector(editTapped), label: "Edit the selected PSMP profile")
-    private let deleteButton = ModalButton.action("Delete…", nil, #selector(deleteTapped), label: "Delete the selected PSMP profile")
-    private(set) var rows: [PSMPProfile] = []
-
-    override var columns: [(String, String, CGFloat)] { [("name", "Name", 170), ("addr", "PSMP address", 230), ("user", "Vault user", 150), ("scp", "scp options", 120)] }
-    override var rowCount: Int { rows.count }
-
-    override func text(row: Int, column: String) -> String {
-        let p = rows[row]
-        switch column {
-        case "name": return p.title
-        case "addr": return p.psmpAddress
-        case "user": return p.vaultUser
-        default: return p.scpOptions.isEmpty ? "—" : p.scpOptions
-        }
-    }
-
-    init(hub: SSHHubPage) {
-        super.init(hub: hub, label: "PSMP profiles list")
-        for b in [addButton, editButton, deleteButton] { b.target = self; toolbar.addArrangedSubview(b) }
-        updateButtons()
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    override func reload() {
-        rows = hub.model.profileList
-        if !present(hub.model.profiles, empty: "No PSMP profiles yet", retry: { [weak hub] in hub?.reloadAll() }) { rows = [] }
-        table.reloadData()
-        updateButtons()
-    }
-
-    func updateButtons() {
-        let ready = hub.model.profiles.isReady
-        addButton.isEnabled = ready
-        editButton.isEnabled = ready && selectedRow != nil
-        deleteButton.isEnabled = ready && selectedRow != nil
-    }
-
-    override func selectionChanged() { updateButtons() }
-    override func activate() { editTapped() }
-    var selected: PSMPProfile? { selectedRow.map { rows[$0] } }
-    @objc func addTapped() { hub.editProfile(nil) }
-    @objc func editTapped() { if let p = selected { hub.editProfile(p) } }
-
-    @objc func deleteTapped() {
-        guard let p = selected else { return }
-        let used = hub.model.servers.isReady ? hub.model.visibleServers.filter { $0.psmpProfileId == p.id }.count : 0
-        confirm("Delete “\(p.title)”?", detail: used > 0 ? "\(used) server\(used == 1 ? "" : "s") use this profile and will stop connecting until you pick another." : "Servers do not use it.", button: "Delete", destructive: true) { [weak self] in
+    private func deleteProfile(_ p: PSMPProfile) {
+        confirm("Delete “\(p.title)”?", detail: "Servers that use this profile keep pointing at it until you edit them.", button: "Delete", destructive: true) { [weak self] in
             self?.hub.service.delete(profile: p.id) { r in
                 if case let .failure(e) = r { self?.message.stringValue = e.message; self?.message.textColor = Token.danger } else { self?.hub.reloadAll() }
             }
@@ -380,52 +398,356 @@ final class CyberArkPane: ListPane, NSSearchFieldDelegate {
 @MainActor
 final class VaultPane: ListPane, NSSearchFieldDelegate {
     private let search = NSSearchField()
-    private let status = Kit.label("", size: 12, bold: true)
-    private let addButton = ModalButton.action("Add secret…", nil, #selector(addTapped), label: "Add a secret to the Password Store")
-    private let updateButton = ModalButton.action("Update value…", nil, #selector(updateTapped), label: "Replace the value of the selected secret")
+    private let status = Kit.label("", size: 13, color: Theme.dynamic(.success))
+    private let addButton = ModalButton("Add credential", style: .primary, icon: .plus, height: 32, label: "Add a credential to the Password Store")
+    private let touchButton = ModalButton("Enable Touch ID", icon: .fingerprint, height: 32, label: "Turn Touch ID unlock on or off")
+    private let lockButton = ModalButton("Lock", icon: .lockIcon, height: 32, label: "Lock the Password Store")
+    private let importKeyButton = ModalButton("Import SSH key", icon: .upload, height: 32, label: "Import an SSH private key from a file")
+    private let importCredButton = ModalButton("Import credential", icon: .upload, height: 32, label: "Import a credential value from a file")
+    private let exportBackupButton = ModalButton("Export backup", height: 32, label: "Export the encrypted store as a backup file")
+    private let moreButton = ModalButton("More", icon: .chevronDown, height: 32, label: "Import and export")
+    private let statusIcon = GlyphView(.unlock, size: 16, token: .success)
+    private let scroll = NSScrollView()
+    private let doc = CredCardsDocument()
     private(set) var rows: [SecretMeta] = []
-
-    override var columns: [(String, String, CGFloat)] { [("name", "Name", 220), ("kind", "Kind", 90), ("desc", "Description", 320)] }
-    override var rowCount: Int { rows.count }
-
-    override func text(row: Int, column: String) -> String {
-        let s = rows[row]
-        switch column {
-        case "name": return s.label
-        case "kind": return s.kind
-        default: return s.description.isEmpty ? "—" : s.description
-        }
+    /// Values the operator chose to show (by secret id). Hidden again after 30 s, on lock and on delete.
+    private(set) var revealed: [String: String] = [:]
+    private var copiedId: String?
+    /// The open form: editing this card in place, a new credential, or an import (classic's CredForm / import cards).
+    private enum Editing: Equatable { case edit(String), new, importKey, importCred }
+    private var editing: Editing?
+    private var editValue = ""
+    private(set) var form: CredFormCard?
+    private var hideTimer: Timer?
+    private var touchOn = false
+    private static let collapsedKey = "muya.vault.collapsed"
+    private var collapsed: Set<String> {
+        get { Set(UserDefaults.standard.stringArray(forKey: Self.collapsedKey) ?? []) }
+        set { UserDefaults.standard.set(Array(newValue).sorted(), forKey: Self.collapsedKey) }
     }
 
+    override var rowCount: Int { rows.count }
+    override func text(row: Int, column: String) -> String { "" }
+
     init(hub: SSHHubPage) {
-        super.init(hub: hub, label: "Secret names (values are never shown)")
-        search.placeholderString = "Filter secrets"
-        search.setSpokenLabel("Filter secrets")
+        super.init(hub: hub, label: "Stored secrets")
+        search.placeholderString = "Search credentials — label, username, group, note…"
+        search.setSpokenLabel("Search credentials")
         search.delegate = self
         status.setAccessibilityLabel("Password Store status")
-        for b in [addButton, updateButton] { b.target = self }
-        for v in [status, FieldBox(search, width: 260), addButton, updateButton] as [NSView] { toolbar.addArrangedSubview(v) }
+        addButton.onClick = { [weak self] in self?.beginNew() }
+        touchButton.onClick = { [weak self] in self?.touchTapped() }
+        lockButton.onClick = { [weak self] in self?.lockTapped() }
+        importKeyButton.onClick = { [weak self] in self?.beginImport(key: true) }
+        importCredButton.onClick = { [weak self] in self?.beginImport(key: false) }
+        exportBackupButton.onClick = { [weak self] in self?.exportBackup() }
+        moreButton.onClick = { [weak self] in self?.showMore() }
+        moreButton.isHidden = true
+        // Row 1: status on the left, actions on the right (classic). Row 2: the search field, full width. Below 760 px the
+        // two ghost buttons drop their words and keep their icon / tooltip so the row never overflows.
+        toolbar.orientation = .vertical; toolbar.alignment = .leading; toolbar.spacing = 12
+        let spacer = NSView(); spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.setContentHuggingPriority(.init(1), for: .horizontal)
+        let statusBox = NSStackView(views: [statusIcon, status]); statusBox.orientation = .horizontal; statusBox.spacing = 4; statusBox.alignment = .centerY
+        let row1 = NSStackView(views: [statusBox, spacer, addButton, importKeyButton, importCredButton, exportBackupButton, moreButton, touchButton, lockButton])
+        row1.orientation = .horizontal; row1.spacing = 8; row1.alignment = .centerY
+        let box = FieldBox(search, height: 32)
+        toolbar.addArrangedSubview(row1); toolbar.addArrangedSubview(box)
+        for v in [row1, box] as [NSView] { v.translatesAutoresizingMaskIntoConstraints = false; v.widthAnchor.constraint(equalTo: toolbar.widthAnchor).isActive = true }
+        // The cards replace the table: same place, same states (locked / loading / failed use the shared overlay).
+        scroll.drawsBackground = false; scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = false
+        scroll.scrollerStyle = .overlay; scroll.automaticallyAdjustsContentInsets = false
+        scroll.documentView = doc
+        doc.autoresizingMask = [.width]
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.setAccessibilityLabel("Stored secrets")
+        guard let listBox = table.enclosingScrollView?.superview else { return }
+        listBox.isHidden = true
+        addSubview(scroll)
+        NSLayoutConstraint.activate([
+            scroll.topAnchor.constraint(equalTo: listBox.topAnchor), scroll.bottomAnchor.constraint(equalTo: listBox.bottomAnchor),
+            scroll.leadingAnchor.constraint(equalTo: listBox.leadingAnchor), scroll.trailingAnchor.constraint(equalTo: listBox.trailingAnchor),
+        ])
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    override func reload() {
-        rows = hub.vault.visible
-        if !present(hub.vault.secrets, empty: hub.vault.filter.isEmpty ? "No secrets yet" : "No secret matches the filter", retry: { [weak hub] in hub?.reloadAll() }) { rows = [] }
-        table.reloadData()
-        status.stringValue = hub.vault.statusText
-        if case .locked = hub.vault.secrets { status.textColor = Token.statePermission } else if hub.vault.secrets.isReady { status.textColor = Token.success } else { status.textColor = Token.textSecondary }
-        addButton.isEnabled = hub.vault.secrets.isReady
-        updateButton.isEnabled = hub.vault.secrets.isReady && selectedRow != nil
+    override func layout() {
+        super.layout()
+        doc.setFrameSize(NSSize(width: scroll.contentSize.width, height: doc.frame.height))
+        // Classic's six buttons fit from ~900 px; below that the import / export ones move into a "More" menu.
+        let compact = bounds.width < 900
+        for b in [importKeyButton, importCredButton, exportBackupButton] { b.isHidden = compact }
+        moreButton.isHidden = !compact
+        let narrow = bounds.width < 760
+        touchButton.title = narrow ? "Touch ID" : (touchOn ? "Disable Touch ID" : "Enable Touch ID")
+        lockButton.title = narrow ? "" : "Lock"; lockButton.toolTip = "Lock the Password Store"; touchButton.toolTip = touchOn ? "Stop offering Touch ID unlock" : "Unlock with Touch ID next time, without the master password"
     }
 
-    override func selectionChanged() { updateButton.isEnabled = hub.vault.secrets.isReady && selectedRow != nil }
-    override func activate() { updateTapped() }
-    var selected: SecretMeta? { selectedRow.map { rows[$0] } }
+    override func reload() {
+        rows = hub.vault.visible
+        let ready = hub.vault.secrets.isReady
+        if !present(hub.vault.secrets, empty: hub.vault.filter.isEmpty ? "No credentials yet" : "No credentials match “\(hub.vault.filter)”.", retry: { [weak hub] in hub?.reloadAll() }) { rows = [] }
+        if !ready { hideValues() }
+        revealed = revealed.filter { k, _ in rows.contains { $0.id == k } }
+        scroll.isHidden = !(ready && (!rows.isEmpty || (editing != nil)))
+        status.stringValue = hub.vault.statusText
+        statusIcon.isHidden = !ready
+        if case .locked = hub.vault.secrets { status.textColor = Theme.dynamic(.warning) } else if ready { status.textColor = Theme.dynamic(.success) } else { status.textColor = Theme.dynamic(.textSecondary) }
+        for b in [addButton, lockButton, touchButton, importKeyButton, importCredButton, exportBackupButton, moreButton] { b.isEnabled = ready }
+        hub.service.vaultStatus { [weak self] st in
+            guard let self else { return }
+            self.touchOn = st.biometricAvailable
+            self.needsLayout = true
+        }
+        rebuild()
+    }
+
+    /// Redraws the cards from the rows, keeping the scroll position.
+    private func rebuild() {
+        let keep = scroll.contentView.bounds.origin
+        let searching = !hub.vault.filter.trimmingCharacters(in: .whitespaces).isEmpty
+        let col = collapsed
+        let groups = CredGroup.make(rows).map { g -> CredGroupView in
+            var isCollapsed = !searching && col.contains(g.name)
+            if case let .edit(id) = editing, g.items.contains(where: { $0.id == id }) { isCollapsed = false }
+            let cards: [FitCard] = g.items.map { m -> FitCard in
+                if case let .edit(id) = editing, id == m.id, let f = makeForm() { return f }
+                return CredCardView(CredCardModel(meta: m, revealed: revealed[m.id], copied: copiedId == m.id),
+                             onEye: { [weak self] in self?.toggleReveal(m) }, onCopy: { [weak self] in self?.copy(m) },
+                             onEdit: { [weak self] in self?.beginEdit(m) }, onExport: { [weak self] in self?.exportCard(m) }, onDelete: { [weak self] in self?.delete(m) })
+            }
+            let v = CredGroupView(group: g, collapsed: isCollapsed, cards: cards)
+            v.onToggle = { [weak self] in
+                guard let self else { return }
+                var c = self.collapsed
+                if c.contains(g.name) { c.remove(g.name) } else { c.insert(g.name) }
+                self.collapsed = c; self.rebuild()
+            }
+            return v
+        }
+        doc.set(groups)
+        switch editing {
+        case .new, .importKey, .importCred: doc.setTop(makeForm())
+        default: doc.setTop(nil)
+        }
+        doc.setFrameSize(NSSize(width: scroll.contentSize.width, height: doc.frame.height))
+        doc.layoutSubtreeIfNeeded()
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, min(keep.y, doc.frame.height - scroll.contentSize.height))))
+    }
+
+    func beginNew() { editing = .new; editValue = ""; rebuild(); scrollToTop() }
+    func beginImport(key: Bool) { editing = key ? .importKey : .importCred; rebuild(); scrollToTop() }
+    func beginEdit(_ m: SecretMeta) {
+        hub.service.reveal(id: m.id) { [weak self] r in
+            guard let self else { return }
+            switch r {
+            case let .success(v): self.editing = .edit(m.id); self.editValue = v; self.rebuild()
+            case let .failure(e): self.showMessage(e.message, error: true)
+            }
+        }
+    }
+    func endEditing() { editing = nil; editValue = ""; rebuild() }
+    private func scrollToTop() { scroll.contentView.scroll(to: .zero); scroll.reflectScrolledClipView(scroll.contentView); form?.focusFirst() }
+
+    /// The form for the open editing state (nil when none). Saving goes to the daemon; the value never stays in a field.
+    private func makeForm() -> CredFormCard? {
+        guard let editing else { return nil }
+        let meta: SecretMeta? = { if case let .edit(id) = editing { return rows.first { $0.id == id } }; return nil }()
+        var v = CredFormCard.Values()
+        var o: CredFormCard.Options
+        switch editing {
+        case .edit: o = .init(title: "Edit credential", primary: "Save")
+            if let m = meta { v = .init(label: m.label, username: m.username, kind: m.kind, group: m.group, description: m.description, value: editValue) }
+        case .new: o = .init(title: "New credential", primary: "Save")
+        case .importKey: o = .init(title: "Import SSH key", primary: "Choose file…", showKind: false, showValue: false, showExtras: false); v.kind = "key"
+        case .importCred: o = .init(title: "Import credential", primary: "Choose file…", showValue: false)
+        }
+        let f = CredFormCard(v, options: o)
+        f.onCancel = { [weak self] in self?.endEditing() }
+        f.onSave = { [weak self, weak f] vals in
+            guard let self, let f else { return nil }
+            return self.save(form: f, vals: vals, editing: editing, meta: meta)
+        }
+        form = f
+        return f
+    }
+
+    private func save(form f: CredFormCard, vals: CredFormCard.Values, editing: Editing, meta: SecretMeta?) -> String? {
+        let label = vals.label.trimmingCharacters(in: .whitespaces)
+        switch editing {
+        case .importKey, .importCred:
+            let key = editing == .importKey
+            let o = NSOpenPanel()
+            o.title = key ? "Select SSH private key file" : "Select file containing the secret value"
+            o.canChooseFiles = true; o.canChooseDirectories = false; o.allowsMultipleSelection = false
+            guard o.runModal() == .OK, let url = o.url else { return nil }
+            hub.service.importFile(label: label.isEmpty ? (key ? "imported key" : "imported credential") : label, username: vals.username, secretKind: key ? nil : vals.kind,
+                                   description: vals.description, group: vals.group.trimmingCharacters(in: .whitespaces), path: url.path) { [weak self, weak f] r in
+                switch r {
+                case .success: self?.endEditing(); self?.showMessage("Imported “\(label.isEmpty ? url.lastPathComponent : label)”.", error: false); self?.hub.reloadAll()
+                case let .failure(e): f?.showError(e.message)
+                }
+            }
+            return nil
+        case .new, .edit:
+            let buf = SecretBuffer(vals.value)
+            let others = hub.vault.visible.filter { $0.id != meta?.id }
+            let errs = SSHValidation.secret(label: vals.label, kind: vals.kind, value: buf, existing: others, updating: false)
+            if let first = errs.first { buf.wipe(); return first.message }
+            f.clearSecret()
+            hub.service.save(id: meta?.id ?? "", label: label, username: vals.username, group: vals.group.trimmingCharacters(in: .whitespaces), description: vals.description, kind: vals.kind, value: buf) { [weak self, weak f] r in
+                switch r {
+                case .success: self?.hideValues(); self?.endEditing(); self?.showMessage(meta != nil ? "Saved “\(label)”." : "Stored “\(label)”.", error: false); self?.hub.reloadAll()
+                case let .failure(e): f?.showError("\(e.message) — type the value again to retry.")
+                }
+            }
+            return nil
+        }
+    }
+
     func controlTextDidChange(_ obj: Notification) { hub.vault.filter = search.stringValue; reload() }
-    @objc func addTapped() { hub.editSecret(nil) }
-    @objc func updateTapped() { if let s = selected { hub.editSecret(s) } }
     func showMessage(_ t: String, error: Bool) { message.stringValue = t; message.textColor = error ? Token.statePermission : Token.textSecondary }
+
+    func hideValues() { revealed = [:]; hideTimer?.invalidate(); hideTimer = nil; if doc.superview != nil, !rows.isEmpty { rebuild() } }
+
+    func toggleReveal(_ s: SecretMeta) {
+        if revealed[s.id] != nil { revealed[s.id] = nil; rebuild(); return }
+        hub.service.reveal(id: s.id) { [weak self] r in
+            guard let self else { return }
+            switch r {
+            case let .success(v):
+                self.revealed[s.id] = v
+                self.hideTimer?.invalidate()
+                self.hideTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: false) { [weak self] _ in MainActor.assumeIsolated { self?.hideValues() } }
+                self.rebuild()
+                self.showMessage("Showing “\(s.label)” for 30 seconds.", error: false)
+            case let .failure(e): self.showMessage(e.message, error: true)
+            }
+        }
+    }
+
+    func copy(_ s: SecretMeta) {
+        hub.service.reveal(id: s.id) { [weak self] r in
+            guard let self else { return }
+            switch r {
+            case let .success(v):
+                let pb = NSPasteboard.general
+                pb.clearContents(); pb.setString(v, forType: .string)
+                let mine = pb.changeCount
+                self.copiedId = s.id; self.rebuild()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.copiedId = nil; self?.rebuild() }
+                self.showMessage("Copied “\(s.label)”. The clipboard is cleared in 30 seconds.", error: false)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 30) { if NSPasteboard.general.changeCount == mine { NSPasteboard.general.clearContents() } }
+            case let .failure(e): self.showMessage(e.message, error: true)
+            }
+        }
+    }
+
+    /// Classic deletes at once, without a confirmation.
+    func delete(_ s: SecretMeta) {
+        hub.service.remove(id: s.id) { [weak self] r in
+            guard let self else { return }
+            switch r {
+            case .success: self.revealed[s.id] = nil; self.showMessage("Deleted “\(s.label)”.", error: false); self.hub.reloadAll()
+            case let .failure(e): self.showMessage(e.message, error: true)
+            }
+        }
+    }
+
+    private func showMore() {
+        let menu = NSMenu()
+        for (title, act) in [("Import SSH key…", #selector(menuImportKey)), ("Import credential…", #selector(menuImportCred)), ("Export backup…", #selector(menuExportBackup))] {
+            let i = NSMenuItem(title: title, action: act, keyEquivalent: ""); i.target = self; menu.addItem(i)
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: moreButton.bounds.height + 2), in: moreButton)
+    }
+    @objc private func menuImportKey() { beginImport(key: true) }
+    @objc private func menuImportCred() { beginImport(key: false) }
+    @objc private func menuExportBackup() { exportBackup() }
+
+    /// Classic: "Export encrypted store backup" -> muya-ssh-vault.enc.bak; the file stays sealed under the master password.
+    func exportBackup() {
+        let p = NSSavePanel()
+        p.title = "Export encrypted store backup"; p.nameFieldStringValue = "muya-ssh-vault.enc.bak"
+        guard p.runModal() == .OK, let url = p.url else { return }
+        hub.service.exportBackup(dest: url.path) { [weak self] r in
+            switch r {
+            case .success: self?.showMessage("Encrypted backup exported to: \(url.path)", error: false)
+            case let .failure(e): self?.showMessage(e.message, error: true)
+            }
+        }
+    }
+
+    /// Classic's per-card Export: the value as plain text in the file picked (owner-only).
+    func exportCard(_ s: SecretMeta) {
+        let p = NSSavePanel()
+        p.title = "Export \(s.kind)"; p.nameFieldStringValue = (s.label.isEmpty ? s.username : s.label) + (s.kind == "key" ? "" : ".txt")
+        guard p.runModal() == .OK, let url = p.url else { return }
+        hub.service.exportCred(id: s.id, dest: url.path) { [weak self] r in
+            switch r {
+            case .success: self?.showMessage("\(s.kind == "key" ? "SSH key" : "Password") exported to: \(url.path)", error: false)
+            case let .failure(e): self?.showMessage(e.message, error: true)
+            }
+        }
+    }
+
+    func touchTapped() {
+        let want = !touchOn
+        hub.service.setTouchId(want) { [weak self] r in
+            guard let self else { return }
+            switch r {
+            case .success: self.showMessage(want ? "Touch ID will unlock the Password Store." : "Touch ID unlock is off.", error: false); self.reload()
+            case let .failure(e): self.showMessage(e.message, error: true)
+            }
+        }
+    }
+
+    func lockTapped() {
+        hub.service.lock { [weak self] r in
+            guard let self else { return }
+            if case let .failure(e) = r { self.showMessage(e.message, error: true); return }
+            self.hideValues(); self.hub.reloadAll()
+        }
+    }
+
+    #if MUYA_TEST_HOOKS
+    /// Debug socket: `show|copy|edit|delete <label>`, `lock`, `collapse <group>`, `rows`, `layout`.
+    func debugAct(_ arg: String) -> String {
+        let p = arg.split(separator: " ", maxSplits: 1).map(String.init)
+        switch p.first ?? "" {
+        case "rows": return rows.map { r in "\(r.label)|\(r.username)|\(r.group)|\(r.kind)|\(revealed[r.id] ?? "••••••••")" }.joined(separator: "\n")
+        case "layout":
+            let lines = doc.groups.map { g -> String in
+                let box = "\(Int(g.frame.minX)),\(Int(g.frame.minY)) \(Int(g.frame.width))x\(Int(g.frame.height))"
+                let cards = g.cards.map { c in "\(Int(c.frame.minX)),\(Int(c.frame.minY)) \(Int(c.frame.width))x\(Int(c.frame.height))" }.joined(separator: ";")
+                return "\(g.groupName) \(box) cards=" + cards
+            }
+            let bar = "toolbar=\(touchButton.title)|\(lockButton.title) width=\(Int(bounds.width))"
+            return lines.joined(separator: "\n") + "\n" + bar
+        case "lock": lockTapped(); return "ok"
+        case "new": beginNew(); return "ok"
+        case "import": beginImport(key: p.count == 2 && p[1] == "key"); return "ok"
+        case "formset":   // formset <id> <value>
+            let q = (p.count == 2 ? p[1] : "").split(separator: " ", maxSplits: 1).map(String.init)
+            guard let f = form, q.count == 2 else { return "error: no form open / formset <label|user|kind|group|desc|secret> <value>" }
+            f.setValue(q[0], q[1]); return "ok"
+        case "formsave": form?.submitForTest(); return form == nil ? "error: no form open" : "ok"
+        case "formcancel": form?.cancelForTest(); return "ok"
+        case "formstate": return form.map { f in "open kind=\(f.kind) error=\(f.values.value.isEmpty ? "value-empty" : "value-set")" } ?? "none"
+        case "collapse":
+            guard p.count == 2 else { return "error: collapse <group>" }
+            var c = collapsed
+            if c.contains(p[1]) { c.remove(p[1]) } else { c.insert(p[1]) }
+            collapsed = c; rebuild(); return "ok"
+        case let act where ["show", "copy", "edit", "delete"].contains(act):
+            guard p.count == 2, let s = rows.first(where: { $0.label == p[1] }) else { return "error: no such secret" }
+            switch act { case "show": toggleReveal(s); case "copy": copy(s); case "edit": beginEdit(s); default: hub.service.remove(id: s.id) { [weak self] _ in self?.hub.reloadAll() } }   // no confirmation sheet from the debug socket
+            return "ok"
+        default: return "error: ssh-secret show|copy|edit|delete <label> | lock | collapse <group> | rows | layout"
+        }
+    }
+    #endif
 }
 
 // MARK: The page
@@ -436,7 +758,9 @@ final class SSHHubPage: PageView {
     var model = ServersModel()
     var cyberark = CyberArkModel()
     var vault = VaultModel()
-    let connect: (_ name: String, _ command: String) -> Void
+    /// Brings the tab the daemon opened for `Connect` to the front.
+    let focusSession: (_ id: UInt64) -> Void
+    let terminalSize: () -> (cols: Int, rows: Int)
     private var tabs: UnderlineTabs!
     private var panes: [SSHSection: ListPane] = [:]
     private(set) var section = SSHSection.servers
@@ -446,19 +770,19 @@ final class SSHHubPage: PageView {
     private(set) var generation = 0
 
     var serversPane: ServersPane { panes[.servers] as! ServersPane }
-    var psmpPane: PSMPPane { panes[.psmp] as! PSMPPane }
     var cyberarkPane: CyberArkPane { panes[.cyberark] as! CyberArkPane }
     var vaultPane: VaultPane { panes[.vault] as! VaultPane }
 
-    init(rpc: SSHRpc, connect: @escaping (_ name: String, _ command: String) -> Void) {
+    init(rpc: SSHRpc, terminalSize: @escaping () -> (cols: Int, rows: Int) = { (120, 30) }, focusSession: @escaping (_ id: UInt64) -> Void = { _ in }) {
         service = SSHService(rpc: rpc)
-        self.connect = connect
+        self.focusSession = focusSession
+        self.terminalSize = terminalSize
         super.init(title: "SSH & Passwords")
         useOwnHeading()
-        tabs = UnderlineTabs(SSHSection.allCases.map(\.title))
+        tabs = UnderlineTabs(SSHSection.tabs.map(\.title))
         tabs.setSpokenLabel("Section")
-        tabs.onChange = { [weak self] i in if let s = SSHSection(rawValue: i) { self?.select(s); self?.focusList() } }
-        panes = [.servers: ServersPane(hub: self), .psmp: PSMPPane(hub: self), .cyberark: CyberArkPane(hub: self), .vault: VaultPane(hub: self)]
+        tabs.onChange = { [weak self] i in guard SSHSection.tabs.indices.contains(i) else { return }; self?.select(SSHSection.tabs[i]); self?.focusList() }
+        panes = [.servers: ServersPane(hub: self), .cyberark: CyberArkPane(hub: self), .vault: VaultPane(hub: self)]
         let icon = GlyphView(.theme(.sshRail), size: 20, token: .textMuted)
         let heading = NSTextField(labelWithString: "SSH Configuration")
         heading.font = ThemeFont.sans(18, .semibold); heading.textColor = Theme.dynamic(.text); heading.setAccessibilityRole(.staticText)
@@ -489,9 +813,12 @@ final class SSHHubPage: PageView {
 
     func focusList() { if let p = panes[section] { window?.makeFirstResponder(p.table) } }
 
-    func select(_ s: SSHSection) {
+    func select(_ wanted: SSHSection) {
+        // PSMP profiles are a card inside Servers now, so asking for that section lands on Servers.
+        let s = wanted == .psmp ? .servers : wanted
         section = s
-        tabs.selected = s.rawValue
+        // PSMP has no tab of its own (its card lives in Servers), so it shows the Servers tab.
+        tabs.selected = SSHSection.tabs.firstIndex(of: s) ?? 0
         for (k, p) in panes { p.isHidden = k != s }
         panes[s]?.reload()
     }
@@ -557,7 +884,13 @@ final class SSHHubPage: PageView {
         var fields = [FormField(id: "master", title: "Master password", helper: create ? "Protects every secret in the store. There is no way to recover it." : "The password you chose when you created the Password Store — the same one classic Muya uses.", kind: .secure)]
         if create { fields.append(FormField(id: "again", title: "Repeat it", kind: .secure)) }
         else { fields.append(FormField(id: "touch", title: "Touch ID", helper: "Unlock with your fingerprint next time.", kind: .check, value: "0")) }
-        let f = FormSheet(title: create ? "Create Password Store" : "Unlock Password Store", fields: fields, primary: create ? "Create" : "Unlock")
+        // Classic's create card: the text about AES-256-GCM, Create + "Export master password", and the plaintext warning.
+        let sheetTitle: String = create ? "Create password store" : "Unlock Password Store"
+        let subtitle: String? = create ? "Your credentials are stored encrypted with AES-256-GCM. Keep your master password safe — the app never stores it, so you can also export an encrypted backup once unlocked.\n⚠️ “Export master password” saves it to a plaintext file you pick. Prefer keeping it in a password manager — the app never stores it." : nil
+        var extra: (title: String, action: (FormSheet) -> Void)?
+        if create { extra = (title: "Export master password", action: { [weak self] sheet in self?.exportMaster(from: sheet) }) }
+        let primaryTitle: String = create ? "Create" : "Unlock"
+        let f = FormSheet(title: sheetTitle, subtitle: subtitle, fields: fields, primary: primaryTitle, extraButton: extra)
         f.validate = { v in
             if (v["master"] ?? "").isEmpty { return [FieldError(field: "master", message: "Type the master password")] }
             if create, v["master"] != v["again"] { return [FieldError(field: "again", message: "The two passwords differ")] }
@@ -580,6 +913,22 @@ final class SSHHubPage: PageView {
             else { self.service.unlock(master: buf, enableTouchId: v["touch"] == "1", finish) }
         }
         present(f)
+    }
+
+    /// Classic's "Export master password": needs the master typed first; writes it in plain text to the file picked.
+    private func exportMaster(from sheet: FormSheet?) {
+        guard let sheet else { return }
+        let master = sheet.value("master")
+        guard master.count >= 4 else { sheet.showErrors([], general: "type the master password above first, then export it"); return }
+        let p = NSSavePanel()
+        p.title = "Export master password (PLAINTEXT)"; p.nameFieldStringValue = "muya-master-password.txt"
+        guard p.runModal() == .OK, let url = p.url else { return }
+        service.exportMaster(dest: url.path, master: SecretBuffer(master)) { r in
+            switch r {
+            case .success: sheet.showErrors([], general: "⚠️ Master password written in plaintext to: \(url.path) — store it somewhere safe.")
+            case let .failure(e): sheet.showErrors([], general: e.message)
+            }
+        }
     }
 
     // MARK: Editors
@@ -682,45 +1031,6 @@ final class SSHHubPage: PageView {
                 switch r {
                 case .success: f?.close(); self?.form = nil; self?.reloadAll()
                 case let .failure(e): f?.showErrors([], general: e.message)
-                }
-            }
-        }
-        present(f)
-    }
-
-    func editSecret(_ existing: SecretMeta?) {
-        let updating = existing != nil
-        var fields = [FormField(id: "label", title: "Name", helper: updating ? "The secret to replace." : "How servers and agents refer to it.", value: existing?.label ?? "", placeholder: "lab-admin")]
-        if !updating {
-            fields.append(FormField(id: "kind", title: "Kind", kind: .popup(SSHValidation.secretKinds.map { ($0, $0) }), value: "password"))
-            fields.append(FormField(id: "desc", title: "Description", helper: "Optional. Shown in the list.", value: ""))
-        }
-        fields.append(FormField(id: "value", title: updating ? "New value" : "Value", helper: "Stored encrypted. Never shown again.", kind: .secure))
-        let f = FormSheet(title: updating ? "Update secret" : "Add secret", fields: fields, primary: updating ? "Update…" : "Add…")
-        if updating { (f.controls["label"] as? NSTextField)?.isEditable = false }
-        let existingList = vault.visible
-        f.validate = { v in
-            let buf = SecretBuffer(v["value"] ?? "")
-            defer { buf.wipe() }
-            return SSHValidation.secret(label: v["label"] ?? "", kind: v["kind"] ?? existing?.kind ?? "password", value: buf, existing: existingList, updating: updating)
-        }
-        f.onSubmit = { [weak self, weak f] v in
-            guard let self, let f else { return }
-            let label = (v["label"] ?? "").trimmingCharacters(in: .whitespaces)
-            let kind = v["kind"] ?? existing?.kind ?? "password"
-            let buf = SecretBuffer(v["value"] ?? "")
-            f.clearSecure() // the field is empty from here on; only the buffer holds the value
-            let c = VaultModel.confirmText(label: label, kind: kind, updating: updating)
-            let a = NSAlert()
-            a.messageText = c.title; a.informativeText = c.detail
-            a.addButton(withTitle: c.button); a.addButton(withTitle: "Cancel")
-            a.beginSheetModal(for: f.window) { resp in
-                guard resp == .alertFirstButtonReturn else { buf.wipe(); return }
-                self.service.store(label: label, description: v["desc"] ?? "", kind: kind, value: buf, updating: updating) { r in
-                    switch r {
-                    case .success: f.close(); self.form = nil; self.vaultPane.showMessage(updating ? "Updated “\(label)”." : "Stored “\(label)”.", error: false); self.reloadAll()
-                    case let .failure(e): f.showErrors([], general: "\(e.message) — type the value again to retry.")
-                    }
                 }
             }
         }

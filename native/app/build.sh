@@ -33,7 +33,7 @@ fi
 
 BIN=$OUT/MuyaNative
 "${SWIFTC[@]}" -O -I CGhostty -Xcc -I"$GHOSTTY/include" -L "$GHOSTTY/lib" \
-  "${CLIENT[@]}" Sources/Inspector/InspectorPane.swift Sources/Queue/QueuePage.swift Sources/Queue/QueueViews.swift Sources/Queue/QueueDebug.swift Sources/SSH/SSHForm.swift Sources/SSH/SSHPage.swift Sources/SSH/SSHDaemon.swift Sources/Vault/VaultPanel.swift Sources/Vault/DebugP12.swift Sources/Resources/ResourcesPage.swift Sources/Resources/SlashPopover.swift Sources/Resources/ResourcesWiring.swift Sources/Resources/DebugP7.swift Sources/Theme/*.swift Sources/App/*.swift -o "$BIN"
+  "${CLIENT[@]}" Sources/Inspector/InspectorPane.swift Sources/Queue/QueuePage.swift Sources/Queue/QueueViews.swift Sources/Queue/QueueDebug.swift Sources/SSH/SSHForm.swift Sources/SSH/PasswordStoreCards.swift Sources/SSH/ServerCards.swift Sources/SSH/SSHPage.swift Sources/SSH/SSHDaemon.swift Sources/Vault/VaultPanel.swift Sources/Vault/DebugP12.swift Sources/Resources/ResourcesPage.swift Sources/Resources/SlashPopover.swift Sources/Resources/ResourcesWiring.swift Sources/Resources/DebugP7.swift Sources/Theme/*.swift Sources/App/*.swift -o "$BIN"
 
 APP=$OUT/MuyaNative.app
 rm -rf "$APP"
@@ -46,11 +46,16 @@ cp ../../src-tauri/icons/icon.icns "$APP/Contents/Resources/Muya.icns"   # Dock 
 cp ../THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/"
 # The release build is Muya 5: classic's own id (no .dev), so macOS permissions carry over (docs/prd-muya-v5-replace.md).
 # This is only the donor of the binary; scripts/bundle.sh makes the real flavours (release / bridge) from it.
+# There is one product, Muya. A dev build says "Muya (dev)" so nothing on screen claims to be a second app, but it
+# keeps its own identifier: two bundles sharing com.staunch.muya is what once made macOS start the wrong copy's
+# background service (lesson L88), so the dev build must never borrow the installed app's id.
 BUNDLE_ID=com.staunch.muya.dev
+NAME="Muya (dev)"
 if [ "${MUYA_RELEASE:-}" = "1" ]; then
   BUNDLE_ID=com.staunch.muya
-  /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" -c "Set :CFBundleDisplayName Muya" -c "Set :CFBundleName Muya" "$APP/Contents/Info.plist"
+  NAME=Muya
 fi
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" -c "Set :CFBundleDisplayName $NAME" -c "Set :CFBundleName $NAME" "$APP/Contents/Info.plist"
 mkdir -p "$APP/Contents/Resources/Fonts"
 cp Resources/Fonts/* "$APP/Contents/Resources/Fonts/" # IBM Plex Sans + JetBrains Mono, SIL OFL 1.1 (licence texts included)
 cp "$BIN" "$APP/Contents/MacOS/MuyaNative"

@@ -114,6 +114,8 @@ extension DebugServer {
         case "settings-scroll-privacy": c.settings.scrollToPrivacy(); return "ok"
         case "settings-visible": return c.settings.window.isVisible ? "yes" : "no"
         case "settings-close": c.settings.window.close(); return "ok"
+        // The Settings dialog is its own window, so `snap` (which draws the main one) cannot catch it.
+        case "settings-snap": return MainActor.assumeIsolated { DebugSnap.snapshot(c.settings.window, to: arg) }
         case "settings-reload": c.settings.reload(); return "ok"
         case "settings-get": return c.settings.value(of: arg)
         case "settings-set":

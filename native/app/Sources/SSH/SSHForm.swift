@@ -36,7 +36,7 @@ final class FormSheet: NSObject, NSComboBoxDelegate {
     var onSubmit: (([String: String]) -> Void)?
     var onChange: ((String, FormSheet) -> Void)?
 
-    init(title: String, subtitle: String? = nil, fields: [FormField], primary primaryTitle: String) {
+    init(title: String, subtitle: String? = nil, fields: [FormField], primary primaryTitle: String, extraButton: (title: String, action: (FormSheet) -> Void)? = nil) {
         window = EditorPanel(contentRect: NSRect(x: 0, y: 0, width: 540, height: 200), styleMask: [.titled], backing: .buffered, defer: true)
         primaryButton = ModalButton(primaryTitle, style: .primary, height: 32)
         super.init()
@@ -80,7 +80,7 @@ final class FormSheet: NSObject, NSComboBoxDelegate {
         summary.font = ThemeFont.sans(12); summary.textColor = Theme.dynamic(.dangerText)
         views.append(summary)
         let hint = ThemedText.helper(" ")
-        let frame = ModalFrame.make(title: title, footerLeft: hint, footerRight: [cancel, primaryButton], width: 540, height: 200)
+        let frame = ModalFrame.make(title: title, footerLeft: hint, footerRight: (extraButton.map { e in let b = ModalButton(e.title, height: 32, label: e.title); b.onClick = { [weak self] in if let self { e.action(self) } }; return [b] } ?? []) + [cancel, primaryButton], width: 540, height: 200)
         for v in views { frame.add(v) }
         // The sheet is as tall as its form (up to what the screen allows).
         frame.root.layoutSubtreeIfNeeded()

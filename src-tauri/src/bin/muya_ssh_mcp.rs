@@ -515,7 +515,7 @@ fn tools_list() -> Value {
             },
             {
                 "name": "get_secret",
-                "description": "Get the PLACEHOLDER for a stored secret, {{muya-secret:name}} — never the value. Put the placeholder into the text you type: ssh_send / ssh_session_exec text, send_to_session deliver:\"keys\", and run_with_secrets env/stdin; Muya swaps in the real value at that moment only, and redacts the value from anything that comes back. A placeholder is substituted only (a) into a terminal that is at a password prompt with echo off, for a configured SSH server, (b) into a session of a server that uses that secret, or (c) into run_with_secrets env/stdin. It is never put into a shell line or a command line (ssh_run refuses placeholders). Requires the Password Store to be unlocked.",
+                "description": "Get the PLACEHOLDER for a stored secret, {{muya-secret:name}} — never the value. The placeholder is NOT substituted inside a shell/curl command you type yourself (curl would send the literal text and the API answers 401). Use it here instead: (1) http_request — {method, url, headers: {\"Authorization\": \"Bearer {{muya-secret:name}}\"}, body}: Muya swaps in the real value and redacts it from the reply. (2) run_with_secrets — put it in env (e.g. env {\"API_KEY\": \"{{muya-secret:name}}\"}) or stdin and read it in the program: command [\"sh\",\"-c\",\"curl -sS -H \\\"Authorization: Bearer $API_KEY\\\" https://host/path\"], or header from stdin: command [\"sh\",\"-c\",\"curl -sS -H @- https://host/path\"] with stdin \"Authorization: Bearer {{muya-secret:name}}\". Never in command (arguments are visible to ps). (3) From a session terminal: muyactl secret exec --env API_KEY=name -- sh -c 'curl -H \"Authorization: Bearer $API_KEY\" ...'. (4) SSH password prompts: ssh_send / ssh_session_exec / send_to_session deliver:\"keys\" — typed only at a password prompt (echo off) of a configured server or into a session of a server that uses that secret. Requires the Password Store to be unlocked",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -544,7 +544,7 @@ fn tools_list() -> Value {
             },
             {
                 "name": "run_with_secrets",
-                "description": "Run a program on THIS Mac as the operator user (e.g. a script you wrote) with secrets available to it but not to you. command is an argv ARRAY (program + arguments, no shell string; use [\"bash\", \"script.sh\"] or [\"bash\",\"-c\",\"...\"] for a shell). Put secrets in env: {\"DB_PASSWORD\": \"{{muya-secret:prod-db}}\"} (placeholders from get_secret), or in stdin. A placeholder inside command is REFUSED (arguments are visible to ps). Muya substitutes the values only into the child's environment / stdin, returns exitCode, stdout and stderr with every secret value redacted (raw, JSON-escaped, base64, hex, URL-encoded), and audit-logs each run (command + secret names, never values). Terminal form for scripts run from a session shell: muyactl secret exec --env VAR=name -- <cmd...>.",
+                "description": "Run a program on THIS Mac as the operator user (e.g. a script you wrote) with secrets available to it but not to you. command is an argv ARRAY (program + arguments, no shell string; use [\"bash\", \"script.sh\"] or [\"bash\",\"-c\",\"...\"] for a shell). Put secrets in env: {\"DB_PASSWORD\": \"{{muya-secret:prod-db}}\"} (placeholders from get_secret), or in stdin. A placeholder inside command is REFUSED (arguments are visible to ps). Muya substitutes the values only into the child's environment / stdin, returns exitCode, stdout and stderr with every secret value redacted (raw, JSON-escaped, base64, hex, URL-encoded), and audit-logs each run (command + secret names, never values). Example REST call: command [\"sh\",\"-c\",\"curl -sS -H \\\"Authorization: Bearer $API_KEY\\\" https://host/path\"], cwd \"/abs/dir\", env {\"API_KEY\": \"{{muya-secret:name}}\"} (for a plain REST call prefer the http_request tool). Terminal form for scripts run from a session shell: muyactl secret exec --env VAR=name -- <cmd...>.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -555,6 +555,22 @@ fn tools_list() -> Value {
                         "timeout": { "type": "integer", "minimum": 1, "maximum": 3600, "description": "Seconds before the run is stopped. Default 120." }
                     },
                     "required": ["command", "cwd"],
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "http_request",
+                "description": "Make one HTTP(S) request from this Mac with stored secrets in it, without ever seeing them. The url, any header value and the body may contain {{muya-secret:name}} placeholders (from get_secret); Muya substitutes the real values when it sends the request and redacts every secret value (raw, JSON-escaped, base64, hex, URL-encoded) from the response status, headers and body before you see them. https only (plain http is allowed for localhost / 127.0.0.1). Redirects are not followed. Audit-logged (method, url without query, secret names; never values). Example: {method:\"GET\", url:\"https://api.example.com/v1/items\", headers:{\"Authorization\":\"Bearer {{muya-secret:my_api_key}}\"}}. Requires the Password Store to be unlocked.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "method": { "type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"], "description": "HTTP method. Default GET." },
+                        "url": { "type": "string", "description": "Absolute https:// URL (http:// only for localhost). May contain placeholders, e.g. in the query." },
+                        "headers": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Request headers; a value may be or contain {{muya-secret:name}}." },
+                        "body": { "type": "string", "description": "Request body text; may contain placeholders." },
+                        "timeout": { "type": "integer", "minimum": 1, "maximum": 120, "description": "Seconds before the request is abandoned. Default 30." }
+                    },
+                    "required": ["url"],
                     "additionalProperties": false
                 }
             },
@@ -1621,6 +1637,45 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                 ))
             }
         }
+        "http_request" => {
+            let url = match args.get("url").and_then(Value::as_str) {
+                Some(u) if !u.trim().is_empty() => u.to_string(),
+                _ => return Ok(tool_error("missing required argument 'url'")),
+            };
+            let mut call = json!({ "op": "http_request", "url": url });
+            if let Some(m) = args.get("method").and_then(Value::as_str) {
+                call["method"] = json!(m);
+            }
+            if let Some(h) = args.get("headers").filter(|h| h.is_object()) {
+                call["headers"] = h.clone();
+            }
+            if let Some(b) = args.get("body").and_then(Value::as_str) {
+                call["body"] = json!(b);
+            }
+            if let Some(t) = args.get("timeout").and_then(Value::as_u64) {
+                call["timeoutSecs"] = json!(t);
+            }
+            let resp = app_call(&call).map_err(|e| (-32000, e))?;
+            if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+                let headers = resp
+                    .get("headers")
+                    .and_then(Value::as_object)
+                    .map(|h| h.iter().map(|(k, v)| format!("{k}: {}", v.as_str().unwrap_or(""))).collect::<Vec<_>>().join("\n"))
+                    .unwrap_or_default();
+                let text = format!(
+                    "HTTP {}{}\n{}\n\n{}",
+                    resp.get("status").map(|v| v.to_string()).unwrap_or_default(),
+                    if resp.get("truncated").and_then(Value::as_bool) == Some(true) { " (body truncated)" } else { "" },
+                    headers,
+                    resp.get("body").and_then(Value::as_str).unwrap_or(""),
+                );
+                Ok(tool_ok(text, Some(resp)))
+            } else {
+                Ok(tool_error(
+                    resp.get("error").and_then(Value::as_str).unwrap_or("http_request failed").to_string(),
+                ))
+            }
+        }
         "run_with_secrets" => {
             let command: Vec<String> = match args.get("command").and_then(Value::as_array) {
                 Some(a) if !a.is_empty() => a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect(),
@@ -1747,8 +1802,12 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                 app_call(&json!({ "op": "get_secret", "name": name })).map_err(|e| (-32000, e))?;
             if resp.get("ok").and_then(Value::as_bool) == Some(true) {
                 let value = resp.get("value").and_then(Value::as_str).unwrap_or("");
-                // The value is returned to the agent by explicit operator design.
-                Ok(tool_ok(value.to_string(), Some(json!({ "value": value }))))
+                // `value` is the placeholder, never the secret; the usage text tells the agent what to do with it.
+                let usage = resp.get("usage").and_then(Value::as_str).unwrap_or("");
+                Ok(tool_ok(
+                    format!("{value}\n\n{usage}"),
+                    Some(json!({ "value": value, "placeholder": value, "usage": usage })),
+                ))
             } else {
                 Ok(tool_error(
                     resp.get("error")

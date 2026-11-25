@@ -96,52 +96,153 @@ final class SchemeRow: NSControl {
     override func viewDidChangeEffectiveAppearance() { needsDisplay = true }
 }
 
-final class FieldPickerController: NSObject, NSSearchFieldDelegate, NSPopoverDelegate {
+/// One group heading of the field popover (classic MenuHeading: 11 px / 600, letter-spaced, --text-muted, 6/4 padding).
+private final class FieldHeadingView: NSView {
+    private let text: String
+    init(_ t: String) { text = t.uppercased(); super.init(frame: .zero) }
+    required init?(coder: NSCoder) { fatalError() }
+    override var isFlipped: Bool { true }
+    override func draw(_ dirtyRect: NSRect) {
+        (text as NSString).draw(at: NSPoint(x: 14, y: 6), withAttributes: [.font: ThemeFont.sans(11, .semibold), .kern: 0.66, .foregroundColor: Theme.dynamic(.textMuted)])
+    }
+    override func viewDidChangeEffectiveAppearance() { needsDisplay = true }
+}
+
+/// One status field: check mark, label on the left, live value right-aligned (classic StatusPicker row: 28 px, 13 px label, 12 px muted value).
+private final class FieldRowView: NSControl {
+    let id: String, label: String, value: String?
+    var on: Bool { didSet { needsDisplay = true } }
+    var onPick: ((String) -> Void)?
+    private var hover = false
+    init(id: String, label: String, value: String?, on: Bool) {
+        self.id = id; self.label = label; self.value = value; self.on = on
+        super.init(frame: .zero)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
+        setAccessibilityRole(.checkBox); setAccessibilityLabel(label)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override var isFlipped: Bool { true }
+    override func accessibilityValue() -> Any? { on ? 1 : 0 }
+    override func accessibilityPerformPress() -> Bool { onPick?(id); return true }
+    override func mouseEntered(with event: NSEvent) { hover = true; needsDisplay = true }
+    override func mouseExited(with event: NSEvent) { hover = false; needsDisplay = true }
+    override func mouseDown(with event: NSEvent) { onPick?(id) }
+    override func draw(_ dirtyRect: NSRect) {
+        if hover { Theme.dynamic(.bgSelected).setFill(); NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill() }
+        let lf = ThemeFont.sans(13), vf = ThemeFont.sans(12)
+        if on { ("✓" as NSString).draw(at: NSPoint(x: 10, y: (bounds.height - lf.boundingRectForFont.height) / 2), withAttributes: [.font: lf, .foregroundColor: Theme.dynamic(.accent)]) }
+        let ps = NSMutableParagraphStyle(); ps.lineBreakMode = .byTruncatingTail
+        let valueText = value ?? "—"
+        let vAttrs: [NSAttributedString.Key: Any] = [.font: vf, .foregroundColor: Theme.dynamic(.textMuted), .paragraphStyle: ps]
+        let lAttrs: [NSAttributedString.Key: Any] = [.font: lf, .foregroundColor: Theme.dynamic(.text), .paragraphStyle: ps]
+        let right = bounds.width - 10
+        let labelW = min((label as NSString).size(withAttributes: lAttrs).width.rounded(.up), right - 30 - 60)
+        let valueW = min((valueText as NSString).size(withAttributes: vAttrs).width.rounded(.up), max(right - (30 + labelW + 8), 0))
+        (label as NSString).draw(in: NSRect(x: 30, y: (bounds.height - lf.boundingRectForFont.height) / 2, width: labelW, height: 18), withAttributes: lAttrs)
+        (valueText as NSString).draw(in: NSRect(x: right - valueW, y: (bounds.height - vf.boundingRectForFont.height) / 2, width: valueW, height: 16), withAttributes: vAttrs)
+    }
+    override func viewDidChangeEffectiveAppearance() { needsDisplay = true }
+}
+
+/// The scrolled list: headings and rows laid out top-down at fixed heights (classic StatusPicker spacing), no autolayout.
+private final class FieldListView: NSView {
+    override var isFlipped: Bool { true }
+    var width: CGFloat = FieldPickerLayout.width
+    func layoutRows(_ views: [NSView], heights: [CGFloat]) {
+        subviews.forEach { $0.removeFromSuperview() }
+        var y: CGFloat = 0
+        for (v, h) in zip(views, heights) {
+            let inset: CGFloat = v is FieldRowView ? 4 : 0
+            v.frame = NSRect(x: inset, y: y, width: width - 2 * inset, height: h)
+            addSubview(v); y += h + (v is FieldRowView ? FieldPickerLayout.rowGap : 0)
+        }
+        frame = NSRect(x: 0, y: 0, width: width, height: max(y + FieldPickerLayout.listPadding, 1))
+    }
+}
+
+final class FieldPickerController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegate, NSPopoverDelegate {
     var onClose: (() -> Void)?
     func popoverDidClose(_ notification: Notification) { onClose?() }
     private let pop = NSPopover()
     private var chosen: [String]   // field ids (statusline.ts), like today's muya.footer.statusFields
     private let onChange: ([String]) -> Void
-    private let list = NSStackView()
+    private let listView = FieldListView()
+    private let scroll = NSScrollView()
     private var data: [String: Any]?
-    private let search = NSSearchField()
+    private let search = NSTextField()
+    private lazy var searchBox = FieldBox(search, height: 30)
+    private let note = ThemedText.plainHelper("Status data appears for Claude sessions started from Muya")
+    private let empty = NSTextField(labelWithString: "No matching fields")
+    private let box = NSView()
+    private var heightConstraint: NSLayoutConstraint!
+    private var scrollHeight: NSLayoutConstraint!
     init(chosen: [String], data: [String: Any]?, onChange: @escaping ([String]) -> Void) {
         self.chosen = chosen; self.data = data; self.onChange = onChange
         super.init()
         pop.behavior = .transient; pop.delegate = self
-        search.placeholderString = "Filter fields"; search.delegate = self; search.translatesAutoresizingMaskIntoConstraints = false
-        list.orientation = .vertical; list.alignment = .leading; list.spacing = 2; list.translatesAutoresizingMaskIntoConstraints = false
-        let scroll = Kit.scroll(list, label: "Status fields"); scroll.translatesAutoresizingMaskIntoConstraints = false
-        let box = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 460)); box.addSubview(search); box.addSubview(scroll)
+        search.placeholderString = "Filter fields"; search.delegate = self
+        note.font = ThemeFont.sans(11); note.textColor = Theme.dynamic(.textMuted)
+        empty.font = ThemeFont.sans(13); empty.textColor = Theme.dynamic(.textMuted)
+        scroll.documentView = listView; scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true; scroll.drawsBackground = false; scroll.borderType = .noBorder
+        scroll.setAccessibilityLabel("Status fields")
+        for v in [searchBox, note, scroll, empty] as [NSView] { v.translatesAutoresizingMaskIntoConstraints = false; box.addSubview(v) }
+        scrollHeight = scroll.heightAnchor.constraint(equalToConstant: 100)
+        heightConstraint = box.heightAnchor.constraint(equalToConstant: 300)
         NSLayoutConstraint.activate([
-            search.topAnchor.constraint(equalTo: box.topAnchor, constant: 10), search.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 10), search.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -10),
-            scroll.topAnchor.constraint(equalTo: search.bottomAnchor, constant: 8), scroll.leadingAnchor.constraint(equalTo: box.leadingAnchor), scroll.trailingAnchor.constraint(equalTo: box.trailingAnchor), scroll.bottomAnchor.constraint(equalTo: box.bottomAnchor),
-            box.widthAnchor.constraint(equalToConstant: 360), box.heightAnchor.constraint(equalToConstant: 460),
+            searchBox.topAnchor.constraint(equalTo: box.topAnchor, constant: 6), searchBox.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 8), searchBox.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -8),
+            note.topAnchor.constraint(equalTo: searchBox.bottomAnchor, constant: 4), note.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 14), note.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -10),
+            scroll.leadingAnchor.constraint(equalTo: box.leadingAnchor), scroll.trailingAnchor.constraint(equalTo: box.trailingAnchor), scroll.bottomAnchor.constraint(equalTo: box.bottomAnchor), scrollHeight,
+            empty.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 14), empty.topAnchor.constraint(equalTo: searchBox.bottomAnchor, constant: 10),
+            box.widthAnchor.constraint(equalToConstant: FieldPickerLayout.width), heightConstraint,
         ])
         let vc = NSViewController(); vc.view = box; pop.contentViewController = vc
         rebuild()
     }
-    func show(from anchor: NSView, rect: NSRect) { pop.show(relativeTo: rect, of: anchor, preferredEdge: .minY) }
+    /// The popover is centred on the + icon, which sits near the window's right edge: slide it left (the arrow then
+    /// points beside the icon) so it stays inside the window. The limit is the WINDOW's right edge, not the anchor's —
+    /// the footer is narrower than the window, and measuring against it let the menu hang outside.
+    func show(from anchor: NSView, rect: NSRect) {
+        let half = max(FieldPickerLayout.width, pop.contentSize.width) / 2
+        var limit = anchor.bounds.maxX
+        if let content = anchor.window?.contentView {
+            limit = anchor.convert(NSPoint(x: content.bounds.maxX, y: 0), from: content).x
+        }
+        let overflow = rect.midX + half - (limit - 8)
+        pop.show(relativeTo: overflow > 0 ? rect.offsetBy(dx: -overflow, dy: 0) : rect, of: anchor, preferredEdge: .minY)
+    }
+    #if MUYA_TEST_HOOKS
+    func debugSetFilter(_ t: String) { search.stringValue = t; rebuild() }
+    func debugClose() { pop.close() }
+    var debugWindowID: Int { pop.contentViewController?.view.window?.windowNumber ?? 0 }
+    var debugWindow: NSWindow? { pop.contentViewController?.view.window }
+    var debugContentView: NSView? { pop.contentViewController?.view }
+    #endif
     func controlTextDidChange(_ obj: Notification) { rebuild() }
     private func rebuild() {
-        list.arrangedSubviews.forEach { list.removeArrangedSubview($0); $0.removeFromSuperview() }
-        if data == nil {
-            let n = ThemedText.helper("Status data appears for Claude sessions started from Muya")
-            n.preferredMaxLayoutWidth = 330; list.addArrangedSubview(n)
-        }
-        for (g, fields) in StatusFieldCatalog.filtered(search.stringValue) {
-            let h = ThemedText.label(g.uppercased()); list.addArrangedSubview(h)
+        let groups = StatusFieldCatalog.filtered(search.stringValue)
+        var views: [NSView] = [], heights: [CGFloat] = []
+        var rows = 0
+        for (g, fields) in groups {
+            views.append(FieldHeadingView(g)); heights.append(FieldPickerLayout.headingHeight)
             for f in fields {
-                let on = chosen.contains(f.id)
-                let val = StatusFieldCatalog.value(f.id, data)
-                let b = ThemedButton((on ? "✓ " : "   ") + f.label + (val.map { "   \($0)" } ?? ""))
-                b.onClick = { [weak self] in
+                let r = FieldRowView(id: f.id, label: f.label, value: StatusFieldCatalog.value(f.id, data), on: chosen.contains(f.id))
+                r.onPick = { [weak self] id in
                     guard let self else { return }
-                    if let i = self.chosen.firstIndex(of: f.id) { self.chosen.remove(at: i) } else { self.chosen.append(f.id) }
+                    if let i = self.chosen.firstIndex(of: id) { self.chosen.remove(at: i) } else { self.chosen.append(id) }
                     self.onChange(self.chosen); self.rebuild()
                 }
-                list.addArrangedSubview(b); b.widthAnchor.constraint(equalToConstant: 336).isActive = true
+                views.append(r); heights.append(FieldPickerLayout.rowHeight); rows += 1
             }
         }
+        listView.layoutRows(views, heights: heights)
+        let screenH = pop.contentViewController?.view.window?.screen?.visibleFrame.height ?? NSScreen.main?.visibleFrame.height ?? 800
+        let hasNote = data == nil
+        note.isHidden = !hasNote; empty.isHidden = rows != 0
+        scroll.isHidden = rows == 0
+        let list = FieldPickerLayout.listHeight(groups: groups.count, rows: rows, screenHeight: screenH)
+        scrollHeight.constant = rows == 0 ? 0 : list
+        heightConstraint.constant = FieldPickerLayout.popoverHeight(groups: groups.count, rows: rows, hasNote: hasNote, screenHeight: screenH)
+        scroll.verticalScroller?.alphaValue = 1
+        pop.contentSize = NSSize(width: FieldPickerLayout.width, height: heightConstraint.constant)
     }
 }

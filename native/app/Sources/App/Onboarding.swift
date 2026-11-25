@@ -219,6 +219,22 @@ enum ServiceApproval {
         return problems.isEmpty ? nil : problems.joined(separator: "; ")
     }
 
+    static let bundleLabel = "com.staunch.muya.muyad"
+
+    /// The copies of this app and the job state (nil = a dev build or a fake HOME: nothing registered there).
+    static func bundleReport(home: String) -> BundleReport? {
+        guard LoginItem.isRealHome(home), let id = Bundle.main.bundleIdentifier, Bundle.main.bundleURL.pathExtension == "app" else { return nil }
+        return BundleCopies.report(bundleID: id, selfPath: Bundle.main.bundleURL.path, label: bundleLabel)
+    }
+
+    /// LaunchServices: this copy in, the others out (files untouched). The caller registers the agents again afterwards.
+    static func fixBundles(home: String) -> String? {
+        guard let r = bundleReport(home: home) else { return nil }
+        let others = r.copies.filter { !$0.isSelf }.map(\.path)
+        NSLog("muya: lsregister: this copy \(Bundle.main.bundleURL.path), dropping \(others)")
+        return BundleCopies.registerSelfOnly(selfPath: Bundle.main.bundleURL.path, others: others)
+    }
+
     /// Does launchd list the muyad job right now (`launchctl print` exits 0)? nil = not a real install, or launchctl cannot be run.
     static func muyadJobLoaded(home: String) -> Bool? {
         guard LoginItem.isRealHome(home) else { return nil }
@@ -255,13 +271,28 @@ final class ServiceGate {
         // Recovery of a service that is not running although Login Items says it is on (see ServiceRecovery).
         let muyadSock = store.socketPath, ptydSock = (store.socketPath as NSString).deletingLastPathComponent + "/ptyd.sock"
         store.service.jobLoaded = { ServiceApproval.muyadJobLoaded(home: home) }
-        store.service.sweepSockets = { StaleSocket.sweep(muyadSock); StaleSocket.sweep(ptydSock) }
+        store.service.managedInstall = ServiceTakeover.isManagedInstall(realHome: LoginItem.isRealHome(home), appBundle: Bundle.main.bundleURL.pathExtension == "app", testSaysSo: false)
+        store.service.sweepSockets = { [weak store] in guard store?.service.managedInstall == true else { return }; StaleSocket.sweep(muyadSock); StaleSocket.sweep(ptydSock) }
         store.service.deadAgents = { ServiceRecovery.deadAgents(muyadSocket: muyadSock, ptydSocket: ptydSock) }
         store.service.reregisterAgents = { ServiceApproval.reregister(home: home, only: $0) }
+        store.service.bundleReport = { ServiceApproval.bundleReport(home: home) }
+        store.service.fixBundles = { ServiceApproval.fixBundles(home: home) }
         #if MUYA_TEST_HOOKS
         // Dev stacks have no bundle and no launchd: the tests say which programs count as "this copy's" and what "register this copy" does.
         let env = ProcessInfo.processInfo.environment
         store.service.expectedMuyad = env["MUYA_TEST_EXPECT_MUYAD"]; store.service.expectedPtyd = env["MUYA_TEST_EXPECT_PTYD"]
+        if env["MUYA_TEST_EXPECT_MUYAD"] != nil { store.service.managedInstall = true }   // the test says what "this copy" is
+        if env["MUYA_TEST_AUTOTAKEOVER"] == "0" { store.service.autoTakeover = false }
+        // Two bundles with the same identifier, without LaunchServices: MUYA_TEST_BUNDLE_COPIES = "self:other:..." (paths), MUYA_TEST_BUNDLE_FLAG = a file whose
+        // existence means "the job is in spawn failed"; the fix removes it (MUYA_TEST_BUNDLE_FIXFAIL = a file; while it exists the fix does nothing, as when macOS keeps the wrong copy).
+        if let list = env["MUYA_TEST_BUNDLE_COPIES"], let flag = env["MUYA_TEST_BUNDLE_FLAG"] {
+            let paths = list.split(separator: ":").map(String.init)
+            store.service.bundleReport = {
+                let failed = FileManager.default.fileExists(atPath: flag)
+                return BundleReport(copies: paths.enumerated().map { BundleCopy(path: $1, version: BundleCopies.version(ofBundle: $1), isSelf: $0 == 0, resolved: failed ? $0 == 1 : $0 == 0) }, spawnFailed: failed)
+            }
+            store.service.fixBundles = { if !(env["MUYA_TEST_BUNDLE_FIXFAIL"].map { FileManager.default.fileExists(atPath: $0) } ?? false) { try? FileManager.default.removeItem(atPath: flag) }; return nil }
+        }
         if let v = env["MUYA_TEST_EXPECT_PRODUCT"] { store.service.expectedProduct = v.isEmpty ? nil : v }
         // Dev stacks have no launchd: MUYA_TEST_JOBLOADED = "yes" / "no" says what `launchctl print` would, MUYA_TEST_REREGISTER starts the agents.
         if let j = env["MUYA_TEST_JOBLOADED"] { store.service.jobLoaded = { j == "yes" } }
@@ -289,6 +320,7 @@ final class ServiceGate {
         switch p {
         case .needsApproval?: showOnboarding(); hideRestart()
         case let .versionSkew(info)?: hideOnboarding(); showRestart(info)
+        case let .brokenBundles(r)?: hideOnboarding(); if let d = restart, !d.committed { hideRestart() }; showRestart(bundles: r)
         case let .staleService(st)?: hideOnboarding(); if let d = restart, !d.committed { hideRestart() }; showRestart(stale: st)   // sessions may have changed since the dialog came up
         default: hideOnboarding(); if let d = restart, !d.committed { hideRestart() } // once "Restart service" was pressed the dialog stays until Done
         }
@@ -352,6 +384,16 @@ final class ServiceGate {
         let d = RestartDialog(info: info, home: store.home)
         d.onLater = { [weak self] in self?.chooseLater() }
         d.onRestart = { [weak self] in self?.store.restartService() }
+        d.onDone = { [weak self] in self?.hideRestart() }
+        d.present(in: content)
+        restart = d
+    }
+
+    func showRestart(bundles: BundleReport) {
+        guard restart == nil, let content = host.contentView else { return }
+        let d = RestartDialog(bundles: bundles, home: store.home)
+        d.onLater = { [weak self] in self?.store.service.bundlesDismissed = true; self?.hideRestart() }   // Later / Escape: a way out, and it stays closed this launch
+        d.onRestart = { [weak self] in self?.store.fixBundlesNow() }
         d.onDone = { [weak self] in self?.hideRestart() }
         d.present(in: content)
         restart = d

@@ -23,6 +23,20 @@ final class SettingsController: NSObject, NSWindowDelegate, NSTextFieldDelegate 
     private let status = ThemedText.helper("Theme changes apply right away · switches apply on Save")
     private var saveButton: ModalButton!
     private var docView: NSView!
+    private var sectionViews: [NSView] = []
+    private let leftCol = Kit.vstack([], spacing: 22), midCol = Kit.vstack([], spacing: 22), rightCol = Kit.vstack([], spacing: 22)
+    private var columnsHost: NSView!
+    private var oneColumn: [NSLayoutConstraint] = [], twoColumns: [NSLayoutConstraint] = [], threeColumns: [NSLayoutConstraint] = []
+    private var columns = 1
+    #if MUYA_TEST_HOOKS
+    var debugColumns: Int { columns }
+    var debugScrolls: Bool { debugOverflow > 1 }
+    /// How many points of content do not fit. 0 means nothing is hidden below the fold.
+    var debugOverflow: CGFloat { guard let sv = docView.enclosingScrollView else { return 0 }; return max(0, docView.frame.height - sv.contentView.bounds.height) }
+    /// The usable height of the screen this dialog is on, which is what limits it.
+    var debugScreenHeight: CGFloat { (window.screen ?? NSScreen.main)?.visibleFrame.height ?? 0 }
+    var debugSectionFrames: String { sectionViews.map { "\(Int($0.frame.minY))+\(Int($0.frame.height))" }.joined(separator: " ") + " | left=\(Int(leftCol.frame.height)) right=\(Int(rightCol.frame.height))" }
+    #endif
     private var stored: [String: String] = [:]
     private enum Footer: Equatable { case idle, saved, busy, error(String) }
     private var footer: Footer = .idle { didSet { refreshFooter() } }
@@ -134,19 +148,40 @@ final class SettingsController: NSObject, NSWindowDelegate, NSTextFieldDelegate 
         let ossSpacer = NSView(); ossSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         sectionStarts.insert(blocks.count)
         blocks.append(Kit.hstack([oss, ossSpacer, licences], spacing: 8))
-        let stack = Kit.vstack(blocks, spacing: 10)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        for (i, v) in blocks.enumerated() {
-            v.translatesAutoresizingMaskIntoConstraints = false
-            v.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-            if i > 0, sectionStarts.contains(i) { stack.setCustomSpacing(22, after: blocks[i - 1]) }
+        // Sections (a group label and what belongs to it) side by side when the dialog is wide, one column when it is not.
+        var starts = sectionStarts.sorted(); if starts.first != 0 { starts.insert(0, at: 0) }
+        for (k, a) in starts.enumerated() {
+            let b = k + 1 < starts.count ? starts[k + 1] : blocks.count
+            let part = Array(blocks[a ..< b])
+            let v = Kit.vstack(part, spacing: 10); v.translatesAutoresizingMaskIntoConstraints = false
+            for blk in part { blk.translatesAutoresizingMaskIntoConstraints = false; blk.widthAnchor.constraint(equalTo: v.widthAnchor).isActive = true }
+            sectionViews.append(v)
         }
+        for c in [leftCol, midCol, rightCol] {   // a column is as tall as its sections, never stretched to the other one
+            c.translatesAutoresizingMaskIntoConstraints = false
+            c.setHuggingPriority(.required, for: .vertical); c.distribution = .gravityAreas
+        }
+        // Two plain columns pinned to the top: each is exactly as tall as its sections (a horizontal NSStackView would stretch the shorter one).
+        columnsHost = NSView(); columnsHost.translatesAutoresizingMaskIntoConstraints = false
+        for c in [leftCol, midCol, rightCol] { columnsHost.addSubview(c) }
+        NSLayoutConstraint.activate([
+            leftCol.topAnchor.constraint(equalTo: columnsHost.topAnchor), leftCol.leadingAnchor.constraint(equalTo: columnsHost.leadingAnchor),
+            midCol.topAnchor.constraint(equalTo: columnsHost.topAnchor), rightCol.topAnchor.constraint(equalTo: columnsHost.topAnchor),
+            columnsHost.bottomAnchor.constraint(greaterThanOrEqualTo: leftCol.bottomAnchor), columnsHost.bottomAnchor.constraint(greaterThanOrEqualTo: midCol.bottomAnchor), columnsHost.bottomAnchor.constraint(greaterThanOrEqualTo: rightCol.bottomAnchor),
+        ])
+        oneColumn = [leftCol.trailingAnchor.constraint(equalTo: columnsHost.trailingAnchor)]
+        let gap = SettingsSizePlan.columnGap
+        twoColumns = [rightCol.leadingAnchor.constraint(equalTo: leftCol.trailingAnchor, constant: gap),
+                      rightCol.trailingAnchor.constraint(equalTo: columnsHost.trailingAnchor), rightCol.widthAnchor.constraint(equalTo: leftCol.widthAnchor)]
+        threeColumns = [midCol.leadingAnchor.constraint(equalTo: leftCol.trailingAnchor, constant: gap), rightCol.leadingAnchor.constraint(equalTo: midCol.trailingAnchor, constant: gap),
+                        rightCol.trailingAnchor.constraint(equalTo: columnsHost.trailingAnchor), midCol.widthAnchor.constraint(equalTo: leftCol.widthAnchor), rightCol.widthAnchor.constraint(equalTo: leftCol.widthAnchor)]
+        arrange(columns: 1)
         let doc = ModalDocView()
         doc.translatesAutoresizingMaskIntoConstraints = false
-        doc.addSubview(stack)
+        doc.addSubview(columnsHost)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: doc.topAnchor, constant: 20), stack.bottomAnchor.constraint(equalTo: doc.bottomAnchor, constant: -20),
-            stack.leadingAnchor.constraint(equalTo: doc.leadingAnchor, constant: 20), stack.trailingAnchor.constraint(equalTo: doc.trailingAnchor, constant: -20),
+            columnsHost.topAnchor.constraint(equalTo: doc.topAnchor, constant: 20), columnsHost.bottomAnchor.constraint(equalTo: doc.bottomAnchor, constant: -20),
+            columnsHost.leadingAnchor.constraint(equalTo: doc.leadingAnchor, constant: 20), columnsHost.trailingAnchor.constraint(equalTo: doc.trailingAnchor, constant: -20),
         ])
         docView = doc
         let scroll = Kit.scroll(doc, label: "Settings")
@@ -191,12 +226,47 @@ final class SettingsController: NSObject, NSWindowDelegate, NSTextFieldDelegate 
         window.setContentSize(NSSize(width: Self.modalWidth, height: Self.modalMaxHeight))
     }
 
-    /// Today's rule: the modal is as tall as its content, at most 85 % of the viewport (maxHeight: 85vh).
+    /// Puts the sections in `n` columns (left to right in their order, as even as the section heights allow).
+    private func arrange(columns n: Int, dialogWidth: CGFloat = SettingsController.modalWidth) {
+        columns = n
+        NSLayoutConstraint.deactivate(oneColumn + twoColumns + threeColumns)
+        NSLayoutConstraint.activate(n <= 1 ? oneColumn : n == 2 ? twoColumns : threeColumns)
+        let cols = [leftCol, midCol, rightCol]
+        for c in cols { for v in c.arrangedSubviews { c.removeArrangedSubview(v); v.removeFromSuperview() } }
+        func place(_ v: NSView, in c: NSStackView) { c.addArrangedSubview(v); v.widthAnchor.constraint(equalTo: c.widthAnchor).isActive = true }
+        midCol.isHidden = n < 3; rightCol.isHidden = n < 2
+        if n <= 1 { for v in sectionViews { place(v, in: leftCol) }; return }
+        // Measure each section at the column width, then split.
+        let colW = SettingsSizePlan.columnWidth(dialogWidth: dialogWidth, columns: n)
+        var heights: [CGFloat] = []
+        for v in sectionViews {
+            let w = v.widthAnchor.constraint(equalToConstant: colW); w.isActive = true
+            heights.append(v.fittingSize.height); w.isActive = false
+        }
+        let counts = SettingsSizePlan.splitCounts(heights: heights, columns: n)
+        var i = 0
+        for (ci, cnt) in counts.enumerated() { for _ in 0 ..< cnt where i < sectionViews.count { place(sectionViews[i], in: cols[n == 2 && ci == 1 ? 2 : ci]); i += 1 } }
+    }
+
+    /// Grows with the window: the fewest columns (1...3, no more than fit) whose content needs no vertical scroll in the room there is;
+    /// otherwise as many as fit. Height is the content's, at most 85 % of the host and the screen.
     private func fitHeight(in host: NSWindow?) {
-        let viewport = host?.contentView?.bounds.height ?? host?.frame.height ?? 732
-        docView.layoutSubtreeIfNeeded()
-        let content = 56 + docView.fittingSize.height + 61
-        window.setContentSize(NSSize(width: Self.modalWidth, height: min(content, (viewport * 0.85).rounded())))
+        let hostW = host?.contentView?.bounds.width ?? host?.frame.width ?? 1120
+        let hostH = host?.contentView?.bounds.height ?? host?.frame.height ?? 732
+        let screen = (host?.screen ?? window.screen ?? NSScreen.main)?.visibleFrame.size
+        let plan = SettingsSizePlan.plan(hostWidth: hostW, hostHeight: hostH, screenWidth: screen?.width, screenHeight: screen?.height)
+        var chosen = plan.columns, width = plan.width, content: CGFloat = 0
+        for n in 1 ... plan.columns {
+            let w = SettingsSizePlan.width(columns: n, available: plan.available)
+            window.setContentSize(NSSize(width: w, height: window.contentRect(forFrameRect: window.frame).height))
+            arrange(columns: n, dialogWidth: w)
+            window.contentView?.layoutSubtreeIfNeeded(); docView.layoutSubtreeIfNeeded()
+            content = 56 + docView.fittingSize.height + 61
+            chosen = n; width = w
+            if content <= plan.maxHeight { break }
+        }
+        _ = chosen
+        window.setContentSize(NSSize(width: width, height: min(content, plan.maxHeight)))
     }
 
     /// The control (read and written by the value hooks) and the view that lays it out in its row.

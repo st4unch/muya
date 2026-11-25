@@ -155,12 +155,16 @@ extension DebugServer {
             let m: [String: SSHSection] = ["servers": .servers, "psmp": .psmp, "cyberark": .cyberark, "vault": .vault]
             guard let sec = m[arg] else { return "error: ssh-section servers|psmp|cyberark|vault" }
             return MainActor.assumeIsolated { controller.sshPage.select(sec); return "ok" }
+        case "ssh-connect":   // ssh-connect <server title>: select it and press Connect
+            return MainActor.assumeIsolated { controller.sshPage.serversPane.debugConnect(arg) }
         case "ssh-reload":   // what the page's Retry button does
             return MainActor.assumeIsolated { controller.sshPage.reloadAll(); return "ok" }
         case "ssh-unlock":   // ssh-unlock: what "Unlock…" does (Touch ID if set up, else the sheet)
             return MainActor.assumeIsolated { controller.sshPage.unlockStore(); return "ok" }
         case "ssh-state":   // ssh-state: the section, the pane's message and the open form (secure fields shown as •)
             return MainActor.assumeIsolated { let h = controller.sshPage; return h.debugState() + (h.openForm.map { "\n--form--\n" + $0.debugState() } ?? "") }
+        case "ssh-secret":   // ssh-secret show|copy|edit|delete|lock|rows [label]: the Password Store buttons, acting on the row with that name
+            return MainActor.assumeIsolated { controller.sshPage.vaultPane.debugAct(arg) }
         case "ssh-form":   // ssh-form set <id> <value> | submit | cancel
             let p = arg.split(separator: " ", maxSplits: 2).map(String.init)
             return MainActor.assumeIsolated {

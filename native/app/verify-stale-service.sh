@@ -6,6 +6,10 @@
 #   2 Restart service: the daemons come back from B (path + the broker socket B serves and A did not), sessions open again, no dialog
 #   3 a restart that does NOT change the job (launchd still points at A): the dialog says so, with the exact steps, instead of looping
 #   4 a matching service: no dialog at all
+#   5 automatic takeover: no dialog, the daemons come back from this copy and the sessions are opened again
+#   7 two bundles with the app's identifier, job in spawn failed, no service running: the app fixes it by itself (no dialog, services from this copy)
+#   8 the same, but the automatic fix does not hold: the dialog lists both copies; its button fixes it
+#   6 automatic takeover that fails (launchd still starts the other copy): the dialog names both copies and offers "Use this copy's service"
 # Screenshots dark + light in screenshots/stale-*.png. Exit 1 on any FAIL.
 set -uo pipefail
 cd "$(dirname "$0")"
@@ -44,7 +48,9 @@ EOS
   nohup "$W/job.sh" muyad >"$W/muyad.log" 2>&1 & JM=$!
   for _ in $(seq 50); do [ -S "$W/muyad.sock" ] && break; sleep 0.1; done
   if [ "$2" = switch ]; then REREG="echo B > '$W/target'"; else REREG="true"; fi
-  MUYA_SOCKET=$W/muyad.sock MUYA_DEBUG_SOCKET=$W/app.sock MUYA_TEST_EXPECT_MUYAD="$NEW/muyad" MUYA_TEST_EXPECT_PTYD="$NEW/muya-ptyd" MUYA_TEST_REREGISTER="$REREG" \
+  # NOEXPECT=1: a plain dev stack (only MUYA_SOCKET, nobody says what "this copy" is): the app must leave the daemon alone
+  EXP=(MUYA_TEST_EXPECT_MUYAD="$NEW/muyad" MUYA_TEST_EXPECT_PTYD="$NEW/muya-ptyd"); [ -n "${NOEXPECT:-}" ] && EXP=()
+  env ${EXP[@]+"${EXP[@]}"} MUYA_SOCKET=$W/muyad.sock MUYA_DEBUG_SOCKET=$W/app.sock MUYA_TEST_REREGISTER="$REREG" MUYA_TEST_AUTOTAKEOVER="${AUTO:-0}" MUYA_TEST_EXPECT_PRODUCT="${PRODUCT:-}" \
     nohup "$APP" >"$W/app.log" 2>&1 & APPID=$!
   for _ in $(seq 80); do [ -S "$W/app.sock" ] && [ -n "$(dbg windowid 2>/dev/null)" ] && break; sleep 0.1; done
 }
@@ -129,5 +135,121 @@ sleep 1.5
 dbg 'ac-skew off' >/dev/null; sleep 3
 check "services from the same copy: no problem" "$(state problem)" "none"
 check "...and no dialog" "$(state restart)" "hidden"
+echo "== 5 automatic takeover"
+AUTO=1 stack five switch
+sleep 1.5
+for _ in $(seq 40); do case "$(dbg "new $W/home/w1")" in ok*) break ;; esac; sleep 0.25; done
+dbg "new $W/home/w2" >/dev/null; sleep 1
+oldpid=$(daemon_pid "Muya Old.app/Contents/MacOS/muyad")
+dbg 'ac-skew off' >/dev/null
+for _ in $(seq 60); do [ -n "$(daemon_pid "Muya New.app/Contents/MacOS/muyad")" ] && break; sleep 0.5; done
+sleep 4
+check "muyad now runs from this copy without any click" "$([ -n "$(daemon_pid "Muya New.app/Contents/MacOS/muyad")" ] && [ -z "$(daemon_pid "Muya Old.app/Contents/MacOS/muyad")" ] && echo yes)" "yes"
+check "ptyd too" "$([ -n "$(daemon_pid "Muya New.app/Contents/MacOS/muya-ptyd")" ] && [ -z "$(daemon_pid "Muya Old.app/Contents/MacOS/muya-ptyd")" ] && echo yes)" "yes"
+check "no dialog" "$(state restart)" "hidden"
+check "no stale problem" "$(state problem)" "none"
+check "the sessions were opened again" "$(state sessions)" "2"
+down
+
+echo "== 6 automatic takeover that fails: the dialog with the one-click fix"
+AUTO=1 stack six keep
+sleep 1.5
+for _ in $(seq 40); do case "$(dbg "new $W/home/w1")" in ok*) break ;; esac; sleep 0.25; done
+sleep 0.5; dbg 'ac-skew off' >/dev/null
+wait_for restart shown 80 >/dev/null; sleep 1
+check "the dialog is shown after the failed takeover" "$(state restart)" "shown"
+d=$(dbg ac-dialog)
+has "it names the other copy" "$d" "Muya Old.app"
+has "it names this copy" "$d" "Muya New.app"
+has "it says the automatic switch failed" "$d" "tried to switch"
+has "the button is the one-click fix" "$d" "Use this copy's service"
+shot 6-takeover-failed
+down
+
+bstack() { # $1 = "fixfail" (the automatic fix does nothing until the button) or "ok"; services are DOWN, "register this copy" starts them from B
+  W=$(mktemp -d /tmp/muya-stl.XXXXXX); W=$(cd "$W" && pwd -P)
+  mkdir -p "$W/A/Muya Old.app/Contents/MacOS" "$W/B/Muya New.app/Contents/MacOS" "$W/home/.claude"
+  cp "$BIN/muyad" "$BIN/muya-ptyd" "$W/B/Muya New.app/Contents/MacOS/"; NEW="$W/B/Muya New.app/Contents/MacOS"
+  export HOME=$W/home
+  cat > "$W/job.sh" <<EOS
+#!/bin/sh
+while :; do
+  if [ "\$1" = ptyd ]; then "$NEW/muya-ptyd" --socket "$W/ptyd.sock"; else "$NEW/muyad" --socket "$W/muyad.sock" --ptyd "$W/ptyd.sock" --broker; fi
+  sleep 1
+done
+EOS
+  cat > "$W/start.sh" <<EOS
+#!/bin/sh
+[ -f "$W/allow" ] || exit 0
+pgrep -f "$W/job.sh ptyd" >/dev/null || { nohup "$W/job.sh" ptyd >"$W/ptyd.log" 2>&1 & }
+pgrep -f "$W/job.sh muyad" >/dev/null || { nohup "$W/job.sh" muyad >"$W/muyad.log" 2>&1 & }
+exit 0
+EOS
+  chmod +x "$W/job.sh" "$W/start.sh"
+  touch "$W/spawnfailed"; if [ "$1" = fixfail ]; then touch "$W/nofix"; else touch "$W/allow"; fi
+  MUYA_SOCKET=$W/muyad.sock MUYA_DEBUG_SOCKET=$W/app.sock MUYA_TEST_EXPECT_MUYAD="$NEW/muyad" MUYA_TEST_EXPECT_PTYD="$NEW/muya-ptyd" MUYA_TEST_REREGISTER="$W/start.sh" MUYA_TEST_AUTOTAKEOVER=1 MUYA_TEST_EXPECT_PRODUCT="" \
+    MUYA_TEST_BUNDLE_COPIES="$W/B/Muya New.app:$W/A/Muya Old.app" MUYA_TEST_BUNDLE_FLAG="$W/spawnfailed" MUYA_TEST_BUNDLE_FIXFAIL="$W/nofix" \
+    nohup "$APP" >"$W/app.log" 2>&1 & APPID=$!
+  JM=$APPID; JP=$APPID
+  for _ in $(seq 80); do [ -S "$W/app.sock" ] && [ -n "$(dbg windowid 2>/dev/null)" ] && break; sleep 0.1; done
+}
+bdown() {
+  for pid in $(ps -axo pid=,command= | awk -v w="$W" 'index($0, w) && $0 ~ /job.sh/ {print $1}'); do kill "$pid" 2>/dev/null; done
+  down
+}
+
+echo "== 7 two bundles with the app's identifier, job cannot spawn: fixed by itself"
+bstack ok
+for _ in $(seq 120); do [ -n "$(daemon_pid "Muya New.app/Contents/MacOS/muyad")" ] && [ "$(state connected)" = true ] && break; sleep 0.5; done
+check "the service came up from this copy" "$([ -n "$(daemon_pid "Muya New.app/Contents/MacOS/muyad")" ] && echo yes)" "yes"
+check "the app connected" "$(state connected)" "true"
+check "no dialog" "$(state restart)" "hidden"
+wait_for problem none 40 >/dev/null
+check "no problem left" "$(state problem)" "none"
+check "the spawn-failed state was cleared by the fix" "$([ -e "$W/spawnfailed" ] && echo still || echo cleared)" "cleared"
+bdown
+
+echo "== 8 the automatic fix does not hold: the dialog lists both copies, the button fixes it"
+bstack fixfail
+wait_for restart shown 200 >/dev/null; sleep 1
+check "the dialog is shown" "$(state restart)" "shown"
+has "the problem is the duplicate bundles" "$(dbg ac-state)" "bundles(2 copies spawnFailed=true)"
+d=$(dbg ac-dialog)
+has "it lists this copy" "$d" "Muya New.app"
+has "it lists the other copy" "$d" "Muya Old.app"
+has "it names the copy in use" "$d" "this copy"
+has "the button is the one-click fix" "$d" "Use this copy's service"
+check "nothing runs yet" "$([ -z "$(daemon_pid "Muya New.app/Contents/MacOS/muyad")" ] && echo yes)" "yes"
+shot 8-duplicate-bundles
+rm -f "$W/nofix"; touch "$W/allow"
+dbg 'ac-click restart' >/dev/null
+for _ in $(seq 120); do [ "$(state connected)" = true ] && break; sleep 0.5; done
+check "after the button the service runs from this copy" "$([ -n "$(daemon_pid "Muya New.app/Contents/MacOS/muyad")" ] && echo yes)" "yes"
+check "the app connected" "$(state connected)" "true"
+bdown
+
+echo "== 9 a dev stack (not a managed install): no takeover, no dialog, no sweep; the daemon keeps running"
+NOEXPECT=1 AUTO=1 PRODUCT=9.9.9 stack nine switch
+sleep 1.5
+for _ in $(seq 40); do case "$(dbg "new $W/home/w1")" in ok*) break ;; esac; sleep 0.25; done
+oldpid=$(daemon_pid "Muya Old.app/Contents/MacOS/muyad")
+dbg 'ac-skew off' >/dev/null; sleep 6
+check "the daemon was not ended" "$(daemon_pid "Muya Old.app/Contents/MacOS/muyad")" "$oldpid"
+check "no dialog" "$(state restart)" "hidden"
+check "no problem" "$(state problem)" "none"
+check "the socket is still there and the app is connected" "$([ -S "$W/muyad.sock" ] && [ "$(state connected)" = true ] && echo yes)" "yes"
+down
+
+echo "== 8b the duplicate-bundle dialog has a way out: Later closes it and it does not come back"
+bstack fixfail
+wait_for restart shown 200 >/dev/null; sleep 1
+has "the dialog has both buttons" "$(dbg ac-dialog)" "buttons=Later/Use this copy's service"
+shot 8b-duplicate-bundles-later
+dbg 'ac-click later' >/dev/null; sleep 1
+check "Later closes the dialog" "$(state restart)" "hidden"
+sleep 12
+check "it does not come back in a loop" "$(state restart)" "hidden"
+bdown
+
 echo "failures=$fails"
 [ "$fails" = 0 ]

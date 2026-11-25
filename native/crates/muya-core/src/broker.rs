@@ -696,6 +696,16 @@ struct BrokerReq {
     /// filter, and the delivery mode ("auto" = native SendMessage, "muya" = Muya types it).
     #[serde(default)]
     target: Option<String>,
+    /// `http_request`: method, absolute https URL, headers and body. Any of url/header values/body may hold
+    /// `{{muya-secret:name}}`; the daemon substitutes it and redacts the reply.
+    #[serde(default)]
+    method: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default)]
+    headers: Option<std::collections::BTreeMap<String, String>>,
+    #[serde(default)]
+    body: Option<String>,
     /// `bridge_*` (PRD `bridge-mcp`): the tool's arguments, passed through to
     /// `bridge_mcp::handle`.
     #[serde(default)]
@@ -1075,31 +1085,38 @@ fn valid_env_name(n: &str) -> bool {
 
 const RUN_OUTPUT_CAP: usize = 256 * 1024;
 
+/// The CLI form (muyactl from a session terminal): tie the peer to a Claude session through its ancestry.
+/// A request from a verified sidecar already has its caller and passes untouched.
+async fn bind_cli_caller<H: BrokerHost>(req: &mut BrokerReq, what: &str) -> Result<(), String> {
+    if !is_unverified(req) {
+        return Ok(());
+    }
+    let pid = req.caller_pid.unwrap_or(0);
+    let found = tokio::task::spawn_blocking(move || {
+        let chain = ancestors_via(pid, parent_of);
+        H::list_agent_sessions_fresh(None)
+            .ok()
+            .and_then(|v| v.into_iter().find(|s| claim_matches(s.pid, &chain)))
+            .map(|s| s.id)
+    })
+    .await
+    .ok()
+    .flatten();
+    match found {
+        Some(id) => {
+            req.caller = id;
+            Ok(())
+        }
+        None => Err(format!("{what} needs a verified Muya session: this caller is not running under a Claude session")),
+    }
+}
+
 /// `run_with_secrets` / `muyactl secret exec`: run a program as the operator user with secrets in its
 /// environment / stdin only. The command is an argv array (never a shell string built from values);
 /// a placeholder in it is refused (visible to `ps`). The response is redacted by the caller.
 async fn handle_run_with_secrets<H: BrokerHost>(host: &H, req: &mut BrokerReq) -> String {
-    if is_unverified(req) {
-        // The CLI form (muyactl from a session terminal): tie the peer to a Claude session through its ancestry.
-        let pid = req.caller_pid.unwrap_or(0);
-        let found = tokio::task::spawn_blocking(move || {
-            let chain = ancestors_via(pid, parent_of);
-            H::list_agent_sessions_fresh(None)
-                .ok()
-                .and_then(|v| v.into_iter().find(|s| claim_matches(s.pid, &chain)))
-                .map(|s| s.id)
-        })
-        .await
-        .ok()
-        .flatten();
-        match found {
-            Some(id) => req.caller = id,
-            None => {
-                return err_resp(
-                    "run_with_secrets needs a verified Muya session: this caller is not running under a Claude session",
-                )
-            }
-        }
+    if let Err(e) = bind_cli_caller::<H>(req, "run_with_secrets").await {
+        return err_resp(e);
     }
     let argv = match req
         .argv
@@ -1201,6 +1218,125 @@ async fn handle_run_with_secrets<H: BrokerHost>(host: &H, req: &mut BrokerReq) -
         Ok(Err(e)) => err_resp(format!("run failed: {e}")),
         Err(_) => json!({"ok": true, "exitCode": null, "stdout": "", "stderr": "", "timedOut": true, "secrets": used}).to_string(),
     }
+}
+
+const HTTP_BODY_CAP: usize = 256 * 1024;
+
+/// https only; plain http is allowed for the local machine (a dev server) and nothing else.
+fn http_url_allowed(url: &reqwest::Url) -> Result<(), String> {
+    match url.scheme() {
+        "https" => Ok(()),
+        "http" => {
+            let h = url.host_str().unwrap_or("");
+            let local = h.eq_ignore_ascii_case("localhost")
+                || h == "[::1]"
+                || h.parse::<std::net::Ipv4Addr>().is_ok_and(|a| a.is_loopback());
+            if local {
+                Ok(())
+            } else {
+                Err("http_request only allows https:// (plain http only for localhost / 127.0.0.1)".into())
+            }
+        }
+        other => Err(format!("http_request does not support the '{other}' scheme: use https://")),
+    }
+}
+
+/// `http_request`: one HTTP call made by the daemon. Placeholders in the url, header values and body are
+/// substituted here; the agent gets status, headers and body with every secret value redacted by the caller.
+/// Redirects are not followed (a redirect could carry the secret to another host).
+async fn handle_http_request<H: BrokerHost>(host: &H, req: &mut BrokerReq) -> String {
+    if let Err(e) = bind_cli_caller::<H>(req, "http_request").await {
+        return err_resp(e);
+    }
+    let Some(url_t) = req.url.clone().filter(|u| !u.trim().is_empty()) else {
+        return err_resp("`http_request` requires an absolute `url`");
+    };
+    let method = req.method.clone().unwrap_or_else(|| "GET".into()).trim().to_ascii_uppercase();
+    let Ok(method) = reqwest::Method::from_bytes(method.as_bytes()) else {
+        return err_resp(format!("unknown HTTP method '{method}'"));
+    };
+    if !host.vault_is_unlocked() {
+        return err_resp("password store is locked — unlock it in the Password Store tab");
+    }
+    let mut used = Vec::new();
+    let url_s = match resolve_for_child(host, url_t.trim(), &mut used) {
+        Ok(v) => v,
+        Err(e) => return err_resp(e),
+    };
+    let url = match reqwest::Url::parse(&url_s) {
+        Ok(u) => u,
+        Err(_) => return err_resp("`url` is not a valid absolute URL"),
+    };
+    if let Err(e) = http_url_allowed(&url) {
+        return err_resp(e);
+    }
+    let mut headers = reqwest::header::HeaderMap::new();
+    for (k, v) in req.headers.clone().unwrap_or_default() {
+        let val = match resolve_for_child(host, &v, &mut used) {
+            Ok(v) => v,
+            Err(e) => return err_resp(e),
+        };
+        let (Ok(name), Ok(mut value)) = (
+            reqwest::header::HeaderName::from_bytes(k.trim().as_bytes()),
+            reqwest::header::HeaderValue::from_str(&val),
+        ) else {
+            return err_resp(format!("header '{k}' is not a valid HTTP header"));
+        };
+        value.set_sensitive(true);
+        headers.insert(name, value);
+    }
+    let body = match req.body.as_deref() {
+        Some(t) => match resolve_for_child(host, t, &mut used) {
+            Ok(v) => Some(v),
+            Err(e) => return err_resp(e),
+        },
+        None => None,
+    };
+    // Audit: who, what, which secrets. The url is logged as typed (placeholders, never values), without its query.
+    let shown = {
+        let mut u = reqwest::Url::parse(url_t.trim()).unwrap_or_else(|_| url.clone());
+        u.set_query(None);
+        u.to_string()
+    };
+    crate::debuglog::log(&format!(
+        "audit: http_request by={} {method} {shown} secrets=[{}]",
+        caller_label(req),
+        used.join(", ")
+    ));
+    let timeout = Duration::from_secs(req.timeout_secs.unwrap_or(30).clamp(1, 120));
+    let client = match reqwest::Client::builder().timeout(timeout).redirect(reqwest::redirect::Policy::none()).build() {
+        Ok(c) => c,
+        Err(e) => return err_resp(format!("http client: {e}")),
+    };
+    let mut rb = client.request(method, url).headers(headers);
+    if let Some(b) = body {
+        rb = rb.body(b.as_str().to_owned());
+    }
+    let resp = match rb.send().await {
+        Ok(r) => r,
+        Err(e) if e.is_timeout() => return err_resp(format!("the request timed out after {}s", timeout.as_secs())),
+        Err(e) => return err_resp(format!("request failed: {}", e.without_url())),
+    };
+    let status = resp.status().as_u16();
+    let out_headers: serde_json::Map<String, serde_json::Value> = resp
+        .headers()
+        .iter()
+        .map(|(k, v)| (k.as_str().to_string(), json!(String::from_utf8_lossy(v.as_bytes()))))
+        .collect();
+    let bytes = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return err_resp(format!("reading the response failed: {}", e.without_url())),
+    };
+    let truncated = bytes.len() > HTTP_BODY_CAP;
+    json!({
+        "ok": true,
+        "status": status,
+        "headers": out_headers,
+        "body": String::from_utf8_lossy(&bytes[..bytes.len().min(HTTP_BODY_CAP)]),
+        "truncated": truncated,
+        "secrets": used,
+    })
+    .to_string()
 }
 
 fn secret_exists<H: BrokerHost>(host: &H, name: &str) -> Result<bool, String> {
@@ -1309,6 +1445,7 @@ pub async fn handle_request_from<H: BrokerHost>(host: &H, line: &str, pid: Optio
         }
         "run" => redact_resp(host, handle_run(host, &servers, &req).await),
         "run_with_secrets" => redact_resp(host, handle_run_with_secrets(host, &mut req).await),
+        "http_request" => redact_resp(host, handle_http_request(host, &mut req).await),
         "scp" => handle_scp(host, &servers, &req).await,
         "send" => handle_send(host, &req),
         "open_session" => handle_open_session(host, &req).await,
@@ -1541,7 +1678,8 @@ pub async fn handle_request_from<H: BrokerHost>(host: &H, line: &str, pid: Optio
                     "ok": true,
                     "value": crate::secret_refs::placeholder(name),
                     "placeholder": crate::secret_refs::placeholder(name),
-                    "note": "This is a placeholder, not the secret. Put it in the text of ssh_session_exec / send_terminal / ssh_send; Muya substitutes the real value when it is used. It is typed only into a password prompt (echo off) of a configured server, or into a session of a server that uses this secret; never into a shell line or a command line (ssh_run refuses placeholders)."
+                    "note": crate::secret_refs::USAGE_HINT.replace("NAME", name),
+                    "usage": crate::secret_refs::USAGE_HINT.replace("NAME", name)
                 })
                 .to_string(),
                 Ok(false) => err_resp(format!("no secret named '{name}' (see list_secrets)")),
@@ -4977,6 +5115,10 @@ mod tests {
                 host,
                 futures_lite_block(handle_run_with_secrets(host, &mut req)),
             ),
+            "http_request" => redact_resp(
+                host,
+                futures_lite_block(handle_http_request(host, &mut req)),
+            ),
             other => panic!("{other}"),
         };
         serde_json::from_str(&out).unwrap()
@@ -5826,6 +5968,81 @@ mod tests {
         )
         .unwrap();
         assert!(futures_lite_block(handle_run(&h, &[], &req)).contains("visible to local"));
+    }
+
+    /// A one-shot local HTTP server that answers 200 and echoes the request it got (headers + body) back.
+    fn echo_server() -> (u16, std::thread::JoinHandle<String>) {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let t = std::thread::spawn(move || {
+            let (mut c, _) = l.accept().unwrap();
+            let mut buf = vec![0u8; 8192];
+            let mut got = Vec::new();
+            loop {
+                let n = c.read(&mut buf).unwrap();
+                got.extend_from_slice(&buf[..n]);
+                let text = String::from_utf8_lossy(&got).to_string();
+                if let Some(i) = text.find("\r\n\r\n") {
+                    let want: usize = text[..i]
+                        .to_ascii_lowercase()
+                        .lines()
+                        .find_map(|l| l.strip_prefix("content-length:").map(|v| v.trim().parse().unwrap()))
+                        .unwrap_or(0);
+                    if got.len() >= i + 4 + want {
+                        break;
+                    }
+                }
+                if n == 0 {
+                    break;
+                }
+            }
+            let text = String::from_utf8_lossy(&got).to_string();
+            let _ = write!(c, "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nx-echo: {}\r\nconnection: close\r\n\r\n{}", text.len(), "agent-made-pw", text);
+            text
+        });
+        (port, t)
+    }
+
+    #[test]
+    fn http_request_substitutes_headers_and_body_and_redacts_the_reply() {
+        let h = vault_host();
+        let (port, server) = echo_server();
+        let r = call(
+            &h,
+            json!({"op":"http_request","method":"POST","url":format!("http://127.0.0.1:{port}/v1/x"),
+                   "headers":{"Authorization":"Bearer {{muya-secret:mine}}"},"body":"k={{muya-secret:mine}}"}),
+        );
+        let seen = server.join().unwrap();
+        assert!(seen.contains("agent-made-pw"), "the server must get the real value: {seen}");
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(r["status"], 200);
+        let out = r.to_string();
+        assert!(!out.contains("agent-made-pw"), "plaintext leaked: {out}");
+        assert!(r["body"].as_str().unwrap().contains("Bearer {{muya-secret:mine}}"), "{r}");
+        assert_eq!(r["headers"]["x-echo"], "{{muya-secret:mine}}");
+        assert_eq!(r["secrets"], json!(["mine"]));
+    }
+
+    #[test]
+    fn http_request_refuses_plain_http_to_other_hosts_and_unknown_secrets() {
+        let h = vault_host();
+        let r = call(&h, json!({"op":"http_request","url":"http://example.com/"}));
+        assert_eq!(r["ok"], false);
+        assert!(r["error"].as_str().unwrap().contains("https"), "{r}");
+        let r = call(&h, json!({"op":"http_request","url":"ftp://example.com/"}));
+        assert_eq!(r["ok"], false);
+        let r = call(&h, json!({"op":"http_request","url":"https://example.com/","headers":{"A":"{{muya-secret:nope}}"}}));
+        assert_eq!(r["ok"], false);
+        assert!(r["error"].as_str().unwrap().contains("no secret named"), "{r}");
+    }
+
+    #[test]
+    fn get_secret_usage_hint_names_the_working_tools() {
+        let h = crate::secret_refs::USAGE_HINT.replace("NAME", "k");
+        for needle in ["http_request", "run_with_secrets", "muyactl secret exec --env API_KEY=k", "{{muya-secret:k}}", "NOT the secret"] {
+            assert!(h.contains(needle), "{needle} missing: {h}");
+        }
     }
 
     fn run_secret_req(extra: serde_json::Value) -> serde_json::Value {

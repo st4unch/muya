@@ -1,0 +1,22 @@
+# Three containers on 127.0.0.1: password sshd (:2201), key sshd (:2202), PSMP-like gateway (:2203) that proxies to :2201.
+# All credentials are throwaway fakes; override with env vars from up.sh.
+services:
+  ssh-pw:
+    build: .
+    environment: { MODE: password, SSH_USER: dba, SSH_PASS: "${E2E_TARGET_PW}" }
+    ports: ["127.0.0.1:2201:22"]
+  ssh-key:
+    build: .
+    environment: { MODE: key, SSH_USER: keyuser, SSH_PUBKEY: "${E2E_PUBKEY}" }
+    ports: ["127.0.0.1:2202:22"]
+  psmp:
+    build: .
+    depends_on: [ssh-pw]
+    environment:
+      MODE: psmp
+      GW_USER: "vaultuser@dba@ssh-pw"
+      PSMP_VAULT_PW: "${E2E_VAULT_PW}"
+      PSMP_TARGET_PW: "${E2E_TARGET_PW}"
+      PSMP_CHALLENGE: "${E2E_CHALLENGE:-0}"
+      PSMP_OTP: "${E2E_OTP:-246810}"
+    ports: ["127.0.0.1:2203:22"]

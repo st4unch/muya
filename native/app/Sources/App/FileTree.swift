@@ -124,17 +124,17 @@ final class FileRowView: NSTableCellView {
 }
 
 final class FileOutline: NSOutlineView {
-    var isHeaderRow: ((Int) -> Bool)?
     /// The triangle of a root row is shown too: a workspace folder collapses and expands like any other folder.
     func disclosureFrame(row: Int) -> NSRect { super.frameOfOutlineCell(atRow: row) }
     var onKey: ((NSEvent) -> Bool)?
-    /// A single click on a workspace root row (outside its triangle): the panel collapses / expands it.
-    var onHeaderClick: ((Int) -> Void)?
+    /// One click on a row (classic FileTree `toggle`): the panel opens the file or toggles the folder. `onDisclosure` = the triangle was hit.
+    var onRowClick: ((_ row: Int, _ onDisclosure: Bool, _ clickCount: Int, _ extend: Bool) -> Void)?
     override func mouseDown(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil), row = self.row(at: p)
-        let onHeader = row >= 0 && isHeaderRow?(row) == true && !disclosureFrame(row: row).contains(p)
-        super.mouseDown(with: event)   // selection, the triangle, double-click; returns after the release
-        if onHeader, event.clickCount == 1 { onHeaderClick?(row) }
+        let onDisclosure = row >= 0 && disclosureFrame(row: row).contains(p)
+        let extend = !event.modifierFlags.intersection([.shift, .command, .control]).isEmpty
+        super.mouseDown(with: event)   // selection, the triangle, drag start; returns after the release
+        if row >= 0 { onRowClick?(row, onDisclosure, event.clickCount, extend) }
     }
     /// The first click works even when the window was not key (coming back from another app), like the sidebar's own rows.
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -217,12 +217,17 @@ final class FileTreePanel: NSObject, NSOutlineViewDataSource, NSOutlineViewDeleg
         outline.style = .plain
         outline.backgroundColor = .clear
         outline.indentationPerLevel = 15
-        outline.isHeaderRow = { [weak self] r in guard let self, let it = self.outline.item(atRow: r) else { return false }; return self.isRootNode(it) }
         outline.dataSource = self
         outline.delegate = self
         outline.target = self
-        outline.doubleAction = #selector(doubleClicked)
-        outline.onHeaderClick = { [weak self] row in if let self, let n = self.outline.item(atRow: row) as? FileNode { self.toggleRoot(n) } }
+        outline.onRowClick = { [weak self] row, onDisclosure, clicks, extend in
+            guard let self, let n = self.outline.item(atRow: row) as? FileNode else { return }
+            switch FileClickLogic.action(isDirectory: n.isDirectory, onDisclosure: onDisclosure, clickCount: clicks, extend: extend) {
+            case .none: break
+            case .toggleFolder: self.toggleRoot(n)
+            case .openFile: self.open(n)
+            }
+        }
         outline.menu = { let m = NSMenu(); m.delegate = self; return m }()
         outline.onKey = { [weak self] e in self?.key(e) ?? false }
         scroll = NSScrollView()
@@ -398,6 +403,9 @@ final class FileTreePanel: NSObject, NSOutlineViewDataSource, NSOutlineViewDeleg
     }
 
     private var expandedPaths = Set<String>()
+    #if MUYA_TEST_HOOKS
+    var debugExpanded: [String] { expandedPaths.sorted() }
+    #endif
     private func restoreExpansion(_ node: FileNode) {
         for k in node.children ?? [] where k.isDirectory && expandedPaths.contains(k.path) {
             outline.expandItem(k)
@@ -533,9 +541,8 @@ final class FileTreePanel: NSObject, NSOutlineViewDataSource, NSOutlineViewDeleg
         return row >= 0 ? outline.item(atRow: row) as? FileNode : nil
     }
 
-    /// One click on a workspace root row collapses/expands it (its triangle does the same by itself); other rows open on double-click.
+    /// One click on a folder row (a workspace root too) collapses/expands that folder only; the FILES section stays as it is.
     func toggleRoot(_ n: FileNode) { if outline.isItemExpanded(n) { outline.collapseItem(n) } else { outline.expandItem(n) } }
-    @objc private func doubleClicked() { if let n = clickedNode(), !isRootNode(n) { open(n) } }
 
     private func key(_ e: NSEvent) -> Bool {
         guard let n = clickedNode() ?? (outline.selectedRow >= 0 ? outline.item(atRow: outline.selectedRow) as? FileNode : nil) else { return false }

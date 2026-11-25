@@ -100,9 +100,10 @@ fn main() {
     bridge.start_pollers();
     // One password store for `vault.*` and for the broker's secret tools.
     let vault = std::sync::Arc::new(muya_core::credstore::CredStore::default());
+    let cyberark = std::sync::Arc::new(muya_core::cyberark::CyberarkState::default());
     let idle = muyad::vault_idle::IdleClock::new();
     muyad::vault_idle::spawn(vault.clone(), idle.clone(), muyad::vault_idle::configured_idle(), std::sync::Arc::downgrade(&muyad));
-    muyad.set_rpc(muyad::rpc::Rpc::new(schedules.clone()).with_muyad(std::sync::Arc::downgrade(&muyad)).with_bridge(bridge.clone()).with_vault(vault.clone()).with_idle(idle));
+    muyad.set_rpc(muyad::rpc::Rpc::new(schedules.clone()).with_muyad(std::sync::Arc::downgrade(&muyad)).with_bridge(bridge.clone()).with_vault(vault.clone()).with_cyberark(cyberark.clone()).with_idle(idle));
 
     // Native beta self-update: only says "an update is available" (never installs by itself).
     muyad::switchover_host::spawn_poller(std::sync::Arc::downgrade(&muyad));
@@ -110,7 +111,7 @@ fn main() {
     // Opt-in during the transition: serve the MCP broker (muya_core::broker) from here. A live
     // broker socket (the Tauri app's) is left alone; muyad then runs without one.
     if args.iter().any(|a| a == "--broker") {
-        match muyad::broker_host::MuyadBrokerHost::new(muyad.clone(), schedules).with_vault(vault).with_bridge(bridge).spawn() {
+        match muyad::broker_host::MuyadBrokerHost::new(muyad.clone(), schedules).with_vault(vault).with_cyberark(cyberark).with_bridge(bridge).spawn() {
             Ok(()) => eprintln!("muyad: serving the MCP broker"),
             Err(e) => eprintln!("muyad: broker not started: {e}"),
         }

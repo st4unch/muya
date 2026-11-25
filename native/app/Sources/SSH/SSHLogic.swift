@@ -127,10 +127,15 @@ struct CyberArkAccount: Equatable {
 /// A stored secret's description. The value is never part of it.
 struct SecretMeta: Equatable {
     var label: String, description: String, kind: String
+    /// Stored by the shared vault (`MUYA-SSHVAULT v1`): an old vault's entries keep their id, user name and group.
+    var id = "", username = "", group = ""
 
     init?(json j: [String: Any]) {
         guard let label = j["label"] as? String else { return nil }
         self.label = label
+        id = j["id"] as? String ?? ""
+        username = j["username"] as? String ?? ""
+        group = j["group"] as? String ?? ""
         description = j["description"] as? String ?? ""
         kind = (j["secretKind"] as? String) ?? (j["secret_kind"] as? String) ?? (j["kind"] as? String) ?? "password"
     }
@@ -249,7 +254,7 @@ enum SSHValidation {
         return out
     }
 
-    static let secretKinds = ["password", "key", "token"]
+    static let secretKinds = ["password", "key", "token", "api_key"]
 
     static func secret(label: String, kind: String, value: SecretBuffer, existing: [SecretMeta], updating: Bool) -> [FieldError] {
         var out: [FieldError] = []
@@ -260,7 +265,7 @@ enum SSHValidation {
         } else if updating, !existing.contains(where: { $0.label.lowercased() == name.lowercased() }) {
             out.append(.init(field: "label", message: "No secret named '\(name)' to update"))
         }
-        if !secretKinds.contains(kind) { out.append(.init(field: "kind", message: "Kind must be password, key or token")) }
+        if !secretKinds.contains(kind) { out.append(.init(field: "kind", message: "Kind must be password, key, token or api_key")) }
         if value.isEmpty { out.append(.init(field: "value", message: "The secret value is required")) }
         return out
     }
@@ -268,30 +273,12 @@ enum SSHValidation {
 
 // MARK: Connect
 
-enum ConnectPlan: Equatable {
-    /// Open a terminal and type this command.
-    case shell(command: String, name: String)
-    /// Cannot be done yet; the text says why.
-    case notWired(String)
-}
-
 enum SSHConnect {
-    /// POSIX single-quote escaping; the only thing that reaches the shell from the server record.
-    static func quote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
-
-    /// What Connect does. A direct server that asks for its password is a plain `ssh` in a new terminal
-    /// (the user types the password there). Anything that needs the Password Store, CyberArk or a PSMP
-    /// hop needs the daemon to inject the secret, which it cannot yet.
-    static func plan(_ s: SSHServer) -> ConnectPlan {
-        if s.connectionType == .psmp { return .notWired("PSMP connections need the daemon to hand the vault password to the terminal, which it does not do yet.") }
-        if s.credentialKind != .prompt { return .notWired("This server's login comes from \(s.credentialKind == .local ? "the Password Store" : "CyberArk"); injecting it needs the daemon, which does not do that yet. Change the login to “Ask when connecting” to open it now.") }
-        guard SSHValidation.server(s, others: [], profiles: []).isEmpty else { return .notWired("Fix the server's fields first.") }
-        var cmd = "exec ssh"
-        if s.port != 22 { cmd += " -p \(s.port)" }
-        let extra = s.sshOptions.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-        for o in extra { cmd += " " + quote(o) }
-        cmd += " -- " + quote("\(s.username)@\(s.host)")
-        return .shell(command: cmd, name: s.title)
+    /// Connect is the daemon's job (`ssh.connect`): it spawns `ssh` as a terminal and injects the stored / CyberArk
+    /// password (classic `ssh_pty_connect`). The page only refuses a server whose fields are invalid, with the same
+    /// first message the editor shows.
+    static func precheck(_ s: SSHServer, profiles: [PSMPProfile] = []) -> String? {
+        SSHValidation.server(s, others: [], profiles: profiles).first?.message
     }
 }
 
@@ -302,6 +289,9 @@ struct ServersModel {
     var servers: PaneState<[SSHServer]> = .loading
     var profiles: PaneState<[PSMPProfile]> = .loading
     var filter = ""
+
+    /// Every server the daemon returned, filter or not (classic's "N server(s)" count).
+    var allServers: [SSHServer] { if case let .ready(all) = servers { return all } else { return [] } }
 
     var visibleServers: [SSHServer] {
         guard case let .ready(all) = servers else { return [] }
@@ -360,15 +350,21 @@ struct VaultModel {
     var visible: [SecretMeta] {
         guard case let .ready(all) = secrets else { return [] }
         let q = filter.trimmingCharacters(in: .whitespaces).lowercased()
-        let list = q.isEmpty ? all : all.filter { $0.label.lowercased().contains(q) || $0.description.lowercased().contains(q) }
-        return list.sorted { $0.label.lowercased() < $1.label.lowercased() }
+        let list = q.isEmpty ? all : all.filter { [$0.label, $0.description, $0.username, $0.group].contains { $0.lowercased().contains(q) } }
+        return list.sorted { ($0.group.lowercased(), $0.label.lowercased()) < ($1.group.lowercased(), $1.label.lowercased()) }
+    }
+
+    /// The label of a stored credential, for the server cards' login word; nil when the store is locked or it is gone.
+    func label(forId id: String) -> String? {
+        guard case let .ready(all) = secrets else { return nil }
+        return (all.first { $0.id == id } ?? all.first { $0.label == id })?.label
     }
 
     var statusText: String {
         switch secrets {
         case .loading: return "Loading…"
         case .locked: return "Locked"
-        case let .ready(a): return "Unlocked · \(a.count) secret\(a.count == 1 ? "" : "s")"
+        case let .ready(a): return "Unlocked · \(a.count) item(s)"
         case .notWired: return "Not available yet"
         case .failed: return "Error"
         }
@@ -386,6 +382,11 @@ struct VaultModel {
 enum SSHSection: Int, CaseIterable {
     case servers, psmp, cyberark, vault
 
+    /// The tab bar, as classic draws it: Servers | CyberArk | Password Store. PSMP profiles are not a tab — classic
+    /// keeps them in a card at the bottom of the Servers tab, so `.psmp` stays in the enum (debug hooks, routing) but
+    /// never gets a tab of its own.
+    static let tabs: [SSHSection] = [.servers, .cyberark, .vault]
+
     var title: String {
         switch self {
         case .servers: return "Servers"
@@ -397,4 +398,82 @@ enum SSHSection: Int, CaseIterable {
 
     /// ⌘1…⌘4 style digit shortcut label.
     var shortcut: String { "\(rawValue + 1)" }
+}
+
+// MARK: Password Store cards (logic)
+
+enum CredKindName {
+    /// classic: password -> "password", key -> "SSH key", token -> "token", api_key -> "API key".
+    static func title(_ kind: String) -> String {
+        switch kind { case "key": return "SSH key"; case "api_key": return "API key"; default: return kind }
+    }
+}
+
+/// Cards of one group, in classic's order: named groups A-Z, "Ungrouped" last.
+struct CredGroup: Equatable {
+    var name: String
+    var items: [SecretMeta]
+
+    static let ungrouped = "Ungrouped"
+
+    static func make(_ all: [SecretMeta]) -> [CredGroup] {
+        var by: [String: [SecretMeta]] = [:]
+        for s in all {
+            let g = s.group.trimmingCharacters(in: .whitespaces)
+            by[g.isEmpty ? ungrouped : g, default: []].append(s)
+        }
+        let names = by.keys.sorted { a, b in
+            if a == ungrouped { return false }
+            if b == ungrouped { return true }
+            return a.localizedCompare(b) == .orderedAscending
+        }
+        return names.map { CredGroup(name: $0, items: by[$0]!.sorted { $0.label.localizedCompare($1.label) == .orderedAscending }) }
+    }
+
+    /// 1 column below 768 px, 2 from 768, 3 from 1536 (classic: md / 2xl on the page width).
+    static func columns(pageWidth: CGFloat) -> Int { pageWidth >= 1536 ? 3 : pageWidth >= 768 ? 2 : 1 }
+}
+
+
+// MARK: Server cards (classic's Servers tab)
+
+/// Servers of one group, in classic's order: named groups A–Z, "Ungrouped" last.
+struct ServerGroup: Equatable {
+    var name: String
+    var items: [SSHServer]
+
+    static let ungrouped = "Ungrouped"
+
+    static func make(_ all: [SSHServer]) -> [ServerGroup] {
+        var by: [String: [SSHServer]] = [:]
+        for s in all {
+            let g = s.group.trimmingCharacters(in: .whitespaces)
+            by[g.isEmpty ? ungrouped : g, default: []].append(s)
+        }
+        let names = by.keys.sorted { a, b in
+            if a == ungrouped { return false }
+            if b == ungrouped { return true }
+            return a.localizedCompare(b) == .orderedAscending
+        }
+        return names.map { ServerGroup(name: $0, items: by[$0]!.sorted { $0.title.localizedCompare($1.title) == .orderedAscending }) }
+    }
+}
+
+/// The mono line under a server card's name, as classic writes it: `user@host:port · type · login`.
+/// The port is always shown (classic does), unlike `SSHServer.destination`.
+enum ServerCardLine {
+    static func destination(_ s: SSHServer) -> String { "\(s.username)@\(s.host):\(s.port)" }
+
+    /// `credName` resolves a Password Store credential id to its label; nil falls back to the kind's short word.
+    static func text(_ s: SSHServer, credName: (String) -> String? = { _ in nil }) -> String {
+        let type = s.connectionType == .psmp ? "PSMP" : "direct"
+        var login: String
+        switch s.credentialKind {
+        case .prompt: login = "prompt"
+        case .local: login = s.credentialRef.flatMap(credName) ?? "Password Store"
+        case .cyberark: login = "CyberArk"
+        }
+        if s.agentAdded { login += " · added by agent" }
+        return [destination(s), type, login].joined(separator: " · ")
+    }
 }

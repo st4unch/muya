@@ -19,6 +19,15 @@ const QUEUE_OFF: &str = "not enabled in this build";
 /// Longest transcript text returned by `sessions.transcript`.
 const MAX_TRANSCRIPT: usize = 256 * 1024;
 
+#[derive(Deserialize)]
+struct ConnectParams {
+    id: String,
+    cols: Option<u16>,
+    rows: Option<u16>,
+}
+
+const CYBERARK_LOGON: &str = "Log on to CyberArk first (SSH > CyberArk tab).";
+
 pub struct Rpc {
     schedules: schedules::ScheduleState,
     muyad: Weak<Muyad>,
@@ -27,7 +36,7 @@ pub struct Rpc {
     vault: std::sync::Arc<credstore::CredStore>,
     /// When a person last used the store (unlock, or the app's interaction pings): see `vault_idle`.
     idle: std::sync::Arc<crate::vault_idle::IdleClock>,
-    cyberark: cyberark::CyberarkState,
+    cyberark: std::sync::Arc<cyberark::CyberarkState>,
     metrics: rpc_agents::MetricsState,
     /// P10: the bridge (local socket + remote pairing); None = this Rpc serves no bridge.
     bridge: Option<crate::bridge_host::MuyadBridgeHost>,
@@ -178,6 +187,78 @@ struct VaultAddParams {
     description: String,
     secret_kind: String,
     secret: String,
+    #[serde(default)]
+    username: String,
+    #[serde(default)]
+    group: String,
+}
+
+#[derive(Deserialize)]
+struct VaultIdParams {
+    id: String,
+}
+
+/// `vault.save`: the Password Store's add/edit form (same shape as classic's `credstore_cred_upsert`).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VaultSaveParams {
+    #[serde(default)]
+    id: Option<String>,
+    label: String,
+    #[serde(default)]
+    username: String,
+    secret_kind: String,
+    secret: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    group: String,
+}
+
+#[derive(Deserialize)]
+struct VaultDestParams {
+    dest: String,
+}
+
+#[derive(Deserialize)]
+struct VaultExportMasterParams {
+    dest: String,
+    master: String,
+}
+
+#[derive(Deserialize)]
+struct VaultExportCredParams {
+    id: String,
+    dest: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VaultImportParams {
+    label: String,
+    #[serde(default)]
+    username: String,
+    #[serde(default = "default_key_kind")]
+    secret_kind: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    group: String,
+    src_path: String,
+}
+
+fn default_key_kind() -> String {
+    "key".into()
+}
+
+/// The Password Store methods that read, change or write out secret material: only the app's own connection (the
+/// operator) may call them. Agents use the broker, which has no such op; this keeps a future path that forwards agent
+/// calls here from reaching the vault.
+pub fn vault_operator_only(method: &str) -> bool {
+    matches!(
+        method,
+        "vault.reveal" | "vault.save" | "vault.remove" | "vault.add" | "vault.update" | "vault.export_backup" | "vault.export_master" | "vault.export_cred" | "vault.import_key" | "vault.import_secret"
+    )
 }
 
 #[derive(Deserialize)]
@@ -250,7 +331,7 @@ fn to_value<T: serde::Serialize>(v: &T) -> Result<Value, String> {
 
 impl Rpc {
     pub fn new(schedules: schedules::ScheduleState) -> Self {
-        Self { schedules, muyad: Weak::new(), vault: std::sync::Arc::new(credstore::CredStore::default()), idle: crate::vault_idle::IdleClock::new(), cyberark: cyberark::CyberarkState::default(), metrics: rpc_agents::MetricsState::default(), bridge: None, send_host: std::sync::OnceLock::new() }
+        Self { schedules, muyad: Weak::new(), vault: std::sync::Arc::new(credstore::CredStore::default()), idle: crate::vault_idle::IdleClock::new(), cyberark: std::sync::Arc::default(), metrics: rpc_agents::MetricsState::default(), bridge: None, send_host: std::sync::OnceLock::new() }
     }
 
     /// Lets the git/plan methods see the folders of the sessions this daemon spawned.
@@ -262,6 +343,12 @@ impl Rpc {
     /// Serve `vault.*` from this store (the same one the broker reads); without it the Rpc keeps its own.
     pub fn with_vault(mut self, vault: std::sync::Arc<credstore::CredStore>) -> Self {
         self.vault = vault;
+        self
+    }
+
+    /// Share the CyberArk logon with the MCP broker (`ssh_open` / `ssh_session_open` fetch passwords with it).
+    pub fn with_cyberark(mut self, c: std::sync::Arc<cyberark::CyberarkState>) -> Self {
+        self.cyberark = c;
         self
     }
 
@@ -331,6 +418,9 @@ impl Rpc {
     }
 
     pub fn call_as(&self, caller: crate::rpc_bridge::Caller, method: &str, params: &str, cancel: &AtomicBool) -> Result<Value, String> {
+        if vault_operator_only(method) && caller != crate::rpc_bridge::Caller::Operator {
+            return Err("the Password Store's reveal / edit / export / import are operator-only: use the Password Store tab".into());
+        }
         if let Some(bridge) = &self.bridge {
             if let Some(r) = crate::rpc_bridge::call(bridge, method, caller, || parse_or_default::<Value>(params)) {
                 return r;
@@ -509,6 +599,43 @@ impl Rpc {
                 ssh::ssh_remove_psmp_profile(p.id)?;
                 Ok(Value::Null)
             }
+            "ssh.connect" => {
+                // The daemon spawns `ssh` as a session and injects the stored / CyberArk password (classic ssh_pty_connect).
+                let p: ConnectParams = parse(params)?;
+                let muyad = self.muyad.upgrade().ok_or("daemon is shutting down")?;
+                let cfg = ssh::load_config()?;
+                let server = cfg.servers.iter().find(|s| s.id == p.id).ok_or("server not found")?.clone();
+                if server.credential_source.kind == "local" && !credstore::credstore_status(&self.vault)?.unlocked {
+                    return Err(LOCKED.into());
+                }
+                let secret = run_async(crate::ssh_connect::resolve_secret(&self.vault, &self.cyberark, &server)).map_err(|e| if e.contains("not logged on") { CYBERARK_LOGON.to_string() } else { e })?;
+                let id = muyad.ssh_connect(&p.id, secret, p.cols, p.rows)?;
+                Ok(json!({ "session": id }))
+            }
+            "ssh.cyberark.get" => to_value(&ssh::ssh_get_config()?.cyberark),
+            "ssh.cyberark.set" => {
+                let v: Value = parse(params)?;
+                let config: ssh::CyberarkConfig = serde_json::from_value(v.get("config").cloned().unwrap_or(Value::Null)).map_err(|e| format!("bad parameters: {e}"))?;
+                ssh::ssh_set_cyberark_config(config)?;
+                Ok(Value::Null)
+            }
+            "cyberark.status" => Ok(json!({ "loggedOn": run_async(cyberark::cyberark_status(&self.cyberark))? })),
+            "cyberark.logoff" => {
+                run_async(cyberark::cyberark_logoff(&self.cyberark))?;
+                Ok(Value::Null)
+            }
+            "cyberark.logon" | "cyberark.test" => {
+                let v: Value = parse(params)?;
+                let config: ssh::CyberarkConfig = serde_json::from_value(v.get("config").cloned().unwrap_or(Value::Null)).map_err(|e| format!("bad parameters: {e}"))?;
+                let username = v.get("username").and_then(Value::as_str).unwrap_or_default().to_string();
+                let master = zeroize::Zeroizing::new(v.get("master").and_then(Value::as_str).unwrap_or_default().to_string());
+                if method == "cyberark.logon" {
+                    run_async(cyberark::cyberark_logon(&self.cyberark, &self.vault, config, username, master.to_string()))?;
+                    Ok(Value::Null)
+                } else {
+                    run_async(cyberark::cyberark_test_connection(&self.cyberark, &self.vault, config, username, master.to_string())).map(Value::String)
+                }
+            }
             "cyberark.accounts.search" => {
                 // Listing accounts needs a CyberArk logon, and the logon needs a vault secret.
                 let p: QueryParams = parse_or_default(params)?;
@@ -578,7 +705,83 @@ impl Rpc {
                 }
                 credstore::add_credential(&self.vault, p.label, p.description, p.secret_kind, secret.to_string())
                     .map_err(locked_or)
-                    .and_then(|m| to_value(&m))
+                    .and_then(|m| {
+                        // The agent-facing add has no username/group; the Password Store form does.
+                        if p.username.is_empty() && p.group.is_empty() {
+                            return to_value(&m);
+                        }
+                        credstore::credstore_cred_upsert(
+                            credstore::CredInput {
+                                id: Some(m.id.clone()),
+                                label: m.label.clone(),
+                                username: p.username.clone(),
+                                secret_kind: m.secret_kind.clone(),
+                                secret: zeroize::Zeroizing::new(secret.to_string()),
+                                description: m.description.clone(),
+                                group: p.group.clone(),
+                                key_passphrase: None,
+                            },
+                            &self.vault,
+                        )
+                        .map_err(locked_or)?;
+                        to_value(&credstore::CredMeta { username: p.username, group: p.group, ..m })
+                    })
+            }
+            // The operator's own Password Store tab (eye / edit / delete), as in classic. The reveal goes to the
+            // app over this socket only; agents never get a value (their broker returns placeholders).
+            "vault.reveal" => {
+                let p: VaultIdParams = parse(params)?;
+                credstore::reveal_cred(&self.vault, &p.id).map(Value::String).map_err(locked_or)
+            }
+            "vault.save" => {
+                let p: VaultSaveParams = parse(params)?;
+                if p.label.trim().is_empty() {
+                    return Err("a name is required".into());
+                }
+                credstore::credstore_cred_upsert(
+                    credstore::CredInput {
+                        id: p.id,
+                        label: p.label.trim().to_string(),
+                        username: p.username,
+                        secret_kind: p.secret_kind,
+                        secret: zeroize::Zeroizing::new(p.secret),
+                        description: p.description,
+                        group: p.group.trim().to_string(),
+                        key_passphrase: None,
+                    },
+                    &self.vault,
+                )
+                .map(Value::String)
+                .map_err(locked_or)
+            }
+            // Classic's "Export encrypted store backup": a copy of the sealed file (still needs the master password).
+            "vault.export_backup" => {
+                let p: VaultDestParams = parse(params)?;
+                credstore::credstore_export(p.dest).map(|_| Value::Null)
+            }
+            // Classic's "Export master password" on the create screen: the typed master as plain text in the picked file
+            // (0600), by explicit operator request. The value is never logged and never leaves this process otherwise.
+            "vault.export_master" => {
+                let p: VaultExportMasterParams = parse(params)?;
+                let master = zeroize::Zeroizing::new(p.master);
+                credstore::credstore_export_master(p.dest, master.to_string()).map(|_| Value::Null)
+            }
+            // Classic's per-card Export: the secret written as plain text to the file the operator picked (0600).
+            "vault.export_cred" => {
+                let p: VaultExportCredParams = parse(params)?;
+                credstore::credstore_export_cred(p.id, p.dest, &self.vault).map(|_| Value::Null).map_err(locked_or)
+            }
+            "vault.import_key" => {
+                let p: VaultImportParams = parse(params)?;
+                credstore::credstore_import_key(p.label, p.username, p.src_path, &self.vault).map(Value::String).map_err(locked_or)
+            }
+            "vault.import_secret" => {
+                let p: VaultImportParams = parse(params)?;
+                credstore::credstore_import_secret(p.label, p.username, p.secret_kind, p.description, p.group, p.src_path, &self.vault).map(Value::String).map_err(locked_or)
+            }
+            "vault.remove" => {
+                let p: VaultIdParams = parse(params)?;
+                credstore::credstore_cred_remove(p.id, &self.vault).map(|_| Value::Null).map_err(locked_or)
             }
             "vault.update" => {
                 let p: VaultUpdateParams = parse(params)?;
@@ -633,5 +836,24 @@ impl Rpc {
                 None => Err(format!("unknown method '{other}'")),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod operator_only_tests {
+    use super::*;
+
+    #[test]
+    fn an_agent_caller_is_refused_every_vault_read_write_export_and_import() {
+        let rpc = Rpc::new(schedules::ScheduleState::client());
+        let cancel = AtomicBool::new(false);
+        for m in ["vault.reveal", "vault.save", "vault.remove", "vault.add", "vault.update", "vault.export_backup", "vault.export_master", "vault.export_cred", "vault.import_key", "vault.import_secret"] {
+            let e = rpc.call_as(crate::rpc_bridge::Caller::Agent, m, "{}", &cancel).unwrap_err();
+            assert!(e.contains("operator-only"), "{m}: {e}");
+            // the operator's own connection is not refused for that reason (it fails on its parameters instead)
+            let e = rpc.call_as(crate::rpc_bridge::Caller::Operator, m, "{}", &cancel).unwrap_err();
+            assert!(!e.contains("operator-only"), "{m}: {e}");
+        }
+        assert!(!vault_operator_only("vault.list") && !vault_operator_only("vault.status"));
     }
 }

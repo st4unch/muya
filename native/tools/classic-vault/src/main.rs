@@ -28,19 +28,23 @@ async fn main() {
             Some("init") => credstore_init(master, State::new(&store)).await.map(|_| String::new()),
             Some("add") => {
                 credstore_unlock(master, State::new(&store)).await?;
-                let c = CredInput { id: None, label: a[2].clone(), username: "tester".into(), secret_kind: "password".into(), secret: a[3].clone().into(), description: "made by classic".into(), group: String::new(), key_passphrase: None };
+                let c = CredInput { id: None, label: a[2].clone(), username: a.get(5).cloned().unwrap_or_else(|| "tester".into()), secret_kind: "password".into(), secret: a[3].clone().into(), description: "made by classic".into(), group: a.get(4).cloned().unwrap_or_default(), key_passphrase: None };
                 credstore_cred_upsert(c, State::new(&store)).map(|_| String::new())
             }
             Some("list") => {
                 credstore_unlock(master, State::new(&store)).await?;
                 Ok(credstore_cred_list(State::new(&store))?.into_iter().map(|m| m.label).collect::<Vec<_>>().join(","))
             }
+            Some("ids") => {
+                credstore_unlock(master, State::new(&store)).await?;
+                Ok(credstore_cred_list(State::new(&store))?.into_iter().map(|m| format!("{}={}", m.label, m.id)).collect::<Vec<_>>().join("\n"))
+            }
             Some("reveal") => {
                 credstore_unlock(master, State::new(&store)).await?;
                 let id = credstore_cred_list(State::new(&store))?.into_iter().find(|m| m.label == a[2]).ok_or("no such label")?.id;
                 credstore_reveal_cred(id, State::new(&store))
             }
-            _ => Err("usage: classic-vault init|add <label> <secret>|list|reveal <label>".into()),
+            _ => Err("usage: classic-vault init|add <label> <secret> [group] [user]|list|reveal <label>".into()),
         }
     };
     match run.await {

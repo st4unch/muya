@@ -31,7 +31,7 @@ extension DebugServer {
         switch cmd {
         case "ac-state":
             let p: String
-            switch store.problem { case nil: p = "none"; case .needsApproval?: p = "approval"; case .versionSkew?: p = "skew"; case let .staleService(st)?: p = "stale(\(st.program) \(st.verdict))"; case let .unreachable(m)?: p = "unreachable(\(m))" }
+            switch store.problem { case nil: p = "none"; case .needsApproval?: p = "approval"; case .versionSkew?: p = "skew"; case let .staleService(st)?: p = "stale(\(st.program) \(st.verdict))"; case let .brokenBundles(r)?: p = "bundles(\(r.copies.count) copies spawnFailed=\(r.spawnFailed))"; case let .unreachable(m)?: p = "unreachable(\(m))" }
             let r = gate.restart
             return "connected=\(store.connected) problem=\(p) onboarding=\(gate.onboarding != nil ? "shown" : "hidden") restart=\(r != nil ? "shown" : "hidden") "
                 + "phase=\(store.service.phase.text.isEmpty ? "idle" : store.service.phase.text) restarting=\(store.restarting) compat=\(store.service.speak != nil) "

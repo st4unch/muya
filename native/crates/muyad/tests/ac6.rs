@@ -74,7 +74,15 @@ fn muyactl_is_read_only() {
     assert!(matches!(&r[1], Frame::Control(Control::Sessions { .. })), "{r:?}");
     let r = talk(&sock, Role::Muyactl, Control::Spawn { argv: vec!["/bin/sh".into()], cwd: "/tmp".into(), env: vec![], cols: 80, rows: 24 });
     assert!(matches!(&r[1], Frame::Control(Control::Error { message, .. }) if message.contains("read-only")), "{r:?}");
-    let out = Command::new(Path::new(env!("CARGO_BIN_EXE_muyad")).with_file_name("muyactl")).args(["--socket"]).arg(&sock).arg("status").output().unwrap();
+    // muyactl is its own crate, so testing muyad does not build it: without this the check below could not run at
+    // all and the "muyactl is read-only" guarantee went unproved in any clean checkout.
+    let exe = Path::new(env!("CARGO_BIN_EXE_muyad")).with_file_name("muyactl");
+    if !exe.exists() {
+        let built = Command::new(env!("CARGO")).args(["build", "-p", "muyactl"]).status().expect("run cargo");
+        assert!(built.success(), "could not build muyactl for this check");
+    }
+    assert!(exe.exists(), "muyactl is missing at {exe:?}");
+    let out = Command::new(&exe).args(["--socket"]).arg(&sock).arg("status").output().unwrap();
     assert!(out.status.success() && String::from_utf8_lossy(&out.stdout).contains("0 sessions"), "{out:?}");
 }
 

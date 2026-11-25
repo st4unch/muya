@@ -65,6 +65,15 @@ public enum StartupRelaunch {
 
 /// `launchctl print` text -> what we need from it.
 public enum LaunchctlPrint {
+    /// `program = /Applications/Muya.app/Contents/MacOS/muyad`: where launchd starts the job from.
+    public static func program(_ text: String) -> String? {
+        for line in text.split(separator: "\n") {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            if t.hasPrefix("program = ") { return String(t.dropFirst("program = ".count)) }
+        }
+        return nil
+    }
+
     /// `parent bundle identifier = com.staunch.muya.native`: whose bundle the job belongs to.
     public static func parentBundleID(_ text: String) -> String? {
         for line in text.split(separator: "\n") {
@@ -87,11 +96,20 @@ public enum LegacyJobs {
 
     /// A service job that belongs to another bundle id (the `.native` beta, a leftover): it must be booted out before this
     /// app registers the same label.
-    public static func foreignServiceLabels(parents: [String: String?], ourBundleID: String) -> [String] {
+    /// Two copies of the same app share the bundle id, so the program path decides too: a job whose program is not inside
+    /// `ourBundlePath` is another copy's even when the id matches (a copy in /Applications and one on the Desktop).
+    public static func foreignServiceLabels(parents: [String: String?], ourBundleID: String, programs: [String: String] = [:], ourBundlePath: String? = nil) -> [String] {
         serviceLabels.filter { l in
             guard let p = parents[l] else { return false }     // not loaded
-            return p != ourBundleID                            // loaded: ours (same id) or foreign (other / unknown id)
+            if p != ourBundleID { return true }                // loaded: another / unknown id
+            if let prog = programs[l], let ours = ourBundlePath { return !isInside(prog, bundle: ours) }
+            return false
         }
+    }
+
+    public static func isInside(_ program: String, bundle: String) -> Bool {
+        let a = ServiceIdentity.canonical(program), b = ServiceIdentity.canonical(bundle)
+        return a == b || a.hasPrefix(b.hasSuffix("/") ? b : b + "/")
     }
 
     /// After a managed hand-over (`--switched-from=update`) the old daemon boots its jobs out within seconds; wait for that

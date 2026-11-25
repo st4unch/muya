@@ -56,9 +56,7 @@ enum SSHPageFactory {
     /// Called from MainController (main thread, not annotated), hence assumeIsolated.
     static func make(store: Store) -> SSHHubPage {
         return MainActor.assumeIsolated {
-            let hub = SSHHubPage(rpc: StoreSSHRpc(store: store)) { name, command in
-                store.openShell(cwd: store.home, name: name, typing: command)
-            }
+            let hub = SSHHubPage(rpc: StoreSSHRpc(store: store), terminalSize: { (store.grid.cols, store.grid.rows) }, focusSession: { id in store.selectWhenAdopted(id) })
             bridge = VaultIdleBridge(store: store, hub: hub)
             return hub
         }

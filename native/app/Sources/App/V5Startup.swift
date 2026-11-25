@@ -78,9 +78,14 @@ enum V5Startup {
     /// Service jobs (muyad / ptyd) that belong to another bundle id than ours.
     static func foreignServices() -> [String] {
         let ours = Bundle.main.bundleIdentifier ?? ""
-        var parents: [String: String?] = [:]
-        for l in LegacyJobs.serviceLabels { if let t = jobPrint(l) { parents[l] = .some(LaunchctlPrint.parentBundleID(t)) } }
-        return LegacyJobs.foreignServiceLabels(parents: parents, ourBundleID: ours)
+        var parents: [String: String?] = [:], programs: [String: String] = [:]
+        for l in LegacyJobs.serviceLabels {
+            guard let t = jobPrint(l) else { continue }
+            parents[l] = .some(LaunchctlPrint.parentBundleID(t))
+            if let prog = LaunchctlPrint.program(t) { programs[l] = prog }
+        }
+        let bundle = Bundle.main.bundleURL
+        return LegacyJobs.foreignServiceLabels(parents: parents, ourBundleID: ours, programs: programs, ourBundlePath: bundle.pathExtension == "app" ? bundle.path : nil)
     }
 
     /// Classic's scheduler agent (`muya --scheduler`) cannot run in this app: its executable does not exist here and the

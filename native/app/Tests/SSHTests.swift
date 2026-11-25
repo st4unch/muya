@@ -89,17 +89,10 @@ func runSSHTests() {
         check(SSHErrorMap.unlockMessage("denied by the user") == "denied by the user", "other text passes through")
     }
 
-    test("connect plan: direct+prompt opens ssh; PSMP / stored logins say why not; injection is quoted") {
-        guard case let .shell(cmd, name) = SSHConnect.plan(server()) else { check(false, "shell plan"); return }
-        check(cmd == "exec ssh -- 'ops@box.example.test'" && name == "Box", "plain: \(cmd)")
-        guard case let .shell(c2, _) = SSHConnect.plan(server { $0.port = 2222; $0.sshOptions = "-J jump@h.example.test -o StrictHostKeyChecking=ask" }) else { check(false, "options plan"); return }
-        check(c2 == "exec ssh -p 2222 '-J' 'jump@h.example.test' '-o' 'StrictHostKeyChecking=ask' -- 'ops@box.example.test'", "port + options each quoted: \(c2)")
-        check(SSHConnect.quote("a'b") == "'a'\\''b'", "single quote escaped")
-        guard case let .shell(c3, _) = SSHConnect.plan(server { $0.username = "o';id;'" }) else { check(false, "hostile user plan"); return }
-        check(c3 == "exec ssh -- 'o'\\'';id;'\\''@box.example.test'", "metacharacters stay inside quotes: \(c3)")
-        if case .notWired = SSHConnect.plan(server { $0.connectionType = .psmp; $0.psmpProfileId = "p1" }) {} else { check(false, "psmp not wired") }
-        if case let .notWired(m) = SSHConnect.plan(server { $0.credentialKind = .local; $0.credentialRef = "n" }) { check(m.contains("Password Store"), "local explains") } else { check(false, "local not wired") }
-        if case .notWired = SSHConnect.plan(server { $0.host = "-x" }) {} else { check(false, "invalid server never reaches the shell") }
+    test("connect: only an invalid server is refused page-side; the daemon opens the rest") {
+        check(SSHConnect.precheck(server()) == nil, "a valid direct server goes to the daemon")
+        check(SSHConnect.precheck(server { $0.credentialKind = .local; $0.credentialRef = "n" }) == nil, "stored login goes to the daemon")
+        check(SSHConnect.precheck(server { $0.host = "-x" }) != nil, "invalid server never reaches the daemon")
     }
 
     test("servers model: filter, grouping, profile titles") {
@@ -128,7 +121,7 @@ func runSSHTests() {
         v.secrets = .locked
         check(v.statusText == "Locked" && v.visible.isEmpty, "locked shows no rows")
         v.secrets = .ready([SecretMeta(label: "b", description: "", kind: "key"), SecretMeta(label: "A", description: "d", kind: "token")])
-        check(v.visible.map(\.label) == ["A", "b"] && v.statusText == "Unlocked · 2 secrets", "sorted + count")
+        check(v.visible.map(\.label) == ["A", "b"] && v.statusText == "Unlocked · 2 item(s)", "sorted + count")
         v.filter = "d"
         check(v.visible.map(\.label) == ["A"], "filter on description")
         check(Mirror(reflecting: SecretMeta(label: "a", description: "", kind: "key")).children.allSatisfy { !["value", "secret", "password"].contains($0.label ?? "") }, "a SecretMeta cannot carry a value")
@@ -197,18 +190,77 @@ func runSSHTests() {
             if case let .ready(list) = v { check(list.count == 3 && list.allSatisfy { $0.label != "" }, "names listed") } else { check(false, "ready after unlock") }
             let buf = SecretBuffer("placeholder-value-1")
             var stored = false
-            svc.store(label: "fresh", description: "d", kind: "token", value: buf, updating: false) { if case .success = $0 { stored = true } }
+            svc.save(id: "", label: "fresh", username: "u1", group: "Grp", description: "d", kind: "token", value: buf) { if case .success = $0 { stored = true } }
             check(stored && rpc.lastSecretParam == "placeholder-value-1", "daemon received the value")
             check(buf.isEmpty, "buffer wiped after the call")
-            check(rpc.secrets.last?["label"] as? String == "fresh" && rpc.secrets.last?["secret"] == nil, "list entry has no value")
-            let buf2 = SecretBuffer("placeholder-value-2")
-            svc.store(label: "fresh", description: "", kind: "token", value: buf2, updating: true) { _ in }
-            check(rpc.calls.last == SSHMethod.vaultUpdate && buf2.isEmpty, "update path wipes too")
+            check(rpc.calls.last == SSHMethod.vaultSave && rpc.secrets.last?["label"] as? String == "fresh" && rpc.secrets.last?["group"] as? String == "Grp", "saved with group")
+            svc.secrets { v = $0 }
+            if case let .ready(list) = v, let m = list.first(where: { $0.label == "fresh" }) {
+                check(m.username == "u1" && m.group == "Grp" && !m.id.isEmpty, "list keeps id/username/group (old vault entries too)")
+                var shown = ""
+                svc.reveal(id: m.id) { if case let .success(t) = $0 { shown = t } }
+                check(shown == "placeholder-value-1", "reveal returns the stored value for the operator")
+                let buf2 = SecretBuffer("placeholder-value-2")
+                svc.save(id: m.id, label: "fresh", username: "u1", group: "Grp", description: "d", kind: "token", value: buf2) { _ in }
+                check(buf2.isEmpty && rpc.secrets.filter { $0["label"] as? String == "fresh" }.count == 1, "edit replaces in place and wipes")
+                var gone = false
+                svc.remove(id: m.id) { if case .success = $0 { gone = true } }
+                check(gone && !rpc.secrets.contains { $0["label"] as? String == "fresh" }, "delete")
+            } else { check(false, "fresh listed") }
+            var xs = 0
+            svc.exportBackup(dest: "/tmp/x.bak") { if case .success = $0 { xs += 1 } }
+            svc.exportCred(id: "k1", dest: "/tmp/x.txt") { if case .success = $0 { xs += 1 } }
+            svc.importFile(label: "ik", username: "u", secretKind: nil, description: "", group: "", path: "/tmp/k") { if case .success = $0 { xs += 1 } }
+            svc.importFile(label: "ic", username: "", secretKind: "token", description: "d", group: "G", path: "/tmp/t") { if case .success = $0 { xs += 1 } }
+            check(xs == 4 && rpc.calls.contains(SSHMethod.exportBackup) && rpc.calls.contains(SSHMethod.importKey) && rpc.calls.contains(SSHMethod.importSecret), "export / import calls")
+            var tid = false
+            svc.setTouchId(true) { if case .success = $0 { tid = true } }
+            var st = SSHService.VaultStatus()
+            svc.vaultStatus { st = $0 }
+            check(tid && st.biometricAvailable, "touch id on")
+            svc.setTouchId(false) { _ in }
+            svc.vaultStatus { st = $0 }
+            check(!st.biometricAvailable, "touch id off")
+            var locked = false
+            svc.lock { if case .success = $0 { locked = true } }
+            check(locked && rpc.mode == .locked, "lock")
         }
+    }
+
+    test("store cards: named groups A-Z, Ungrouped last, kind names, 1/2/3 columns") {
+        func m(_ l: String, _ g: String, _ k: String = "password") -> SecretMeta { var s = SecretMeta(label: l, description: "", kind: k); s.group = g; return s }
+        let g = CredGroup.make([m("z", ""), m("b", "Prod"), m("a", "Lab"), m("c", "Lab"), m("y", "  ")])
+        check(g.map(\.name) == ["Lab", "Prod", "Ungrouped"], "group order")
+        check(g[0].items.map(\.label) == ["a", "c"] && g[2].items.map(\.label) == ["y", "z"], "items sorted, blank group = Ungrouped")
+        check(CredKindName.title("key") == "SSH key" && CredKindName.title("api_key") == "API key" && CredKindName.title("token") == "token", "kind names")
+        check([500, 767, 768, 1535, 1536].map { CredGroup.columns(pageWidth: CGFloat($0)) } == [1, 1, 2, 2, 3], "breakpoints")
+    }
+
+    test("server cards: named groups A-Z, Ungrouped last, classic's mono line") {
+        func s(_ label: String, _ group: String, psmp: Bool = false, kind: CredentialKind = .prompt, ref: String? = nil) -> SSHServer {
+            var v = SSHServer(); v.label = label; v.group = group; v.host = "10.0.1.11"; v.port = 22; v.username = "ubuntu"
+            v.connectionType = psmp ? .psmp : .direct; v.credentialKind = kind; v.credentialRef = ref
+            return v
+        }
+        let g = ServerGroup.make([s("web-02", ""), s("db-01", "Production"), s("web-01", "Production"), s("edge", "  ")])
+        check(g.map(\.name) == ["Production", "Ungrouped"], "named groups first, Ungrouped last")
+        check(g[0].items.map(\.title) == ["db-01", "web-01"], "servers sorted inside a group")
+        check(g[1].items.map(\.title) == ["edge", "web-02"], "a blank group is Ungrouped")
+        // classic shows the port even when it is 22, unlike `destination`.
+        check(ServerCardLine.text(s("web-01", "P")) == "ubuntu@10.0.1.11:22 · direct · prompt", "direct, prompt")
+        check(ServerCardLine.text(s("db-01", "P", psmp: true)) == "ubuntu@10.0.1.11:22 · PSMP · prompt", "PSMP")
+        check(ServerCardLine.text(s("x", "P", kind: .cyberark)) == "ubuntu@10.0.1.11:22 · direct · CyberArk", "CyberArk login")
+        let named = ServerCardLine.text(s("x", "P", kind: .local, ref: "c1"), credName: { $0 == "c1" ? "lab-admin" : nil })
+        check(named == "ubuntu@10.0.1.11:22 · direct · lab-admin", "a stored credential shows its label")
+        check(ServerCardLine.text(s("x", "P", kind: .local, ref: "gone")) == "ubuntu@10.0.1.11:22 · direct · Password Store", "locked store falls back to the kind")
+        var added = s("y", ""); added.agentAdded = true
+        check(ServerCardLine.text(added).hasSuffix("· added by agent"), "agent-added servers say so")
     }
 
     test("sections: tab order and titles") {
         check(SSHSection.allCases.map(\.title) == ["Servers", "PSMP profiles", "CyberArk", "Password Store"], "titles")
+        // classic's tab bar: PSMP profiles are a card at the bottom of Servers, not a tab.
+        check(SSHSection.tabs.map(\.title) == ["Servers", "CyberArk", "Password Store"], "the tab bar matches classic")
         check(CredentialKind.allCases.map(\.title) == ["Ask when connecting", "Password Store", "CyberArk account"], "login kinds")
     }
 }

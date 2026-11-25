@@ -10,6 +10,9 @@
 //   uf-tree-chevron <path>             one click on the triangle of that row
 //   uf-root-state                      roots and whether each is expanded
 //   uf-mark-opened <id> <name>         marks a session as opened by an agent
+//   uf-fields [mock|none] [filter]     opens the footer status-field popover (mock = sample status data) and returns its size
+//   uf-fields-close                    closes it
+//   uf-settings                        opens Settings and returns its size "w h columns"
 
 import AppKit
 
@@ -80,6 +83,35 @@ extension DebugServer {
             return "posted frame=\(r)"
         case "uf-root-state":
             return c.files.roots.map { "\($0.path)=\(c.files.outline.isItemExpanded($0) ? "open" : "closed")" }.joined(separator: "\n")
+        case "uf-fields":
+            c.statusData = w.first == "none" ? nil : ["model": ["display_name": "Opus 5.5", "id": "claude-opus-5-5"], "effort": ["level": "high"], "version": "2.1.245",
+                "context_window": ["used_percentage": 42, "remaining_percentage": 58, "context_window_size": 1_000_000, "total_input_tokens": 420_000, "total_output_tokens": 18_500],
+                "cost": ["total_cost_usd": 1.84, "total_duration_ms": 2_520_000], "rate_limits": ["five_hour": ["used_percentage": 31]], "session_name": "demo", "cwd": "/work/demo"]
+            let ft = c.frameView.footer
+            ft.onFields?(NSRect(x: ft.bounds.width - 60, y: 6, width: 20, height: 20))
+            if w.count > 1, let p = c.fieldPicker { p.debugSetFilter(w.dropFirst().joined(separator: " ")) }
+            return "ok \(c.fieldPicker?.debugWindowID ?? 0)"
+        case "uf-fields-id": return "\(c.fieldPicker?.debugWindowID ?? 0)"
+        case "uf-fields-rect":   // the popover's frame and the window's, so a check can prove it stays inside
+            guard let p = c.fieldPicker, let pv = p.debugContentView, let pw = pv.window else { return "error: no field menu open" }
+            // The popover's WINDOW is bigger than the menu: it carries a transparent shadow margin. Measure the menu.
+            let f = pw.convertToScreen(pv.convert(pv.bounds, to: nil)), w = c.window.frame
+            return "popover=\(Int(f.minX)),\(Int(f.minY)),\(Int(f.width)),\(Int(f.height)) window=\(Int(w.minX)),\(Int(w.minY)),\(Int(w.width)),\(Int(w.height))"
+        case "uf-fields-close": c.fieldPicker?.debugClose(); return "ok"
+        case "uf-settings":
+            c.settings.show()
+            // show() sizes the window; the columns only settle once the content has laid out, so measure after that.
+            c.settings.window.contentView?.layoutSubtreeIfNeeded()
+            let f = c.settings.window.frame
+            return "\(Int(f.width)) \(Int(f.height)) \(c.settings.debugColumns) scrolls=\(c.settings.debugScrolls) hidden=\(Int(c.settings.debugOverflow)) screen=\(Int(c.settings.debugScreenHeight))"
+        case "uf-click-row":   // uf-click-row <path>: one click in the middle of that row, converted through the frame view like uf-click
+            let o = c.files.outline
+            guard let n = c.files.node(path: arg), case let row = o.row(forItem: n), row >= 0 else { return "error: not visible" }
+            let r = o.rect(ofRow: row), pt = o.convert(NSPoint(x: r.minX + 80, y: r.midY), to: c.frameView)
+            click(winPoint(pt.x, pt.y), clicks: 1, send: true)
+            return "ok"
+        case "uf-tree-state":   // sidebar section open?, rows, expanded folders, the file open in the viewer
+            return "section=\(c.sidebar?.expanded == true ? "open" : "closed") rows=\(c.files.outline.numberOfRows) expanded=[\(c.files.debugExpanded.map { ($0 as NSString).lastPathComponent }.joined(separator: ","))] viewer=\(c.viewer.url?.lastPathComponent ?? "-")"
         case "uf-mark-opened":
             guard w.count >= 2, let id = UInt64(w[0]), let s = c.store.sessions.first(where: { $0.id == id }) else { return "error: no session" }
             c.store.markOpened(s, by: w.dropFirst().joined(separator: " ")); return "ok"

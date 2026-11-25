@@ -18,6 +18,7 @@ pub mod rpc_term_history;
 pub mod rpc_vault_notes;
 pub mod vault_idle;
 pub mod scheduler_host;
+pub mod ssh_connect;
 pub mod switchover_host;
 pub mod terminals;
 

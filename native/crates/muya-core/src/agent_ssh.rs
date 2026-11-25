@@ -142,6 +142,35 @@ pub fn open(
     secret: Option<Zeroizing<String>>,
     is_psmp: bool,
 ) -> Result<String, String> {
+    open_with(store, program, args, secret, is_psmp, READY_TIMEOUT)
+}
+
+/// How long the output must stay quiet before a login that never asked for the password (key auth, a reused ControlMaster)
+/// is treated as "no prompt is coming" and the shell-ready probe may be sent.
+const QUIET_BEFORE_PROBE: Duration = Duration::from_millis(2500);
+
+/// May the shell-ready probe be written now? The password path is unchanged: with a secret armed, the probe waits until it was
+/// injected. The ADDITION: a login that produced output, is not at a password / challenge prompt and has been quiet for
+/// `QUIET_BEFORE_PROBE` is already past authentication (key login, multiplexed connection), so the probe may go. Nothing the
+/// probe does can send the password: injection only ever happens on a seen prompt (see `spawn_reader`).
+fn may_probe(need_inject: bool, injected: bool, tail: &str, quiet_for: Duration) -> bool {
+    if !need_inject || injected {
+        return true;
+    }
+    !tail.is_empty()
+        && quiet_for >= QUIET_BEFORE_PROBE
+        && !crate::inject::looks_like_password_prompt(tail)
+        && !crate::inject::looks_like_challenge_prompt(tail)
+}
+
+pub fn open_with(
+    store: &AgentSshStore,
+    program: &str,
+    args: &[String],
+    secret: Option<Zeroizing<String>>,
+    is_psmp: bool,
+    ready_timeout: Duration,
+) -> Result<String, String> {
     let pair = native_pty_system()
         .openpty(PtySize {
             rows: 40,
@@ -196,7 +225,9 @@ pub fn open(
     // proceed non-interactively. Once the password is in (or none is needed), probe with
     // a printf and wait for it to echo — that only happens at an interactive shell, so it
     // also waits out a RADIUS push the human is approving.
-    let deadline = Instant::now() + READY_TIMEOUT;
+    let deadline = Instant::now() + ready_timeout;
+    let mut seen_len = 0usize;
+    let mut changed_at = Instant::now();
     // Built from `$R` on the remote (like exec markers) so the echoed probe command never
     // contains the full token — only the real printf output does.
     let rn = nonce();
@@ -225,7 +256,12 @@ pub fn open(
         // Only start probing once the password is in (writing during the password prompt
         // would feed the probe into the password field). Re-probe periodically so a probe
         // that lands mid-push still gets retried.
-        let can_probe = !need_inject || injected.load(Ordering::Relaxed);
+        let (blen, tail) = buffer.lock().map(|b| (b.len(), b.clone())).unwrap_or_default();
+        if blen != seen_len {
+            seen_len = blen;
+            changed_at = Instant::now();
+        }
+        let can_probe = may_probe(need_inject, injected.load(Ordering::Relaxed), &tail, changed_at.elapsed());
         if can_probe
             && probed_at
                 .map(|t| t.elapsed() > Duration::from_secs(2))
@@ -265,6 +301,41 @@ pub fn open(
         },
     );
     Ok(session_id)
+}
+
+/// A session around `program` on a fresh PTY WITHOUT the shell-ready probe (no password, no echo handshake): the building
+/// block of the idle-reaper tests, which need a live child to reap but no remote shell. Returns the id and the child's pid.
+pub fn spawn_unprobed(store: &AgentSshStore, program: &str, args: &[String]) -> Result<(String, Option<u32>), String> {
+    let pair = native_pty_system()
+        .openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 })
+        .map_err(|e| format!("openpty failed: {e}"))?;
+    let mut cmd = CommandBuilder::new(program);
+    for a in args {
+        cmd.arg(a);
+    }
+    cmd.cwd("/");
+    let child = pair.slave.spawn_command(cmd).map_err(|e| format!("spawn failed: {e}"))?;
+    drop(pair.slave);
+    let pid = child.process_id();
+    let writer: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(pair.master.take_writer().map_err(|e| e.to_string())?));
+    let id = format!("agentssh:{}", nonce());
+    store.0.lock().unwrap().insert(
+        id.clone(),
+        Session { writer, buffer: Arc::new(Mutex::new(String::new())), child, _master: pair.master, last_used: Mutex::new(Instant::now()) },
+    );
+    Ok((id, pid))
+}
+
+/// How many sessions the store holds.
+pub fn session_count(store: &AgentSshStore) -> usize {
+    store.0.lock().unwrap().len()
+}
+
+/// Mark `id` used `age` ago (a clock seam for the reaper tests: no need to wait out a real timeout).
+pub fn set_last_used_ago(store: &AgentSshStore, id: &str, age: Duration) {
+    if let Some(s) = store.0.lock().unwrap().get(id) {
+        *s.last_used.lock().unwrap() = Instant::now().checked_sub(age).unwrap_or_else(Instant::now);
+    }
 }
 
 /// Run one command inside an open session, framed by begin/end sentinels, and return its
@@ -469,5 +540,96 @@ mod tests {
             "recently-used session must survive"
         );
         close(&store, &fresh).unwrap();
+    }
+
+    fn alive(pid: u32) -> bool {
+        // signal 0 = "does this process exist" (a reaped child is gone, a zombie would still answer)
+        unsafe { libc::kill(pid as i32, 0) == 0 }
+    }
+
+    /// The idle reaper closes the session past the timeout and leaves a recently used one; the closed one's child is
+    /// killed AND waited for (no zombie), the other keeps running. Real PTY children (`sleep`), no shell, no env needed.
+    #[test]
+    fn reap_idle_closes_only_idle_sessions_and_reaps_their_child() {
+        let store = AgentSshStore::default();
+        let (idle, idle_pid) = spawn_unprobed(&store, "/bin/sleep", &["600".into()]).expect("idle child");
+        let (busy, busy_pid) = spawn_unprobed(&store, "/bin/sleep", &["600".into()]).expect("busy child");
+        let (idle_pid, busy_pid) = (idle_pid.unwrap(), busy_pid.unwrap());
+        assert!(alive(idle_pid) && alive(busy_pid));
+        set_last_used_ago(&store, &idle, Duration::from_secs(3600));
+        set_last_used_ago(&store, &busy, Duration::from_secs(60));
+
+        let closed = reap_idle(&store, IDLE_TIMEOUT);
+        assert_eq!(closed, vec![idle.clone()]);
+        assert_eq!(session_count(&store), 1, "only the busy session is left");
+        assert!(!alive(idle_pid), "the idle session's child is killed and reaped");
+        assert!(alive(busy_pid), "the busy session's child still runs");
+        assert!(exec(&store, &idle, "echo x", None).is_err(), "the idle session id is gone");
+
+        close(&store, &busy).unwrap();
+        assert!(!alive(busy_pid));
+        assert_eq!(session_count(&store), 0);
+    }
+
+    #[test]
+    fn buffer_cap_is_512k_and_idle_timeout_30_minutes() {
+        assert_eq!(BUFFER_CAP, 512 * 1024);
+        assert_eq!(IDLE_TIMEOUT, Duration::from_secs(30 * 60));
+    }
+
+    fn secret(s: &str) -> Option<Zeroizing<String>> {
+        Some(Zeroizing::new(s.to_string()))
+    }
+
+    #[test]
+    fn probe_gate_keeps_the_password_path_and_adds_the_quiet_login() {
+        let q = Duration::from_secs(3);
+        // password path: with a secret armed and not yet injected, a prompt (or no output) never lets the probe go
+        assert!(!may_probe(true, false, "u@h's password: ", q));
+        assert!(!may_probe(true, false, "", q), "no output at all: nothing to go on, nothing is written");
+        assert!(!may_probe(true, false, "Last login\n$ ", Duration::from_millis(100)), "not quiet long enough");
+        assert!(may_probe(true, true, "anything", Duration::ZERO), "after the injection the probe goes at once, as before");
+        assert!(may_probe(false, false, "", Duration::ZERO), "no secret: as before");
+        // the addition: a quiet shell with output and no prompt (key login, reused connection)
+        assert!(may_probe(true, false, "Last login: today\n$ ", q));
+        assert!(!may_probe(true, false, "Enter your RADIUS passcode: ", q), "a challenge is never probed over");
+    }
+
+    /// A password server still injects and opens (a child that asks for the password and logs what it reads).
+    #[test]
+    fn a_password_prompt_is_answered_once_and_the_session_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("read.txt");
+        let script = format!("printf 'user@host password: '; read -r PW; echo \"$PW\" > '{}'; echo Welcome; exec sh", log.display());
+        let store = AgentSshStore::default();
+        let id = open_with(&store, "/bin/sh", &["-c".into(), script], secret("Pw-Inject-1"), false, Duration::from_secs(20)).expect("opens");
+        assert_eq!(std::fs::read_to_string(&log).unwrap().trim(), "Pw-Inject-1", "the password was injected on the prompt");
+        close(&store, &id).unwrap();
+    }
+
+    /// A key-only login prints no password prompt: the session opens and the password is NEVER written (the child logs its stdin).
+    #[test]
+    fn a_login_without_a_prompt_opens_and_never_gets_the_password() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("stdin.txt");
+        let script = format!("echo 'Last login: today'; tee '{}' | sh", log.display());
+        let store = AgentSshStore::default();
+        let id = open_with(&store, "/bin/sh", &["-c".into(), script], secret("Pw-Never-Sent-2"), false, Duration::from_secs(30)).expect("opens without a prompt");
+        let seen = std::fs::read_to_string(&log).unwrap_or_default();
+        assert!(!seen.contains("Pw-Never-Sent-2"), "the password was written to a login that never asked: {seen:?}");
+        close(&store, &id).unwrap();
+    }
+
+    /// No output, no prompt: nothing is written at all (no probe, no password) and the open fails at the timeout.
+    #[test]
+    fn silence_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("stdin.txt");
+        let script = format!("cat > '{}'", log.display());
+        let store = AgentSshStore::default();
+        let r = open_with(&store, "/bin/sh", &["-c".into(), script], secret("Pw-Silent-3"), false, Duration::from_secs(4));
+        assert!(r.is_err(), "times out");
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(std::fs::read_to_string(&log).unwrap_or_default(), "", "nothing was written to a silent login");
     }
 }

@@ -39,6 +39,7 @@ a group** — you need real names/aliases, and guessing is never allowed (see be
 | Type a raw command (+ Enter) into one tab, shell or agent | `send_terminal` |
 | Send the same thing to every open tab at once | `broadcast` |
 | Store/rename/regroup/rotate a credential (any secret) | `add_secret` / `update_secret` / `list_secrets`; `get_secret` gives the `{{muya-secret:name}}` placeholder |
+| Call a REST API with a stored key (Authorization header etc.) | `http_request` — headers/body/url may hold `{{muya-secret:name}}`; Muya sends it and redacts the reply. NEVER paste the placeholder into your own curl: nothing substitutes it (401) |
 | Use a secret inside a script you wrote | `run_with_secrets` (or `muyactl secret exec --env VAR=name -- cmd` in a session shell) |
 | Run an operator-pinned command (aws/kubectl/git...) that uses a secret I never see | `list_operations` → `run_operation` |
 | Put a plan/PRD on the operator's Kanban board | `track_plan` |
@@ -177,6 +178,10 @@ server** — read this before running anything:
   string; placeholders in it are refused because `ps` shows arguments). Output comes back with every secret
   value redacted (raw, JSON, base64, hex, URL-encoded); each run is audit-logged by command and secret names.
   From a session shell use `muyactl secret exec --env VAR=name -- <cmd...>` (same path).
+  Example: `command: ["sh","-c","curl -sS -H \"Authorization: Bearer $API_KEY\" https://host/path"], env: {API_KEY: "{{muya-secret:name}}"}`.
+- `http_request(method?, url, headers?, body?, timeout?)` makes one HTTP call from the daemon. `url`, header values
+  and `body` may contain `{{muya-secret:name}}`; the response status/headers/body come back redacted. https only
+  (http for localhost), no redirects, audit-logged without values. Use it for REST APIs instead of curl.
 - Servers: `ssh_add_server` / `ssh_update_server` / `ssh_remove_server` work on any entry with a `group`
   like the Servers page; any secret may be a server's credential, and credential-to-host changes are audit-logged.
 - Prefer `run_operation` over `get_secret` when you just need to *use* a credential (e.g.

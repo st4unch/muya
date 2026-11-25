@@ -39,6 +39,25 @@ struct Inner {
     bridge: Option<MuyadBridgeHost>,
     /// The password store (locked until `vault.unlock`); the Rpc serves the same one.
     vault: Arc<CredStore>,
+    /// The CyberArk logon the Rpc serves (`cyberark.logon`); `ssh_open` fetches passwords with it.
+    cyberark: Arc<muya_core::cyberark::CyberarkState>,
+    /// `ssh_open` session id -> the terminal session it opened (for `ssh_send`).
+    ssh_tabs: std::sync::Mutex<std::collections::HashMap<String, u64>>,
+}
+
+/// How often the idle reaper looks (classic `lib.rs`: every 5 minutes; sessions go after `IDLE_TIMEOUT`, 30 minutes).
+pub const REAP_EVERY: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+/// The reaper loop: every `every`, close the sessions idle for `idle`. `rounds` limits it (tests); None = for ever.
+pub fn run_idle_reaper(store: &muya_core::agent_ssh::AgentSshStore, every: std::time::Duration, idle: std::time::Duration, rounds: Option<usize>) {
+    let mut n = 0;
+    while rounds.map_or(true, |r| n < r) {
+        std::thread::sleep(every);
+        for id in muya_core::agent_ssh::reap_idle(store, idle) {
+            muya_core::debuglog::log(&format!("[agent-ssh] reaped idle session {id}"));
+        }
+        n += 1;
+    }
 }
 
 #[derive(Clone)]
@@ -48,7 +67,20 @@ impl MuyadBrokerHost {
     /// `schedules`: the daemon's timers (`--scheduler`) or a store-only client.
     pub fn new(muyad: Arc<Muyad>, schedules: ScheduleState) -> Self {
         let delivery_keys = DeliveryKeys::in_claude_dir(&muya_core::schedules::claude_dir());
-        Self(Arc::new(Inner { muyad, broker: BrokerState::default(), agent_ssh: AgentSshStore::default(), schedules, delivery_keys, bridge: None, vault: Arc::new(CredStore::default()) }))
+        Self(Arc::new(Inner { muyad, broker: BrokerState::default(), agent_ssh: AgentSshStore::default(), schedules, delivery_keys, bridge: None, vault: Arc::new(CredStore::default()), cyberark: Arc::default(), ssh_tabs: Default::default() }))
+    }
+
+    /// Agent SSH sessions (`ssh_session_open`) have no other garbage collector: one the agent never closes (crash, context
+    /// reset) would keep its PTY and connection for as long as muyad runs. Same cadence and timeout as classic.
+    pub fn start_idle_reaper(&self, every: std::time::Duration, idle: std::time::Duration) {
+        let store = self.0.agent_ssh.clone();
+        let _ = std::thread::Builder::new().name("agent-ssh-reaper".into()).spawn(move || run_idle_reaper(&store, every, idle, None));
+    }
+
+    /// Fetch CyberArk passwords with the logon `c` (the store the Rpc logs on); call before `spawn`.
+    pub fn with_cyberark(self, cyberark: Arc<muya_core::cyberark::CyberarkState>) -> Self {
+        let inner = Arc::try_unwrap(self.0).unwrap_or_else(|_| unreachable!("with_cyberark is called before the host is shared"));
+        Self(Arc::new(Inner { cyberark, ..inner }))
     }
 
     /// Read secrets from `vault` (the store the Rpc unlocks); call before `spawn`.
@@ -66,6 +98,7 @@ impl MuyadBrokerHost {
     /// Binds the broker socket and serves it on a dedicated tokio runtime thread. Fails (and
     /// leaves the socket alone) when a live broker already owns it, e.g. the Tauri app.
     pub fn spawn(self) -> Result<(), String> {
+        self.start_idle_reaper(REAP_EVERY, muya_core::agent_ssh::IDLE_TIMEOUT);
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::Builder::new()
             .name("broker".into())
@@ -99,7 +132,36 @@ impl BrokerHost for MuyadBrokerHost {
     }
 
     fn emit(&self, event: &str, payload: Value) -> Result<(), String> {
-        self.0.muyad.emit_event(event, &payload)
+        match event {
+            // The agent's `ssh_open` / `ssh_send`: the daemon owns the terminal, so it opens it (with the password
+            // injected) and types into it; there is no app-side handler to wait for.
+            "ssh-broker-open" => {
+                let server_id = payload["serverId"].as_str().ok_or("serverId missing")?.to_string();
+                let session = payload["sessionId"].as_str().ok_or("sessionId missing")?.to_string();
+                let cfg = muya_core::ssh::load_config()?;
+                let server = cfg.servers.iter().find(|s| s.id == server_id).ok_or("server not found")?.clone();
+                // `emit` is sync but runs inside the broker's async task: resolve the (async) secret on a thread of its own
+                // so a nested runtime is never started on this one.
+                let host = self.clone();
+                let srv = server.clone();
+                let secret = std::thread::spawn(move || {
+                    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
+                    rt.block_on(crate::ssh_connect::resolve_secret(&host.0.vault, &host.0.cyberark, &srv)).map_err(locked_or)
+                })
+                .join()
+                .map_err(|_| "secret lookup panicked".to_string())??;
+                let id = self.0.muyad.ssh_connect(&server_id, secret, None, None)?;
+                self.0.ssh_tabs.lock().unwrap().insert(session, id);
+                Ok(())
+            }
+            "ssh-broker-send" => {
+                let session = payload["sessionId"].as_str().unwrap_or_default();
+                let text = payload["text"].as_str().unwrap_or_default();
+                let id = self.0.ssh_tabs.lock().unwrap().get(session).copied().ok_or("no such ssh tab")?;
+                self.0.muyad.type_raw(id, text)
+            }
+            _ => self.0.muyad.emit_event(event, &payload),
+        }
     }
 
     fn claim_delivery(&self, key: &str) -> Result<bool, String> {
@@ -135,8 +197,8 @@ impl BrokerHost for MuyadBrokerHost {
         credstore::edit_credential(&self.0.vault, reference, edit).map(secret_meta).map_err(locked_or)
     }
 
-    async fn cyberark_password(&self, _: &str) -> Result<Zeroizing<String>, String> {
-        Err(format!("CyberArk is {NOT_YET}"))
+    async fn cyberark_password(&self, account_id: &str) -> Result<Zeroizing<String>, String> {
+        muya_core::cyberark::fetch_password(&self.0.cyberark, account_id).await.map_err(|e| if e.contains("not logged on") { "log on to CyberArk first (SSH > CyberArk tab)".to_string() } else { e })
     }
 
     async fn schedule_op(&self, op: String, key: Option<String>, fields: Option<Value>, enabled: Option<bool>, limit: Option<usize>) -> Result<Value, String> {
@@ -209,5 +271,35 @@ impl BrokerHost for MuyadBrokerHost {
 
     fn read_transcript_tail(cwd: &str, session_id: &str, limit: usize, query: Option<&str>) -> Result<String, String> {
         broker::default_read_transcript_tail(cwd, session_id, limit, query)
+    }
+}
+
+#[cfg(test)]
+mod reaper_tests {
+    use super::*;
+    use muya_core::agent_ssh;
+    use std::time::Duration;
+
+    fn alive(pid: u32) -> bool {
+        unsafe { libc::kill(pid as i32, 0) == 0 }
+    }
+
+    /// The daemon's loop (the thread `start_idle_reaper` runs) reaps an idle session by itself: with a short injected timeout the
+    /// session is gone from the store and its child process is dead, with nobody calling `close`.
+    #[test]
+    fn the_reaper_loop_closes_an_idle_session_and_reaps_its_child() {
+        let store = agent_ssh::AgentSshStore::default();
+        let (_id, pid) = agent_ssh::spawn_unprobed(&store, "/bin/sleep", &["600".into()]).expect("child");
+        let pid = pid.unwrap();
+        assert!(alive(pid));
+        run_idle_reaper(&store, Duration::from_millis(250), Duration::from_millis(100), Some(2));
+        assert_eq!(agent_ssh::session_count(&store), 0, "the idle session was closed by the loop");
+        assert!(!alive(pid), "its child was killed and reaped");
+    }
+
+    #[test]
+    fn reaper_cadence_matches_classic() {
+        assert_eq!(REAP_EVERY, Duration::from_secs(300));
+        assert_eq!(agent_ssh::IDLE_TIMEOUT, Duration::from_secs(1800));
     }
 }

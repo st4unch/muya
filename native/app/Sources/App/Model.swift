@@ -527,7 +527,14 @@ final class Store: @unchecked Sendable {
         sessions.last?.name = t.name
         delegate?.storeDidChangeSessions(self)
         if selected == nil { select(sessions.last) }
+        if wantFocus == t.id { wantFocus = nil; select(sessions.last) }
     }
+
+    /// The SSH page's Connect: bring session `id` forward now, or as soon as its `terminal-opened` event adopts it.
+    func selectWhenAdopted(_ id: UInt64) {
+        if let s = sessions.first(where: { $0.id == id }) { select(s) } else { wantFocus = id }
+    }
+    private var wantFocus: UInt64?
 
     /// Opens a shell in `cwd` and types `command` into it (resume a Claude session).
     func openShell(cwd: String, name: String, typing command: String) {

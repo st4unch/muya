@@ -15,8 +15,9 @@ protocol SSHRpc: AnyObject {
 enum SSHMethod {
     static let serversList = "ssh.servers.list", serversSave = "ssh.servers.save", serversDelete = "ssh.servers.delete"
     static let psmpList = "ssh.psmp.list", psmpSave = "ssh.psmp.save", psmpDelete = "ssh.psmp.delete"
+    static let connect = "ssh.connect"
     static let cyberarkSearch = "cyberark.accounts.search"
-    static let vaultList = "vault.list", vaultUnlock = "vault.unlock", vaultAdd = "vault.add", vaultUpdate = "vault.update", vaultStatus = "vault.status", vaultInit = "vault.init"
+    static let vaultList = "vault.list", vaultUnlock = "vault.unlock", vaultAdd = "vault.add", vaultUpdate = "vault.update", vaultReveal = "vault.reveal", vaultSave = "vault.save", vaultRemove = "vault.remove", vaultLock = "vault.lock", exportBackup = "vault.export_backup", exportCred = "vault.export_cred", exportMaster = "vault.export_master", importKey = "vault.import_key", importSecret = "vault.import_secret", touchIdEnable = "vault.touchid.enable", touchIdDisable = "vault.touchid.disable", vaultStatus = "vault.status", vaultInit = "vault.init"
 }
 
 @MainActor
@@ -38,6 +39,17 @@ final class SSHService {
             switch r {
             case let .success(v): done(.ready(Self.objects(v).compactMap(PSMPProfile.init(json:))))
             case let .failure(e): done(SSHErrorMap.classify(e.message))
+            }
+        }
+    }
+
+    /// The daemon opens the terminal (password injected there) and tells the app by `muya://terminal-opened`;
+    /// the reply carries the session id so the page can bring that tab forward.
+    func connect(server id: String, cols: Int, rows: Int, _ done: @escaping @MainActor (Result<UInt64, RpcFailure>) -> Void) {
+        rpc.call(SSHMethod.connect, ["id": id, "cols": cols, "rows": rows]) { r in
+            switch r {
+            case let .success(v): done(.success(((v as? [String: Any])?["session"] as? NSNumber)?.uint64Value ?? 0))
+            case let .failure(e): done(.failure(e))
             }
         }
     }
@@ -114,16 +126,56 @@ final class SSHService {
         rpc.call(SSHMethod.vaultInit, ["master": master.reveal()]) { r in master.wipe(); done(r.map { _ in () }) }
     }
 
-    /// Stores or replaces a secret. The buffer is wiped before `done` runs, success or not.
-    func store(label: String, description: String, kind: String, value: SecretBuffer, updating: Bool, _ done: @escaping @MainActor (Result<Void, RpcFailure>) -> Void) {
-        var params: [String: Any] = ["label": label, "secret": value.reveal()]
-        if !updating { params["description"] = description; params["secretKind"] = kind }
-        rpc.call(updating ? SSHMethod.vaultUpdate : SSHMethod.vaultAdd, params) { r in
+    /// Adds (`id` empty) or edits (`id` set) a stored secret. The buffer is wiped before `done` runs, success or not.
+    func save(id: String, label: String, username: String, group: String, description: String, kind: String, value: SecretBuffer, _ done: @escaping @MainActor (Result<Void, RpcFailure>) -> Void) {
+        var params: [String: Any] = ["label": label, "username": username, "group": group, "description": description, "secretKind": kind, "secret": value.reveal()]
+        if !id.isEmpty { params["id"] = id }
+        rpc.call(SSHMethod.vaultSave, params) { r in
             value.wipe()
             done(r.map { _ in () })
         }
         // `params` still holds the revealed String until it goes out of scope; the buffer itself is wiped
         // above as soon as the reply arrives, and the page clears its field right after submitting.
+    }
+
+    /// The stored value of one secret, for the operator's eye / copy / edit. Only the Password Store tab asks.
+    func reveal(id: String, _ done: @escaping @MainActor (Result<String, RpcFailure>) -> Void) {
+        rpc.call(SSHMethod.vaultReveal, ["id": id]) { r in done(r.map { $0 as? String ?? "" }) }
+    }
+
+    func remove(id: String, _ done: @escaping @MainActor (Result<Void, RpcFailure>) -> Void) {
+        rpc.call(SSHMethod.vaultRemove, ["id": id]) { r in done(r.map { _ in () }) }
+    }
+
+    /// Classic's Export backup: the sealed store file copied to `dest` (needs the master password to open).
+    func exportBackup(dest: String, _ done: @escaping @MainActor (Result<Void, RpcFailure>) -> Void) {
+        rpc.call(SSHMethod.exportBackup, ["dest": dest]) { r in done(r.map { _ in () }) }
+    }
+
+    /// Classic's "Export master password" (create screen): the typed master as plain text in `dest`. The buffer is wiped after the call.
+    func exportMaster(dest: String, master: SecretBuffer, _ done: @escaping @MainActor (Result<Void, RpcFailure>) -> Void) {
+        rpc.call(SSHMethod.exportMaster, ["dest": dest, "master": master.reveal()]) { r in master.wipe(); done(r.map { _ in () }) }
+    }
+
+    /// Classic's per-card Export: the secret as plain text in the file the operator picked.
+    func exportCred(id: String, dest: String, _ done: @escaping @MainActor (Result<Void, RpcFailure>) -> Void) {
+        rpc.call(SSHMethod.exportCred, ["id": id, "dest": dest]) { r in done(r.map { _ in () }) }
+    }
+
+    /// Import SSH key (`secretKind` nil) or Import credential from a file the operator picked.
+    func importFile(label: String, username: String, secretKind: String?, description: String, group: String, path: String, _ done: @escaping @MainActor (Result<Void, RpcFailure>) -> Void) {
+        var p: [String: Any] = ["label": label, "username": username, "srcPath": path]
+        if let secretKind { p["secretKind"] = secretKind; p["description"] = description; p["group"] = group }
+        rpc.call(secretKind == nil ? SSHMethod.importKey : SSHMethod.importSecret, p) { r in done(r.map { _ in () }) }
+    }
+
+    /// Turns the Touch ID unlock on (store must be open) or off.
+    func setTouchId(_ on: Bool, _ done: @escaping @MainActor (Result<Void, RpcFailure>) -> Void) {
+        rpc.call(on ? SSHMethod.touchIdEnable : SSHMethod.touchIdDisable, [:]) { r in done(r.map { _ in () }) }
+    }
+
+    func lock(_ done: @escaping @MainActor (Result<Void, RpcFailure>) -> Void) {
+        rpc.call(SSHMethod.vaultLock, [:]) { r in done(r.map { _ in () }) }
     }
 
     private static func objects(_ v: Any) -> [[String: Any]] {
@@ -147,6 +199,9 @@ final class FakeSSHRpc: SSHRpc {
     private(set) var calls: [String] = []
     private(set) var lastSecretParam: String?
     var unlocks = 0
+    /// The server id of the last `ssh.connect` (the daemon opens the tab).
+    private(set) var lastConnect: String?
+    var touchId = false
 
     init(mode: Mode = .working) {
         self.mode = mode
@@ -158,9 +213,9 @@ final class FakeSSHRpc: SSHRpc {
         ]
         profiles = [["id": "p1", "label": "Lab PSMP", "psmpAddress": "psmp.example.test", "vaultUser": "svc-ops", "userDelim": "@", "paramDelim": "#", "scpOptions": "-O"]]
         secrets = [
-            ["label": "lab-admin", "description": "Edge router login", "secret_kind": "password"],
-            ["label": "ci-deploy-key", "description": "Build host key", "secret_kind": "key"],
-            ["label": "registry-token", "description": "", "secret_kind": "token"],
+            ["id": "k1", "label": "lab-admin", "username": "admin", "group": "Lab", "description": "Edge router login", "secretKind": "password", "_value": "test-pass-1"],
+            ["id": "k2", "label": "ci-deploy-key", "username": "ci", "group": "Lab", "description": "Build host key", "secretKind": "key", "_value": "test-key-2"],
+            ["id": "k3", "label": "registry-token", "username": "", "group": "", "description": "", "secretKind": "token", "_value": "test-token-3"],
         ]
         accounts = [
             ["id": "acc-1", "name": "Operating System-UnixSSH-db.example.test-dba", "address": "db.example.test", "username": "dba", "safe": "DB-Prod", "platform_id": "UnixSSH"],
@@ -170,11 +225,14 @@ final class FakeSSHRpc: SSHRpc {
 
     func call(_ method: String, _ params: [String: Any], done: @escaping @MainActor (Result<Any, RpcFailure>) -> Void) {
         calls.append(method)
-        if method == SSHMethod.vaultAdd || method == SSHMethod.vaultUpdate { lastSecretParam = params["secret"] as? String }
+        if method == SSHMethod.vaultAdd || method == SSHMethod.vaultUpdate || method == SSHMethod.vaultSave { lastSecretParam = params["secret"] as? String }
         if mode == .unwired { return done(.failure(RpcFailure(message: "unknown method '\(method)'"))) }
         let vaultCall = method.hasPrefix("vault.") || method == SSHMethod.cyberarkSearch
         if mode == .locked, vaultCall, method != SSHMethod.vaultUnlock { return done(.failure(RpcFailure(message: "password store is locked — unlock it in the Password Store tab"))) }
         switch method {
+        case SSHMethod.connect:
+            lastConnect = params["id"] as? String
+            done(.success(["session": 7]))
         case SSHMethod.serversList: done(.success(servers))
         case SSHMethod.serversSave:
             var s = params["server"] as? [String: Any] ?? [:]
@@ -198,14 +256,34 @@ final class FakeSSHRpc: SSHRpc {
         case SSHMethod.cyberarkSearch:
             let q = (params["query"] as? String ?? "").lowercased()
             done(.success(accounts.filter { a in ["name", "address", "username", "safe"].contains { (a[$0] as? String ?? "").lowercased().contains(q) } }))
-        case SSHMethod.vaultList: done(.success(secrets))
-        case SSHMethod.vaultStatus: done(.success(["initialized": true, "unlocked": mode != .locked, "biometricAvailable": false]))
+        case SSHMethod.vaultList: done(.success(secrets.map { $0.filter { $0.key != "_value" } }))
+        case SSHMethod.vaultStatus: done(.success(["initialized": true, "unlocked": mode != .locked, "biometricAvailable": touchId]))
         case SSHMethod.vaultUnlock: unlocks += 1; mode = .working; done(.success(["unlocked": true]))
         case SSHMethod.vaultInit: mode = .working; done(.success([String: Any]()))
         case SSHMethod.vaultAdd:
-            secrets.append(["label": params["label"] ?? "", "description": params["description"] ?? "", "secret_kind": params["secretKind"] ?? "password"])
+            secrets.append(["id": "k\(secrets.count + 1)", "label": params["label"] ?? "", "description": params["description"] ?? "", "secretKind": params["secretKind"] ?? "password", "_value": params["secret"] ?? ""])
             done(.success([String: Any]()))
         case SSHMethod.vaultUpdate: done(.success([String: Any]()))
+        case SSHMethod.vaultSave:
+            var e: [String: Any] = ["label": params["label"] ?? "", "username": params["username"] ?? "", "group": params["group"] ?? "", "description": params["description"] ?? "", "secretKind": params["secretKind"] ?? "password", "_value": params["secret"] ?? ""]
+            let id = params["id"] as? String ?? ""
+            e["id"] = id.isEmpty ? "k\(secrets.count + 1)" : id
+            secrets.removeAll { $0["id"] as? String == e["id"] as? String }
+            secrets.append(e)
+            done(.success(e["id"] ?? ""))
+        case SSHMethod.vaultReveal:
+            if let s = secrets.first(where: { $0["id"] as? String == params["id"] as? String }) { done(.success(s["_value"] as? String ?? "")) }
+            else { done(.failure(RpcFailure(message: "credential not found"))) }
+        case SSHMethod.vaultRemove:
+            secrets.removeAll { $0["id"] as? String == params["id"] as? String }
+            done(.success(NSNull()))
+        case SSHMethod.vaultLock: mode = .locked; done(.success(NSNull()))
+        case SSHMethod.exportBackup, SSHMethod.exportCred, SSHMethod.exportMaster: done(.success(NSNull()))
+        case SSHMethod.importKey, SSHMethod.importSecret:
+            secrets.append(["id": "k\(secrets.count + 1)", "label": params["label"] ?? "", "username": params["username"] ?? "", "group": params["group"] ?? "", "description": params["description"] ?? "", "secretKind": params["secretKind"] ?? "key", "_value": "imported"])
+            done(.success("k"))
+        case SSHMethod.touchIdEnable: touchId = true; done(.success(NSNull()))
+        case SSHMethod.touchIdDisable: touchId = false; done(.success(NSNull()))
         default: done(.failure(RpcFailure(message: "unknown method '\(method)'")))
         }
     }

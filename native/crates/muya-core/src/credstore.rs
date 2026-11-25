@@ -831,7 +831,8 @@ pub fn credstore_cred_upsert(cred: CredInput, state: &CredStore) -> Result<Strin
             slot.secret = cred.secret;
             slot.description = cred.description;
             slot.group = cred.group;
-            slot.key_passphrase = cred.key_passphrase;
+            // An edit that does not mention a key passphrase keeps the stored one.
+            slot.key_passphrase = cred.key_passphrase.or_else(|| slot.key_passphrase.take());
             existing
         }
         None => {

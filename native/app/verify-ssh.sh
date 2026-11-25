@@ -10,7 +10,7 @@ OUT=$HERE/build
 mkdir -p "$OUT" screenshots
 swiftc -swift-version 5 -target arm64-apple-macos26.0 -warnings-as-errors -parse-as-library -O \
   -I CGhostty -Xcc -I"$GHOSTTY/include" -L "$GHOSTTY/lib" \
-  Sources/Client/*.swift Sources/Theme/*.swift Sources/App/Theme.swift Sources/App/Kit.swift Sources/App/ModalParts.swift Sources/App/FindIconButton.swift Sources/App/AccessibilityAudit.swift \
-  Sources/SSH/SSHLogic.swift Sources/SSH/SSHService.swift Sources/SSH/SSHForm.swift Sources/SSH/SSHPage.swift \
+  Sources/Client/*.swift Sources/Logic/ServiceIdentity.swift Sources/Theme/*.swift Sources/App/Theme.swift Sources/App/Kit.swift Sources/App/ModalParts.swift Sources/App/FindIconButton.swift Sources/App/AccessibilityAudit.swift \
+  Sources/SSH/SSHLogic.swift Sources/SSH/SSHService.swift Sources/SSH/SSHForm.swift Sources/SSH/PasswordStoreCards.swift Sources/SSH/ServerCards.swift Sources/SSH/SSHPage.swift \
   tools/ssh-shots.swift -o "$OUT/ssh-shots"
 "$OUT/ssh-shots" "$HERE/screenshots"

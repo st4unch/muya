@@ -14,6 +14,8 @@ public enum ServiceProblem: Equatable, Sendable {
     /// The protocol matches but the running services belong to another copy of the app (moved to the Trash, or replaced in place):
     /// they lack this copy's fixes. The same restart dialog offers to start this copy's own.
     case staleService(StaleService)
+    /// Another bundle with this app's identifier makes macOS start (or fail to start) the service from the wrong copy.
+    case brokenBundles(BundleReport)
     /// Anything else: the normal "not connected, retrying" banner.
     case unreachable(String)
 
@@ -43,11 +45,20 @@ public struct StaleService: Equatable, Sendable {
     /// "muyad" / "muya-ptyd": which program the verdict is about.
     public var program: String
     public var sessions: [LiveSession]
-    public init(verdict: ServiceIdentity.Verdict, program: String, sessions: [LiveSession]) { self.verdict = verdict; self.program = program; self.sessions = sessions }
+    /// For the message: this copy's bundle path and release, the release the running service announced, and why an automatic
+    /// takeover did not work (nil = not tried / not applicable).
+    public var appPath: String?, appVersion: String?, daemonVersion: String?, takeoverFailure: String?
+    public init(verdict: ServiceIdentity.Verdict, program: String, sessions: [LiveSession], appPath: String? = nil, appVersion: String? = nil, daemonVersion: String? = nil, takeoverFailure: String? = nil) {
+        self.verdict = verdict; self.program = program; self.sessions = sessions
+        self.appPath = appPath; self.appVersion = appVersion; self.daemonVersion = daemonVersion; self.takeoverFailure = takeoverFailure
+    }
 }
 
 public enum ServiceCopy {
     public static let starting = "Starting the background service…"
+    /// A build that owns no background service (a dev build, a fake HOME, a hand-started daemon): it must never send
+    /// the user to the installed Muya's Login Items switch over a service this copy was never going to have.
+    public static let noServiceHere = "Not connected to a background service. This copy does not manage one — start a daemon for it, or use the installed Muya."
     /// The last-resort text: what is wrong and the one thing to do. Never "connection closed".
     public static func cannotStart(detail: String?, jobLoaded: Bool?) -> String {
         let why = jobLoaded == true ? "macOS lists the background service but it does not answer." : "macOS did not start the background service."
@@ -59,6 +70,9 @@ public enum ServiceCopy {
         if let s = status, s.contains("Retry") { return s }
         return (status ?? "The background service is not running yet. Muya is starting it.") + " Press Retry in a moment."
     }
+    /// The status line while macOS cannot start the service because of a second copy; stays after the dialog was dismissed.
+    public static let bundlesStatus = "macOS cannot start the background service: more than one copy of Muya is installed."
+    public static let bundlesTitle = "More than one copy of Muya is installed"
     public static let staleTitle = "Restart the Muya background service?"
     /// `home` shortens the path the way the app does elsewhere.
     public static func staleBody(_ s: StaleService, kept: Int, home: String) -> String {
@@ -69,9 +83,16 @@ public enum ServiceCopy {
         case .replaced: why = "The background service (\(s.program)) was started before this copy of Muya was installed, so the latest fixes are not active yet."
         default: why = "The background service is not the one inside this copy of Muya."
         }
+        var names = ""
+        if let ap = s.appPath {
+            names = " This copy: \(KeptSession.abbreviate(ap, home: home))\(s.appVersion.map { " (\($0))" } ?? ""). Running service: "
+            if case let .otherCopy(running) = s.verdict { names += KeptSession.abbreviate(ServiceTakeover.bundlePath(ofProgram: running), home: home) } else { names += "this copy's path" }
+            names += s.daemonVersion.map { " (\($0))." } ?? "."
+        }
+        let failed = s.takeoverFailure.map { " Muya tried to switch to this copy's service by itself and could not (\($0))." } ?? ""
         let tail = kept == 0 ? "No sessions are open, so nothing is lost." :
             "Restarting ends the \(kept) running session\(kept == 1 ? "" : "s") below and opens each again in the same folder, resuming the Claude conversation where there is one; anything running in a plain shell stops. “Later” keeps everything running as it is."
-        return why + " " + tail
+        return why + names + failed + " " + tail
     }
 
     public static let onboardingTitle = "Allow the Muya background service"
@@ -91,6 +112,7 @@ public enum ServiceCopy {
         return versions + " " + tail
     }
     public static let restartButton = "Restart service"
+    public static let staleRestartButton = "Use this copy's service"
     public static let laterButton = "Later"
     public static let compatNote = "Muya and its background service run different versions. Choose Restart Background Service in the Muya menu when it suits you."
 }

@@ -70,9 +70,14 @@ start_app() {
   # The throwaway HOME also keeps AppKit's saved state and defaults away from the real home.
   # MUYA_APP_ARGS="-AppleKeyboardUIMode 3" runs the app with Full Keyboard Access on (a process-local default; the real setting is untouched).
   # shellcheck disable=SC2086
-  HOME=$DEV/home MUYA_SOCKET=$DEV/muyad.sock MUYA_DEBUG_SOCKET=$DEV/app-debug.sock \
-    nohup "$APP_BIN" ${MUYA_APP_ARGS:-} >"$DEV/app.log" 2>&1 &
-  APP_PID=$!
+  # The app must keep a LIVING parent: muyad refuses a launchd-parented (orphaned) peer that is not responsible for itself (muya-peer
+  # refuse_reason, a daemonised PTY child could look like that), and a plain `nohup app &` from a script that then exits is exactly that.
+  # So a small subshell stays alive as the app's parent (the real app, started by Finder / `open`, is responsible for itself instead).
+  rm -f "$DEV/app.pid"
+  HOME=$DEV/home MUYA_SOCKET=$DEV/muyad.sock MUYA_DEBUG_SOCKET=$DEV/app-debug.sock APP_BIN=$APP_BIN APP_ARGS="${MUYA_APP_ARGS:-}" DEVDIR=$DEV \
+    nohup bash -c '"$APP_BIN" $APP_ARGS >"$DEVDIR/app.log" 2>&1 & echo $! > "$DEVDIR/app.pid"; wait' >/dev/null 2>&1 &
+  for _ in $(seq 50); do [ -s "$DEV/app.pid" ] && break; sleep 0.1; done
+  APP_PID=$(cat "$DEV/app.pid" 2>/dev/null || true)
   save
   say "app pid $APP_PID (debug socket $DEV/app-debug.sock)"
 }

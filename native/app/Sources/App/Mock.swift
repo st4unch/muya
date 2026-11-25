@@ -83,7 +83,18 @@ enum MockData {
     // MARK: Schedules + Queue data (same rows as src/mock/schedulesMock.ts and fixtures.ts MOCK_PROJECT_STATUS)
 
     /// Answers `schedules.list` / `schedules.runs` in mock mode (there is no daemon): 3 jobs, 14 kept runs (12 + 2).
+    /// The SSH page's data in mock mode: the same synthetic in-memory daemon the client tests use (documentation names, test values).
+    nonisolated(unsafe) static var sshFake: FakeSSHRpc?
+
     static func call(_ method: String, _ params: [String: Any]) -> Any? {
+        if ["vault.", "ssh.", "servers.", "psmp.", "cyberark."].contains(where: method.hasPrefix) {
+            return MainActor.assumeIsolated { () -> Any? in
+                let fake = sshFake ?? FakeSSHRpc(); sshFake = fake
+                var out: Any?
+                fake.call(method, params) { if case let .success(v) = $0 { out = v } }
+                return out
+            }
+        }
         let now = Int64(Date().timeIntervalSince1970 * 1000), h: Int64 = 3_600_000
         /// Local time tomorrow in ms (the web mock's clock shows "tomorrow 04:21" / "tomorrow 08:21").
         func tomorrow(_ hour: Int, _ minute: Int) -> Int64 {

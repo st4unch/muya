@@ -27,9 +27,9 @@ nonisolated(unsafe) var fails = 0
 func expect(_ ok: Bool, _ what: String) { if ok { print("PASS \(what)") } else { print("FAIL \(what)"); fails += 1 } }
 
 @MainActor
-func makeHub(_ mode: FakeSSHRpc.Mode, connected: ((String, String) -> Void)? = nil) -> (SSHHubPage, FakeSSHRpc, NSWindow) {
+func makeHub(_ mode: FakeSSHRpc.Mode, focused: ((UInt64) -> Void)? = nil) -> (SSHHubPage, FakeSSHRpc, NSWindow) {
     let rpc = FakeSSHRpc(mode: mode)
-    let hub = SSHHubPage(rpc: rpc) { n, c in connected?(n, c) }
+    let hub = SSHHubPage(rpc: rpc, focusSession: { focused?($0) })
     let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 600), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
     w.title = "Muya Native"
     w.contentView = hub
@@ -47,17 +47,14 @@ struct Shots {
         func both(_ w: NSWindow, _ name: String) { shoot(w, dark: true, to: "\(out)/\(name)-dark.png"); shoot(w, dark: false, to: "\(out)/\(name)-light.png"); print("shot \(name)") }
 
         // Servers
-        var opened: (String, String)?
-        let (hub, rpc, win) = makeHub(.working) { opened = ($0, $1) }
+        var focusedSession: UInt64?
+        let (hub, rpc, win) = makeHub(.working, focused: { focusedSession = $0 })
         expect(hub.model.visibleServers.count == 4 && hub.serversPane.rowCount == 4, "servers list shows four rows")
         both(win, "ssh-servers")
-        hub.serversPane.table.selectRowIndexes([0], byExtendingSelection: false)   // Build host: direct + prompt
-        hub.serversPane.connectTapped()
-        expect(opened?.1 == "exec ssh -- 'ci@build.example.test'" && opened?.0 == "Build host", "Connect on a direct server opens a terminal command: \(opened?.1 ?? "nil")")
-        opened = nil
-        hub.serversPane.table.selectRowIndexes([1], byExtendingSelection: false)   // Edge router: stored login
-        hub.serversPane.connectTapped()
-        expect(opened == nil && hub.serversPane.message.stringValue.contains("Password Store"), "Connect on a stored-login server explains instead of opening: \(hub.serversPane.message.stringValue)")
+        expect(hub.serversPane.connectServer(titled: "Build host"), "Connect on the Build host card")   // direct + prompt
+        expect(rpc.lastConnect == "s1" && focusedSession == 7, "Connect asks the daemon (ssh.connect) and brings the new tab forward: \(rpc.lastConnect ?? "nil") \(String(describing: focusedSession))")
+        expect(hub.serversPane.connectServer(titled: "Edge router"), "Connect on the Edge router card")   // stored login: the daemon injects it
+        expect(rpc.lastConnect == "s2", "Connect on a stored-login server also goes to the daemon: \(rpc.lastConnect ?? "nil")")
         both(win, "ssh-servers-connect-note")
 
         // Server editor with an error
@@ -75,9 +72,10 @@ struct Shots {
         } else { expect(false, "server form opened") }
         both(win, "ssh-servers-after-add")
 
-        // PSMP
+        // PSMP profiles: classic has no PSMP tab, the card sits at the bottom of Servers.
         hub.select(.psmp)
-        expect(hub.psmpPane.rowCount == 1, "psmp list shows one profile")
+        expect(hub.section == .servers, "asking for PSMP lands on Servers, as classic has no PSMP tab")
+        expect(hub.serversPane.cardsSummary().contains("psmp=1"), "the PSMP profiles card shows one profile")
         both(win, "ssh-psmp")
         hub.editProfile(nil)
         if let f = hub.form {
@@ -101,18 +99,18 @@ struct Shots {
         hub.select(.vault)
         expect(hub.vaultPane.rowCount == 3 && hub.vault.statusText.hasPrefix("Unlocked"), "vault lists three names")
         both(win, "vault-unlocked")
-        hub.editSecret(nil)
-        if let f = hub.form {
-            f.set("label", "lab-admin")
-            (f.controls["value"] as? NSTextField)?.stringValue = "placeholder-not-a-secret"
-            both(f.window, "vault-add-form-filled")
-            f.submitTapped()
-            expect(f.debugState().contains("label: A secret named"), "duplicate name is refused with a pointer to Update")
-            both(f.window, "vault-add-form-errors")
-            f.clearSecure()
-            expect(!f.debugState().contains("placeholder"), "debug state never shows a secret, and clearSecure empties the field")
-            f.cancelTapped()
-        }
+        // classic draws the new-credential form as a card above the groups, not as a sheet.
+        hub.vaultPane.beginNew()
+        if let f = hub.vaultPane.form {
+            f.setValue("label", "lab-admin")
+            f.setValue("value", "placeholder-not-a-secret")
+            both(win, "vault-add-form-filled")
+            f.submitForTest()
+            expect(hub.vaultPane.form != nil, "a duplicate name keeps the form open instead of saving")
+            both(win, "vault-add-form-errors")
+            f.clearSecret()
+            f.cancelForTest()
+        } else { expect(false, "new-credential card opened") }
 
         // Locked store
         let (lockedHub, lockedRpc, lockedWin) = makeHub(.locked)
@@ -120,6 +118,13 @@ struct Shots {
         expect(lockedHub.vault.statusText == "Locked" && lockedHub.vaultPane.stateView.text.contains("locked"), "locked store shows the locked state: \(lockedHub.vaultPane.stateView.text)")
         both(lockedWin, "vault-locked")
         lockedHub.vaultPane.stateView.button.onClick?()
+        // Unlock asks for the master password first (Touch ID is off in the fake), exactly as classic does.
+        expect(lockedHub.form != nil, "Unlock opens the master-password sheet")
+        if let f = lockedHub.form {
+            f.set("master", "placeholder-not-a-secret")
+            both(f.window, "vault-unlock-sheet")
+            f.submitTapped()
+        }
         expect(lockedRpc.unlocks == 1 && lockedHub.vault.statusText.hasPrefix("Unlocked"), "Unlock calls the daemon and the list appears")
         both(lockedWin, "vault-after-unlock")
 
@@ -158,13 +163,13 @@ struct Shots {
         for sec in SSHSection.allCases { hub.select(sec); audited("SSH section \(sec.title)", [win]) }
         hub.select(.servers); hub.editServer(nil); if let f = hub.form { audited("server form", [f.window]); f.cancelTapped() }
         hub.select(.psmp); hub.editProfile(nil); if let f = hub.form { audited("PSMP profile form", [f.window]); f.cancelTapped() }
-        hub.select(.vault); hub.editSecret(nil); if let f = hub.form { audited("secret form", [f.window]); f.clearSecure(); f.cancelTapped() }
+        hub.select(.vault); hub.vaultPane.beginNew(); if hub.vaultPane.form != nil { audited("secret form", [win]); hub.vaultPane.form?.clearSecret(); hub.vaultPane.form?.cancelForTest() }
         audited("locked Password Store", [lockedWin]); audited("not-available state", [bareWin])
         expect(treeBad.isEmpty, "accessibility tree audit: every interactive control is labelled (\(treeBad.joined(separator: " | ")))")
 
         // Keyboard: Return on a row activates, sections are reachable from the segmented control
         hub.select(.servers)
-        expect(hub.serversPane.table.onReturn != nil && hub.psmpPane.table.onReturn != nil, "lists react to Return")
+        expect(hub.vaultPane.table.onReturn != nil, "lists react to Return")
         print(fails == 0 ? "ALL PASS" : "\(fails) FAILED")
         exit(fails == 0 ? 0 : 1)
     }
