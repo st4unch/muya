@@ -342,11 +342,12 @@ pub fn session_channel_event(from: &str, text: &str) -> serde_json::Value {
 async fn serve_subscription(
     session_id: String,
     pid: i32,
+    verified: bool,
     mut reader: BufReader<tokio::net::unix::OwnedReadHalf>,
     mut write_half: tokio::net::unix::OwnedWriteHalf,
 ) {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    if !try_register_channel(&session_id, pid, &tx) {
+    if !try_register_channel(&session_id, pid, &tx, verified) {
         let _ = write_half
             .write_all(b"{\"ok\":false,\"error\":\"session already has a live channel owned by another process\"}\n")
             .await;
@@ -401,6 +402,7 @@ fn try_register_channel(
     session_id: &str,
     pid: i32,
     tx: &tokio::sync::mpsc::UnboundedSender<String>,
+    verified: bool,
 ) -> bool {
     let mut map = CHANNELS.lock().unwrap();
     let mut owners = CHANNEL_OWNERS.lock().unwrap();
@@ -411,7 +413,9 @@ fn try_register_channel(
     }
     map.insert(session_id.to_string(), tx.clone());
     owners.insert(session_id.to_string(), pid);
-    if pid > 0 {
+    // Only a claim the registry and the kernel both back becomes the caller's identity; an unproven one gets
+    // the push channel and nothing else.
+    if verified && pid > 0 {
         PEER_SESSIONS
             .lock()
             .unwrap()
@@ -423,6 +427,74 @@ fn try_register_channel(
 fn verified_caller(pid: Option<i32>) -> String {
     pid.and_then(|p| PEER_SESSIONS.lock().ok().and_then(|m| m.get(&p).cloned()))
         .unwrap_or_default()
+}
+
+/// peer pid -> (session id, the Claude process it was found under): ancestry bindings, re-checked on every hit.
+static ANCESTRY_BOUND: LazyLock<StdMutex<HashMap<i32, (String, i32)>>> =
+    LazyLock::new(|| StdMutex::new(HashMap::new()));
+/// peer pid -> when ancestry last found no Claude session above it (not asked again for a few seconds).
+static ANCESTRY_MISS: LazyLock<StdMutex<HashMap<i32, std::time::Instant>>> =
+    LazyLock::new(|| StdMutex::new(HashMap::new()));
+const ANCESTRY_MISS_TTL: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The session whose Claude process is an ancestor of `chain[0]`. Strict: a session the registry reports
+/// without a pid never matches (a subscribe claim is judged the same way by [`judge_claim`]).
+fn session_by_ancestry(sessions: &[AgentSession], chain: &[i32]) -> Option<(String, i32)> {
+    sessions.iter().find_map(|s| {
+        let p = i32::try_from(s.pid?).ok().filter(|p| *p > 1)?;
+        (!s.id.is_empty() && chain.contains(&p)).then(|| (s.id.clone(), p))
+    })
+}
+
+/// Ties a socket peer to a Claude session by its process ancestry alone, so a caller is identified whether or
+/// not its sidecar holds a channel subscription (that needs the optional `--dangerously-load-development-channels`
+/// flag, which most sessions are not started with). Nothing the caller sends is trusted: the broker reads the
+/// peer's parents from the kernel and the Claude pids from the registry. Empty when no Claude session is above it.
+async fn bind_by_ancestry<H: BrokerHost>(pid: i32) -> String {
+    if pid <= 1 {
+        return String::new();
+    }
+    let hit = ANCESTRY_BOUND.lock().ok().and_then(|m| m.get(&pid).cloned());
+    if let Some((sid, claude)) = hit {
+        if ancestors_via(pid, parent_of).contains(&claude) && pid_alive(claude) {
+            return sid;
+        }
+        if let Ok(mut m) = ANCESTRY_BOUND.lock() {
+            m.remove(&pid);
+        }
+    }
+    let missed = ANCESTRY_MISS
+        .lock()
+        .ok()
+        .and_then(|m| m.get(&pid).copied())
+        .is_some_and(|at| at.elapsed() < ANCESTRY_MISS_TTL);
+    if missed {
+        return String::new();
+    }
+    let found = tokio::task::spawn_blocking(move || {
+        let chain = ancestors_via(pid, parent_of);
+        H::list_agent_sessions_fresh(None)
+            .ok()
+            .and_then(|v| session_by_ancestry(&v, &chain))
+    })
+    .await
+    .ok()
+    .flatten();
+    match found {
+        Some((sid, claude)) => {
+            if let Ok(mut m) = ANCESTRY_BOUND.lock() {
+                m.insert(pid, (sid.clone(), claude));
+            }
+            sid
+        }
+        None => {
+            if let Ok(mut m) = ANCESTRY_MISS.lock() {
+                m.retain(|_, at| at.elapsed() < ANCESTRY_MISS_TTL);
+                m.insert(pid, std::time::Instant::now());
+            }
+            String::new()
+        }
+    }
 }
 
 /// Identity used for ownership: the verified session, else the peer pid.
@@ -1190,8 +1262,8 @@ async fn bind_cli_caller<H: BrokerHost>(req: &mut BrokerReq, what: &str) -> Resu
         let chain = ancestors_via(pid, parent_of);
         H::list_agent_sessions_fresh(None)
             .ok()
-            .and_then(|v| v.into_iter().find(|s| claim_matches(s.pid, &chain)))
-            .map(|s| s.id)
+            .and_then(|v| session_by_ancestry(&v, &chain))
+            .map(|(id, _)| id)
     })
     .await
     .ok()
@@ -1232,7 +1304,10 @@ async fn handle_run_with_secrets<H: BrokerHost>(host: &H, req: &mut BrokerReq) -
             "a secret placeholder cannot be part of the command: arguments are visible to local `ps`. Put it in `env` (VAR: \"{{muya-secret:name}}\") or `stdin` and read it from the environment.",
         );
     }
-    if !host.vault_is_unlocked() {
+    // Only a call that names a secret needs the vault open; a plain command runs while it is locked.
+    let uses_secret = req.env.iter().flatten().any(|(_, v)| !crate::secret_refs::names_in(v).is_empty())
+        || req.stdin.as_deref().is_some_and(|t| !crate::secret_refs::names_in(t).is_empty());
+    if uses_secret && !host.vault_is_unlocked() {
         return err_resp("password store is locked — unlock it in the Password Store tab");
     }
     let cwd = match req.cwd.as_deref().filter(|c| !c.trim().is_empty()) {
@@ -1349,7 +1424,13 @@ async fn handle_http_request<H: BrokerHost>(host: &H, req: &mut BrokerReq) -> St
     let Ok(method) = reqwest::Method::from_bytes(method.as_bytes()) else {
         return err_resp(format!("unknown HTTP method '{method}'"));
     };
-    if !host.vault_is_unlocked() {
+    // Only a call that names a secret needs the vault open; a plain request goes out while it is locked.
+    let uses_secret = [Some(url_t.as_str()), req.body.as_deref()]
+        .into_iter()
+        .flatten()
+        .chain(req.headers.iter().flatten().map(|(_, v)| v.as_str()))
+        .any(|t| !crate::secret_refs::names_in(t).is_empty());
+    if uses_secret && !host.vault_is_unlocked() {
         return err_resp("password store is locked — unlock it in the Password Store tab");
     }
     let mut used = Vec::new();
@@ -1473,6 +1554,11 @@ pub async fn handle_request_from<H: BrokerHost>(host: &H, line: &str, pid: Optio
         Err(e) => return err_resp(format!("bad request: {e}")),
     };
     req.caller = verified_caller(pid);
+    if req.caller.is_empty() {
+        if let Some(p) = pid {
+            req.caller = bind_by_ancestry::<H>(p).await;
+        }
+    }
     req.caller_pid = pid;
 
     // Load current config (non-secret). ssh::ssh_list_servers reads the config
@@ -3615,6 +3701,9 @@ fn handle_open_terminal<H: BrokerHost>(host: &H, req: &BrokerReq) -> String {
             if let Ok(mut m) = TERMINAL_OWNERS.lock() {
                 m.insert(id, caller_key(req));
             }
+            // Recorded like an open_session tab, so close_session can close what the agent opened (and still
+            // refuses a tab the operator opened by hand), also after a restart.
+            register_agent_session(&name, &caller_key(req));
             eprintln!(
                 "[broker] open_terminal id={id} name={name} command_bytes={}",
                 command.as_deref().map_or(0, str::len)
@@ -4462,29 +4551,35 @@ fn ancestors_via(pid: i32, parent: impl Fn(i32) -> Option<i32>) -> Vec<i32> {
     out
 }
 
-/// Whether a sidecar (process `pid`) may claim Claude session `session_id`: when the registry knows the
-/// session's Claude process, the sidecar must run under it. An id the registry does not know yet
-/// (a session that has not registered) cannot be checked and is accepted.
-fn claim_matches(session_claude_pid: Option<i64>, ancestors: &[i32]) -> bool {
-    match session_claude_pid.and_then(|p| i32::try_from(p).ok()) {
-        Some(p) if p > 1 => ancestors.contains(&p),
-        _ => true,
+/// What the broker can say about a sidecar's claim to be Claude session X.
+#[derive(Debug, PartialEq, Eq)]
+enum SessionClaim {
+    /// X is in the registry and its Claude process is above the sidecar: the identity is proven.
+    Verified,
+    /// The registry does not know X (or could not be read, or reports no pid for it). The push channel may be
+    /// served, but the claim proves nothing and must never become the caller's identity.
+    Unknown,
+    /// X is in the registry under a different Claude process: refused.
+    Mismatch,
+}
+
+fn judge_claim(sessions: &[AgentSession], session_id: &str, ancestors: &[i32]) -> SessionClaim {
+    let Some(found) = sessions.iter().find(|s| s.id == session_id) else {
+        return SessionClaim::Unknown;
+    };
+    match found.pid.and_then(|p| i32::try_from(p).ok()).filter(|p| *p > 1) {
+        None => SessionClaim::Unknown,
+        Some(p) if ancestors.contains(&p) => SessionClaim::Verified,
+        Some(_) => SessionClaim::Mismatch,
     }
 }
 
-async fn check_session_claim<H: BrokerHost>(session_id: &str, pid: i32) -> Result<(), String> {
+async fn check_session_claim<H: BrokerHost>(session_id: &str, pid: i32) -> SessionClaim {
     let sessions = match tokio::task::spawn_blocking(|| H::list_agent_sessions_fresh(None)).await {
         Ok(Ok(s)) => s,
-        _ => return Ok(()), // no registry to check against (claude missing): same as unknown
+        _ => return SessionClaim::Unknown, // no registry to check against (claude missing)
     };
-    let Some(found) = sessions.iter().find(|s| s.id == session_id) else {
-        return Ok(());
-    };
-    if claim_matches(found.pid, &ancestors_via(pid, parent_of)) {
-        Ok(())
-    } else {
-        Err(format!("session '{session_id}' belongs to another Claude process than the one this sidecar runs under"))
-    }
+    judge_claim(&sessions, session_id, &ancestors_via(pid, parent_of))
 }
 
 async fn serve_connection<H: BrokerHost>(stream: tokio::net::UnixStream, host: Arc<H>) {
@@ -4508,15 +4603,16 @@ async fn serve_connection<H: BrokerHost>(stream: tokio::net::UnixStream, host: A
                 if let Some(session_id) = subscribe_request(&line) {
                     // M8: the session id is the caller's identity later on, so it must be the Claude
                     // process this sidecar actually runs under, not an id another process made up.
-                    if let Err(e) =
-                        check_session_claim::<H>(&session_id, peer_pid.unwrap_or(0)).await
-                    {
+                    let claim = check_session_claim::<H>(&session_id, peer_pid.unwrap_or(0)).await;
+                    if claim == SessionClaim::Mismatch {
+                        let e = format!("session '{session_id}' belongs to another Claude process than the one this sidecar runs under");
                         let _ = write_half
                             .write_all(format!("{}\n", err_resp(e)).as_bytes())
                             .await;
                         return;
                     }
-                    serve_subscription(session_id, peer_pid.unwrap_or(0), reader, write_half).await;
+                    let verified = claim == SessionClaim::Verified;
+                    serve_subscription(session_id, peer_pid.unwrap_or(0), verified, reader, write_half).await;
                     return;
                 }
                 let mut resp = handle_request_from(&*host, &line, peer_pid).await;
@@ -4967,11 +5063,11 @@ mod tests {
         let (tx2, _rx2) = tokio::sync::mpsc::unbounded_channel::<String>();
         let me = std::process::id() as i32;
         let id = "sess-h1-test";
-        assert!(try_register_channel(id, me, &tx1));
+        assert!(try_register_channel(id, me, &tx1, true));
         // Same process may re-register.
-        assert!(try_register_channel(id, me, &tx1));
+        assert!(try_register_channel(id, me, &tx1, true));
         // Another live process (pid 1 = launchd, alive) may not take over.
-        assert!(!try_register_channel(id, 1, &tx2));
+        assert!(!try_register_channel(id, 1, &tx2, true));
         assert_eq!(verified_caller(Some(me)), id);
         CHANNELS.lock().unwrap().remove(id);
         CHANNEL_OWNERS.lock().unwrap().remove(id);
@@ -6647,12 +6743,13 @@ mod tests {
             _ => None,
         });
         assert_eq!(chain, vec![300, 200, 100]);
-        assert!(claim_matches(Some(200), &chain));
-        assert!(!claim_matches(Some(999), &chain));
-        assert!(
-            claim_matches(None, &chain),
-            "unknown session pid cannot be checked"
-        );
+        let reg = vec![session_with_pid("mine", Some(200)), session_with_pid("other", Some(999)), session_with_pid("no-pid", None)];
+        assert_eq!(judge_claim(&reg, "mine", &chain), SessionClaim::Verified);
+        assert_eq!(judge_claim(&reg, "other", &chain), SessionClaim::Mismatch);
+        // Nothing to prove it with: not refused (the channel still works) but never an identity.
+        assert_eq!(judge_claim(&reg, "no-pid", &chain), SessionClaim::Unknown);
+        assert_eq!(judge_claim(&reg, "made-up", &chain), SessionClaim::Unknown);
+        assert_eq!(judge_claim(&[], "mine", &chain), SessionClaim::Unknown);
         assert!(ancestors_via(5, |_| Some(5)).len() == 1, "loops end");
     }
 
@@ -6848,6 +6945,200 @@ mod tests {
         // A tab the operator opened by hand was never written, so it stays unclosable.
         assert!(!read_owned(&path).contains_key("by-hand"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+
+    // ---- MCP caller identity, lock gate, ownership persistence (defects A-D) ----
+
+    /// The identity tests share this process's pid and the global registry fake: one at a time.
+    static IDENTITY_TESTS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    /// Sends one `subscribe` for `claim` over a real socket pair (the peer pid is this process) and returns the
+    /// broker's first answer plus the client side, which keeps the subscription alive until dropped.
+    async fn subscribe_as(h: TermHost, claim: &str) -> (String, tokio::net::UnixStream) {
+        let (client, server) = tokio::net::UnixStream::pair().unwrap();
+        tokio::spawn(serve_connection(server, Arc::new(h)));
+        let mut client = client;
+        client.write_all(format!("{{\"op\":\"subscribe\",\"sessionId\":\"{claim}\"}}\n").as_bytes()).await.unwrap();
+        let mut line = String::new();
+        let mut r = BufReader::new(&mut client);
+        r.read_line(&mut line).await.unwrap();
+        (line.trim().to_string(), client)
+    }
+
+    fn forget_identity(me: i32) {
+        ANCESTRY_BOUND.lock().unwrap().remove(&me);
+        ANCESTRY_MISS.lock().unwrap().remove(&me);
+        PEER_SESSIONS.lock().unwrap().remove(&me);
+    }
+
+    fn session_with_pid(id: &str, pid: Option<i64>) -> AgentSession {
+        let mut s = fake_session(id, id, "/t/anc");
+        s.pid = pid;
+        s
+    }
+
+    #[test]
+    fn ancestry_matches_only_a_session_with_a_known_pid_above_the_caller() {
+        let sessions = vec![session_with_pid("no-pid", None), session_with_pid("mine", Some(500)), session_with_pid("other", Some(600))];
+        // sidecar 900 <- claude 500 <- shell 400
+        assert_eq!(session_by_ancestry(&sessions, &[900, 500, 400]), Some(("mine".into(), 500)));
+        // a process under no Claude session stays unbound, and a pid-less registry row never matches
+        assert_eq!(session_by_ancestry(&sessions, &[900, 400]), None);
+        assert_eq!(session_by_ancestry(&[session_with_pid("no-pid", None)], &[900, 500]), None);
+    }
+
+    /// The shipped bug: identity came only from a channel subscription, which most sessions never open (it needs
+    /// the optional --dangerously-load-development-channels flag), so every caller was "unverified" and
+    /// broadcast / session messaging were dead. A caller under a Claude process is now bound without one.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_caller_under_a_claude_process_is_verified_without_a_channel_subscription() {
+        let _serial = IDENTITY_TESTS.lock().await;
+        let me = std::process::id() as i32;
+        let line = r#"{"op":"broadcast","command":"echo hi"}"#;
+        let reset = || {
+            ANCESTRY_BOUND.lock().unwrap().remove(&me);
+            ANCESTRY_MISS.lock().unwrap().remove(&me);
+        };
+        // No Claude session above this process: still refused (the check is not weakened).
+        reset();
+        let h = three();
+        let out: serde_json::Value = serde_json::from_str(&handle_request_from(&h, line, Some(me)).await).unwrap();
+        assert_eq!(out["ok"], false, "{out}");
+        assert!(out["error"].as_str().unwrap().contains("unverified"), "{out}");
+        // The registry reports a Claude session whose process is this caller's ancestor.
+        reset();
+        FAKE_SESSIONS.lock().unwrap().push(session_with_pid("sess-anc-a", Some(me as i64)));
+        let h = three();
+        let out: serde_json::Value = serde_json::from_str(&handle_request_from(&h, line, Some(me)).await).unwrap();
+        FAKE_SESSIONS.lock().unwrap().retain(|s| s.id != "sess-anc-a");
+        reset();
+        assert_eq!(out["ok"], true, "{out}");
+        assert!(!h.typed.lock().unwrap().is_empty(), "broadcast must have typed into the tabs");
+    }
+
+    #[test]
+    fn a_call_without_a_secret_placeholder_runs_while_the_password_store_is_locked() {
+        let h = three(); // no vault entries = locked
+        let (port, server) = echo_server();
+        let r = call(&h, json!({"op":"http_request","url":format!("http://127.0.0.1:{port}/plain")}));
+        assert_eq!(r["ok"], true, "{r}"); // asserted before the join: a refused call never reaches the server
+        server.join().unwrap();
+        assert_eq!(r["status"], 200);
+        assert_eq!(r["secrets"], json!([]));
+        let r = call(
+            &h,
+            json!({"op":"run_with_secrets","argv":["/bin/echo","hi"],"cwd":"/tmp","env":{"PLAIN":"no-secret-here"},"stdin":"plain"}),
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(r["exitCode"], 0);
+        // ...and a call that does name a secret still needs the store open.
+        for req in [
+            json!({"op":"http_request","url":"https://example.com/","headers":{"A":"{{muya-secret:k}}"}}),
+            json!({"op":"http_request","url":"https://example.com/","body":"{{muya-secret:k}}"}),
+            json!({"op":"http_request","url":"https://example.com/?t={{muya-secret:k}}"}),
+            json!({"op":"run_with_secrets","argv":["/bin/echo"],"cwd":"/tmp","env":{"X":"{{muya-secret:k}}"}}),
+            json!({"op":"run_with_secrets","argv":["/bin/echo"],"cwd":"/tmp","stdin":"{{muya-secret:k}}"}),
+        ] {
+            let r = call(&h, req.clone());
+            assert!(r["error"].as_str().unwrap_or_default().contains("password store is locked"), "{req}: {r}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_shell_tab_the_agent_opened_can_be_closed_by_it_and_survives_a_restart() {
+        let opener = "sess-d-opener";
+        let h = term_host(vec![]);
+        let v = call(&h, json!({"op":"open_terminal","name":"d-own-shell","sessionId":opener}));
+        assert_eq!(v["ok"], true, "{v}");
+        // Defect C: the ownership is on disk, not only in memory.
+        assert_eq!(read_owned(&owned_path()).get("d-own-shell").map(|e| e.opener.as_str()), Some(opener));
+        // A restart: the in-memory map is gone and is loaded back from the file.
+        *AGENT_OPENED_SESSIONS.lock().unwrap() = read_owned(&owned_path());
+        // The tab exists (id 99 as the fake host opened it) next to one the operator opened by hand.
+        let h = term_host(vec![term(99, "d-own-shell", "shell", None, None), term(98, "d-by-hand", "shell", None, None)]);
+        let refused = broker_call(&h, json!({"op":"close_session","target":"d-own-shell"}), "sess-someone-else").await;
+        assert_eq!(refused["ok"], false, "{refused}");
+        let by_hand = broker_call(&h, json!({"op":"close_session","target":"d-by-hand"}), opener).await;
+        assert_eq!(by_hand["ok"], false, "{by_hand}");
+        assert!(h.closed.lock().unwrap().is_empty());
+        let ok = broker_call(&h, json!({"op":"close_session","target":"d-own-shell"}), opener).await;
+        assert_eq!(ok["ok"], true, "{ok}");
+        assert_eq!(*h.closed.lock().unwrap(), vec![99]);
+        assert!(!read_owned(&owned_path()).contains_key("d-own-shell"));
+    }
+
+
+    // ---- defect F: a claimed session id is not an identity unless the registry and the kernel back it ----
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_made_up_session_id_gets_a_channel_but_no_identity_and_no_powers() {
+        let _serial = IDENTITY_TESTS.lock().await;
+        let me = std::process::id() as i32;
+        forget_identity(me);
+        let (ack, client) = subscribe_as(three(), "00000000-dead-beef-f000-000000000001").await;
+        assert!(ack.contains("\"ok\":true"), "delivery must keep working for a session the registry lacks: {ack}");
+        assert!(CHANNELS.lock().unwrap().contains_key("00000000-dead-beef-f000-000000000001"));
+        // ...but the claim did not become the caller's identity,
+        assert_eq!(verified_caller(Some(me)), "", "an unproven claim must not be recorded");
+        // the identity gate still refuses it,
+        let h = three();
+        let out: serde_json::Value = serde_json::from_str(
+            &handle_request_from(&h, r#"{"op":"broadcast","command":"echo hi"}"#, Some(me)).await,
+        ).unwrap();
+        assert_eq!(out["ok"], false, "{out}");
+        assert!(out["error"].as_str().unwrap().contains("unverified"), "{out}");
+        assert!(h.typed.lock().unwrap().is_empty());
+        // and it cannot act as the claimed session for ownership: a tab owned by that id stays shut.
+        register_agent_session("f-owned-tab", "00000000-dead-beef-f000-000000000001");
+        let h = term_host(vec![term(97, "f-owned-tab", "shell", None, None)]);
+        let out: serde_json::Value = serde_json::from_str(
+            &handle_request_from(&h, r#"{"op":"close_session","target":"f-owned-tab"}"#, Some(me)).await,
+        ).unwrap();
+        assert_eq!(out["ok"], false, "{out}");
+        assert!(out["error"].as_str().unwrap().contains("not opened by you"), "{out}");
+        assert!(h.closed.lock().unwrap().is_empty());
+        let out: serde_json::Value = serde_json::from_str(
+            &handle_request_from(&h, r#"{"op":"send_terminal","target":"f-owned-tab","command":"ls"}"#, Some(me)).await,
+        ).unwrap();
+        assert_eq!(out["ok"], false, "{out}");
+        assert!(h.typed.lock().unwrap().is_empty());
+        release_agent_session("f-owned-tab");
+        drop(client);
+        forget_identity(me);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_genuine_claim_is_still_recorded_as_the_identity() {
+        let _serial = IDENTITY_TESTS.lock().await;
+        let me = std::process::id() as i32;
+        forget_identity(me);
+        FAKE_SESSIONS.lock().unwrap().push(session_with_pid("sess-f-real", Some(me as i64)));
+        let (ack, client) = subscribe_as(three(), "sess-f-real").await;
+        assert!(ack.contains("\"ok\":true"), "{ack}");
+        assert_eq!(verified_caller(Some(me)), "sess-f-real");
+        register_agent_session("f-real-tab", "sess-f-real");
+        let h = term_host(vec![term(96, "f-real-tab", "shell", None, None)]);
+        let out: serde_json::Value = serde_json::from_str(
+            &handle_request_from(&h, r#"{"op":"close_session","target":"f-real-tab"}"#, Some(me)).await,
+        ).unwrap();
+        assert_eq!(out["ok"], true, "{out}");
+        drop(client);
+        FAKE_SESSIONS.lock().unwrap().retain(|s| s.id != "sess-f-real");
+        forget_identity(me);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_claim_on_a_session_of_another_claude_process_is_still_refused() {
+        let _serial = IDENTITY_TESTS.lock().await;
+        let me = std::process::id() as i32;
+        forget_identity(me);
+        FAKE_SESSIONS.lock().unwrap().push(session_with_pid("sess-f-foreign", Some(999_999)));
+        let (ack, _client) = subscribe_as(three(), "sess-f-foreign").await;
+        FAKE_SESSIONS.lock().unwrap().retain(|s| s.id != "sess-f-foreign");
+        assert!(ack.contains("\"ok\":false") && ack.contains("another Claude process"), "{ack}");
+        assert!(!CHANNELS.lock().unwrap().contains_key("sess-f-foreign"));
+        assert_eq!(verified_caller(Some(me)), "");
     }
 
 }

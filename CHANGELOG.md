@@ -4,6 +4,17 @@ All notable changes to Muya are documented here, newest first.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.4] - 2026-11-26
+
+### Fixed
+- **Your sessions recognise each other again.** Muya could no longer tell which session a request came from, so every one of them counted as a stranger: a session could not send a message to all of them at once, a message it did send arrived stamped as coming from an unverified session, and a session you opened from another could not even answer back. Muya now works out which session a request belongs to from the process it came from, which the caller cannot fake.
+- **An agent can close the terminal tabs it opened.** It could open a plain shell tab but never close it again — the only way out was typing `exit` into it. Tabs you opened by hand are still only yours to close, and that ownership now survives restarting Muya.
+- **Something that needs no password no longer asks for the Password Store.** A plain web request, or running a script with no stored secret in it, was refused while the store was locked. The store is only needed now when the call actually uses a secret from it; secrets stay redacted and every use is still logged.
+- **A damaged server list says so.** If the file holding your SSH servers were corrupted, agents were told you simply had none. They now get an error, so nothing is silently treated as empty.
+
+### Security
+- **A session's identity can no longer be claimed by something else.** A program on this Mac could announce itself as any session it liked and take on that session's rights — typing into its tabs or reaching its stored secrets. Identity now comes only from what the system itself reports about the calling process; announcing a name buys nothing. Claimed identities the system does not confirm keep receiving notifications, so nothing legitimate breaks.
+
 ## [5.0.3] - 2026-11-26
 
 ### Fixed

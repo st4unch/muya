@@ -36,6 +36,22 @@ fn wait_for(what: &str, mut ok: impl FnMut() -> bool) {
     }
 }
 
+/// A `claude` whose registry lists one session, `{sid}`, running as this test process. The broker only accepts a
+/// session identity the registry and the process ancestry both back, so a test that plays a sidecar needs one.
+fn fake_claude_registry(dir: &Path, sid: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let f = bin.join("claude");
+    let json = format!(
+        r#"[{{"pid":{},"cwd":"/tmp","kind":"interactive","startedAt":1,"sessionId":"{sid}","name":"{sid}","status":"idle"}}]"#,
+        std::process::id()
+    );
+    std::fs::write(&f, format!("#!/bin/sh\necho '{json}'\n")).unwrap();
+    std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
+    bin
+}
+
 fn start(tag: &str) -> Env {
     let dir = PathBuf::from(format!("/tmp/muya-tt-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -55,7 +71,7 @@ fn start(tag: &str) -> Env {
     let muyad = Command::new(env!("CARGO_BIN_EXE_muyad"))
         .env_clear()
         .env("HOME", &home)
-        .env("PATH", "/usr/bin:/bin")
+        .env("PATH", format!("{}:/usr/bin:/bin", fake_claude_registry(&env.dir, "term-tools-caller").display()))
         .env("MUYA_SSH_BROKER_SOCK", env.dir.join("b.sock"))
         .arg("--socket")
         .arg(env.dir.join("m.sock"))

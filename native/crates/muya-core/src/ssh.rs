@@ -207,7 +207,19 @@ pub fn save_to(path: &Path, cfg: &SshConfig) -> Result<(), String> {
 }
 
 pub fn load() -> Result<SshConfig, String> {
-    Ok(load_from(&config_path()?))
+    load_strict(&config_path()?)
+}
+
+/// Like [`load_from`], but a file that exists and cannot be read or parsed is an error, not an empty config:
+/// an agent must not conclude the operator has no servers (and a save must not overwrite them) because the
+/// file is damaged. A missing file is a fresh install: empty.
+pub fn load_strict(path: &Path) -> Result<SshConfig, String> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => serde_json::from_str(&text)
+            .map_err(|e| format!("the SSH server list ({}) could not be read: {e}", path.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(SshConfig::default()),
+        Err(e) => Err(format!("the SSH server list ({}) could not be read: {e}", path.display())),
+    }
 }
 
 pub fn save(cfg: &SshConfig) -> Result<(), String> {
@@ -1517,6 +1529,21 @@ mod tests {
         let back = load_from(&path);
         assert_eq!(back.servers.len(), 1);
         assert_eq!(back.servers[0].port, 2222);
+    }
+
+    /// A damaged server list must be an error (so `ssh_list_servers` does not report "no servers" and a save
+    /// does not overwrite the real list), while a fresh install with no file is simply empty.
+    #[test]
+    fn a_damaged_server_list_is_an_error_not_an_empty_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("muya-ssh-config.json");
+        assert!(load_strict(&path).unwrap().servers.is_empty(), "no file = fresh install");
+        std::fs::write(&path, b"{ not json").unwrap();
+        assert!(load_strict(&path).err().unwrap().contains("could not be read"));
+        let mut cfg = SshConfig::default();
+        upsert_server_in(&mut cfg, srv("h", 22, "u")).unwrap();
+        save_to(&path, &cfg).unwrap();
+        assert_eq!(load_strict(&path).unwrap().servers.len(), 1);
     }
 
     fn psmp() -> PsmpProfile {

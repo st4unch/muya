@@ -243,8 +243,11 @@ fn password_store_rpcs_and_agent_use_of_secrets() {
     // Lock: nothing is readable until unlocked again.
     app.rpc("vault.lock", json!({})).unwrap();
     assert!(app.rpc("vault.reveal", json!({"id": id})).is_err());
-    let g = broker(&env, json!({"op":"http_request","caller":"e2e","url":"https://example.com/"}));
+    // A call that names a secret needs the store open; one that names none does not (it must not depend on the network here).
+    let g = broker(&env, json!({"op":"http_request","caller":"e2e","url":"https://example.com/",
+        "headers":{"Authorization":"Bearer {{muya-secret:svc_api_key}}"}}));
     assert_eq!(g["ok"], false, "{g}");
+    assert!(g["error"].as_str().unwrap_or("").contains("password store is locked"), "{g}");
 }
 
 fn connect_retry(p: impl AsRef<std::path::Path>) -> std::os::unix::net::UnixStream {

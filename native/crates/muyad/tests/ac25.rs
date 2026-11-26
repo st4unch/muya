@@ -57,7 +57,8 @@ fn setup(tag: &str) -> Env {
     std::fs::create_dir_all(home.join(".claude")).unwrap();
     script(
         &home.join(".local/bin/claude"),
-        "#!/bin/sh\nif [ \"$1\" = agents ]; then echo '[{\"sessionId\":\"sess-1\",\"pid\":1,\"name\":\"worker\",\"cwd\":\"/tmp\",\"kind\":\"interactive\",\"startedAt\":1,\"status\":\"idle\"}]'; exit 0; fi\nexit 1\n",
+        // The registry also lists the test process as the sidecar's session: a claimed identity must be backed by it.
+        &format!("#!/bin/sh\nif [ \"$1\" = agents ]; then echo '[{{\"sessionId\":\"sess-1\",\"pid\":1,\"name\":\"worker\",\"cwd\":\"/tmp\",\"kind\":\"interactive\",\"startedAt\":1,\"status\":\"idle\"}},{{\"sessionId\":\"ac25-caller\",\"pid\":{},\"name\":\"ac25-caller\",\"cwd\":\"/tmp\",\"kind\":\"interactive\",\"startedAt\":1,\"status\":\"idle\"}}]'; exit 0; fi\nexit 1\n", std::process::id()),
     );
     script(
         &dir.join("fakeshell"),
