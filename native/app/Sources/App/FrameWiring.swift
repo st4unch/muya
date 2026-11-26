@@ -145,7 +145,7 @@ extension MainController {
     func refreshFrame() {
         guard let f = frameView else { return }
         let page = currentPage
-        filesHome.isHidden = !ScreenRoute(page: page == nil ? nil : "page", filesMode: filesMode).filesScreenVisible
+        filesHome.isHidden = !ScreenRoute(page: page == nil ? nil : "page", filesMode: filesMode).filesEmptyStateVisible(fileOpen: !viewer.isHidden)
         filesHome.count = viewer.isHidden ? 0 : 1
         f.rail.active = page == nil ? (filesMode ? .files : .control) : page === sessionsPage ? .sessions : page === schedulesPage ? .schedules : page === sshPage ? .ssh
             : page === queuePage ? (queuePage.tab == .kanban ? .kanban : .queue) : (String(describing: type(of: page!)).contains("Resources") ? .resources : nil)

@@ -27,6 +27,10 @@ public struct ScreenRoute: Equatable, Sendable {
 
     /// Which views must be visible for this route: the Files screen only in Files mode without a page, never together with a page.
     public var filesScreenVisible: Bool { filesMode && page == nil }
+    /// "No file open" is the Files screen's EMPTY state: it must go the moment the viewer shows a file, or it covers it
+    /// (the viewer and this view fill the same area). Operator report, 2026-11-26: a file opened and the screen still said
+    /// "No file open".
+    public func filesEmptyStateVisible(fileOpen: Bool) -> Bool { filesScreenVisible && !fileOpen }
     public func pageVisible(_ name: String) -> Bool { page == name }
     /// The rail highlight.
     public func railActive(queueTab: String = "queue") -> RailTarget {

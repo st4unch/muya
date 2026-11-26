@@ -1,6 +1,6 @@
 #if MUYA_TEST_HOOKS
 // Test-hook commands of the open-files list (verify-files-panel.sh); only while MUYA_DEBUG_SOCKET is set.
-//   of-state                    "frame=x,y,w,h hidden=… compact=… count=… offset=… max=… scrolls=… visible=a..b headerY=… current=…"
+//   of-state                    "frame=x,y,w,h hidden=… count=… offset=… max=… scrolls=… visible=a..b headerY=… current=…"
 //   of-scroll <px>              scrolls the cards to that offset (clamped), answers like of-state
 //   of-overdraw                 draws the list into a bitmap 1500 px taller/wider than its frame and counts the painted pixels
 //                               that fall outside the frame: "below=N right=N above=N" (0 everywhere = nothing leaves the frame)
@@ -15,7 +15,7 @@ extension DebugServer {
         let l = sb.openFiles
         func state() -> String {
             let m = l.layoutModel, f = l.frame
-            return "frame=\(Int(f.minX)),\(Int(f.minY)),\(Int(f.width)),\(Int(f.height)) hidden=\(l.isHidden) compact=\(l.compact) count=\(l.paths.count) offset=\(Int(l.scrollOffset)) max=\(Int(m.maxOffset)) scrolls=\(m.scrolls) visible=\(m.visible(offset: l.scrollOffset)) headerY=\(Int(sb.filesHeaderFrame.minY)) current=\(l.current.map { ($0 as NSString).lastPathComponent } ?? "-")"
+            return "frame=\(Int(f.minX)),\(Int(f.minY)),\(Int(f.width)),\(Int(f.height)) hidden=\(l.isHidden) count=\(l.paths.count) offset=\(Int(l.scrollOffset)) max=\(Int(m.maxOffset)) scrolls=\(m.scrolls) visible=\(m.visible(offset: l.scrollOffset)) headerY=\(Int(sb.filesHeaderFrame.minY)) current=\(l.current.map { ($0 as NSString).lastPathComponent } ?? "-")"
         }
         switch cmd {
         case "of-state": return state()

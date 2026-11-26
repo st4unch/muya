@@ -10,11 +10,11 @@ public struct SidebarGeometry: Equatable, Sendable {
     public static let hintHeight: CGFloat = 57
 
     public var agents: CGRect?       // nil in Files mode (the open-files list takes its place)
-    public var openFiles: CGRect?    // Files mode: on top of the column. Control mode: only when files are open, just above the FILES header
+    public var openFiles: CGRect?    // nil outside Files mode: open files belong to the Files screen, as in classic (ControlScreen.tsx:180)
     public var header: CGRect        // the "FILES N" row: the click target that toggles the tree
     public var tree: CGRect
 
-    public static func layout(width: CGFloat, height: CGFloat, expanded: Bool, filesMode: Bool, openFilesWanted: CGFloat, agentsWanted: CGFloat = 0, filesHeight: CGFloat? = nil, controlFilesWanted: CGFloat = 0) -> SidebarGeometry {
+    public static func layout(width: CGFloat, height: CGFloat, expanded: Bool, filesMode: Bool, openFilesWanted: CGFloat, agentsWanted: CGFloat = 0, filesHeight: CGFloat? = nil) -> SidebarGeometry {
         let bar = barHeight
         if filesMode {
             // Classic's Files screen: the open files on top, the FILES section at the bottom of the column. Collapsed it is the
@@ -36,12 +36,7 @@ public struct SidebarGeometry: Equatable, Sendable {
         var section = expanded ? max(height - hintHeight - max(agentsH, 0), bar) : bar
         if expanded, let fh = filesHeight { section = max(FilesHeightLogic.clamp(fh, available: height - hintHeight), bar) }   // dragged: the operator's height (classic filesH)
         let header = CGRect(x: 0, y: height - hintHeight - section, width: width, height: bar)
-        // Control mode with files open: their cards sit between the agents and the FILES header, at most 40% of what the agents
-        // area has and never so much that the agents list drops under 120 px; the list scrolls inside whatever it gets.
-        let above = max(height - hintHeight - section, 0)
-        let cf = controlFilesWanted > 0 ? max(min(controlFilesWanted, above * 0.4, above - 120), 0) : 0
-        return SidebarGeometry(agents: CGRect(x: 0, y: 0, width: width - 1, height: above - cf),
-                               openFiles: cf > 0 ? CGRect(x: 0, y: above - cf, width: width - 1, height: cf) : nil, header: header,
+        return SidebarGeometry(agents: CGRect(x: 0, y: 0, width: width - 1, height: max(height - hintHeight - section, 0)), openFiles: nil, header: header,
                                tree: CGRect(x: 0, y: header.maxY, width: width - 1, height: expanded ? section - bar : 0))
     }
 }

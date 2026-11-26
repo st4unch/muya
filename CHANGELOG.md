@@ -4,6 +4,13 @@ All notable changes to Muya are documented here, newest first.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.6] - 2026-11-26
+
+### Fixed
+- **The Files screen shows the file you opened.** Opening a file left "No file open" sitting on top of it: the file really was open — the list marked it, the editor had it — but the empty state covered the whole area, so it looked as if nothing had happened, or as if the file had closed again. It steps aside for the file now and comes back when the last one is closed.
+- **Open files are listed on the Files screen only.** 5.0.5 also showed them under Control, where they do not belong.
+- **The open-file rows match Muya 4 again.** Each row carries its file-kind icon, the unsaved dot sits next to the × instead of pushing the name, the full path shows as a tooltip, and middle-click closes a row like a browser tab.
+
 ## [5.0.5] - 2026-11-26
 
 ### Fixed

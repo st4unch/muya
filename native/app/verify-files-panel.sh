@@ -2,8 +2,7 @@
 # The Files panel's open-files list, end to end in the dev stack (run-dev.sh, throwaway HOME): with 22 files open
 #   A. nothing is drawn outside the list's frame, and the list scrolls;
 #   B. a click on the right part of a LONG file name opens it (it used to close it), a click on the × closes it;
-#   C. the open files are visible in Control mode too (classic's open-files list only exists on the Files screen; the operator wants
-#      them in the Files area from Control as well, see OpenFilesList.compact);
+#   C. Control shows NO open-files list: open files belong to the Files screen, as in classic (ControlScreen.tsx:180);
 # then screenshots of the window in both themes, Files mode and Control mode: screenshots/files-panel-*.png.
 # Builds first. Needs the daemons (native/target/debug, or MUYA_BIN_DIR); builds them when missing.   exit = number of FAILs
 set -uo pipefail
@@ -44,7 +43,7 @@ dbg "p4-files 0" >/dev/null
 dbg "rail Files" >/dev/null; sleep 0.8
 st=$(dbg of-state)
 expect "22 files open in the list" "$(kv "$st" count)" 22
-expect "Files mode: full list (not compact), visible" "$(kv "$st" compact)/$(kv "$st" hidden)" "false/false"
+expect "Files mode: the list is shown" "$(kv "$st" hidden)" "false"
 expect "the list scrolls (22 cards do not fit)" "$(kv "$st" scrolls)" true
 fy=$(sed -n 's/frame=[0-9-]*,\([0-9-]*\),[0-9]*,\([0-9]*\).*/\1 \2/p' <<<"$st"); top=${fy% *}; h=${fy#* }
 [ $((top + h)) -le "$(kv "$st" headerY)" ] && ok "list frame ends above the FILES header ($((top + h)) <= $(kv "$st" headerY))" || bad "list frame overlaps the FILES header: $st"
@@ -76,15 +75,15 @@ for theme in Dark Light; do
   [ -s "$SHOTS/files-panel-files-$t.png" ] && ok "screenshot files-panel-files-$t.png" || bad "no screenshot files-$t"
 done
 
-# ---- C: Control mode ----
+# ---- C: Control mode shows no open files (they belong to the Files screen, as in classic ControlScreen.tsx:180) ----
 dbg "rail Control" >/dev/null; sleep 0.8
 st=$(dbg of-state)
-expect "Control: the open files are listed (compact, visible, 22)" "$(kv "$st" compact)/$(kv "$st" hidden)/$(kv "$st" count)" "true/false/22"
-fy=$(sed -n 's/frame=[0-9-]*,\([0-9-]*\),[0-9]*,\([0-9]*\).*/\1 \2/p' <<<"$st"); top=${fy% *}; h=${fy#* }
-[ $((top + h)) -le "$(kv "$st" headerY)" ] && ok "Control: list sits above the FILES header ($((top + h)) <= $(kv "$st" headerY))" || bad "Control: list overlaps FILES header: $st"
-[ "$h" -gt 40 ] && ok "Control: the list has height ($h px)" || bad "Control: list collapsed: $st"
-expect "Control: the current file is marked" "$(kv "$st" current)" "$LONG"
+expect "Control: the open-files list is not shown" "$(kv "$st" hidden)" "true"
 ov=$(dbg of-overdraw); expect "Control: nothing painted outside the frame" "$(kv "$ov" below)/$(kv "$ov" right)/$(kv "$ov" above)" "0/0/0"
+dbg "rail Files" >/dev/null; sleep 0.6
+expect "back in Files the list is shown again" "$(kv "$(dbg of-state)" hidden)" "false"
+expect "and still has every file" "$(kv "$(dbg of-state)" count)" 22
+dbg "rail Control" >/dev/null; sleep 0.6
 for theme in Dark Light; do
   t=$(echo "$theme" | tr 'A-Z' 'a-z'); dbg "settings-set appearance $theme" >/dev/null; sleep 1.2
   dbg "snap $SHOTS/files-panel-control-$t.png" >/dev/null; sleep 0.5

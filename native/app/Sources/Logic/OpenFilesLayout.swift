@@ -7,25 +7,26 @@ import Foundation
 public struct OpenFilesLayout: Equatable, Sendable {
     public static let rowHeight: CGFloat = 44
     public static let titleTop: CGFloat = 52      // Files mode: the "Files N" title row sits above the cards
-    public static let compactTop: CGFloat = 5     // Control mode: no title (the FILES header below carries the count)
     public static let bottomPad: CGFloat = 8
     public static let cardInset: CGFloat = 10     // card x from the list's left edge
     public static let cardTrail: CGFloat = 11     // and from its right edge
     public static let closeSize: CGFloat = 24     // classic: the × button is 24x24 ...
     public static let closeMargin: CGFloat = 6    // ... 6 px from the card's right edge
-    public static let nameLead: CGFloat = 10
-    public static let dotSlot: CGFloat = 14       // the unsaved dot (7 px) and its gap, next to the name
+    public static let nameLead: CGFloat = 10      // classic: the row button's left padding
+    public static let iconSize: CGFloat = 14      // the file-kind icon before the name (classic: icons.tsx, gap 8)
+    public static let iconGap: CGFloat = 8
+    public static let dotSize: CGFloat = 7        // the unsaved dot, right-aligned before the × (classic: marginRight 2)
+    public static let dotGap: CGFloat = 2
 
     public var width: CGFloat
     public var height: CGFloat
     public var count: Int
-    public var compact: Bool
 
-    public init(width: CGFloat, height: CGFloat, count: Int, compact: Bool) {
-        self.width = width; self.height = height; self.count = count; self.compact = compact
+    public init(width: CGFloat, height: CGFloat, count: Int) {
+        self.width = width; self.height = height; self.count = count
     }
 
-    public var top: CGFloat { compact ? Self.compactTop : Self.titleTop }
+    public var top: CGFloat { Self.titleTop }
     /// Where the cards live: from `top` to the bottom edge, never beyond the frame.
     public var viewport: CGRect { CGRect(x: 0, y: top, width: width, height: max(height - top, 0)) }
     public var contentHeight: CGFloat { CGFloat(count) * Self.rowHeight + Self.bottomPad }
@@ -34,7 +35,7 @@ public struct OpenFilesLayout: Equatable, Sendable {
     public var scrolls: Bool { maxOffset > 0 }
 
     /// The height the list asks its parent for: everything when the parent has the room (the parent caps it, the list then scrolls).
-    public static func wantedHeight(count: Int, compact: Bool) -> CGFloat { (compact ? compactTop : titleTop) + CGFloat(count) * rowHeight + bottomPad }
+    public static func wantedHeight(count: Int) -> CGFloat { titleTop + CGFloat(count) * rowHeight + bottomPad }
 
     /// A card in list coordinates for the given scroll offset.
     public func card(_ i: Int, offset: CGFloat) -> CGRect {
@@ -59,9 +60,31 @@ public struct OpenFilesLayout: Equatable, Sendable {
     public static func closeRect(card: CGRect) -> CGRect {
         CGRect(x: card.maxX - closeMargin - closeSize, y: card.minY + (card.height - closeSize) / 2, width: closeSize, height: closeSize)
     }
-    /// The width a card's name (and its folder line) may use: everything left of the × button, less the dot when the file is unsaved.
+    /// The file-kind icon's box, at the left of the card (classic draws one before the name).
+    public static func iconRect(card: CGRect) -> CGRect {
+        CGRect(x: card.minX + nameLead, y: card.minY + (card.height - iconSize) / 2, width: iconSize, height: iconSize)
+    }
+    /// Where the name and the folder line start: after the icon.
+    public static func textLead(card: CGRect) -> CGFloat { iconRect(card: card).maxX + iconGap }
+    /// The unsaved dot, right-aligned just before the × (classic puts it there, not after the name).
+    public static func dotRect(card: CGRect) -> CGRect {
+        CGRect(x: closeRect(card: card).minX - dotGap - dotSize, y: card.midY - dotSize / 2, width: dotSize, height: dotSize)
+    }
+    /// The width a card's name (and its folder line) may use: from the text lead to the × button, less the dot when unsaved.
     public static func nameWidth(card: CGRect, dirty: Bool) -> CGFloat {
-        max(closeRect(card: card).minX - 4 - (card.minX + nameLead) - (dirty ? dotSlot : 0), 0)
+        let right = dirty ? dotRect(card: card).minX : closeRect(card: card).minX
+        return max(right - 4 - textLead(card: card), 0)
+    }
+
+    public enum Icon: Equatable, Sendable { case code, markdown, image, pdf }
+    /// The kind the icon shows, from the extension alone (classic maps the viewer kind: mdview/imgview/pdfview, else code).
+    public static func icon(for path: String) -> Icon {
+        switch (path as NSString).pathExtension.lowercased() {
+        case "md", "markdown", "mdown", "mkd": return .markdown
+        case "png", "jpg", "jpeg", "gif", "webp", "heic", "tiff", "tif", "bmp", "icns", "ico", "svg": return .image
+        case "pdf": return .pdf
+        default: return .code
+        }
     }
 
     public enum Hit: Equatable, Sendable { case none, open(Int), close(Int) }

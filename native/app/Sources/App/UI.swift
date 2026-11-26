@@ -444,12 +444,14 @@ final class MainController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         openFilePaths.removeAll { $0 == url.path }; openFilePaths.append(url.path); viewerPath = url.path; sidebar?.openFiles.current = url.path
         viewer.show(url, kind: kind)
         viewer.isHidden = false
+        refreshFrame()   // the Files screen's "No file open" must step aside for the file
     }
 
     func closeViewer() {
         guard !viewer.isHidden else { return }
         if let p = viewerPath { openFilePaths.removeAll { $0 == p }; viewerPath = nil; sidebar?.openFiles.current = nil; viewer.discardSession(p) }
         viewer.isHidden = true
+        refreshFrame()   // ... and come back when the last file is closed
         window.makeFirstResponder(terminal)
     }
 
