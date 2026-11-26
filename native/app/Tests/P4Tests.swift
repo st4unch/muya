@@ -166,7 +166,7 @@ func runP4Tests() {
 
     test("every key of today's app is either handled or listed obsolete with a reason") {
         let handled: Set<String> = [PrefKeys.theme, PrefKeys.autoApprove, PrefKeys.autoSave, PrefKeys.resumeOnLaunch, PrefKeys.terminalPrefs, PrefKeys.viewMode,
-                                    PrefKeys.agentsOpen, PrefKeys.inspectorOpen, PrefKeys.agentsWidth, PrefKeys.inspectorWidth, PrefKeys.filesOpen, PrefKeys.filesHeight,
+                                    PrefKeys.agentsOpen, PrefKeys.inspectorOpen, PrefKeys.agentsWidth, PrefKeys.inspectorWidth, PrefKeys.filesOpen, PrefKeys.filesHeight, PrefKeys.selectedRoot,
                                     PrefKeys.openFiles, PrefKeys.composerHistoryAgent, PrefKeys.mergeQueue, "muya.pinnedAgents", "muya.footer.statusFields", "apex.sessionsHeadsUp", PrefKeys.splitGroups, PrefKeys.splitCollapsed]
         let all = ["apex.composerHistory.agent", "apex.composerHistory.shell", "apex.gridKeys", "apex.mergeQueue", "apex.openTabs", "apex.selectedRoot", "apex.sessionsHeadsUp", "apex.theme",
                    "apex.viewMode", "apex.workspaces", "apex.worktrees", "muya.autoApprove", "muya.autoSave", "muya.composerOpen", "muya.fileAccessGate.dismissed", "muya.footer.statusFields",

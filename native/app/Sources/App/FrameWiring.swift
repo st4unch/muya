@@ -36,7 +36,8 @@ extension MainController {
         Tile.onSend = { [weak self] s, t in self?.store.select(s); self?.store.paste(t); self?.store.sendKey("enter", mods: 0) }
         Tile.onAlways = { [weak self] id in
             guard let self, let s = self.store.sessions.first(where: { $0.id == id }), s.exited == nil, let k = s.screen?.alwaysKey else { return }
-            self.store.select(s); self.store.sendText(k)
+            self.store.select(s)
+            self.store.answerVerified(session: id, promptKey: s.screen?.promptKey ?? "", choice: .key(k, index: s.screen?.alwaysIndex ?? 0))
         }
         Tile.onChoose = { [weak self] session, anchor in   // the name's chevron: choose the session shown in this panel
             guard let self else { return }
@@ -70,7 +71,7 @@ extension MainController {
         Toasts.center = ToastCenter(host: window.contentView)
         Toasts.center.topInset = { [unowned self] in MainActor.assumeIsolated { autoAllowSuggest.isShown } ? 204 : 66 }
         DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.checkStorageHeadsUp() }
-        agentsPanel.sessions = { [unowned self] in store.sessions }
+        agentsPanel.sessions = { [unowned self] in store.scopedSessions }
         agentsPanel.selected = { [unowned self] in store.selected }
         agentsPanel.onSelect = { [weak self] s in self?.filesMode = false; self?.store.select(s); self?.showPage(nil); self?.window.makeFirstResponder(self?.terminal) }
         agentsPanel.onSynced = { [weak self] in self?.syncRail() }
@@ -189,8 +190,7 @@ extension MainController {
         sidebar?.openFiles.onClose = { [weak self] p in self?.closeFile(p) }
         viewer.onDirtyChange = { [weak self] in guard let self else { return }; self.sidebar?.openFiles.dirty = Set(self.viewer.dirtyPaths) }
         viewer.autoSaveEnabled = { [weak self] in self?.store.prefs.bool("autoSave") ?? false }
-        let dir = store.selected.map { ($0.cwd as NSString).lastPathComponent } ?? ""
-        f.header.workspace = dir.isEmpty ? "—" : dir
+        f.header.workspace = WorkspaceScope.chipLabel(scope: store.selectedRoot, hasSessions: !store.sessions.isEmpty)
         let pref = store.prefs.string("appearance")
         f.header.themeButton.icon = pref == "Light" ? .themeSun : pref == "Dark" ? .themeMoon : .themeMonitor
         f.header.themeButton.toolTip = "Theme: \(pref.isEmpty ? "System" : pref)"
@@ -222,7 +222,7 @@ extension MainController {
 
     /// Sends one message to every panel of the grid: select, paste, Return, then back to the original selection.
     func broadcastDialog() {
-        let ids = GridLayout.visible(ids: store.sessions.map(\.id), selected: store.selected?.id)
+        let ids = GridLayout.visible(ids: store.scopedSessions.map(\.id), selected: store.selected?.id)
         let targets = ids.compactMap { id in store.sessions.first { $0.id == id } }.filter { $0.exited == nil }
         Dialogs.shared.broadcast(over: window, panels: targets.count) { [weak self] text in
             guard let self else { return }
@@ -389,19 +389,55 @@ extension MainController {
     nonisolated(unsafe) static var menuHook: ((NSMenu) -> Void)?
     nonisolated(unsafe) static var menuAutoCancel: TimeInterval = 0
     #endif
-    /// The "Workspace <name> ⌄" menu (src/App.tsx "workspaces" menu): the folders the sessions work in. Native has no workspace
-    /// scope, so choosing one selects its first session.
+    /// The "Workspace <name> ⌄" menu (src/App.tsx "workspaces" menu): "All workspaces", then the folders the sessions work in.
+    /// Choosing one sets the workspace scope (Store.selectedRoot); the tick follows the scope, not the selected session.
+    var workspaceRows: [WorkspaceMenuLogic.Row] { WorkspaceMenuLogic.rows(cwds: store.sessions.map(\.cwd), keep: store.selectedRoot) }
+
+    /// The menu as titles ("-" = separator, "✓ " = ticked), for the menu and the debug socket alike. `digit` is the ⌥⌘
+    /// shortcut; the menu gives it to AppKit as a key equivalent so macOS draws it right-aligned, as every other menu does.
+    func workspaceMenuModel() -> [(title: String, hint: String, digit: Int?, on: Bool, root: String?, action: Bool)] {
+        let rows = workspaceRows
+        var out: [(title: String, hint: String, digit: Int?, on: Bool, root: String?, action: Bool)] = []
+        let agents: (Int) -> String = { "\($0) agent\($0 == 1 ? "" : "s")" }
+        if !rows.isEmpty {
+            out.append(("All workspaces   \(agents(store.sessions.count))", "⌥⌘0", 0, store.selectedRoot == nil, nil, true))
+        }
+        for (i, r) in rows.enumerated() {
+            out.append(("\(r.title)   \(agents(r.count)) · \(r.path.abbreviatingHome(store.home))", i < 9 ? "⌥⌘\(i + 1)" : "", i < 9 ? i + 1 : nil, r.path == store.selectedRoot, r.path, true))
+        }
+        return out
+    }
+
+    /// Chooses the scope (nil = all). The selection moves only when it falls out of the new scope (classic App.tsx:613).
+    func chooseWorkspace(_ root: String?) {
+        store.selectedRoot = root
+        store.legacy.set(PrefKeys.selectedRoot, root)
+        showPage(nil)
+        if let sel = store.selected, !store.scopedSessions.contains(where: { $0 === sel }), let first = store.scopedSessions.first { store.select(first) }
+        agentsPanel.reloadNow()
+        refreshFrame()
+    }
+
+    /// ⌥⌘1-9 / ⌥⌘0 and the debug socket: the Nth row as listed, nil = all. False when there is no such row.
+    @discardableResult
+    func chooseWorkspace(digit: Int?) -> Bool {
+        switch WorkspaceScope.pick(digit: digit, rows: workspaceRows.map(\.path)) {
+        case .all: chooseWorkspace(nil)
+        case .root(let r): chooseWorkspace(r)
+        case .none: return false
+        }
+        return true
+    }
+
     func workspaceMenu(_ chip: NSRect) {
-        let rows = WorkspaceMenuLogic.rows(cwds: store.sessions.map(\.cwd))
         let m = NSMenu(title: "Workspaces")
         let head = NSMenuItem(title: "WORKSPACES", action: nil, keyEquivalent: ""); head.isEnabled = false; m.addItem(head)
-        if rows.isEmpty { let e = NSMenuItem(title: "No workspace yet.", action: nil, keyEquivalent: ""); e.isEnabled = false; m.addItem(e) }
-        for r in rows {
-            let i = BlockMenuItem(title: "\(r.title)   \(r.count) agent\(r.count == 1 ? "" : "s") · \(r.path.abbreviatingHome(store.home))") { [weak self] in
-                guard let self, let s = self.store.sessions.first(where: { $0.cwd == r.path }) else { return }
-                self.showPage(nil); self.store.select(s)
-            }
-            i.state = r.path == store.selected?.cwd ? .on : .off
+        let model = workspaceMenuModel()
+        if model.isEmpty { let e = NSMenuItem(title: "No workspace yet.", action: nil, keyEquivalent: ""); e.isEnabled = false; m.addItem(e) }
+        for e in model {
+            let i = BlockMenuItem(title: e.title) { [weak self] in self?.chooseWorkspace(e.root) }
+            if let d = e.digit { i.keyEquivalent = String(d); i.keyEquivalentModifierMask = [.option, .command] }
+            i.state = e.on ? .on : .off
             m.addItem(i)
         }
         m.addItem(.separator())

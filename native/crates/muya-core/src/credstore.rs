@@ -351,6 +351,10 @@ pub async fn credstore_unlock(master: String, state: &CredStore) -> Result<(), S
 // remains available as the fallback (Touch ID never enrolled/canceled/disabled).
 // ---------------------------------------------------------------------------
 
+/// The one "store is locked" error, shown to agents and humans alike. It auto-locks after 15 minutes idle,
+/// so an agent holding a placeholder can hit it; say who can fix it and how.
+pub const LOCKED_MSG: &str = "password store is locked — ask the operator to unlock it in Muya's Password Store tab (Touch ID); it locks itself again after 15 minutes idle";
+
 const KEYCHAIN_SERVICE: &str = "com.staunch.muya.vault";
 const KEYCHAIN_ACCOUNT: &str = "master-key";
 
@@ -644,7 +648,7 @@ pub fn reveal_cred(store: &CredStore, id: &str) -> Result<String, String> {
     let guard = store.0.lock().map_err(|_| "state poisoned")?;
     let u = guard
         .as_ref()
-        .ok_or("password store is locked — unlock it in the Password Store tab")?;
+        .ok_or(LOCKED_MSG)?;
     u.data
         .credentials
         .iter()
@@ -725,7 +729,7 @@ pub fn list_meta(store: &CredStore) -> Result<Vec<CredMeta>, String> {
     let guard = store.0.lock().map_err(|_| "state poisoned")?;
     let u = guard
         .as_ref()
-        .ok_or("password store is locked — unlock it in the Password Store tab")?;
+        .ok_or(LOCKED_MSG)?;
     Ok(u.data
         .credentials
         .iter()
@@ -780,7 +784,7 @@ fn add_credential_at(
     let mut guard = store.0.lock().map_err(|_| "state poisoned")?;
     let u = guard
         .as_mut()
-        .ok_or("password store is locked — unlock it in the Password Store tab")?;
+        .ok_or(LOCKED_MSG)?;
     // CREATE-ONLY: reject a name collision instead of overwriting (injected-agent
     // protection). Match on `label`, which is the agent-facing secret name.
     if u.data.credentials.iter().any(|c| c.label == label) {
@@ -873,7 +877,7 @@ pub fn secret_for(store: &CredStore, id: &str) -> Result<Zeroizing<String>, Stri
     let guard = store.0.lock().map_err(|_| "state poisoned")?;
     let u = guard
         .as_ref()
-        .ok_or("password store is locked — unlock it in the Password Store tab")?;
+        .ok_or(LOCKED_MSG)?;
     let cred = u
         .data
         .credentials
@@ -893,7 +897,7 @@ pub fn secret_for_ref(store: &CredStore, reference: &str) -> Result<Zeroizing<St
     let guard = store.0.lock().map_err(|_| "state poisoned")?;
     let u = guard
         .as_ref()
-        .ok_or("password store is locked — unlock it in the Password Store tab")?;
+        .ok_or(LOCKED_MSG)?;
     let cred = u
         .data
         .credentials
@@ -971,7 +975,7 @@ fn edit_credential_at(
     let mut guard = store.0.lock().map_err(|_| "state poisoned")?;
     let u = guard
         .as_mut()
-        .ok_or("password store is locked — unlock it in the Password Store tab")?;
+        .ok_or(LOCKED_MSG)?;
     let idx = u
         .data
         .credentials
@@ -1187,6 +1191,14 @@ mod tests {
         assert!(!valid_secret_kind("apikey"));
         assert!(!valid_secret_kind("shell"));
         assert!(!valid_secret_kind(""));
+    }
+
+    #[test]
+    fn locked_store_error_tells_the_operator_what_to_do() {
+        let locked = CredStore(Mutex::new(None));
+        let err = reveal_cred(&locked, "any").unwrap_err();
+        assert_eq!(err, LOCKED_MSG);
+        assert!(err.contains("operator") && err.contains("Password Store tab"), "{err}");
     }
 
     // Build an unlocked in-memory store backed by a temp vault for add_secret tests.

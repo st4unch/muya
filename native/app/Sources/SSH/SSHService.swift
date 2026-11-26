@@ -228,7 +228,7 @@ final class FakeSSHRpc: SSHRpc {
         if method == SSHMethod.vaultAdd || method == SSHMethod.vaultUpdate || method == SSHMethod.vaultSave { lastSecretParam = params["secret"] as? String }
         if mode == .unwired { return done(.failure(RpcFailure(message: "unknown method '\(method)'"))) }
         let vaultCall = method.hasPrefix("vault.") || method == SSHMethod.cyberarkSearch
-        if mode == .locked, vaultCall, method != SSHMethod.vaultUnlock { return done(.failure(RpcFailure(message: "password store is locked — unlock it in the Password Store tab"))) }
+        if mode == .locked, vaultCall, method != SSHMethod.vaultUnlock { return done(.failure(RpcFailure(message: "password store is locked — ask the operator to unlock it in Muya's Password Store tab (Touch ID); it locks itself again after 15 minutes idle"))) }
         switch method {
         case SSHMethod.connect:
             lastConnect = params["id"] as? String

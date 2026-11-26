@@ -357,7 +357,7 @@ test("visible text: wide characters are not split by their spacer cell (accessib
     check(r.visibleText() == "日本語 ok\nş ğ ı İ", "CJK text reads as written: \(r.visibleText().debugDescription)")
 }
 
-test("scrollback: wheel scrolls the replica, new output snaps back to the bottom") {
+test("scrollback: the view follows the bottom until the operator scrolls back") {
     let r = Replica(cols: 20, rows: 5, theme: .dark)!
     for i in 0 ..< 60 { r.write(Data("line \(i)\r\n".utf8)) }
     let s0 = r.scrollState
@@ -369,12 +369,30 @@ test("scrollback: wheel scrolls the replica, new output snaps back to the bottom
     check(r.scrollState.offsetFromBottom == 6, "scrolled back down 4")
     r.scroll(lines: -1000)
     check(r.scrollState.offsetFromBottom == r.scrollState.history, "clamped at the top of history")
+    let held = r.visibleText()
     r.write(Data("fresh output\r\n".utf8))
-    check(r.scrollState.offsetFromBottom == 0, "new output returns to the bottom, got \(r.scrollState.offsetFromBottom)")
-    check(r.visibleText().contains("fresh output"), "and the fresh line is visible")
+    check(r.scrollState.offsetFromBottom > 0, "output does not yank a scrolled-back view, got \(r.scrollState.offsetFromBottom)")
+    check(r.visibleText() == held && !held.isEmpty, "the old text is still visible, the fresh line is not")
+    r.scroll(lines: 1000) // back to the last row: follow resumes
+    check(r.scrollState.offsetFromBottom == 0, "back at the bottom")
+    r.write(Data("next line\r\n".utf8))
+    check(r.scrollState.offsetFromBottom == 0 && r.visibleText().contains("next line"), "stays at the bottom and shows the fresh line")
     r.scroll(lines: -8)
+    r.write(Data("x\r\n".utf8))
+    check(r.scrollState.offsetFromBottom > 0, "scrolled back again, held")
     r.scrollToBottom()
     check(r.scrollState.offsetFromBottom == 0, "scrollToBottom (a keystroke)")
+    r.write(Data("after keystroke\r\n".utf8))
+    check(r.scrollState.offsetFromBottom == 0 && r.visibleText().contains("after keystroke"), "scrollToBottom resumes following")
+}
+
+test("scrollback: a full-screen program on the alternate screen always keeps the view") {
+    let r = Replica(cols: 20, rows: 5, theme: .dark)!
+    for i in 0 ..< 40 { r.write(Data("row \(i)\r\n".utf8)) }
+    r.write(Data("\u{1B}[?1049h".utf8))
+    r.scroll(lines: -10)
+    r.write(Data("tui frame\r\n".utf8))
+    check(r.scrollState.offsetFromBottom == 0, "alternate screen follows output, got \(r.scrollState.offsetFromBottom)")
 }
 
 test("scrollback can be read while output continues when snapping is off") {
@@ -423,9 +441,12 @@ runServiceRecoveryTests()
 runStartedTerminalTests()
 runAgentCloseTests()
 runSidebarTests()
+runOpenFilesLayoutTests()
+runSidebarControlFilesTests()
 runAgentsWidthTests()
 runSessionsRailTests()
 runUiFixesTests()
+runWorkspaceScopeTests()
 runFileClickTests()
 runFieldPickerTests()
 runSettingsSizingTests()
@@ -452,7 +473,9 @@ runPaletteFilesTests()
 runScrollCrashTests()
 runP3Tests()
 runTerminalTests()
+runTerminalPathLinksTests()
 runExitDiagTests()
+runPromptAnswerTests()
 
 print("\(ran) tests, \(failures) failures")
 exit(failures == 0 ? 0 : 1)

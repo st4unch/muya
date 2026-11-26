@@ -37,7 +37,7 @@ func runP7Tests() {
         let p = ResourcesLogic.createPrompt(kind: "Skill", request: "  it's $(rm -rf ~) `x`  ")
         check(p.hasSuffix("User request: it's $(rm -rf ~) `x`") && p.contains("skill author"), "prompt")
         let c = ResourcesLogic.createCommand(prompt: p)
-        check(c.hasPrefix("claude '") && c.hasSuffix("'") && c.contains("it'\\''s"), "single quotes escaped")
+        check(c.hasPrefix("claude --permission-mode auto '") && c.hasSuffix("'") && c.contains("it'\\''s"), "single quotes escaped")
         check(ResourcesLogic.createPrompt(kind: "Hook", request: "x").contains("hooks expert") && ResourcesLogic.createPrompt(kind: "MCP", request: "x").contains("MCP"), "kinds")
     }
 

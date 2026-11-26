@@ -14,7 +14,7 @@ use std::sync::atomic::AtomicBool;
 
 /// The one answer every secret-touching method gives until the Touch ID / unlock decision (S6):
 /// the daemon holds no unlocked vault, so it never sees a master password or a secret value.
-pub const LOCKED: &str = "password store is locked — unlock it in the Password Store tab";
+pub const LOCKED: &str = muya_core::credstore::LOCKED_MSG;
 const QUEUE_OFF: &str = "not enabled in this build";
 /// Longest transcript text returned by `sessions.transcript`.
 const MAX_TRANSCRIPT: usize = 256 * 1024;

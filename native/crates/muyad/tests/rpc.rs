@@ -301,7 +301,7 @@ fn migrate_agents_transcript_ssh_vault_and_queue_work_over_rpc() {
     assert!(app.rpc("ssh.servers.delete", json!({ "id": "nope" })).unwrap_err().contains("not found"));
 
     // A locked store hands out nothing; `vault.unlock` / `vault.init` are tested in `vault_unlock_*`.
-    const LOCKED: &str = "password store is locked — unlock it in the Password Store tab";
+    const LOCKED: &str = muya_core::credstore::LOCKED_MSG;
     assert_eq!(app.rpc("vault.list", json!({})).unwrap_err(), LOCKED);
     assert_eq!(app.rpc("vault.add", json!({ "label": "a", "secretKind": "password", "secret": "s3cret" })).unwrap_err(), LOCKED);
     assert_eq!(app.rpc("vault.update", json!({ "reference": "a", "secret": "s3cret" })).unwrap_err(), LOCKED);
@@ -326,7 +326,7 @@ fn vault_unlock_says_what_went_wrong_and_works_with_the_right_password() {
     app.rpc("vault.add", json!({ "label": "web", "secretKind": "password", "secret": "s3cret" })).unwrap();
     assert!(app.rpc("vault.init", json!({ "master": "again" })).unwrap_err().contains("already exists"));
     app.rpc("vault.lock", json!({})).unwrap();
-    assert_eq!(app.rpc("vault.list", json!({})).unwrap_err(), "password store is locked — unlock it in the Password Store tab");
+    assert_eq!(app.rpc("vault.list", json!({})).unwrap_err(), muya_core::credstore::LOCKED_MSG);
     assert_eq!(app.rpc("vault.unlock", json!({ "master": "wrong" })).unwrap_err(), "Wrong master password.");
     assert_eq!(app.rpc("vault.unlock", json!({})).unwrap_err(), "Type the master password.");
     app.rpc("vault.unlock", json!({ "master": "pw one" })).unwrap();
@@ -359,7 +359,7 @@ fn vault_locks_itself_after_idle_and_interaction_pings_keep_it_open() {
         if app.rpc("vault.status", json!({})).unwrap()["unlocked"] == false { locked = true; break; }
     }
     assert!(locked, "the store never locked itself");
-    assert_eq!(app.rpc("vault.list", json!({})).unwrap_err(), "password store is locked — unlock it in the Password Store tab");
+    assert_eq!(app.rpc("vault.list", json!({})).unwrap_err(), muya_core::credstore::LOCKED_MSG);
     app.rpc("vault.unlock", json!({ "master": "pw" })).unwrap();
     assert_eq!(app.rpc("vault.list", json!({})).unwrap()[0]["label"], "web");
 }

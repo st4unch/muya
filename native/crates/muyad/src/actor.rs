@@ -294,11 +294,38 @@ fn snapshot(term: &Terminal) -> Vec<u8> {
     match Formatter::new(term, opts).and_then(|mut f| f.format_alloc(None).map(|b| b.to_vec())) {
         Ok(v) => {
             let mut out = [b"\x1bc".as_slice(), &v].concat();
+            out.extend_from_slice(&blank_row_padding(term, &out));
             out.extend_from_slice(&final_cursor_position(term));
             out
         }
         Err(_) => Vec::new(),
     }
+}
+
+/// The formatter stops at the last row that has something in it, so a replica that replays the stream
+/// ends with that row at the bottom (scrolling the screen up) while the source still has blank rows
+/// under it: the replica's content then sits LOWER than the source's, and the cursor row, which the
+/// source gives as an absolute row, lands one or more rows above its text. Every later cursor move
+/// ("up N", erase line) of a TUI then hits the wrong row. This returns the newlines at the bottom row
+/// that scroll the replayed content up by exactly the blank rows the replica is missing, measured by
+/// replaying `stream` into a scratch terminal of the same size and comparing the trailing blank rows.
+fn blank_row_padding(term: &Terminal, stream: &[u8]) -> Vec<u8> {
+    let (Ok(cols), Ok(rows)) = (term.cols(), term.rows()) else { return Vec::new() };
+    if rows < 2 || term.mode(Mode::ORIGIN).unwrap_or(false) {
+        return Vec::new();
+    }
+    let Ok(mut scratch) = Terminal::new(Options { cols, rows, max_scrollback: SCROLLBACK_BYTES }) else { return Vec::new() };
+    scratch.vt_write(stream);
+    let trailing_blank = |t: &Terminal| visible_lines(t).iter().rev().take_while(|l| l.is_empty()).count();
+    let missing = trailing_blank(term).saturating_sub(trailing_blank(&scratch));
+    if missing == 0 {
+        return Vec::new();
+    }
+    let cursor_style = term.cursor_style().unwrap_or_default();
+    let mut out = format!("\x1b[0m\x1b[{rows};1H").into_bytes();
+    out.extend(std::iter::repeat_n(*b"\r\n", missing).flatten());
+    out.extend_from_slice(sgr(&cursor_style).as_bytes());
+    out
 }
 
 /// The formatter emits the cursor position before the tab stops (`ESC[3g`, `ESC[nG ESC H`…), and
@@ -412,6 +439,29 @@ mod tests {
             let mut replica = term(80, 24);
             replica.vt_write(&snap);
             assert_eq!(cursor(&replica), cursor(&src), "script {script:?}");
+        }
+    }
+
+    /// With scrollback and blank rows under the cursor (a TUI that drew in the middle of the screen, a
+    /// prompt after `clear`-less output), the snapshot must rebuild the SAME rows, not just the same
+    /// cursor: a replica whose content sits one row lower than the source's draws every later
+    /// cursor move (Ink's "cursor up N") on the wrong row.
+    #[test]
+    fn the_snapshot_keeps_the_rows_when_blank_rows_follow_the_cursor() {
+        let mut script = String::new();
+        for i in 1..=30 {
+            script.push_str(&format!("line {i}\r\n"));
+        }
+        // Rows 4..6 blank, the cursor on row 3 (wrapped-line rows and a styled row above it).
+        script.push_str("\x1b[1;31mred\x1b[0m\x1b[3;1H\x1b[Jprompt % \x1b[3;9H");
+        for script in [script.as_str(), "a\r\nb\x1b[2J\x1b[H", "x\r\n\r\n\r\n\r\n\r\n\r\n\r\ny\x1b[2;1H\x1b[J"] {
+            let mut src = term(40, 6);
+            src.vt_write(script.as_bytes());
+            let snap = snapshot(&src);
+            let mut replica = term(40, 6);
+            replica.vt_write(&snap);
+            assert_eq!(visible_lines(&replica), visible_lines(&src), "rows differ for {script:?}");
+            assert_eq!(cursor(&replica), cursor(&src), "cursor differs for {script:?}");
         }
     }
 

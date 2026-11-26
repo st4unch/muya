@@ -31,12 +31,15 @@ final class SidebarView: FillView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    private var geometry: SidebarGeometry { SidebarGeometry.layout(width: bounds.width, height: bounds.height, expanded: expanded, filesMode: filesMode, openFilesWanted: openFiles.wantedHeight, agentsWanted: (agents as? AgentsPanel)?.wantedHeight ?? 0, filesHeight: filesHeight) }
+    private var geometry: SidebarGeometry { SidebarGeometry.layout(width: bounds.width, height: bounds.height, expanded: expanded, filesMode: filesMode, openFilesWanted: openFiles.wantedHeight, agentsWanted: (agents as? AgentsPanel)?.wantedHeight ?? 0, filesHeight: filesHeight, controlFilesWanted: filesMode || openFiles.paths.isEmpty ? 0 : openFiles.wantedHeight) }
     var filesHeaderFrame: NSRect { geometry.header }
     override func layout() {
         super.layout()
+        openFiles.compact = !filesMode   // before the geometry asks for its wanted height
         let g = geometry
         if let r = g.agents { agents.frame = r }
+        // Control shows the open files too (one card each, the current one marked) when there are any and there is room.
+        openFiles.isHidden = g.openFiles == nil
         if let r = g.openFiles { openFiles.frame = r }
         files.frame = g.tree
         window?.invalidateCursorRects(for: self)

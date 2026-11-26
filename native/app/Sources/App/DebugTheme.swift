@@ -129,6 +129,36 @@ extension DebugServer {
             }
             return t.findState()
         case "term-menu": return controller.terminal.contextMenu().items.map { $0.isSeparatorItem ? "-" : ($0.isEnabled ? "" : "(off)") + $0.title }.joined(separator: "|")
+        case "term-link":   // term-link <col> <row>: the path token at that cell of the screen, what it resolves to and what it is
+            let a = arg.split(separator: " ").compactMap { Int($0) }
+            guard a.count == 2 else { return "error: term-link <col> <row>" }
+            guard let i = controller.terminal.linkInfo(col: a[0], row: a[1]) else { return "none" }
+            return "token=\(i.token.text) from=\(i.token.startCol) to=\(i.token.endCol) kind=\(i.kind.rawValue) path=\(i.path)"
+        case "term-link-hover":   // term-link-hover <col> <row>: moves the pointer there (the real hover path; the stat is async, so read term-link-state after)
+            let a = arg.split(separator: " ").compactMap { Int($0) }
+            guard a.count == 2 else { return "error: term-link-hover <col> <row>" }
+            controller.terminal.hover(col: a[0], row: a[1]); return "ok"
+        case "term-link-state": return controller.terminal.linkState
+        case "term-link-capture":   // term-link-capture on|off|last|reset: record a clicked link menu instead of popping it up
+            switch arg {
+            case "on": TerminalView.captureMenus = true; return "ok"
+            case "off": TerminalView.captureMenus = false; return "ok"
+            case "reset": controller.terminal.resetPathMenu(); return "ok"
+            default: return controller.terminal.lastPathMenu?.joined(separator: "|") ?? "none"
+            }
+        case "term-link-menu":   // term-link-menu <col> <row>: the titles of the menu a click there opens, header first; "none" off a link
+            let a = arg.split(separator: " ").compactMap { Int($0) }
+            guard a.count == 2 else { return "error: term-link-menu <col> <row>" }
+            return controller.terminal.pathMenu(col: a[0], row: a[1]).map { $0.items.map { $0.isSeparatorItem ? "-" : $0.title }.joined(separator: "|") } ?? "none"
+        case "term-link-run":   // term-link-run <col> <row> <item title>: picks that item of the link's menu (Reveal in Finder is not run here)
+            let parts = arg.split(separator: " ", maxSplits: 2).map(String.init)
+            guard parts.count == 3, let c = Int(parts[0]), let r = Int(parts[1]), let i = controller.terminal.linkInfo(col: c, row: r), i.kind != .none else { return "error: no link" }
+            if parts[2] == "Reveal in Finder" { return "skipped" }
+            let t = controller.terminal
+            let pb = NSPasteboard(name: NSPasteboard.Name("muya.test.pathlinks")); pb.clearContents()
+            TerminalView.pasteboard = pb; defer { TerminalView.pasteboard = .general }
+            t.runPathAction(parts[2], path: i.path, kind: i.kind)
+            return "clipboard=\(pb.string(forType: .string) ?? "") viewer=\(controller.viewerPath ?? "") sessions=\(controller.store.sessions.count)"
         case "term-paste-path":   // term-paste-path <clipboard text>: puts it on the clipboard and pastes it as a path
             NSPasteboard.general.clearContents(); NSPasteboard.general.setString(arg.replacingOccurrences(of: "\\n", with: "\n"), forType: .string)
             controller.terminal.pasteAsPath(); return "ok"

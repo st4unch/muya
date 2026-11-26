@@ -71,3 +71,22 @@ func runSidebarTests() {
         } }
     }
 }
+
+func runSidebarControlFilesTests() {
+    test("Control with open files: their cards sit between the agents and the FILES header, capped, nothing overlaps") {
+        for expanded in [false, true] {
+            let g = SidebarGeometry.layout(width: 264, height: 700, expanded: expanded, filesMode: false, openFilesWanted: 0, agentsWanted: 300, controlFilesWanted: 5 + 22 * 44 + 8)
+            let of = g.openFiles!
+            check(of.maxY == g.header.minY, "right above the FILES header (expanded \(expanded))")
+            check(g.agents!.maxY == of.minY && g.agents!.height >= 120, "agents above it keep 120+ px: \(g.agents!)")
+            check(of.height <= (g.header.minY) * 0.4 + 0.5, "at most 40% of the area above the header: \(of.height)")
+        }
+    }
+    test("Control with few open files: the list takes only its rows; with none, no list and the agents are as before") {
+        let few = SidebarGeometry.layout(width: 264, height: 700, expanded: false, filesMode: false, openFilesWanted: 0, controlFilesWanted: 5 + 44 + 8)
+        check(few.openFiles!.height == 57, "one card: \(few.openFiles!.height)")
+        let none = SidebarGeometry.layout(width: 264, height: 700, expanded: false, filesMode: false, openFilesWanted: 0, controlFilesWanted: 0)
+        let old = SidebarGeometry.layout(width: 264, height: 700, expanded: false, filesMode: false, openFilesWanted: 0)
+        check(none.openFiles == nil && none == old, "unchanged without open files")
+    }
+}

@@ -58,6 +58,18 @@ pub struct ScreenPermission {
     pub target: String,
     pub question: String,
     pub options: Vec<PermissionOption>,
+    /// true when the TUI could not draw the whole dialog and wrote its own "N more lines" /
+    /// "ctrl+o to expand" line into it. The prompt is still live and answerable. Rust-only: omitted
+    /// when false so the TypeScript golden parity holds for every normal prompt.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
+    /// 0-based row carrying the `❯` marker (0 when none is drawn). Rust-only, omitted when 0.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub selected: usize,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 /// Field order matches the TypeScript object spread: activity, busy, mode, modeDetected,
@@ -92,7 +104,13 @@ static MODE_RE: LazyLock<Regex> = LazyLock::new(|| {
     re(r"^\s*(?:⏵⏵|⏸)\s+(bypass permissions|accept edits|plan mode|auto mode|manual mode) on\b")
 });
 static QUESTION_RE: LazyLock<Regex> = LazyLock::new(|| re(r"^\s*(Do you want to .+\?)\s*$"));
-static OPTION_RE: LazyLock<Regex> = LazyLock::new(|| re(r"^\s*(?:❯\s*)?(\d{1,2})\.\s+(\S.*?)\s*$"));
+static OPTION_RE: LazyLock<Regex> = LazyLock::new(|| re(r"^\s*(❯\s*)?(\d{1,2})\.\s+(\S.*?)\s*$"));
+/// The TUI's own line in a dialog that did not fit: "↑ 8 more lines", "↓ 3 more lines",
+/// "… 5 more lines", "+4 more", or a hint like "(ctrl+o to expand description)". It is neither an
+/// option nor a wrapped label, so without this the option block would be rejected as prose.
+static TRUNCATION_RE: LazyLock<Regex> = LazyLock::new(|| {
+    re(r"^\s*(?:[↑↓…]\s*\d+\s+more\s+lines?|\+\d+\s+more(?:\s+lines?)?|\(ctrl\+\w+ to [^)]*\))\s*$")
+});
 static SEPARATOR_RE: LazyLock<Regex> = LazyLock::new(|| re(r"^\s*[─╌]{10,}\s*$"));
 static SOLID_SEPARATOR_RE: LazyLock<Regex> = LazyLock::new(|| re(r"^\s*─{10,}\s*$"));
 static ELAPSED_RE: LazyLock<Regex> = LazyLock::new(|| re(r"^(?:\d+h\s+)?(?:\d+m\s+)?\d+s$"));
@@ -213,6 +231,8 @@ fn parse_permission(lines: &[String]) -> Option<ScreenPermission> {
         // Options directly under the question; wrapped labels continue on indented lines.
         let mut options: Vec<PermissionOption> = Vec::new();
         let mut saw_esc = false;
+        let mut truncated = false;
+        let mut selected = 0usize;
         let mut i = q + 1;
         while i < lines.len() {
             let l = &lines[i];
@@ -224,12 +244,17 @@ fn parse_permission(lines: &[String]) -> Option<ScreenPermission> {
                 break;
             }
             if let Some(om) = OPTION_RE.captures(l) {
-                let kind = classify(&om[2])?;
+                let kind = classify(&om[3])?;
+                if om.get(1).is_some() {
+                    selected = options.len();
+                }
                 options.push(PermissionOption {
-                    key: om[1].to_owned(),
-                    label: om[2].to_owned(),
+                    key: om[2].to_owned(),
+                    label: om[3].to_owned(),
                     kind,
                 });
+            } else if TRUNCATION_RE.is_match(l) {
+                truncated = true;
             } else if !options.is_empty() && WRAPPED_RE.is_match(l) {
                 let last = options.last_mut().unwrap();
                 last.label.push(' ');
@@ -271,6 +296,11 @@ fn parse_permission(lines: &[String]) -> Option<ScreenPermission> {
             .rev()
             .find(|&j| SEPARATOR_RE.is_match(&lines[j]) && SOLID_SEPARATOR_RE.is_match(&lines[j]));
         let (mut tool, mut target) = (String::new(), String::new());
+        // The hint can sit in a description box (dashed rule) the solid-separator search skips.
+        let above = sep.map_or(q.saturating_sub(8), |j| j + 1);
+        if lines[above..q].iter().any(|l| TRUNCATION_RE.is_match(l)) {
+            truncated = true;
+        }
         if let Some(sep) = sep {
             let body: Vec<&str> = lines[sep + 1..q].iter().map(|l| js_trim(l)).collect();
             let title = body.iter().copied().find(|l| !l.is_empty()).unwrap_or("");
@@ -283,7 +313,12 @@ fn parse_permission(lines: &[String]) -> Option<ScreenPermission> {
             target = body[start..]
                 .iter()
                 .copied()
-                .find(|l| !l.is_empty() && !TIP.is_match(l) && !SEPARATOR_RE.is_match(l))
+                .find(|l| {
+                    !l.is_empty()
+                        && !TIP.is_match(l)
+                        && !SEPARATOR_RE.is_match(l)
+                        && !TRUNCATION_RE.is_match(l)
+                })
                 .unwrap_or("")
                 .to_owned();
         }
@@ -292,6 +327,8 @@ fn parse_permission(lines: &[String]) -> Option<ScreenPermission> {
             target,
             question: qm[1].to_owned(),
             options,
+            truncated,
+            selected,
         });
     }
     None

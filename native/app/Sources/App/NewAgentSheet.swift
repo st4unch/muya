@@ -51,7 +51,9 @@ final class NewAgentSheet: NSObject {
         workspace.addItems(withObjectValues: workspaces); workspace.stringValue = initial; workspace.completes = false   // the inline-completion popup swallowed the first click on Launch after typing a path
         workspace.placeholderString = "/path/to/project"; workspace.setSpokenLabel("Workspace folder")
         workspace.font = ThemeFont.mono(13)
-        mode.plain = true; mode.selected = mode.titles.firstIndex(of: "Auto") ?? 0; mode.onChange = { [weak self] _ in self?.kindChanged() }; mode.setSpokenLabel("Permission mode")
+        // Opens on Settings > Default permission mode; a different pick here is for this session only and is never written back.
+        mode.plain = true; mode.selected = mode.titles.firstIndex(of: NewAgentCommand.mode(for: store.permissionMode).label) ?? 0
+        mode.onChange = { [weak self] _ in self?.kindChanged() }; mode.setSpokenLabel("Permission mode")
         manager.target = self; manager.action = #selector(kindChanged); manager.setSpokenLabel("Open the agents manager instead")
         branch.font = ThemeFont.mono(12); name.delegate = nil
         prompt.isRichText = false; prompt.font = ThemeFont.mono(12); prompt.textColor = Theme.dynamic(.text); prompt.drawsBackground = false
@@ -115,13 +117,14 @@ final class NewAgentSheet: NSObject {
     }
 
     private var kind: Int { tabs.selected }
+    private var pickedMode: NewAgentCommand.Mode { NewAgentCommand.modes.first { $0.label == mode.titleOfSelectedItem } ?? NewAgentCommand.mode(for: store.permissionMode) }
 
     @objc private func kindChanged() {
         error.isHidden = true
         let claude = kind == 0, terminal = kind == 2
         groups["mode"]?.isHidden = !claude
         channelsRow?.isHidden = manager.state == .on
-        let m = NewAgentCommand.modes.first { $0.label == mode.titleOfSelectedItem } ?? NewAgentCommand.modes[3]
+        let m = pickedMode
         modeHint.stringValue = manager.state == .on ? "Not used by the agents manager" : m.hint
         groups["branch"]?.isHidden = !claude
         groups["prompt"]?.isHidden = terminal || (claude && manager.state == .on)
@@ -145,7 +148,7 @@ final class NewAgentSheet: NSObject {
 
     /// The command Launch would type (empty for Terminal) — shown by the test hook.
     var command: String {
-        let m = NewAgentCommand.modes.first { $0.label == mode.titleOfSelectedItem } ?? NewAgentCommand.modes[3]
+        let m = pickedMode
         return NewAgentCommand.build(kind: kind, mode: m.value, agentsManager: manager.state == .on, branch: branch.stringValue, prompt: prompt.string, files: files, channels: channels.state == .on && channelsOk == true, claudePath: bins?.claude, opencodePath: bins?.opencode)
     }
 

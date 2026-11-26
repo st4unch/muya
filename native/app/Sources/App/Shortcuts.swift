@@ -82,7 +82,7 @@ final class ShortcutRouter: NSObject {
         case .splitTerminalArea:
             guard c.canSplitSelected else { return false }
             c.addSplitPane(); return true
-        case .selectWorkspace: return false // no workspace scope in the native app yet
+        case .selectWorkspace(let n): return c.chooseWorkspace(digit: n)
         }
     }
 

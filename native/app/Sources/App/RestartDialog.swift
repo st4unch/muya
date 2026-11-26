@@ -360,7 +360,7 @@ extension Store {
             guard let self else { return }
             var plan = self.service.restartPlan // the answer to `Upgrade`; the daemon's file wins when it has one
             if case let .success(v) = result, let p = ResumeStep.parsePlan(v) { plan = p }
-            let steps = ResumeStep.steps(plan, home: self.home) { var d: ObjCBool = false; return FileManager.default.fileExists(atPath: $0, isDirectory: &d) && d.boolValue }
+            let steps = ResumeStep.steps(plan, home: self.home, mode: self.permissionMode) { var d: ObjCBool = false; return FileManager.default.fileExists(atPath: $0, isDirectory: &d) && d.boolValue }
             self.progress(.resuming(done: 0, total: steps.count))
             for (i, step) in steps.enumerated() {
                 if let cmd = step.command { self.openShell(cwd: step.cwd, name: step.name, typing: cmd) } else { self.spawn(cwd: step.cwd, name: step.name) }

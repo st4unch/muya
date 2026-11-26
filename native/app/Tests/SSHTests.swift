@@ -81,6 +81,7 @@ func runSSHTests() {
 
     test("error classification: locked, not available yet, unknown method, other") {
         check(SSHErrorMap.classify("password store is locked — unlock it in the Password Store tab", as: [SecretMeta].self) == .locked, "locked")
+        check(SSHErrorMap.classify("password store is locked — ask the operator to unlock it in Muya's Password Store tab (Touch ID); it locks itself again after 15 minutes idle", as: [SecretMeta].self) == .locked, "locked, the sentence that tells the operator what to do")
         if case .notWired = SSHErrorMap.classify("CyberArk is not available in the native daemon yet", as: [SecretMeta].self) {} else { check(false, "not available") }
         if case let .notWired(m) = SSHErrorMap.classify("unknown method 'vault.list'", as: [SecretMeta].self) { check(m.contains("does not offer"), "friendly text: \(m)") } else { check(false, "unknown method") }
         if case .failed = SSHErrorMap.classify("connection closed", as: [SecretMeta].self) {} else { check(false, "other") }

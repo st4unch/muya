@@ -61,8 +61,8 @@ public struct AgentRow: Equatable, Sendable {
 public enum AgentsLogic {
     /// Session ids land in a shell command: only plain id characters (src/lib/agent.ts isSafeSessionId).
     public static func isSafeId(_ id: String) -> Bool { !id.isEmpty && id.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "." || $0 == "_" || $0 == "-") } }
-    /// `claude attach '<id>' --dangerously-skip-permissions` (src/components/SessionsPage.tsx openCommandFor); nil for an unsafe id.
-    public static func attachCommand(_ id: String) -> String? { isSafeId(id) ? "claude attach '\(id)' --dangerously-skip-permissions" : nil }
+    /// `claude attach '<id>'` (attach takes no options: a flag after it is ignored with a warning, and cannot change a running session's mode); nil for an unsafe id.
+    public static func attachCommand(_ id: String) -> String? { isSafeId(id) ? "claude attach '\(id)'" : nil }
     /// `opencode --session '<id>' --auto` (src/lib/agent.ts buildResumeCommand).
     public static func opencodeResumeCommand(_ id: String) -> String? { isSafeId(id) ? "opencode --session '\(id)' --auto" : nil }
 

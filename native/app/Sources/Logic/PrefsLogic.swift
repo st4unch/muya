@@ -187,6 +187,7 @@ public enum PrefKeys {
     public static let inspectorWidth = "muya.panels.inspectorWidth" // :19 (260-520)
     public static let filesOpen = "muya.panels.filesOpen"         // :20
     public static let filesHeight = "muya.panels.filesHeight"     // usePanelLayout.ts:21 (120-2000, absent = fill)
+    public static let selectedRoot = "apex.selectedRoot"   // src/App.tsx:588 (absent = All workspaces)
     public static let openFiles = "muya.openFiles"         // src/App.tsx:199
     public static let composerHistoryAgent = "apex.composerHistory.agent" // src/redesign/composerHistory.ts:10
     public static let mergeQueue = "apex.mergeQueue"       // src/components/QueuePage.tsx:52 (QueuePrefs, P-queue)
@@ -200,7 +201,6 @@ public enum PrefKeys {
         "muya.selectedAgent": "keyed by a webview tab key; native selects by muyad session id (first live session on connect)",
         "apex.gridKeys": "webview tab keys; the native grid shows the first six sessions plus the selected one",
         "muya.gridLayout": "native tiles pick the shape from the session count (1/2/4/6), there is no layout choice",
-        "apex.selectedRoot": "workspace scope of the webview file tree; native derives workspaces from the sessions' working directories",
         "apex.workspaces": "user-added file-tree roots; the native Files rail follows the selected session's directory",
         "apex.worktrees": "worktree list of the webview Queue; native Queue derives it from the sessions' directories",
         "muya.notifications": "bell log; the native bell shows 'No notifications.' (no feed yet, tracked in parity.md)",

@@ -21,6 +21,13 @@ struct ScreenSummary: Equatable {
     /// The "yes, and don't ask again" answer of the prompt (permission kind approveAlways) and its label, when the prompt has one.
     var alwaysKey: String?, alwaysLabel: String?
     var promptKey = ""
+    /// 0-based positions of the Allow / Deny / "don't ask again" options (the fallback moves the `❯` marker there).
+    var approveIndex = 0, denyIndex = 0
+    var alwaysIndex: Int?
+    /// Row carrying the `❯` marker (daemon `selected`, absent = 0).
+    var selectedIndex = 0
+    /// The TUI could not draw the whole dialog ("N more lines"); the prompt is still live.
+    var truncated = false
 
     init?(json: String) {
         guard let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] else { return nil }
@@ -35,6 +42,12 @@ struct ScreenSummary: Equatable {
             approveKey = (p["options"] as? [[String: Any]])?.first { ($0["kind"] as? String) == "approve" }?["key"] as? String
             let always = (p["options"] as? [[String: Any]])?.first { ($0["kind"] as? String) == "approveAlways" }
             alwaysKey = always?["key"] as? String; alwaysLabel = always?["label"] as? String
+            let opts = (p["options"] as? [[String: Any]]) ?? []
+            approveIndex = opts.firstIndex { ($0["kind"] as? String) == "approve" } ?? 0
+            denyIndex = opts.lastIndex { ($0["kind"] as? String) == "deny" } ?? max(0, opts.count - 1)
+            alwaysIndex = opts.firstIndex { ($0["kind"] as? String) == "approveAlways" }
+            truncated = (p["truncated"] as? Bool) ?? false
+            selectedIndex = (p["selected"] as? Int) ?? 0
         }
     }
 }
@@ -114,6 +127,14 @@ final class Store: @unchecked Sendable {
     weak var delegate: StoreDelegate?
     private(set) var sessions: [SessionModel] = []
     private(set) var selected: SessionModel?
+    /// The workspace scope (docs/prd-workspace-scope-native.md): the folder whose sessions the lists show; nil = all workspaces.
+    /// A view filter only: out-of-scope sessions keep running.
+    var selectedRoot: String?
+    /// The sessions the lists show under the current scope.
+    var scopedSessions: [SessionModel] {
+        guard let root = selectedRoot else { return sessions }
+        return sessions.filter { WorkspaceScope.inScope(cwd: $0.cwd, scope: root) }
+    }
     private(set) var connected = false
     /// AC19/AC21: what the last failed connection meant, the "later" hello version, the restart in progress (RestartDialog.swift).
     let service = ServiceState()
@@ -145,6 +166,9 @@ final class Store: @unchecked Sendable {
     private(set) var snapshotAt: [UInt64: Date] = [:] // guarded by outputLock
     func snapshotTimes() -> [UInt64: Date] { outputLock.lock(); defer { outputLock.unlock() }; return snapshotAt }
 
+    /// Settings > Default permission mode as stored ("" when never set); every command that starts Claude passes it to NewAgentCommand.flag(for:).
+    var permissionMode: String { prefs.string("permissionMode") }
+
     /// Dev-only mock mode (MUYA_MOCK=1 with MUYA_DEBUG_SOCKET): `Mock.swift` seeds sessions without a daemon so screenshots
     /// can be compared with the web UI's mock data (ui-diff measures style, not content).
     private(set) var mockMode = false
@@ -163,6 +187,7 @@ final class Store: @unchecked Sendable {
         prefs = UIPrefs(url: dir.appendingPathComponent("prefs.json"))
         legacy = LegacyStore(url: URL(fileURLWithPath: LegacyStore.path(home: self.home)))
         bridge = PrefsBridge(prefs: prefs, legacy: legacy)
+        selectedRoot = legacy.get(PrefKeys.selectedRoot).flatMap { $0.isEmpty ? nil : $0 }
         if let data = try? Data(contentsOf: namesURL), let d = try? JSONSerialization.jsonObject(with: data) as? [String: String] { names = d }
         openersURL = dir.appendingPathComponent("openers.json")
         if let data = try? Data(contentsOf: openersURL), let d = try? JSONSerialization.jsonObject(with: data) as? [String: String] { openers = d }
@@ -329,6 +354,7 @@ final class Store: @unchecked Sendable {
             // The first output after Attached is the VT snapshot of muyad's terminal.
             let isSnapshot = awaitingSnapshot.remove(id) != nil
             s.replica.write(isSnapshot ? repairSnapshotCursor(data) : data)
+            if isSnapshot { s.replica.scrollToBottom() } // a fresh attach shows the live screen and follows it
             if isSnapshot { outputLock.lock(); if snapshotAt[id] == nil { snapshotAt[id] = Date() }; outputLock.unlock() }
             // One main-queue hop per burst, not per frame: a stream arrives in thousands of frames.
             outputLock.lock()
@@ -451,7 +477,9 @@ final class Store: @unchecked Sendable {
         let now = Date()
         for key in autoAllow.tick(prompting: Set(prompting.keys), enabled: enabled, now: now) {
             guard let p = prompting[key] else { continue }
-            connection?.sendInput(session: p.id, Data(p.key.utf8))
+            if let sc = sessions.first(where: { $0.id == p.id })?.screen {
+                answerVerified(session: p.id, promptKey: sc.promptKey, choice: .key(p.key, index: sc.approveIndex))
+            }
             autoAllowed += 1
         }
         autoAllowTimer?.invalidate(); autoAllowTimer = nil
@@ -471,13 +499,44 @@ final class Store: @unchecked Sendable {
     /// The Inspector's NEEDS APPROVAL card: Allow sends the key the daemon's prompt parser named, Deny sends Esc.
     func answerPrompt(session id: UInt64, approve: Bool) {
         guard let s = sessions.first(where: { $0.id == id }), s.exited == nil else { return }
+        guard let sc = s.screen, sc.permission else { return }
         if approve {
-            guard let k = s.screen?.approveKey else { return }
-            connection?.sendInput(session: id, Data(k.utf8))
+            guard let k = sc.approveKey else { return }
+            answerVerified(session: id, promptKey: sc.promptKey, choice: .key(k, index: sc.approveIndex))
         } else {
-            connection?.sendInput(session: id, Data([0x1b]))
+            answerVerified(session: id, promptKey: sc.promptKey, choice: .escape(denyIndex: sc.denyIndex))
         }
     }
+
+    /// Answers the prompt `promptKey` of a session and checks it went away (PromptAnswer decides each step): the
+    /// option key first; if the same prompt is still on screen, the TUI's own selection (arrows, then Enter);
+    /// if it is still there after that, stop and count it (`promptAnswerStuck`, debug `prompt-answer-state`).
+    func answerVerified(session id: UInt64, promptKey: String, choice: PromptAnswer.Choice, attempt: Int = 0) {
+        let live = sessions.first(where: { $0.id == id })
+        let present = live.map { $0.exited == nil && $0.screen?.permission == true && $0.screen?.promptKey == promptKey } ?? false
+        if attempt > 0 && !present { return }   // answered (or the session is gone)
+        switch PromptAnswer.next(attempt: attempt, choice: choice, stillPresent: present, selected: live?.screen?.selectedIndex ?? 0) {
+        case .done: return
+        case .giveUp:
+            promptAnswerStuck += 1
+            let name = live?.name ?? "A session"
+            Toasts.center?.show(title: "\(name) is waiting for permission", message: "Muya could not answer the dialog. It is still waiting: answer it in the session.", seconds: 15)
+            return
+        case let .write(writes):
+            if attempt == 1 { promptAnswerFallbacks += 1 }
+            var at: TimeInterval = 0
+            for w in writes {
+                at += w.delay
+                DispatchQueue.main.asyncAfter(deadline: .now() + at) { [weak self] in self?.connection?.sendInput(session: id, Data(w.bytes)) }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + at + PromptAnswer.verifyDelay) { [weak self] in
+                self?.answerVerified(session: id, promptKey: promptKey, choice: choice, attempt: attempt + 1)
+            }
+        }
+    }
+    /// Answers that needed the arrow fallback, and prompts still showing after it (test hook and diagnostics).
+    private(set) var promptAnswerFallbacks = 0
+    private(set) var promptAnswerStuck = 0
 
     /// First-launch migration of the Tauri app's UI state (muya_core::migrate). The daemon call may not exist yet:
     /// an old daemon answers "unknown method" and nothing is stored, so it is tried again next launch.

@@ -9,11 +9,18 @@ public enum WorkspaceMenuLogic {
         public var path: String, title: String, count: Int
         public init(path: String, title: String, count: Int) { self.path = path; self.title = title; self.count = count }
     }
-    /// Folders in order of first appearance, with how many sessions work in each; the title is the folder name.
-    public static func rows(cwds: [String]) -> [Row] {
-        var order: [String] = [], counts: [String: Int] = [:]
-        for c in cwds where !c.isEmpty { if counts[c] == nil { order.append(c) }; counts[c, default: 0] += 1 }
-        return order.map { Row(path: $0, title: ($0 as NSString).lastPathComponent.isEmpty ? $0 : ($0 as NSString).lastPathComponent, count: counts[$0] ?? 0) }
+    /// Folders in order of first appearance; the title is the folder name. `count` = the sessions in that root's scope
+    /// (the folder itself, its subfolders, its `-worktrees` folder, every SSH session), i.e. the rows the list shows after choosing it.
+    /// `keep` (the chosen root) stays listed after its last session closes.
+    public static func rows(cwds: [String], ssh: [Bool] = [], keep: String? = nil) -> [Row] {
+        var order: [String] = []
+        for c in cwds where !c.isEmpty && !order.contains(c) { order.append(c) }
+        if let k = keep, !k.isEmpty, !order.contains(k) { order.append(k) }
+        return order.map { root in
+            let n = cwds.indices.filter { WorkspaceScope.inScope(cwd: cwds[$0], ssh: ssh.indices.contains($0) && ssh[$0], scope: root) }.count
+            let base = (root as NSString).lastPathComponent
+            return Row(path: root, title: base.isEmpty ? root : base, count: n)
+        }
     }
 }
 

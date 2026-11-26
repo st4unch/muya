@@ -186,8 +186,15 @@ server** — read this before running anything:
   like the Servers page; any secret may be a server's credential, and credential-to-host changes are audit-logged.
 - Prefer `run_operation` over `get_secret` when you just need to *use* a credential (e.g.
   an operator-pinned `aws`/`kubectl`/`git` command) — it injects the secret without ever
-  exposing the value to you. Reach for `get_secret` only when you must place the actual
-  value somewhere yourself (a config file, an env var).
+  exposing the value to you. `get_secret` never hands you the value, only the placeholder
+  `{{muya-secret:name}}`; Muya substitutes it on its own surfaces:
+  - call an API with the key: `http_request` with the placeholder in a header;
+  - write a key file you must not read: `run_with_secrets` with the placeholder in `env` (or `stdin`), e.g.
+    `command: ["sh","-c","umask 177; printf %s \"$KEY\" > \"$HOME/.config/<tool>/key\""], env: {KEY: "{{muya-secret:name}}"}`;
+  - run a tool that needs it in its environment: `run_with_secrets`, or `muyactl secret exec` from a session shell.
+  Your OWN tools (Bash, Write, a shell line you type, a curl you run yourself) never substitute a placeholder:
+  the literal `{{muya-secret:name}}` text lands in the file or request. If the store is locked, ask the operator
+  to unlock it in the Password Store tab; it locks itself after 15 minutes idle.
 - `run_operation` arguments are policed by a fail-closed allow-list — pass flag values as
   `--flag=value`; unlisted flags/operands are rejected before the fixed program ever runs.
 
@@ -224,7 +231,8 @@ background service). `schedules_list` says who fires the timers in `runner`: `he
 - **Never guess an ambiguous target** — every fuzzy-resolution tool here (`send_to_session`,
   `read_session`, `close_session`) returns candidates instead of picking one; ask the
   operator.
-- **Secrets are never exposed to you** unless you explicitly call `get_secret` — every
-  other tool in this surface (SSH, operations) injects credentials without revealing them.
+- **Secrets are never exposed to you** — `get_secret` returns only a placeholder, and every
+  tool in this surface (SSH, operations, `http_request`, `run_with_secrets`) injects the real value
+  without revealing it. Use the placeholder through those tools; your own Bash/Write cannot resolve it.
 - **Ownership is checked, not assumed** — you can `ssh_send`/`close_session` only sessions
   you yourself opened; the operator's own sessions and manually-opened tabs are off-limits.

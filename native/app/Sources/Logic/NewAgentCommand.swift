@@ -13,6 +13,13 @@ enum NewAgentCommand {
         Mode(value: "bypass", label: "Bypass permissions", hint: "Skip every permission check", flag: "--dangerously-skip-permissions"),
     ]
 
+    /// The mode a profile with nothing stored starts with. Muya is published: a fresh install never skips permission checks.
+    static let defaultMode = "auto"
+    /// The mode behind a stored value (Settings > Default permission mode); empty or unknown falls back to `defaultMode`. The only fallback there is.
+    static func mode(for stored: String?) -> Mode { modes.first { $0.value == stored } ?? modes.first { $0.value == defaultMode }! }
+    /// The only place a mode becomes a command-line flag; every way a Claude session starts calls it with the stored value.
+    static func flag(for stored: String?) -> String { mode(for: stored).flag }
+
     static func singleQuote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
     /// "" for Terminal (no command). kind: 0 Claude Code, 1 opencode, 2 Terminal.
@@ -22,7 +29,7 @@ enum NewAgentCommand {
         let claudeCmd = claudePath.map(singleQuote) ?? "claude", opencodeCmd = opencodePath.map(singleQuote) ?? "opencode"
         if kind == 2 { return "" }
         if kind == 0 && agentsManager { return "\(claudeCmd) agents" }
-        let flag = modes.first { $0.value == mode }?.flag ?? modes[3].flag
+        let flag = Self.flag(for: mode)
         var base = kind == 1 ? "\(opencodeCmd) --auto" : (channels ? "\(claudeCmd) \(channelFlag) \(flag)" : "\(claudeCmd) \(flag)")
         let b = branch.trimmingCharacters(in: .whitespaces)
         if kind == 0, !b.isEmpty { base += " --worktree \(singleQuote(b))" }

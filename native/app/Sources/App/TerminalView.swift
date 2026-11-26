@@ -14,6 +14,23 @@ final class TerminalView: MTKView, NSTextInputClient {
     var onGrid: ((TerminalView, Int, Int) -> Void)?
     /// A click landed in this view: make its session the selected one.
     var onFocusRequest: ((TerminalView) -> Void)?
+    /// A path link's menu: "Open in Muya" (a file) / "Open Terminal Here" (a directory).
+    var onOpenFile: ((URL) -> Void)?
+    var onTerminalHere: ((String) -> Void)?
+    private struct LinkHit { var row: Int, from: Int, to: Int; var path: String; var kind: TerminalPathLinks.Kind
+        func contains(_ c: Int, _ r: Int) -> Bool { r == row && c >= from && c <= to } }
+    private var linkHit: LinkHit?
+    /// The token under the pointer that was already looked at (so moving along it costs nothing).
+    private var linkProbe: (row: Int, from: Int, to: Int)?
+    private var pressedLink: LinkHit?
+    private var pressCell = (col: -1, row: -1)
+    /// Test hooks: the titles of the last path menu a click opened, and whether to record it instead of popping it up.
+    private(set) var lastPathMenu: [String]?
+    nonisolated(unsafe) static var captureMenus = false
+    func resetPathMenu() { lastPathMenu = nil }
+    private var linkCache = TerminalPathLinks.Cache()
+    private var trackingArea: NSTrackingArea?
+    private var resignObserver: NSObjectProtocol?
     private var marked = NSAttributedString()
     private var keyboardObserver: NSObjectProtocol?
     private var scroll = ScrollAccumulator()
@@ -86,6 +103,8 @@ final class TerminalView: MTKView, NSTextInputClient {
         super.viewDidMoveToWindow()
         updateScale()
         applyAppearance()
+        resignObserver.map(NotificationCenter.default.removeObserver)
+        resignObserver = window.map { NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: $0, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.clearLink() } } }
         if schemeObserver == nil {
             schemeObserver = NotificationCenter.default.addObserver(forName: TerminalSchemeState.didChange, object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.applyAppearance() } }
         }
@@ -149,7 +168,7 @@ final class TerminalView: MTKView, NSTextInputClient {
     }
 
     func show(_ s: SessionModel?) {
-        if session !== s { cancelComposition(); drag = .none; autoscroll?.invalidate() }
+        if session !== s { cancelComposition(); drag = .none; autoscroll?.invalidate(); clearLink() }
         session = s
         renderer.replica = s?.replica
         // A session takes the grid of the view that shows it.
@@ -206,7 +225,7 @@ final class TerminalView: MTKView, NSTextInputClient {
         switch a {
         case .write(let s): store.sendText(s)
         case .copyOrInterrupt: if copySelection() == nil { store.sendText("\u{03}") }
-        case .launchClaude: store.sendText("claude --permission-mode auto\r") // lib/agent.ts AGENT_BASE_COMMAND.claude
+        case .launchClaude: store.sendText("claude \(NewAgentCommand.flag(for: store.permissionMode))\r")
         case .font(let d): Self.onFontStep?(d)
         case .search: showFind()
         }
@@ -282,7 +301,11 @@ final class TerminalView: MTKView, NSTextInputClient {
 
     // MARK: Context menu (today's TerminalContextMenu: Copy, Paste, Select All, Clear Scrollback, text size)
 
-    override func menu(for event: NSEvent) -> NSMenu? { contextMenu() }
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let (c, r) = cell(at: event)
+        if linksActive(event), let hit = linkHit, hit.contains(c, r) { return pathMenu(for: hit) }   // a right-click on a path link
+        return contextMenu()
+    }
 
     /// Today's TerminalContextMenu.tsx, item for item: Copy, Paste, Paste as Path, Select All, Open Link (when the selection is
     /// a web URL), Find…, Clear Scrollback, text size.
@@ -394,6 +417,9 @@ final class TerminalView: MTKView, NSTextInputClient {
         guard let s = session else { return }
         let m = Self.mods(event.modifierFlags)
         let (c, r) = cell(at: event)
+        pressCell = (c, r)
+        pressedLink = nil
+        if event.clickCount == 1, linksActive(event), let hit = linkHit, hit.contains(c, r) { pressedLink = hit }
         switch MouseRoute.decide(programTracksMouse: s.replica.mouseTracking, shift: event.modifierFlags.contains(.shift)) {
         case .report:
             drag = .report
@@ -419,6 +445,8 @@ final class TerminalView: MTKView, NSTextInputClient {
             store.sendMouse(session: s, col: c, row: r, button: "left", action: "motion", mods: Self.mods(event.modifierFlags))
         case .select:
             lastDragEvent = event
+            let (c, r) = cell(at: event)
+            if pressedLink != nil, (c, r) != pressCell { pressedLink = nil }   // a drag is a selection, not a click on the link
             s.replica.selectionDrag(pointer(event, rectangle: event.modifierFlags.contains(.option)), geometry: gestureGeometry)
             updateAutoscroll(for: event)
             requestDraw()
@@ -427,9 +455,16 @@ final class TerminalView: MTKView, NSTextInputClient {
     }
 
     override func mouseUp(with event: NSEvent) {
-        defer { drag = .none; autoscroll?.invalidate(); autoscroll = nil }
+        defer { drag = .none; autoscroll?.invalidate(); autoscroll = nil; pressedLink = nil }
         guard let s = session else { return }
         let (c, r) = cell(at: event)
+        if let hit = pressedLink, drag == .select, hit.contains(c, r) {   // press and release on the same link, no drag: its menu
+            s.replica.selectionRelease(col: c, row: r); requestDraw()
+            let menu = pathMenu(for: hit)
+            lastPathMenu = menu.items.map { $0.isSeparatorItem ? "-" : $0.title }
+            if !Self.captureMenus { menu.popUp(positioning: nil, at: convert(event.locationInWindow, from: nil), in: self) }
+            return
+        }
         switch drag {
         case .report: store.sendMouse(session: s, col: c, row: r, button: "left", action: "release", mods: Self.mods(event.modifierFlags))
         case .select: s.replica.selectionRelease(col: c, row: r); requestDraw()
@@ -458,6 +493,7 @@ final class TerminalView: MTKView, NSTextInputClient {
         let cs = renderer.cellSizePoints
         let lines = scroll.lines(delta: Double(event.scrollingDeltaY / (event.hasPreciseScrollingDeltas ? cs.height : 1)))
         guard lines != 0 else { return }
+        clearLink()
         if s.replica.mouseTracking && !event.modifierFlags.contains(.shift) {
             let (c, r) = cell(at: event)
             for _ in 0 ..< abs(lines) {
@@ -466,6 +502,119 @@ final class TerminalView: MTKView, NSTextInputClient {
         } else {
             s.replica.scroll(lines: -lines)
             requestDraw()
+        }
+    }
+
+    // MARK: Path links (classic's terminal path links: hover a path that exists, click or right-click for its menu)
+
+    /// False while the program owns the mouse (and Shift is not held): the click is the program's.
+    private func linksActive(_ event: NSEvent) -> Bool {
+        guard let s = session else { return false }
+        return MouseRoute.decide(programTracksMouse: s.replica.mouseTracking, shift: event.modifierFlags.contains(.shift)) == .select
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let t = trackingArea { removeTrackingArea(t) }
+        let t = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self, userInfo: nil)
+        addTrackingArea(t)
+        trackingArea = t
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        guard linksActive(event) else { clearLink(); return }
+        let (c, r) = cell(at: event)
+        hover(col: c, row: r)
+    }
+
+    override func mouseExited(with event: NSEvent) { clearLink() }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        guard let h = linkHit else { return }
+        let g = IMEAnchor.cellRect(col: h.from, row: h.row, cellW: metrics.cellW, cellH: metrics.cellH, padding: metrics.padding)
+        addCursorRect(NSRect(x: g.x, y: g.y, width: g.w * Double(h.to - h.from + 1), height: g.h), cursor: .pointingHand)
+    }
+
+    func clearLink() {
+        linkProbe = nil
+        guard linkHit != nil || renderer.link != nil else { return }
+        linkHit = nil
+        renderer.link = nil
+        window?.invalidateCursorRects(for: self)
+        requestDraw()
+    }
+
+    /// The path token at a cell of the visible screen, resolved against the session's current directory (main thread; a stat).
+    func linkInfo(col: Int, row: Int) -> (token: TerminalPathLinks.Token, path: String, kind: TerminalPathLinks.Kind)? {
+        guard let s = session, let t = TerminalPathLinks.token(cells: s.replica.rowCells(row), column: col) else { return nil }
+        let p = TerminalPathLinks.resolve(t.text, cwd: SessionModel.currentDirectory(of: s.pid) ?? s.cwd, home: store.home)
+        return (t, p, TerminalPathLinks.kind(ofPath: p))
+    }
+
+    /// The pointer is over a cell: underline the path token there once it is known to exist. Resolution (a stat) runs off the
+    /// main thread and is remembered per (cwd, token); a token already looked at is not looked at again while the pointer stays on it.
+    func hover(col c: Int, row r: Int) {
+        if let p = linkProbe, p.row == r, c >= p.from, c <= p.to { return }
+        clearLink()
+        guard let s = session, let t = TerminalPathLinks.token(cells: s.replica.rowCells(r), column: c) else { return }
+        let probe = (row: r, from: t.startCol, to: t.endCol)
+        linkProbe = probe
+        let cwd = SessionModel.currentDirectory(of: s.pid) ?? s.cwd
+        let home = store.home
+        func apply(_ path: String, _ kind: TerminalPathLinks.Kind) {
+            guard kind != .none else { return }
+            linkHit = LinkHit(row: probe.row, from: probe.from, to: probe.to, path: path, kind: kind)
+            renderer.link = probe
+            window?.invalidateCursorRects(for: self)
+            requestDraw()
+        }
+        if let hit = linkCache[cwd, t.text] { apply(hit.path, hit.kind); return }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let path = TerminalPathLinks.resolve(t.text, cwd: cwd, home: home)
+            let kind = TerminalPathLinks.kind(ofPath: path)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.linkCache[cwd, t.text] = (path, kind)
+                guard self.session === s, let now = self.linkProbe, now == probe else { return }
+                apply(path, kind)
+            }
+        }
+    }
+
+    /// The menu a click on this cell would open (debug socket / tests); nil when the cell is not on an existing path.
+    func pathMenu(col: Int, row: Int) -> NSMenu? {
+        guard let i = linkInfo(col: col, row: row), i.kind != .none else { return nil }
+        return pathMenu(for: LinkHit(row: row, from: i.token.startCol, to: i.token.endCol, path: i.path, kind: i.kind))
+    }
+
+    /// The underlined link right now: "row from to kind path", or "none" (debug socket / tests).
+    var linkState: String {
+        guard let h = linkHit else { return "none" }
+        return "row=\(h.row) from=\(h.from) to=\(h.to) kind=\(h.kind.rawValue) path=\(h.path) underlined=\(renderer.link != nil)"
+    }
+
+    /// Classic's path menu: a 📁 / 📄 header, then Open in Muya (file) or Open Terminal Here (directory), Reveal in Finder, Copy Path.
+    private func pathMenu(for hit: LinkHit) -> NSMenu {
+        let m = NSMenu()
+        let header = NSMenuItem(title: TerminalPathLinks.header(path: hit.path, kind: hit.kind), action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        m.addItem(header)
+        m.addItem(.separator())
+        for title in TerminalPathLinks.menuTitles(for: hit.kind) {
+            m.addItem(BlockMenuItem(title: title) { [weak self] in self?.runPathAction(title, path: hit.path, kind: hit.kind) })
+        }
+        return m
+    }
+
+    func runPathAction(_ title: String, path: String, kind: TerminalPathLinks.Kind) {
+        let url = URL(fileURLWithPath: path)
+        switch title {
+        case "Open in Muya": onOpenFile?(url)
+        case "Open Terminal Here": onTerminalHere?(PathActions.terminalDirectory(for: url, isDirectory: kind == .dir))
+        case "Reveal in Finder": NSWorkspace.shared.activateFileViewerSelecting([url])
+        case "Copy Path": Self.pasteboard.clearContents(); Self.pasteboard.setString(path, forType: .string)
+        default: break
         }
     }
 }

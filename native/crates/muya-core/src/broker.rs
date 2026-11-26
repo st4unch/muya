@@ -1308,7 +1308,7 @@ async fn handle_run_with_secrets<H: BrokerHost>(host: &H, req: &mut BrokerReq) -
     let uses_secret = req.env.iter().flatten().any(|(_, v)| !crate::secret_refs::names_in(v).is_empty())
         || req.stdin.as_deref().is_some_and(|t| !crate::secret_refs::names_in(t).is_empty());
     if uses_secret && !host.vault_is_unlocked() {
-        return err_resp("password store is locked — unlock it in the Password Store tab");
+        return err_resp(crate::credstore::LOCKED_MSG);
     }
     let cwd = match req.cwd.as_deref().filter(|c| !c.trim().is_empty()) {
         Some(c) if Path::new(c).is_absolute() && Path::new(c).is_dir() => c.to_string(),
@@ -1431,7 +1431,7 @@ async fn handle_http_request<H: BrokerHost>(host: &H, req: &mut BrokerReq) -> St
         .chain(req.headers.iter().flatten().map(|(_, v)| v.as_str()))
         .any(|t| !crate::secret_refs::names_in(t).is_empty());
     if uses_secret && !host.vault_is_unlocked() {
-        return err_resp("password store is locked — unlock it in the Password Store tab");
+        return err_resp(crate::credstore::LOCKED_MSG);
     }
     let mut used = Vec::new();
     let url_s = match resolve_for_child(host, url_t.trim(), &mut used) {
@@ -1593,7 +1593,7 @@ pub async fn handle_request_from<H: BrokerHost>(host: &H, line: &str, pid: Optio
                     if server.credential_source.kind == "local" {
                         if !host.vault_is_unlocked() {
                             return err_resp(
-                                "password store is locked — unlock it in the Password Store tab",
+                                crate::credstore::LOCKED_MSG,
                             );
                         }
                     }
@@ -1851,7 +1851,7 @@ pub async fn handle_request_from<H: BrokerHost>(host: &H, line: &str, pid: Optio
             // The agent never sees the value: it gets a placeholder that Muya swaps for the real
             // secret when it is typed/run (ssh_send, ssh_run, ssh_session_exec, send_terminal).
             if !host.vault_is_unlocked() {
-                return err_resp("password store is locked — unlock it in the Password Store tab");
+                return err_resp(crate::credstore::LOCKED_MSG);
             }
             match secret_exists(host, name) {
                 Ok(true) => json!({
@@ -1963,7 +1963,7 @@ async fn handle_run_operation<H: BrokerHost>(host: &H, req: &BrokerReq) -> Strin
     let secret: Option<Zeroizing<String>> = match op.secret_id.as_deref() {
         Some(reference) if !reference.is_empty() => {
             if !host.vault_is_unlocked() {
-                return err_resp("password store is locked — unlock it in the Password Store tab");
+                return err_resp(crate::credstore::LOCKED_MSG);
             }
             // Ops reference the secret by the NAME the operator gave it (label) or
             // by id — not the internal hex id alone. secret_for_ref resolves either.
@@ -4213,7 +4213,7 @@ async fn resolve_injectable_secret<H: BrokerHost>(
         "local" => {
             if !host.vault_is_unlocked() {
                 return Err(
-                    "password store is locked — unlock it in the Password Store tab".into(),
+                    crate::credstore::LOCKED_MSG.into(),
                 );
             }
             let id = server
@@ -6505,6 +6505,35 @@ mod tests {
         for needle in ["http_request", "run_with_secrets", "muyactl secret exec --env API_KEY=k", "{{muya-secret:k}}", "NOT the secret"] {
             assert!(h.contains(needle), "{needle} missing: {h}");
         }
+    }
+
+    fn get_secret_call(h: &TermHost) -> serde_json::Value {
+        let line = json!({"op":"get_secret","name":"mine"}).to_string();
+        serde_json::from_str(&futures_lite_block(handle_request(h, &line))).unwrap()
+    }
+
+    #[test]
+    fn get_secret_answer_warns_that_the_callers_own_tools_do_not_substitute() {
+        let h = vault_host();
+        let r = get_secret_call(&h);
+        assert_eq!(r["ok"], true, "{r}");
+        let note = r["note"].as_str().unwrap();
+        for needle in ["run_with_secrets", "http_request", "Your own tools (Bash, Write", "never substitute"] {
+            assert!(note.contains(needle), "{needle} missing: {note}");
+        }
+        assert!(!r.to_string().contains("agent-made-pw"), "{r}");
+    }
+
+    #[test]
+    fn locked_store_error_names_the_operator_and_the_password_store_tab() {
+        let m = crate::credstore::LOCKED_MSG;
+        for needle in ["operator", "Password Store tab", "15 minutes"] {
+            assert!(m.contains(needle), "{needle} missing: {m}");
+        }
+        let mut h = vault_host();
+        h.vault.clear(); // an empty vault is the locked fixture
+        let r = get_secret_call(&h);
+        assert_eq!(r["error"], m, "{r}");
     }
 
     fn run_secret_req(extra: serde_json::Value) -> serde_json::Value {

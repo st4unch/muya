@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use zeroize::Zeroizing;
 
-const LOCKED: &str = "password store is locked — unlock it in the Password Store tab";
+const LOCKED: &str = muya_core::credstore::LOCKED_MSG;
 const NOT_YET: &str = "not available in the native daemon yet";
 
 fn secret_meta(m: credstore::CredMeta) -> SecretMeta {

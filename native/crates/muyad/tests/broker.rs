@@ -154,7 +154,7 @@ fn sidecar_talks_to_the_broker_in_muyad() {
         let resp = broker_op(&sock, req);
         let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
         assert_eq!(v["ok"], false, "{resp}");
-        assert_eq!(v["error"], "password store is locked — unlock it in the Password Store tab", "{resp}");
+        assert_eq!(v["error"], muya_core::credstore::LOCKED_MSG, "{resp}");
     }
 }
 

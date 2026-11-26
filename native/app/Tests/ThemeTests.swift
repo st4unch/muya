@@ -67,7 +67,7 @@ func runThemeTests() {
         let plain = AgentRow(json: ["sessionId": "s3", "kind": "interactive"])!, oc = AgentRow(json: ["sessionId": "s4", "kind": "opencode"])!
         check(bg.attachable && withId.attachable && !plain.attachable, "attachable = background or has an id")
         check(oc.isOpencode && !plain.isOpencode, "opencode kind")
-        check(AgentsLogic.attachCommand("abc-12.x_y") == "claude attach 'abc-12.x_y' --dangerously-skip-permissions", "attach command")
+        check(AgentsLogic.attachCommand("abc-12.x_y") == "claude attach 'abc-12.x_y'", "attach command")
         check(AgentsLogic.attachCommand("a'b") == nil && AgentsLogic.attachCommand("") == nil && AgentsLogic.attachCommand("a b") == nil, "unsafe ids refused")
         check(AgentsLogic.opencodeResumeCommand("x1") == "opencode --session 'x1' --auto", "opencode resume command")
         let now = Date(timeIntervalSince1970: 1_000_000)

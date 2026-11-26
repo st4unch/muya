@@ -140,18 +140,18 @@ public enum SplitLogic {
         public var command: String?
         public var forked: Bool
     }
-    public static let claudeBase = "claude --permission-mode auto"
+    public static func claudeBase(mode: String? = nil) -> String { "claude \(NewAgentCommand.flag(for: mode))" }
     public static let opencodeBase = "opencode --auto"
     public static func isSafeSessionId(_ id: String) -> Bool {
         !id.isEmpty && id.unicodeScalars.allSatisfy { ("A" ... "Z").contains($0) || ("a" ... "z").contains($0) || ("0" ... "9").contains($0) || $0 == "." || $0 == "_" || $0 == "-" }
     }
-    public static func cloneSpec(name: String, agent: String?, sessionId: String?, sessionCwd: String?) -> SplitClone {
+    public static func cloneSpec(name: String, agent: String?, sessionId: String?, sessionCwd: String?, mode: String? = nil) -> SplitClone {
         guard let agent else { return SplitClone(name: name, command: nil, forked: false) }
         if agent == "claude", let id = sessionId, isSafeSessionId(id) {
-            let fork = "claude --resume \(OpenAgentSession.quote(id)) --fork-session --permission-mode auto"
+            let fork = "claude --resume \(OpenAgentSession.quote(id)) --fork-session \(NewAgentCommand.flag(for: mode))"
             return SplitClone(name: "\(name) (fork)", command: sessionCwd.map { "cd \(OpenAgentSession.quote($0)) && \(fork)" } ?? fork, forked: true)
         }
-        return SplitClone(name: name, command: agent == "opencode" ? opencodeBase : claudeBase, forked: false)
+        return SplitClone(name: name, command: agent == "opencode" ? opencodeBase : claudeBase(mode: mode), forked: false)
     }
 
     /// Pane widths as fractions that sum to 1: the divider between pane i and i+1 moved by `delta` (fraction of the width), each pane >= `minFraction`.
@@ -183,12 +183,12 @@ public struct OpenAgentSession: Equatable, Sendable {
     static func quote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
     /// The shell command of the new session. `openerName`: the opener's tab name, when known.
-    public func command(openerName: String?) -> String {
+    public func command(openerName: String?, mode: String? = nil) -> String {
         let who = openerName.map { "session \"\($0)\"" } ?? "another Claude session"
         let headless = agent == "claude" && unattended
         var base: String
         if agent == "claude" {
-            base = "claude --permission-mode auto"
+            base = SplitLogic.claudeBase(mode: mode)
             if headless {
                 let report = openedBy.map { "If you hit any problem or need a decision you can't make, ask \(who) that opened you, not the operator: send_to_session(target: \"\($0)\", deliver: \"muya\"). When you finish, report there too with a short summary of what you did." }
                     ?? "Put a short summary of what you did, or what blocks you, in your final answer."

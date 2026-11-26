@@ -360,7 +360,7 @@ final class SessionsPage: PageView, NSOutlineViewDataSource, NSOutlineViewDelega
     func entry(id: String) -> HistoryEntry? { entries.first { $0.sessionId == id || $0.sessionId.hasPrefix(id) } }
 
     func resume(_ e: HistoryEntry) {
-        guard let cmd = SessionsLogic.resumeCommand(e.sessionId) else { status.stringValue = "This session id cannot be resumed safely."; return }
+        guard let cmd = SessionsLogic.resumeCommand(e.sessionId, mode: store.permissionMode) else { status.stringValue = "This session id cannot be resumed safely."; return }
         let cwd = FileManager.default.fileExists(atPath: e.cwd) ? e.cwd : store.home
         store.openShell(cwd: cwd, name: "↻ \(e.displayName)", typing: cmd)
         onResume?(e)

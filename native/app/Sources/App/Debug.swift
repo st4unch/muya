@@ -226,13 +226,20 @@ extension DebugServer {
                 "\(i)\t\(t.terminal.session?.id.description ?? "-")\t\(t.terminal.lastGrid.cols)x\(t.terminal.lastGrid.rows)\t\(Int(t.frame.width))x\(Int(t.frame.height))\(t.focused ? "\t*" : "")"
             }.joined(separator: "\n")
         case "mouse":
-            // mouse down|drag|up <col> <row> [clicks=N] [tile=N] [shift|opt|cmd]
-            guard w.count >= 3, let col = Int(w[1]), let row = Int(w[2]) else { return "error: mouse down|drag|up <col> <row>" }
+            // mouse down|drag|up|move|right <col> <row> [clicks=N] [tile=N] [shift|opt|cmd]
+            // move = the pointer arrives over the cell (hover); right = a right-click, answers with the titles of the menu it would show
+            guard w.count >= 3, let col = Int(w[1]), let row = Int(w[2]) else { return "error: mouse down|drag|up|move|right <col> <row>" }
             let view = tile(w), f = flags(w)
             let clicks = w.first(where: { $0.hasPrefix("clicks=") }).flatMap { Int($0.dropFirst(7)) } ?? 1
-            let type: NSEvent.EventType = w[0] == "down" ? .leftMouseDown : w[0] == "up" ? .leftMouseUp : .leftMouseDragged
+            let type: NSEvent.EventType = w[0] == "down" ? .leftMouseDown : w[0] == "up" ? .leftMouseUp : w[0] == "move" ? .mouseMoved : w[0] == "right" ? .rightMouseDown : .leftMouseDragged
             guard let e = mouseEvent(type, view, col: col, row: row, flags: f, clicks: clicks) else { return "error: no event" }
-            switch w[0] { case "down": view.mouseDown(with: e); case "up": view.mouseUp(with: e); default: view.mouseDragged(with: e) }
+            switch w[0] {
+            case "down": view.mouseDown(with: e)
+            case "up": view.mouseUp(with: e)
+            case "move": view.mouseMoved(with: e)
+            case "right": return view.menu(for: e)?.items.map { $0.isSeparatorItem ? "-" : $0.title }.joined(separator: "|") ?? "none"
+            default: view.mouseDragged(with: e)
+            }
             return "ok"
         case "bytes": return store.sessions.map { "\($0.id)\t\($0.replica.bytesIn)" }.joined(separator: "\n")
         case "selection": return jsonString(store.selected?.replica.selectedText() ?? "")
@@ -369,7 +376,9 @@ extension DebugServer {
         case "wake": NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.didWakeNotification, object: NSWorkspace.shared)
             let r = c.lastWakeResync
             return "ok wakes=\(c.wakeCount) sessions=\(r?.sessionsBefore ?? -1)->\(r?.sessionsAfter ?? -1) resync_ms=\(Int((r?.seconds ?? 0) * 1000))"
-        case "ssh-reload", "ssh-connect", "ssh-unlock", "ssh-state", "ssh-form", "gallery", "gallery-close", "fonts", "composer", "rail", "dialog", "session-menu", "drop", "dump-views", "session-collapse", "mode-menu", "window-rect", "ssh-section", "ssh-secret", "resources-tab", "terminal-scheme", "toast-lift", "toast-panels", "app-activate", "status-fields", "status-footer", "footer-composer", "footer-height", "appearance-popover", "term-find", "term-menu", "term-paste-path", "term-clear-scrollback": return runTheme(cmd, arg)
+        case "ssh-reload", "ssh-connect", "ssh-unlock", "ssh-state", "ssh-form", "gallery", "gallery-close", "fonts", "composer", "rail", "dialog", "session-menu", "drop", "dump-views", "session-collapse", "mode-menu", "window-rect", "ssh-section", "ssh-secret", "resources-tab", "terminal-scheme", "toast-lift", "toast-panels", "app-activate", "status-fields", "status-footer", "footer-composer", "footer-height", "appearance-popover", "term-find", "term-menu", "term-link", "term-link-hover", "term-link-state", "term-link-capture", "term-link-menu", "term-link-run", "term-paste-path", "term-clear-scrollback": return runTheme(cmd, arg)
+        case "ws-rows", "ws-select", "ws-choose", "ws-list", "ws-palette", "ws-state": return runWorkspaceScope(cmd, arg)
+        case "of-state", "of-scroll", "of-overdraw", "of-click": return runFilesPanel(cmd, arg)
         case "rail-state", "rail-flip", "rail-key", "rail-pick", "sidebar-set", "mock-many": return runRail(cmd, arg)
         default: return runFaz4(cmd, arg) ?? runQueue(cmd, arg) ?? runP6(cmd, arg) ?? runP3(cmd, arg) ?? runSplit(cmd, arg) ?? runP4(cmd, arg) ?? runP7(cmd, arg) ?? runP12(cmd, arg) ?? runAC1921(cmd, arg) ?? runUiFixes(cmd, arg)
         }

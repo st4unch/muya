@@ -508,7 +508,7 @@ final class MainController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         let plan = ResumeLogic.plan(saved: resume.saved, enabled: store.prefs.bool("resumeOnLaunch"), liveTerminals: store.sessions.filter { $0.exited == nil }.count,
                                     existingFolders: { var d: ObjCBool = false; return FileManager.default.fileExists(atPath: $0, isDirectory: &d) && d.boolValue })
         for e in plan {
-            guard let cmd = SessionsLogic.resumeCommand(e.sessionId) else { continue }
+            guard let cmd = SessionsLogic.resumeCommand(e.sessionId, mode: store.permissionMode) else { continue }
             store.openShell(cwd: e.cwd, name: "↻ \(e.name.isEmpty ? String(e.sessionId.prefix(8)) : e.name)", typing: cmd)
             resumedAtLaunch.append(e.name)
         }
@@ -562,7 +562,7 @@ final class MainController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     /// Everything ⌘K can reach: the open terminals, the most recent Claude sessions, the views and the commands.
     func paletteItems() -> [PaletteItem] {
         var items: [PaletteItem] = []
-        for s in store.sessions { items.append(PaletteItem(id: "term:\(s.id)", group: "Terminals", title: s.name, subtitle: s.cwd.abbreviatingHome(store.home))) }
+        for s in store.scopedSessions { items.append(PaletteItem(id: "term:\(s.id)", group: "Terminals", title: s.name, subtitle: s.cwd.abbreviatingHome(store.home))) }
         // Today's order: Agents, Files (open files + the selected agent's changed files, as in src/App.tsx), Commands; history last.
         let snap = inspector.snapshot
         items += PaletteFiles.items(open: openFilePaths, changes: store.selected == nil ? [] : snap.status.changes.map { (path: $0.path, deleted: $0.x == "D" || $0.y == "D") },
@@ -823,9 +823,10 @@ final class MainController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     @objc func nextSession() { step(1) }
     @objc func previousSession() { step(-1) }
     private func step(_ d: Int) {
-        guard !store.sessions.isEmpty else { return }
-        let i = store.selected.flatMap { s in store.sessions.firstIndex { $0 === s } } ?? 0
-        store.select(store.sessions[(i + d + store.sessions.count) % store.sessions.count])
+        let list = store.scopedSessions
+        guard !list.isEmpty else { return }
+        let i = store.selected.flatMap { s in list.firstIndex { $0 === s } } ?? 0
+        store.select(list[(i + d + list.count) % list.count])
     }
 
     @objc func renameSession() {
@@ -859,6 +860,12 @@ final class MainController: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     private func wireTile(_ t: Tile) {
         t.terminal.onGrid = { [weak self] view, cols, rows in self?.gridChanged(view, cols, rows) }
+        t.terminal.onOpenFile = { [weak self] url in self?.openViewer(url, FileKind.detect(url)) }
+        t.terminal.onTerminalHere = { [weak self] dir in
+            guard let self else { return }
+            self.closeViewer()
+            self.store.spawn(cwd: dir)
+        }
         t.terminal.onFocusRequest = { [weak self] view in
             guard let self, let s = view.session, s !== self.store.selected else { return }
             self.store.select(s)
@@ -881,7 +888,7 @@ final class MainController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         if gridMode {
             let choice = GridState.layout
             let waiting = Set(store.sessions.filter { $0.exited == nil && $0.screen?.permission == true }.map(\.id))
-            let ids = GridPlan.visible(ids: store.sessions.map(\.id), waiting: waiting, waitingFirst: GridState.waitingFirst, picked: GridState.picked, selected: store.selected?.id, capacity: choice.capacity)
+            let ids = GridPlan.visible(ids: store.scopedSessions.map(\.id), waiting: waiting, waitingFirst: GridState.waitingFirst, picked: GridState.picked, selected: store.selected?.id, capacity: choice.capacity)
             sessions = ids.compactMap { id in store.sessions.first { $0.id == id } }
             GridState.shownIds = ids
         } else if let g = splitModel.group(of: store.selected), let sel = store.selected {

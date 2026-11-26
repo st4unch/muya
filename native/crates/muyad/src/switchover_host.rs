@@ -16,7 +16,7 @@
 use crate::Muyad;
 use muya_switchover::manifest;
 use muya_switchover::swap::{self, Plan, Platform, Step, SwapError, SwitchState};
-use muya_switchover::sysplatform::SysPlatform;
+use muya_switchover::sysplatform::{self, SysPlatform};
 use muya_switchover::v5::{self, Kind};
 use muya_switchover::verify::VerifyError;
 use muya_switchover::{feed, healthy_marker_path, launchd, state_path, TEAM_ID};
@@ -115,8 +115,10 @@ impl Fetch for CurlFetch {
         } else {
             &[]
         };
-        let out = std::process::Command::new("curl")
-            .args(["-fsSL"])
+        // The same hardening as the download path: Muya's update check must not break because this Mac's curl was
+        // pointed at a project's CA file that is no longer there (sysplatform::harden).
+        let out = sysplatform::harden(&mut std::process::Command::new("curl"))
+            .args([sysplatform::QUIET_RC, "-fsSL"])
             .args(proto)
             .args([
                 "--connect-timeout",
@@ -132,9 +134,9 @@ impl Fetch for CurlFetch {
         if out.status.success() {
             Ok(out.stdout)
         } else {
-            Err(format!(
-                "network error: {}",
-                String::from_utf8_lossy(&out.stderr).trim()
+            Err(sysplatform::explain(
+                out.status.code(),
+                &String::from_utf8_lossy(&out.stderr),
             ))
         }
     }

@@ -57,7 +57,7 @@ extension MainController {
         let agent: String? = src.kind == "opencode" ? "opencode" : (src.screen?.modeDetected == true || src.kind == "claude") ? "claude" : nil
         let begin = { [weak self] (sid: String?, scwd: String?) in
             guard let self, self.store.sessions.contains(where: { $0 === src }) else { return }
-            let spec = SplitLogic.cloneSpec(name: src.name, agent: agent, sessionId: sid, sessionCwd: scwd.flatMap { $0 == cwd ? nil : $0 })
+            let spec = SplitLogic.cloneSpec(name: src.name, agent: agent, sessionId: sid, sessionCwd: scwd.flatMap { $0 == cwd ? nil : $0 }, mode: self.store.permissionMode)
             self.splitModel.pendingAnchor = SplitModel.key(src)
             self.splitModel.pendingKnownIds = Set(self.store.sessions.map(\.id))
             if let c = spec.command { self.store.openShell(cwd: cwd, name: spec.name, typing: c) } else { self.store.spawn(cwd: cwd, name: spec.name) }
@@ -190,7 +190,7 @@ extension MainController {
             }
             showPage(nil)
             let known = Set(store.sessions.map(\.id))
-            store.openShell(cwd: dir, name: req.name, typing: req.command(openerName: opener))
+            store.openShell(cwd: dir, name: req.name, typing: req.command(openerName: opener, mode: store.permissionMode))
             if let s = store.sessions.last(where: { !known.contains($0.id) }) { store.markOpened(s, by: opener ?? "another session") }
             splitAdoptPending(); splitModel.pendingAnchor = nil
         }

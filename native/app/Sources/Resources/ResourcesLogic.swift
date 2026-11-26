@@ -94,7 +94,7 @@ enum ResourcesLogic {
     }
 
     /// The shell command that starts Claude with that prompt: the prompt is single-quoted, so nothing in it runs.
-    static func createCommand(prompt: String) -> String { "claude '" + prompt.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+    static func createCommand(prompt: String, mode: String? = nil) -> String { "claude \(NewAgentCommand.flag(for: mode)) '" + prompt.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 }
 
 // MARK: Slash commands

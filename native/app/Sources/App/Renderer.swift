@@ -267,6 +267,10 @@ final class TerminalRenderer: NSObject, MTKViewDelegate {
     private var cachedGeneration = -1
     private var cachedAtlas: ObjectIdentifier?
     private var cachedSelection = -1
+    private var cachedLink = -1
+    private var linkVersion = 0
+    /// The path link under the pointer: its cells are drawn underlined (terminal path links). Not the selection.
+    var link: (row: Int, from: Int, to: Int)? { didSet { linkVersion += 1 } }
     private var overlay: [(index: Int, original: CellInstance)] = []
     private(set) var cursorCell = (x: 0, y: 0)
     private var lastDraw = 0.0
@@ -329,7 +333,7 @@ final class TerminalRenderer: NSObject, MTKViewDelegate {
     private func update(replica: Replica) {
         let id = ObjectIdentifier(replica)
         let atlasID = ObjectIdentifier(atlas)
-        var full = cachedFor != id || cachedGeneration != atlas.generation || cachedAtlas != atlasID || cachedSelection != replica.selectionVersion
+        var full = cachedFor != id || cachedGeneration != atlas.generation || cachedAtlas != atlasID || cachedSelection != replica.selectionVersion || cachedLink != linkVersion
         replica.lock.lock()
         ghostty_render_state_begin_update(replica.renderState, replica.terminal)
         replica.lock.unlock()
@@ -410,6 +414,7 @@ final class TerminalRenderer: NSObject, MTKViewDelegate {
                         if ghostty_render_state_row_cells_get(rowCells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &c) == GHOSTTY_SUCCESS { bg = SIMD4(c.r, c.g, c.b, 255) }
                     }
                     if selected, x >= Int(rowSel.start_x), x <= Int(rowSel.end_x) { bg = selBg }
+                    if let l = link, l.row == y, x >= l.from, x <= l.to { lineFlags |= 2 }
                     var wide = GHOSTTY_CELL_WIDE_NARROW
                     ghostty_cell_get(raw, GHOSTTY_CELL_DATA_WIDE, &wide)
                     var inst = CellInstance(grid: SIMD2(Float(x), Float(y)), size: .zero, uv: .zero, fg: fg, bg: bg, flags: lineFlags)
@@ -438,6 +443,7 @@ final class TerminalRenderer: NSObject, MTKViewDelegate {
         cachedFor = id
         cachedAtlas = atlasID
         cachedSelection = selectionVersion
+        cachedLink = linkVersion
         // The atlas filled up and was cleared mid-update: instances built earlier point at wiped
         // glyphs. Build everything again against the fresh atlas.
         if atlas.generation != generation { cachedFor = nil; cachedGeneration = atlas.generation }

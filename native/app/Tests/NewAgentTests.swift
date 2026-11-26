@@ -77,4 +77,32 @@ func runPaletteFilesTests() {
         let dup = PaletteFiles.items(open: ["/home/u/src/a.rs"], changes: [("~/src/a.rs", false)], root: "/r", home: "/home/u")
         check(dup.count == 1 && dup[0].id == "file:/r/~/src/a.rs", "same label: later wins")
     }
+
+    test("default permission mode: one flag per mode, an empty or unknown stored value is auto") {
+        for m in NewAgentCommand.modes { check(NewAgentCommand.flag(for: m.value) == m.flag, m.value) }
+        check(NewAgentCommand.flag(for: "bypass") == "--dangerously-skip-permissions", "bypass")
+        check(NewAgentCommand.flag(for: "manual") == "--permission-mode manual", "manual")
+        for odd in [nil, "", "Bypass permissions", "yolo"] as [String?] { check(NewAgentCommand.flag(for: odd) == "--permission-mode auto", "fallback \(odd ?? "nil")") }
+        check(UIPrefs.defaults["permissionMode"] as? String == "auto", "factory default")
+        let row = SettingsSchema.rows.first { $0.id == "permissionMode" }
+        check(row?.store == "ui" && row?.title == "Default permission mode", "settings row")
+        if case let .popup(l)? = row?.kind { check(l == NewAgentCommand.modes.map(\.label), "five labels") } else { check(false, "popup") }
+    }
+
+    test("default permission mode: every command builder follows the stored mode") {
+        for (mode, flag) in [("bypass", "--dangerously-skip-permissions"), ("manual", "--permission-mode manual"), (nil, "--permission-mode auto"), ("", "--permission-mode auto")] as [(String?, String)] {
+            check(SessionsLogic.resumeCommand("abc-1", mode: mode) == "claude --resume 'abc-1' \(flag)", "resume \(mode ?? "nil")")
+            check(SplitLogic.claudeBase(mode: mode) == "claude \(flag)", "claudeBase")
+            check(SplitLogic.cloneSpec(name: "n", agent: "claude", sessionId: "abc-1", sessionCwd: nil, mode: mode).command == "claude --resume 'abc-1' --fork-session \(flag)", "fork")
+            check(SplitLogic.cloneSpec(name: "n", agent: "claude", sessionId: nil, sessionCwd: nil, mode: mode).command == "claude \(flag)", "fresh clone")
+            let o = OpenAgentSession(payload: "{\"name\":\"w\",\"unattended\":false}")!
+            check(o.command(openerName: nil, mode: mode) == "claude \(flag) --name 'w'", "open_session")
+            let u = OpenAgentSession(payload: "{\"name\":\"w\"}")!
+            check(u.command(openerName: nil, mode: mode).hasPrefix("claude \(flag) --disallowedTools"), "unattended open_session")
+            check(ResourcesLogic.createCommand(prompt: "p", mode: mode) == "claude \(flag) 'p'", "resources create")
+            let live = LiveSession(id: 2, pid: 102, cwd: "/w", claudeSessionId: "c-1")
+            check(ResumeStep.steps([live], home: "/h", mode: mode) { _ in true }.first?.command == "claude --resume 'c-1' \(flag)", "restart resume")
+        }
+        check(AgentsLogic.attachCommand("abc") == "claude attach 'abc'", "attach has no flag")
+    }
 }

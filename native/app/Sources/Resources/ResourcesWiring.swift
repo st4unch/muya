@@ -11,6 +11,7 @@ enum ResourcesPageFactory {
                 c.showPage(nil)
                 c.store.openShell(cwd: c.store.home, name: name, typing: command)
             }
+            page.permissionMode = { [unowned c] in c.store.permissionMode }
             page.report = { [unowned c] text in
                 // Today's page shows an alert; a sheet-less line in the log keeps the debug runs unblocked.
                 if ProcessInfo.processInfo.environment["MUYA_DEBUG_SOCKET"] != nil { print("resources: \(text)"); return }

@@ -110,10 +110,10 @@ public enum SessionsLogic {
             .sorted { ($0.entries.first?.lastActivity ?? 0, $1.cwd) > ($1.entries.first?.lastActivity ?? 0, $0.cwd) }
     }
 
-    /// `claude --resume '<id>' --permission-mode auto`; nil when the id could break out of the quotes.
-    public static func resumeCommand(_ id: String) -> String? {
+    /// `claude --resume '<id>' <flag of the stored mode>`; nil when the id could break out of the quotes.
+    public static func resumeCommand(_ id: String, mode: String? = nil) -> String? {
         guard !id.isEmpty, id.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }) else { return nil }
-        return "claude --resume '\(id)' --permission-mode auto"
+        return "claude --resume '\(id)' \(NewAgentCommand.flag(for: mode))"
     }
 
     /// Default file name of an export: the session label with runs of odd characters turned into `-`.
@@ -450,6 +450,7 @@ public enum SettingsSchema {
         SettingRow(id: "openAtLogin", section: "Startup", title: "Open at login", helper: "Starts Muya when you log in to your Mac.", kind: .toggle, store: "ui"),
         SettingRow(id: "resumeOnLaunch", section: "Startup", title: "Resume Claude sessions on launch", helper: "Reopen the Claude sessions that were open when Muya quit.", kind: .toggle, store: "ui"),
         SettingRow(id: "autoApprove", section: "Startup", title: "Auto-allow permission prompts", helper: "Answers a Claude permission prompt for you after 2 seconds.", kind: .toggle, store: "ui"),
+        SettingRow(id: "permissionMode", section: "Claude", title: "Default permission mode", helper: "How Claude sessions start.", kind: .popup(NewAgentCommand.modes.map(\.label)), store: "ui"),
         SettingRow(id: "claudeStatusInFooter", section: "Claude", title: "Claude status in Muya's footer", helper: "Shows model, context and cost through a statusLine in ~/.claude/settings.json.", kind: .toggle, store: "core"),
         SettingRow(id: "claudeCleanupDays", section: "Claude", title: "Delete old Claude sessions after", helper: "Claude removes session history older than this (cleanupPeriodDays).", kind: .popup(cleanupChoices), store: "core"),
         SettingRow(id: "autoSave", section: "Editor", title: "Auto-save files", helper: "Saves a changed file a moment after you stop typing.", kind: .toggle, store: "ui"),
@@ -466,7 +467,7 @@ public enum SettingsSchema {
 
 /// The app's own preferences (theme, terminal font size, ...) in one JSON file, written atomically.
 public final class UIPrefs: @unchecked Sendable {
-    public static let defaults: [String: Any] = ["appearance": "System", "resumeOnLaunch": false, "openAtLogin": false, "spotlightRoots": "", "autoApprove": false, "autoSave": false, "terminalFontSize": 13]
+    public static let defaults: [String: Any] = ["appearance": "System", "resumeOnLaunch": false, "openAtLogin": false, "spotlightRoots": "", "autoApprove": false, "autoSave": false, "terminalFontSize": 13, "permissionMode": NewAgentCommand.defaultMode]
     private let url: URL
     private let lock = NSLock()
     private var values: [String: Any]

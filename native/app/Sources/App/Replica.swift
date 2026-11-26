@@ -18,7 +18,9 @@ final class Replica: @unchecked Sendable {
     /// Bumped whenever the selection changes; the renderer rebuilds highlighted rows when it moves.
     private(set) var selectionVersion = 0
     private var hadSelection = false
-    /// New output returns the view to the bottom (PRD §8: scrollback is read while the program is quiet).
+    /// Output keeps the view at the bottom only while it is already there. Scrolling back turns the follow off so
+    /// the operator can read history while a program is writing; returning to the last row, typing, pasting, a find
+    /// jump back to the bottom, or an attach snapshot resumes it. A full-screen (alternate screen) program always follows.
     var snapToBottomOnOutput = true
     /// Latency probe: when output containing `bytes` arrives, `hit` runs once (on the reader thread).
     private var probe: (bytes: Data, hit: () -> Void)?
@@ -51,7 +53,10 @@ final class Replica: @unchecked Sendable {
             ghostty_terminal_vt_write(terminal, base, raw.count)
             bytesIn += raw.count
             if let pr = probe, data.range(of: pr.bytes) != nil { probe = nil; pr.hit() }
-            if snapToBottomOnOutput, scrolledBackLocked { scrollLocked(GHOSTTY_SCROLL_VIEWPORT_BOTTOM, delta: 0) }
+            if scrolledBackLocked, snapToBottomOnOutput || onAlternateScreenLocked {
+                scrollLocked(GHOSTTY_SCROLL_VIEWPORT_BOTTOM, delta: 0)
+                snapToBottomOnOutput = true
+            }
             if hadSelection, !selectionActiveLocked { hadSelection = false; selectionVersion += 1 } // the program overwrote it
             lock.unlock()
         }
@@ -104,11 +109,13 @@ final class Replica: @unchecked Sendable {
     func scroll(lines: Int) {
         lock.lock(); defer { lock.unlock() }
         scrollLocked(GHOSTTY_SCROLL_VIEWPORT_DELTA, delta: lines)
+        snapToBottomOnOutput = !scrolledBackLocked // follow only while the view is at the last row
     }
 
     func scrollToBottom() {
         lock.lock(); defer { lock.unlock() }
         scrollLocked(GHOSTTY_SCROLL_VIEWPORT_BOTTOM, delta: 0)
+        snapToBottomOnOutput = true
     }
 
     private func scrollLocked(_ tag: GhosttyTerminalScrollViewportTag, delta: Int) {
@@ -125,6 +132,12 @@ final class Replica: @unchecked Sendable {
         guard ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_SCROLLBAR, &sb) == GHOSTTY_SUCCESS else { return (0, 0) }
         let history = Int(sb.total) - Int(sb.len)
         return (max(history, 0), max(history - Int(sb.offset), 0))
+    }
+
+    fileprivate var onAlternateScreenLocked: Bool {
+        var screen = GhosttyTerminalScreen(rawValue: 0)
+        guard ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN, &screen) == GHOSTTY_SUCCESS else { return false }
+        return screen == GHOSTTY_TERMINAL_SCREEN_ALTERNATE
     }
 
     fileprivate var scrolledBackLocked: Bool {
@@ -178,6 +191,49 @@ final class Replica: @unchecked Sendable {
         }
         while lines.last == "" { lines.removeLast() }
         return lines.joined(separator: "\n")
+    }
+}
+
+// MARK: One viewport row as cells (terminal path links)
+
+extension Replica {
+    /// Viewport row `row` as one string per cell: "" for a wide character's second cell, " " for a blank one. Main thread
+    /// (the renderer's thread: it shares the render state).
+    func rowCells(_ row: Int) -> [String] {
+        lock.lock()
+        ghostty_render_state_begin_update(renderState, terminal)
+        lock.unlock()
+        ghostty_render_state_end_update(renderState)
+        var iter: GhosttyRenderStateRowIterator?
+        var cells: GhosttyRenderStateRowCells?
+        ghostty_render_state_row_iterator_new(nil, &iter)
+        ghostty_render_state_row_cells_new(nil, &cells)
+        defer { ghostty_render_state_row_iterator_free(iter); ghostty_render_state_row_cells_free(cells) }
+        ghostty_render_state_get(renderState, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &iter)
+        var y = 0
+        var cps = [UInt32](repeating: 0, count: 32)
+        while ghostty_render_state_row_iterator_next(iter) {
+            defer { y += 1 }
+            guard y == row else { continue }
+            ghostty_render_state_row_get(iter, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &cells)
+            var out: [String] = []
+            while ghostty_render_state_row_cells_next(cells) {
+                var len: UInt32 = 0
+                var raw: GhosttyCell = 0, wide = GHOSTTY_CELL_WIDE_NARROW
+                ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, &raw)
+                ghostty_cell_get(raw, GHOSTTY_CELL_DATA_WIDE, &wide)
+                if wide == GHOSTTY_CELL_WIDE_SPACER_TAIL { out.append(""); continue }
+                ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN, &len)
+                if len == 0 { out.append(" "); continue }
+                if cps.count < Int(len) { cps = [UInt32](repeating: 0, count: Int(len)) }
+                ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF, &cps)
+                var u = String.UnicodeScalarView()
+                for i in 0 ..< Int(len) { if let c = UnicodeScalar(cps[i]) { u.append(c) } }
+                out.append(String(u))
+            }
+            return out
+        }
+        return []
     }
 }
 
@@ -357,6 +413,7 @@ extension Replica {
         guard ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_SCROLLBAR, &sb) == GHOSTTY_SUCCESS else { return }
         let top = Int(sb.offset), len = Int(sb.len)
         if m.row < top || m.row >= top + len { scrollLocked(GHOSTTY_SCROLL_VIEWPORT_DELTA, delta: m.row - (top + len / 2)) }
+        snapToBottomOnOutput = !scrolledBackLocked // output must not yank the view off a search hit
     }
 
     /// First row of the visible part of the buffer (absolute, 0 = oldest scrollback row).

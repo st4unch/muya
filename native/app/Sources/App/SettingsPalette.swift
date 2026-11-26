@@ -78,6 +78,7 @@ final class SettingsController: NSObject, NSWindowDelegate, NSTextFieldDelegate 
         "keepRunningInBackground": "The red close button hides the window; sessions and schedules keep running. Click Muya in the Dock to bring it back, ⌘Q to quit.",
         "resumeOnLaunch": "Claude tabs from last time pick up their conversations without a click. If there are none, a new Claude session opens.",
         "claudeStatusInFooter": "Model, context, cost and limits of the session you're looking at. Muya adds its status line to ~/.claude/settings.json and keeps yours running. Off puts your own back.",
+        "permissionMode": "What Claude sessions start with: new ones, ones Muya resumes, forks and the ones an agent opens. Bypass means Claude never asks before it acts. A session Muya kept running in the background is re-attached, not restarted, so it keeps its mode until it next starts.",
         "claudeCleanupDays": "Claude deletes sessions not used for this long when it starts. Old sessions make Muya and Claude slower. Sessions you archive in Sessions are kept.",
         "autoSave": "Files you edit in Muya are saved a second after you stop typing. Either way, Muya keeps their earlier versions; see Activity or File ▸ Version History (⇧⌘H).",
         "debugLog": "Each CyberArk logon/list/retrieve and SSH connect step is appended with a timestamp. Metadata only — never passwords, tokens or account secrets.",
@@ -280,7 +281,7 @@ final class SettingsController: NSObject, NSWindowDelegate, NSTextFieldDelegate 
             s.target = self; s.action = #selector(changed(_:)); c = s; layout = s
         case let .popup(labels):
             let p = NSPopUpButton(frame: .zero, pullsDown: false); p.addItems(withTitles: labels); p.target = self; p.action = #selector(changed(_:)); c = p
-            layout = FieldBox(p, width: 130)
+            layout = FieldBox(p, width: row.id == "permissionMode" ? 170 : 130)
         case .text:
             let f = Kit.field(row.id == "spotlightRoots" ? "~/work, ~/Documents" : "~/.claude/muya-debug.log", label: row.title); f.delegate = self; c = f
             layout = FieldBox(f, width: 200)
@@ -337,6 +338,7 @@ final class SettingsController: NSObject, NSWindowDelegate, NSTextFieldDelegate 
         case let (.segmented(labels), s as IconSegmented): s.selected = labels.firstIndex(of: (value as? String) ?? "") ?? 0
         case (.popup, let p as NSPopUpButton):
             if row.id == "claudeCleanupDays" { p.selectItem(withTitle: SettingsSchema.cleanupLabel(days: (value as? NSNumber)?.intValue)) }
+            if row.id == "permissionMode" { p.selectItem(withTitle: NewAgentCommand.mode(for: value as? String).label) }
         case (.text, let f as NSTextField): f.stringValue = (value as? String) ?? ""
         default: break
         }
@@ -417,6 +419,9 @@ final class SettingsController: NSObject, NSWindowDelegate, NSTextFieldDelegate 
             stored[id] = v
         case "spotlightRoots":
             store.prefs.set(id, v)
+            stored[id] = v
+        case "permissionMode":
+            store.prefs.set(id, NewAgentCommand.modes.first { $0.label == v }?.value ?? NewAgentCommand.defaultMode)
             stored[id] = v
         case _ where row.store == "ui":
             store.prefs.set(id, v == "on")

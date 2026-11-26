@@ -177,6 +177,14 @@ extension DebugServer {
         case "notify-delivered": return c.store.notifier.debugDelivered()
         case "notify-click": if let id = UInt64(arg) { c.store.notifier.focus(session: id); return "ok" } else { return "error: notify-click <session id>" }
         case "autoallow-state": return "allowed=\(c.store.autoAllowed)"
+        case "prompt-screen":   // what Muya parsed from a session's screen: permission seen, truncated, marker row, option keys
+            guard let id = UInt64(arg), let sc = c.store.sessions.first(where: { $0.id == id })?.screen else { return "error: no screen" }
+            return "permission=\(sc.permission) truncated=\(sc.truncated) selected=\(sc.selectedIndex) approve=\(sc.approveKey ?? "-")"
+        case "answer-prompt":   // answer-prompt <session id> allow|deny: the same path as the Inspector / grid buttons
+            let w = arg.split(separator: " ").map(String.init)
+            guard w.count == 2, let id = UInt64(w[0]), w[1] == "allow" || w[1] == "deny" else { return "error: answer-prompt <session id> allow|deny" }
+            c.store.answerPrompt(session: id, approve: w[1] == "allow"); return "ok"
+        case "prompt-answer-state": return "fallbacks=\(c.store.promptAnswerFallbacks) stuck=\(c.store.promptAnswerStuck)"
         case "resume-state": return "resumed=\(c.resumedAtLaunch.joined(separator: ",")) saved=\(c.resume.saved.map(\.sessionId).joined(separator: ","))"
         case "migration-state": return c.migrationOutcome.map { "\($0)" } ?? "pending"
         case "sched-events": return "events=\(c.store.eventsSeen) eventReloads=\(sc.eventReloads) pollReloads=\(sc.pollReloads)"

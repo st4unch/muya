@@ -142,11 +142,11 @@ public struct ResumeStep: Equatable, Sendable {
     public var command: String?
 
     /// `exists` tells whether a folder is still there (a deleted project falls back to the home folder).
-    public static func steps(_ plan: [LiveSession], home: String, exists: (String) -> Bool) -> [ResumeStep] {
+    public static func steps(_ plan: [LiveSession], home: String, mode: String? = nil, exists: (String) -> Bool) -> [ResumeStep] {
         plan.filter { $0.exited == nil }.map { s in
             let cwd = (!s.cwd.isEmpty && exists(s.cwd)) ? s.cwd : home
             let base = cwd == home ? "Shell" : (cwd as NSString).lastPathComponent
-            let cmd = s.claudeSessionId.flatMap(SessionsLogic.resumeCommand)
+            let cmd = s.claudeSessionId.flatMap { SessionsLogic.resumeCommand($0, mode: mode) }
             return ResumeStep(cwd: cwd, name: cmd == nil ? base : "↻ \(base)", command: cmd)
         }
     }

@@ -80,6 +80,8 @@ final class ResourcesPage: PageView, NSSearchFieldDelegate {
     private let service: ResourcesService
     /// Opens a terminal running `command` (Create with Claude).
     var openTerminal: (String, String) -> Void = { _, _ in }
+    /// Settings > Default permission mode (the stored value).
+    var permissionMode: () -> String = { "" }
     /// Asks the user (a sheet or alert text); tests and verify scripts replace it.
     var report: (String) -> Void = { _ in }
 
@@ -490,7 +492,7 @@ final class ResourcesPage: PageView, NSSearchFieldDelegate {
 
     /// What the sheet's Create button does: Claude Code opens in a new terminal with the wrapped request.
     func createWith(kind: String, request: String) {
-        openTerminal("Create \(kind)", ResourcesLogic.createCommand(prompt: ResourcesLogic.createPrompt(kind: kind, request: request)))
+        openTerminal("Create \(kind)", ResourcesLogic.createCommand(prompt: ResourcesLogic.createPrompt(kind: kind, request: request), mode: permissionMode()))
     }
 
     func showCreate() {

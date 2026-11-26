@@ -54,6 +54,35 @@ fn run(prog: &str, args: &[&str]) -> Result<String, String> {
     }
 }
 
+/// Muya's own downloads must not depend on how the operator configured curl for their work.
+///
+/// curl reads `~/.curlrc` and takes its CA bundle from `CURL_CA_BUNDLE` / `SSL_CERT_FILE`. A developer machine often
+/// points those at a project's own PEM (a corporate TLS proxy, say); when that file moves or the project is deleted,
+/// every curl on that Mac fails with `curl: (77) error setting certificate verify locations` — and Muya's update check
+/// died with it, although nothing is wrong with Muya or the network. `-q` ignores the rc file, and clearing those
+/// variables leaves curl on the system trust store, which is what an app's own updater must use.
+pub fn harden(cmd: &mut Command) -> &mut Command {
+    for v in ["CURL_CA_BUNDLE", "CURL_CA_PATH", "SSL_CERT_FILE", "SSL_CERT_DIR", "CURL_HOME", "CURLOPT_CAINFO"] {
+        cmd.env_remove(v);
+    }
+    cmd
+}
+
+/// `-q` must come first: it tells curl to ignore `~/.curlrc` before anything else is read.
+pub const QUIET_RC: &str = "-q";
+
+/// A clearer line than curl's own for the failures an operator can actually do something about.
+pub fn explain(code: Option<i32>, stderr: &str) -> String {
+    match code {
+        Some(77) => format!(
+            "network error: curl could not read the certificate file it was told to use. \
+Muya ignores ~/.curlrc, but a CA file set for this Mac is still unreadable. {}",
+            stderr.trim()
+        ),
+        _ => format!("network error: {}", stderr.trim()),
+    }
+}
+
 impl Platform for SysPlatform {
     fn download(&mut self, url: &str, dest: &Path, progress: &mut dyn FnMut(u64, Option<u64>)) -> Result<(), String> {
         if let Some(d) = dest.parent() {
@@ -61,13 +90,13 @@ impl Platform for SysPlatform {
         }
         let _ = std::fs::remove_file(dest);
         // https only, redirects only to https (GitHub -> objects.githubusercontent.com).
-        let mut args: Vec<String> = vec!["-fsSL".into(), "--connect-timeout".into(), "15".into(), "--max-time".into(), "900".into(), "-o".into(), dest.to_string_lossy().into(), url.into()];
+        let mut args: Vec<String> = vec![QUIET_RC.into(), "-fsSL".into(), "--connect-timeout".into(), "15".into(), "--max-time".into(), "900".into(), "-o".into(), dest.to_string_lossy().into(), url.into()];
         if url.starts_with("https://") {
             let mut p = vec!["--proto".to_string(), "=https".into(), "--proto-redir".into(), "=https".into()];
             p.append(&mut args);
             args = p;
         }
-        let mut child = Command::new("curl").args(&args).stderr(std::process::Stdio::piped()).spawn().map_err(|e| format!("curl: {e}"))?;
+        let mut child = harden(&mut Command::new("curl")).args(&args).stderr(std::process::Stdio::piped()).spawn().map_err(|e| format!("curl: {e}"))?;
         loop {
             match child.try_wait().map_err(|e| e.to_string())? {
                 Some(status) => {
@@ -78,7 +107,7 @@ impl Platform for SysPlatform {
                             use std::io::Read;
                             let _ = s.read_to_string(&mut err);
                         }
-                        return Err(format!("network error: {}", err.trim()));
+                        return Err(explain(status.code(), &err));
                     }
                     let n = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
                     progress(n, Some(n));
@@ -323,5 +352,35 @@ mod tests {
         let names: Vec<_> = std::fs::read_dir(&desktop).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
         assert_eq!(names, ["Muya Native Yeni.app"], "no partial copy or probe file left in the folder");
         assert_eq!(std::fs::read_dir(home.join(".Trash")).unwrap().count(), 0, "nothing is left in the Trash");
+    }
+}
+
+#[cfg(test)]
+mod curl_env_tests {
+    use super::*;
+
+    /// The operator's machine had `CURL_CA_BUNDLE` pointing at a project PEM that no longer existed, so every curl on
+    /// it failed with exit 77 — and with it Muya's update check. Muya's own curl must not read that setting.
+    #[test]
+    fn muyas_curl_ignores_the_machines_ca_overrides_and_rc_file() {
+        let mut c = Command::new("curl");
+        harden(&mut c);
+        let removed: Vec<String> = c
+            .get_envs()
+            .filter(|(_, v)| v.is_none())
+            .map(|(k, _)| k.to_string_lossy().into_owned())
+            .collect();
+        for v in ["CURL_CA_BUNDLE", "CURL_CA_PATH", "SSL_CERT_FILE", "SSL_CERT_DIR", "CURL_HOME"] {
+            assert!(removed.iter().any(|r| r == v), "{v} must be cleared, got {removed:?}");
+        }
+        assert_eq!(QUIET_RC, "-q", "curl must be told to ignore ~/.curlrc");
+    }
+
+    #[test]
+    fn exit_77_says_what_is_wrong_instead_of_only_quoting_curl() {
+        let m = explain(Some(77), "curl: (77) error setting certificate verify locations: CAfile: /gone/skyhigh.pem");
+        assert!(m.contains("could not read the certificate file"), "{m}");
+        assert!(m.contains("skyhigh.pem"), "the original line is kept: {m}");
+        assert_eq!(explain(Some(6), "curl: (6) Could not resolve host"), "network error: curl: (6) Could not resolve host");
     }
 }
