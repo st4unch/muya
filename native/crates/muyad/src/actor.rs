@@ -81,6 +81,10 @@ pub enum Cmd {
     Lines {
         reply: Sender<Vec<String>>,
     },
+    /// Everything the terminal still holds (scrollback + screen) as plain text, trailing blanks trimmed (`read_session` on a shell).
+    Text {
+        reply: Sender<String>,
+    },
     Stop,
 }
 
@@ -254,8 +258,20 @@ pub fn run(
             Cmd::Lines { reply } => {
                 let _ = reply.send(visible_lines(&term));
             }
+            Cmd::Text { reply } => {
+                let _ = reply.send(plain_text(&term));
+            }
             Cmd::Stop => return,
         }
+    }
+}
+
+/// Scrollback and screen as plain text (no escape sequences), with trailing blank space trimmed.
+fn plain_text(term: &Terminal) -> String {
+    let opts = FormatterOptions::new().with_format(Format::Plain).with_trim(true);
+    match Formatter::new(term, opts).and_then(|mut f| f.format_alloc(None).map(|b| b.to_vec())) {
+        Ok(v) => String::from_utf8_lossy(&v).trim_end().to_string(),
+        Err(_) => String::new(),
     }
 }
 

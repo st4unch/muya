@@ -166,7 +166,7 @@ fn same_key_types_once_even_when_muyad_is_kill9ed_between_the_attempts() {
     let typed = drain(&rx, Duration::from_millis(500));
     assert_eq!(typed.len(), 1, "first attempt types once: {typed:?}");
     assert_eq!(typed[0]["sessionId"], "sess-1");
-    assert_eq!(typed[0]["text"], "deploy now\n");
+    assert_eq!(typed[0]["text"], "deploy now\r", "a line feed in keys is sent as Enter");
 
     // The app/muyad dies right after the first attempt (the caller never saw the reply).
     drop(app);

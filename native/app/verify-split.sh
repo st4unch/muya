@@ -99,6 +99,12 @@ dbg "split-open {\"name\":\"plain\",\"cwd\":\"$DEV/home/b\",\"splitWith\":\"unkn
 check "an unresolved splitWith opens a plain session" "$(dbg sessions | wc -l | tr -d ' ')" "$((b4 + 2))"
 check "...and shows alone" "$(npanes)" "0"
 shot agent
+echo "== 5b close_session: the daemon's close event removes the tab"
+bc=$(dbg sessions | wc -l | tr -d ' ')
+victim=$(dbg sessions | awk '{print $1}' | tail -1)
+dbg "agent-close {\"sessionId\":\"4f6c1d2e-aaaa-bbbb-cccc-0123456789ab\",\"terminalId\":$victim}" >/dev/null; sleep 0.8
+check "close_session removed the tab" "$(dbg sessions | wc -l | tr -d ' ')" "$((bc - 1))"
+check "a close for a tab that is gone is ignored" "$(dbg "agent-close {\"terminalId\":$victim}")" "error: no such tab"
 
 echo "== 6 IME and Turkish in a pane"
 dbg "select $A" >/dev/null; sleep 0.6

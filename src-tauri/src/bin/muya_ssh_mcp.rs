@@ -24,7 +24,19 @@ use std::path::PathBuf;
 use serde_json::{json, Value};
 
 const SERVER_NAME: &str = "muya-mcp";
-const SERVER_VERSION: &str = "0.1.0";
+/// The app version this sidecar was built from.
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// `<app version>+tools-<8 hex>`: the hash covers the whole tool list (names and schemas), so "is this the shipped
+/// sidecar?" is one look: a stale copy has the same app-version family but another hash. Shown by `--version` and in
+/// the MCP `initialize` reply (`serverInfo.version`).
+fn server_version() -> String {
+    let mut h: u32 = 0x811c9dc5; // FNV-1a
+    for b in tools_list().to_string().bytes() {
+        h = (h ^ u32::from(b)).wrapping_mul(0x01000193);
+    }
+    format!("{APP_VERSION}+tools-{h:08x}")
+}
 
 fn app_socket_path() -> PathBuf {
     if let Ok(p) = std::env::var("MUYA_SSH_BROKER_SOCK") {
@@ -192,6 +204,7 @@ fn tools_list() -> Value {
                     "type": "object",
                     "properties": {
                         "name": { "type": "string", "description": "Name for the new session (used later with send_to_session; also the CLI --name for claude)." },
+                        "kind": { "type": "string", "enum": ["claude", "shell"], "description": "What to open. \"claude\" (default): a Claude/opencode session (see `agent`). \"shell\": a plain terminal tab with NO agent in it — address it by name with send_to_session(deliver:\"keys\") (end a command with \"\\n\" to run it) and read its output with read_session. With \"shell\", `initial_message` is typed as the first command, and `agent`, `split`, `unattended` do not apply." },
                         "agent": { "type": "string", "enum": ["claude", "opencode"], "description": "Which agent CLI to launch. Defaults to claude." },
                         "cwd": { "type": "string", "description": "Working directory for the new session. Defaults to the operator's current workspace." },
                         "initial_message": { "type": "string", "description": "Optional first message/prompt to give the new session immediately on launch." },
@@ -223,13 +236,13 @@ fn tools_list() -> Value {
             },
             {
                 "name": "send_to_session",
-                "description": "Send a message to ANOTHER running session, addressed by the operator's name for it. Muya resolves the name to exactly one session (if several match, you get the candidates — ASK THE USER which one, never guess), and stamps your own session as the sender. By default it hands you back the canonical target name to deliver with the native SendMessage tool, which reaches the other session without interrupting its running work. Pass deliver:\"muya\" to have Muya type a CHAT message into that session's terminal instead (fallback when SendMessage isn't available). Pass deliver:\"keys\" to answer an interactive screen a session is stuck on instead (check list_sessions' waitingFor first) — `text` is typed VERBATIM with no wrapping, so pass exactly what a human would type (e.g. \"1\\n\" or \"y\\n\") to pick an option and confirm; deliver:\"muya\" would type its message-wrapping text INTO the prompt and likely break it, so never use it for this.",
+                "description": "Send a message to ANOTHER running session, addressed by the operator's name for it. Muya resolves the name to exactly one session (if several match, you get the candidates — ASK THE USER which one, never guess), and stamps your own session as the sender. By default (deliver:\"auto\" = \"muya\") Muya itself types a CHAT message into that session's terminal, tagged with you as the sender — the result says `delivered`, so a success means it was typed. (Claude Code's native SendMessage is a separate tool; this one does not hand the delivery back to you.) A plain SHELL tab takes only deliver:\"keys\". Pass deliver:\"keys\" to answer an interactive screen a session is stuck on instead (check list_sessions' waitingFor first) — `text` is typed VERBATIM with no wrapping, so pass exactly what a human would type (e.g. \"1\\n\" or \"y\\n\" — a line feed is sent as Enter) to pick an option and confirm, or to run a command in a shell tab; deliver:\"muya\" would type its message-wrapping text INTO the prompt and likely break it, so never use it for this.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "target": { "type": "string", "description": "Target session name or id (from list_sessions)." },
                         "text": { "type": "string", "description": "The message to send (deliver:\"auto\"/\"muya\"), or the literal keystrokes to type (deliver:\"keys\")." },
-                        "deliver": { "type": "string", "enum": ["auto", "muya", "keys"], "description": "'auto' (default): resolve and deliver via the native SendMessage tool. 'muya': Muya types a wrapped chat message into the target terminal. 'keys': Muya types `text` in verbatim — for answering a prompt, not for chat." },
+                        "deliver": { "type": "string", "enum": ["auto", "muya", "keys"], "description": "'auto' (default) and 'muya': Muya types a wrapped chat message into the target Claude session's terminal. A shell tab refuses these. 'keys': Muya types `text` in verbatim — for answering a prompt, not for chat." },
                         "idempotency_key": { "type": "string", "description": "Optional, for deliver:\"muya\"/\"keys\": a unique id for this message. If you retry the call with the SAME key (e.g. after a timeout or a Muya restart) the text is typed once, not twice." }
                     },
                     "required": ["target", "text"],
@@ -713,6 +726,36 @@ fn tools_list() -> Value {
     })
 }
 
+/// `Err` names the first argument the tool's schema does not declare (only where the schema says
+/// `additionalProperties:false`, which every tool's does).
+fn reject_unknown_args(tool: &str, args: &Value) -> Result<(), String> {
+    let list = tools_list();
+    let Some(schema) = list["tools"]
+        .as_array()
+        .and_then(|t| t.iter().find(|t| t["name"] == tool))
+        .map(|t| &t["inputSchema"])
+    else {
+        return Ok(());
+    };
+    if schema["additionalProperties"] != json!(false) {
+        return Ok(());
+    }
+    let (Some(props), Some(given)) = (schema["properties"].as_object(), args.as_object()) else {
+        return Ok(());
+    };
+    let unknown: Vec<&str> = given.keys().filter(|k| !props.contains_key(*k)).map(String::as_str).collect();
+    if unknown.is_empty() {
+        return Ok(());
+    }
+    let mut known: Vec<&str> = props.keys().map(String::as_str).collect();
+    known.sort_unstable();
+    Err(format!(
+        "{tool} has no argument '{}' (it would have been ignored). Arguments: {}",
+        unknown.join("', '"),
+        known.join(", ")
+    ))
+}
+
 /// Dispatch a `tools/call`. Connection failures bubble up as `Err` (JSON-RPC
 /// error); business failures (locked store, unknown alias) return a tool result
 /// with `isError:true` so the model can react.
@@ -722,6 +765,12 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| json!({}));
+
+    // A tool must refuse an argument its schema does not declare: one that is accepted and ignored is worse than
+    // an error (`open_session kind:"shell"` used to open a Claude session without a word).
+    if let Err(e) = reject_unknown_args(name, &args) {
+        return Ok(tool_error(e));
+    }
 
     match name {
         "ssh_list_servers" => {
@@ -901,6 +950,9 @@ fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
                 .and_then(Value::as_str)
                 .map(str::to_string);
             let mut op = json!({ "op": "open_session", "name": name });
+            if let Some(k) = args.get("kind").and_then(Value::as_str) {
+                op["kind"] = json!(k);
+            }
             if let Some(a) = &agent {
                 op["agent"] = json!(a);
             }
@@ -1997,7 +2049,7 @@ fn handle_method(method: &str, params: &Value) -> Result<Value, (i64, String)> {
                 // when the session was started with Muya's channel flag (see
                 // `channel_enabled_in`). Declaring it otherwise is harmless.
                 "capabilities": { "tools": {}, "experimental": { "claude/channel": {} } },
-                "serverInfo": { "name": SERVER_NAME, "version": SERVER_VERSION },
+                "serverInfo": { "name": SERVER_NAME, "version": server_version() },
                 "instructions": CHANNEL_INSTRUCTIONS
             }))
         }
@@ -2097,6 +2149,10 @@ fn run_channel_subscription(session_id: String) {
 }
 
 fn main() {
+    if std::env::args().nth(1).is_some_and(|a| a == "--version" || a == "-V") {
+        println!("{SERVER_NAME} {}", server_version());
+        return;
+    }
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
 

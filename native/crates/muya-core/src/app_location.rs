@@ -108,14 +108,19 @@ pub fn stable_mcp_binary(exe: &Path) -> Result<PathBuf, String> {
     let Some(bin_dir) = stable_bin_dir() else {
         return Ok(beside);
     };
-    match install_copy(&beside, &bin_dir, MCP_BIN_NAME) {
+    refresh_helper(&beside, &bin_dir)
+}
+
+/// [`install_copy`] with the failure policy of [`stable_mcp_binary`]: a failed copy registers the helper beside the exe.
+pub fn refresh_helper(beside: &Path, bin_dir: &Path) -> Result<PathBuf, String> {
+    match install_copy(beside, bin_dir, MCP_BIN_NAME) {
         Ok(p) => Ok(p),
         Err(e) => {
             crate::debuglog::log(&format!(
                 "[mcp] could not install stable helper copy ({e}); registering {}",
                 beside.display()
             ));
-            Ok(beside)
+            Ok(beside.to_path_buf())
         }
     }
 }
@@ -326,6 +331,31 @@ mod tests {
         )
         .unwrap();
         assert_eq!(std::fs::read(&dst).unwrap(), b"helper-v2");
+    }
+
+    // An identical bundled helper leaves the installed copy untouched (same inode, so a running sidecar is never disturbed);
+    // a different one replaces it by rename, whatever the file dates say (the field bug: a 12 Nov copy outlived 5 updates).
+    #[test]
+    fn refresh_helper_replaces_a_different_copy_and_leaves_an_identical_one() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = tempfile::tempdir().unwrap();
+        let exe = fake_bundle(dir.path());
+        let src = exe.parent().unwrap().join(MCP_BIN_NAME);
+        let bin = dir.path().join("support/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let dst = bin.join(MCP_BIN_NAME);
+        // An OLDER content with a NEWER mtime than the bundled file still loses.
+        std::fs::write(&dst, b"helper-old").unwrap();
+        assert_eq!(refresh_helper(&src, &bin).unwrap(), dst);
+        assert_eq!(std::fs::read(&dst).unwrap(), b"helper-v1");
+        let ino = std::fs::metadata(&dst).unwrap().ino();
+        refresh_helper(&src, &bin).unwrap();
+        assert_eq!(std::fs::metadata(&dst).unwrap().ino(), ino, "identical: not rewritten");
+        // A newer bundle: replaced, and no temp file is left behind.
+        std::fs::write(&src, b"helper-v2").unwrap();
+        refresh_helper(&src, &bin).unwrap();
+        assert_eq!(std::fs::read(&dst).unwrap(), b"helper-v2");
+        assert_eq!(std::fs::read_dir(&bin).unwrap().count(), 1);
     }
 
     // A copy made from a quarantined bundle must not inherit the quarantine flag.

@@ -158,6 +158,58 @@ fn sidecar_talks_to_the_broker_in_muyad() {
     }
 }
 
+/// An argument the schema does not declare is refused by the sidecar, and `kind` (declared) reaches the broker, which
+/// refuses an unknown value: neither is swallowed while a Claude session opens (MCP defect 5).
+#[test]
+fn undeclared_arguments_and_unknown_kinds_are_refused() {
+    let Some(bin) = sidecar() else { return };
+    let d = start("broker3");
+    let sock = d.dir.join("b.sock");
+    let r = mcp(
+        &bin,
+        &sock,
+        &[
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#,
+            r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"open_session","arguments":{"name":"x","frobnicate":true}}}"#,
+            r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"open_session","arguments":{"name":"x","kind":"terminal"}}}"#,
+            r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"schedule_create","arguments":{"name":"a","prompt":"p","folder":"/tmp","schedule":{"kind":"interval","minutes":10},"modle":"x"}}}"#,
+        ],
+    );
+    for (i, want) in [(1, "no argument 'frobnicate'"), (2, "unknown kind 'terminal'"), (3, "no argument 'modle'")] {
+        let v: serde_json::Value = serde_json::from_str(&r[i]).unwrap();
+        assert_eq!(v["result"]["isError"], true, "{}", r[i]);
+        assert!(v["result"]["content"][0]["text"].as_str().unwrap().contains(want), "{}", r[i]);
+    }
+}
+
+/// Defect 7 against a freshly built sidecar: model and effort are in the schema and come back from schedules_list.
+/// (The operator's copy was two weeks old and had neither field; `--version` says which sidecar runs.)
+#[test]
+fn schedule_model_and_effort_round_trip_and_the_sidecar_reports_its_version() {
+    let Some(bin) = sidecar() else { return };
+    let v = Command::new(&bin).arg("--version").output().unwrap();
+    let v = String::from_utf8_lossy(&v.stdout).to_string();
+    assert!(v.starts_with("muya") && v.contains("+tools-"), "{v}");
+    let d = start("broker4");
+    let sock = d.dir.join("b.sock");
+    let create = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"schedule_create","arguments":{"name":"zz-model","prompt":"p","folder":"/tmp","schedule":{"kind":"interval","minutes":10},"enabled":false,"model":"sonnet","effort":"low"}}}"#;
+    let r = mcp(
+        &bin,
+        &sock,
+        &[
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#,
+            create,
+            r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"schedules_list","arguments":{}}}"#,
+        ],
+    );
+    let init: serde_json::Value = serde_json::from_str(&r[0]).unwrap();
+    assert!(init["result"]["serverInfo"]["version"].as_str().unwrap().contains("+tools-"), "{}", r[0]);
+    let c: serde_json::Value = serde_json::from_str(&r[1]).unwrap();
+    assert_ne!(c["result"]["isError"], true, "{}", r[1]);
+    let list = r[2].replace("\\\"", "\"");
+    assert!(list.contains("\"model\": \"sonnet\"") && list.contains("\"effort\": \"low\""), "{}", r[2]);
+}
+
 #[test]
 fn a_live_broker_socket_is_not_taken_over() {
     let Some(_) = sidecar() else { return };

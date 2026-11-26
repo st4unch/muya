@@ -36,6 +36,15 @@ fn main() {
             }
         }
     }
+    // The MCP helper that `~/.claude.json` and the plugin point at lives at a fixed per-user path, outside the app. An update
+    // replaced the app but never that copy, so agents kept a sidecar from the day Muya was first run. launchd restarts muyad
+    // after every update, so refreshing here is "on launch and after an update". No-op outside a bundle (dev, tests).
+    if let Ok(exe) = std::env::current_exe() {
+        match muya_core::app_location::stable_mcp_binary(&exe) {
+            Ok(p) => eprintln!("muyad: MCP helper at {}", p.display()),
+            Err(e) => eprintln!("muyad: MCP helper not refreshed: {e}"),
+        }
+    }
     let dir = || muya_peer::socket_dir().unwrap_or_else(|e| fail(format!("socket dir: {e}")));
     let socket = arg(&args, "--socket").unwrap_or_else(|| dir().join("muyad.sock"));
     let ptyd = arg(&args, "--ptyd").unwrap_or_else(|| dir().join("ptyd.sock"));

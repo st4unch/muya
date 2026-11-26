@@ -445,7 +445,8 @@ fn p2_open_close_deliver_events() {
     assert_eq!(r["ok"], true, "{r}");
     assert_eq!(
         app.event("muya://close-agent-session"),
-        json!({ "sessionId": "sess-1" })
+        json!({ "sessionId": "sess-1" }),
+        "no terminal runs sess-1 here, so no terminalId: the app then closes nothing"
     );
 
     // Only sessions open_session opened may be closed.

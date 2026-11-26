@@ -157,8 +157,25 @@ extension MainController {
             Toasts.center?.show(title: "Typed by \(by)", message: "Into \(target) (\(obj["bytes"] as? Int ?? 0) bytes).", seconds: 5)
             return
         }
+        // `close_session`: muyad asks the app to close a tab an agent opened. Without this the daemon's reply said
+        // "Closed session" while the tab stayed open — the close had no listener at all on this side.
+        if (n.userInfo?["name"] as? String) == "muya://close-agent-session", let raw = n.userInfo?["payload"] as? String {
+            closeAgentSession(payload: raw)
+            return
+        }
         guard (n.userInfo?["name"] as? String) == "muya://open-agent-session", let payload = n.userInfo?["payload"] as? String, let req = OpenAgentSession(payload: payload) else { return }
         openAgentSession(req)
+    }
+
+    /// Closes the tab `close_session` named. The payload is `{"sessionId": <Claude session id or "shell:N">, "terminalId": N}`:
+    /// the tab is the one whose PTY id is `terminalId` (a Claude session id means nothing to the store). Unknown or
+    /// already-gone ids are ignored: the agent is told the session is closed either way, and closing a tab twice
+    /// must not take a second one with it. Returns whether a tab was closed.
+    @discardableResult
+    func closeAgentSession(payload: String) -> Bool {
+        guard let req = AgentCloseRequest(payload: payload), let s = store.sessions.first(where: { $0.id == req.terminalId }) else { return false }
+        store.close(s)
+        return true
     }
 
     /// A new terminal runs the agent. With `splitWith` (the caller's Claude session id) it opens as a pane next to the caller's terminal when

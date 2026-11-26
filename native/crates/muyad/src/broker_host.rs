@@ -240,6 +240,14 @@ impl BrokerHost for MuyadBrokerHost {
         self.0.muyad.screen_lines(id)
     }
 
+    fn terminal_close(&self, id: u64) -> Result<(), String> {
+        self.0.muyad.close_terminal(id)
+    }
+
+    fn terminal_text(&self, id: u64) -> Option<String> {
+        self.0.muyad.screen_text(id)
+    }
+
     fn terminal_echo(&self, id: u64) -> Option<bool> {
         self.0.muyad.pty_echo(id)
     }

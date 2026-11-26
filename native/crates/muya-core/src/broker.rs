@@ -200,6 +200,14 @@ pub trait BrokerHost: Send + Sync + 'static {
     fn terminal_lines(&self, _id: u64) -> Option<Vec<String>> {
         None
     }
+    /// Ends terminal `id` (the PTY and its process). Idempotent: an unknown id is not an error.
+    fn terminal_close(&self, _id: u64) -> Result<(), String> {
+        Err(NATIVE_ONLY.into())
+    }
+    /// Everything terminal `id` still holds (scrollback + screen) as plain text. `None` = unknown.
+    fn terminal_text(&self, _id: u64) -> Option<String> {
+        None
+    }
     /// Whether the PTY of terminal `id` echoes typed characters (termios ECHO). `None` = unknown.
     fn terminal_echo(&self, _id: u64) -> Option<bool> {
         None
@@ -252,7 +260,7 @@ pub fn default_read_transcript_tail(
 }
 
 /// Mirrors the frontend `AgentSession` TypeScript interface (camelCase via serde).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSession {
     pub id: String,
@@ -482,8 +490,91 @@ pub fn release_ssh_session(id: &str) {
 /// `close_session` succeeds (or the tab closes by any other means) — mirrors
 /// `SSH_SESSIONS` above so an agent can never close a session it didn't open
 /// (the operator's own main chat, or a "+ New Agent" tab they opened by hand).
-static AGENT_OPENED_SESSIONS: LazyLock<StdMutex<HashMap<String, String>>> =
-    LazyLock::new(|| StdMutex::new(HashMap::new()));
+static AGENT_OPENED_SESSIONS: LazyLock<StdMutex<HashMap<String, OwnedEntry>>> =
+    LazyLock::new(|| StdMutex::new(read_owned(&owned_path())));
+
+/// Who opened a session and when (ms since the epoch; the age keeps a just-registered name from being pruned
+/// before its tab shows up).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct OwnedEntry {
+    opener: String,
+    at: u64,
+}
+
+/// An entry that is not backed by a live session this long after it was registered is dropped.
+const OWNED_GRACE_MS: u64 = 2 * 60 * 1000;
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
+}
+
+/// `~/Library/Application Support/com.staunch.muya/native/agent-opened-sessions.json`. An update of Muya restarts
+/// muyad; without this file the agent that opened a tab could no longer close it.
+fn owned_path() -> std::path::PathBuf {
+    // Unit tests of this crate must never touch the real Application Support folder.
+    if cfg!(test) {
+        return std::env::temp_dir().join(format!("muya-core-test-{}", std::process::id())).join("agent-opened-sessions.json");
+    }
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default();
+    crate::migrate::native_store_dir(&home).join("agent-opened-sessions.json")
+}
+
+fn read_owned(path: &std::path::Path) -> HashMap<String, OwnedEntry> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<HashMap<String, OwnedEntry>>(&t).ok())
+        .unwrap_or_default()
+}
+
+/// Only verified callers (a Claude session id) are written down: `pid:N` means nothing after a restart, and a
+/// reused pid must never inherit a tab.
+fn write_owned(path: &std::path::Path, map: &HashMap<String, OwnedEntry>) {
+    let keep: HashMap<&String, &OwnedEntry> = map.iter().filter(|(_, e)| !e.opener.starts_with("pid:")).collect();
+    let Ok(text) = serde_json::to_string(&keep) else { return };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let tmp = path.with_extension("json.tmp");
+    let ok = {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)
+            .and_then(|mut f| f.write_all(text.as_bytes()))
+            .is_ok()
+    };
+    if ok {
+        let _ = std::fs::rename(&tmp, path);
+    }
+}
+
+/// Drops the entries whose session is gone (not in `live`) and older than the grace period. Returns whether any went.
+fn prune_owned(map: &mut HashMap<String, OwnedEntry>, live: &[String], now: u64) -> bool {
+    let before = map.len();
+    map.retain(|name, e| {
+        now.saturating_sub(e.at) < OWNED_GRACE_MS || live.iter().any(|l| name_matches(l, name))
+    });
+    map.len() != before
+}
+
+fn save_owned_locked(m: &HashMap<String, OwnedEntry>) {
+    write_owned(&owned_path(), m);
+}
+
+/// Forgets owned names with no live session behind them (called when an agent opens something, and by the ownership checks' callers).
+fn prune_agent_sessions(live: &[String]) {
+    if let Ok(mut m) = AGENT_OPENED_SESSIONS.lock() {
+        if prune_owned(&mut m, live, now_ms()) {
+            save_owned_locked(&m);
+        }
+    }
+}
 
 /// Terminal id -> caller key of whoever opened it with `open_terminal` (M8).
 static TERMINAL_OWNERS: LazyLock<StdMutex<HashMap<u64, String>>> =
@@ -501,7 +592,8 @@ fn owns_terminal(t: &TerminalInfo, opener: &str) -> bool {
 /// Records `opener` (the verified caller key) as the owner of the session `name`.
 fn register_agent_session(name: &str, opener: &str) {
     if let Ok(mut m) = AGENT_OPENED_SESSIONS.lock() {
-        m.insert(name.to_string(), opener.to_string());
+        m.insert(name.to_string(), OwnedEntry { opener: opener.to_string(), at: now_ms() });
+        save_owned_locked(&m);
     }
 }
 
@@ -509,7 +601,7 @@ fn register_agent_session(name: &str, opener: &str) {
 fn agent_session_owned_by(name: &str, opener: &str) -> bool {
     AGENT_OPENED_SESSIONS
         .lock()
-        .map(|m| m.get(name).is_some_and(|o| o == opener))
+        .map(|m| m.get(name).is_some_and(|o| o.opener == opener))
         .unwrap_or(false)
 }
 
@@ -525,7 +617,9 @@ fn agent_session_name_taken(name: &str) -> bool {
 /// ones — so a manually-closed tab's name doesn't stay falsely closable). Idempotent.
 pub fn release_agent_session(name: &str) {
     if let Ok(mut m) = AGENT_OPENED_SESSIONS.lock() {
-        m.remove(name);
+        if m.remove(name).is_some() {
+            save_owned_locked(&m);
+        }
     }
 }
 
@@ -1449,8 +1543,8 @@ pub async fn handle_request_from<H: BrokerHost>(host: &H, line: &str, pid: Optio
         "scp" => handle_scp(host, &servers, &req).await,
         "send" => handle_send(host, &req),
         "open_session" => handle_open_session(host, &req).await,
-        "list_sessions" => handle_list_sessions::<H>(&req).await,
-        "read_session" => redact_resp(host, handle_read_session::<H>(&req).await),
+        "list_sessions" => handle_list_sessions(host, &req).await,
+        "read_session" => redact_resp(host, handle_read_session(host, &req).await),
         "send_to_session" => handle_send_to_session(host, &req).await,
         "compact_session" => handle_compact_session(host, &req).await,
         "usage" => handle_usage::<H>(&req).await,
@@ -2001,6 +2095,44 @@ pub fn running_sessions<H: BrokerHost>() -> Result<Vec<AgentSession>, String> {
         .collect())
 }
 
+/// Plain shell tabs are sessions too (`open_session` with `kind:"shell"`, `open_terminal`): they get the id
+/// `shell:<terminal id>` so every session tool can address them next to the Claude sessions.
+const SHELL_ID_PREFIX: &str = "shell:";
+
+fn shell_terminal_id(session_id: &str) -> Option<u64> {
+    session_id.strip_prefix(SHELL_ID_PREFIX)?.parse().ok()
+}
+
+fn shell_sessions(terms: &[TerminalInfo]) -> Vec<AgentSession> {
+    terms
+        .iter()
+        .filter(|t| t.kind == "shell")
+        .map(|t| AgentSession {
+            id: format!("{SHELL_ID_PREFIX}{}", t.id),
+            name: t.name.clone(),
+            worktree: t.cwd.clone(),
+            status: "idle".into(),
+            agent: "shell".into(),
+            ..Default::default()
+        })
+        .collect()
+}
+
+/// Claude sessions (from `claude agents`) plus the shell tabs. A machine without Claude still lists its shells.
+fn merge_sessions(
+    claude: Result<Vec<AgentSession>, String>,
+    shells: Vec<AgentSession>,
+) -> Result<Vec<AgentSession>, String> {
+    match claude {
+        Ok(mut v) => {
+            v.extend(shells);
+            Ok(v)
+        }
+        Err(_) if !shells.is_empty() => Ok(shells),
+        Err(e) => Err(e),
+    }
+}
+
 fn session_pairs(sessions: &[AgentSession]) -> Vec<(String, String)> {
     sessions
         .iter()
@@ -2072,7 +2204,27 @@ fn normalize_agent(raw: Option<&str>) -> Result<String, String> {
     }
 }
 
+/// What `open_session` opens: a Claude/opencode session (default) or a plain shell. An unknown value is an
+/// error: a caller that asked for a shell and quietly got Claude would type its commands into Claude's prompt.
+fn normalize_kind(raw: Option<&str>) -> Result<&'static str, String> {
+    match raw.map(str::trim).filter(|s| !s.is_empty()) {
+        None => Ok("claude"),
+        Some(k) if k.eq_ignore_ascii_case("claude") => Ok("claude"),
+        Some(k) if k.eq_ignore_ascii_case("shell") => Ok("shell"),
+        Some(other) => Err(format!(
+            "unknown kind '{other}' — expected \"claude\" (default) or \"shell\""
+        )),
+    }
+}
+
 async fn handle_open_session<H: BrokerHost>(host: &H, req: &BrokerReq) -> String {
+    let kind = match normalize_kind(req.kind.as_deref()) {
+        Ok(k) => k,
+        Err(e) => return err_resp(e),
+    };
+    if kind == "shell" {
+        return open_shell_session(host, req);
+    }
     let (name, payload) = match build_open_session_payload(req) {
         Ok(v) => v,
         Err(e) => return err_resp(e),
@@ -2091,6 +2243,7 @@ async fn handle_open_session<H: BrokerHost>(host: &H, req: &BrokerReq) -> String
     // that races the tab actually opening still sees this name as ours.
     // The name must be free: registering a name an operator's own tab already uses would make
     // that tab look agent-owned (and closable).
+    prune_agent_sessions(&live_session_names(host));
     if agent_session_name_taken(&name)
         || blocking(|| host.terminal_list())
             .map(|t| t.iter().any(|x| x.name.eq_ignore_ascii_case(&name)))
@@ -2110,6 +2263,70 @@ async fn handle_open_session<H: BrokerHost>(host: &H, req: &BrokerReq) -> String
     };
     match track_open(host, &t, &name, req.initial_message.as_deref(), &before).await {
         Ok(v) => v.to_string(),
+        Err(e) => {
+            release_agent_session(&name);
+            err_resp(e)
+        }
+    }
+}
+
+/// Names of the tabs and Claude sessions that exist right now.
+fn live_session_names<H: BrokerHost>(host: &H) -> Vec<String> {
+    let mut v: Vec<String> = blocking(|| host.terminal_list())
+        .map(|t| t.into_iter().map(|x| x.name).collect())
+        .unwrap_or_default();
+    if let Ok(s) = running_sessions::<H>() {
+        v.extend(s.into_iter().map(|x| x.name));
+    }
+    v
+}
+
+/// `open_session kind:"shell"`: a plain terminal tab, no Claude. Addressable by name like any session.
+fn open_shell_session<H: BrokerHost>(host: &H, req: &BrokerReq) -> String {
+    let name = match req.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+        Some(n) if n.len() > MAX_NAME_LEN => {
+            return err_resp(format!("`name` is too long (limit {MAX_NAME_LEN} bytes)"))
+        }
+        Some(n) => n.to_string(),
+        None => return err_resp("`open_session` requires a non-empty `name`"),
+    };
+    if let Some(a) = req.agent.as_deref().map(str::trim).filter(|a| !a.is_empty() && !a.eq_ignore_ascii_case("claude")) {
+        return err_resp(format!("`agent` \"{a}\" makes no sense with kind \"shell\": a shell runs no agent CLI"));
+    }
+    let command = match req.initial_message.as_deref().filter(|c| !c.trim().is_empty()) {
+        Some(c) => match check_terminal_text("open_session", Some(c)) {
+            Ok(c) => Some(c),
+            Err(e) => return err_resp(e),
+        },
+        None => None,
+    };
+    let cwd = req.cwd.as_deref().map(str::trim).filter(|c| !c.is_empty());
+    if cwd.is_some_and(|c| c.len() > MAX_CWD_LEN) {
+        return err_resp(format!("`cwd` is too long (limit {MAX_CWD_LEN} bytes)"));
+    }
+    if cwd.is_some_and(|c| !std::path::Path::new(c).is_dir()) {
+        return err_resp(format!("`cwd` is not a folder: {}", cwd.unwrap_or_default()));
+    }
+    prune_agent_sessions(&live_session_names(host));
+    if agent_session_name_taken(&name)
+        || blocking(|| host.terminal_list())
+            .map(|t| t.iter().any(|x| x.name.eq_ignore_ascii_case(&name)))
+            .unwrap_or(false)
+    {
+        return err_resp(format!("a session named '{name}' already exists, pick another name"));
+    }
+    register_agent_session(&name, &caller_key(req));
+    match blocking(|| host.terminal_open(&name, cwd, command.as_deref())) {
+        Ok(id) => {
+            if let Ok(mut m) = TERMINAL_OWNERS.lock() {
+                m.insert(id, caller_key(req));
+            }
+            json!({
+                "ok": true, "name": name, "kind": "shell", "status": "started",
+                "terminalId": id, "sessionId": format!("{SHELL_ID_PREFIX}{id}"),
+            })
+            .to_string()
+        }
         Err(e) => {
             release_agent_session(&name);
             err_resp(e)
@@ -2268,10 +2485,13 @@ async fn track_open<H: BrokerHost>(
 /// `list_sessions` (PRD `session-messaging`): the RUNNING Claude sessions Muya knows,
 /// with the operator's own names — so an agent can address "the password-hardening
 /// session" by name instead of guessing.
-async fn handle_list_sessions<H: BrokerHost>(req: &BrokerReq) -> String {
+async fn handle_list_sessions<H: BrokerHost>(host: &H, req: &BrokerReq) -> String {
+    let shells = shell_sessions(&blocking(|| host.terminal_list()).unwrap_or_default());
     let sessions = match tokio::task::spawn_blocking(running_sessions::<H>).await {
-        Ok(Ok(s)) => s,
-        Ok(Err(e)) => return err_resp(e),
+        Ok(r) => match merge_sessions(r, shells) {
+            Ok(s) => s,
+            Err(e) => return err_resp(e),
+        },
         Err(e) => return err_resp(format!("list task failed: {e}")),
     };
     let me = req.session_id.as_deref().unwrap_or("");
@@ -2281,6 +2501,7 @@ async fn handle_list_sessions<H: BrokerHost>(req: &BrokerReq) -> String {
             json!({
                 "id": s.id,
                 "name": s.name,
+                "kind": if shell_terminal_id(&s.id).is_some() { "shell" } else { "claude" },
                 "cwd": s.worktree,
                 "status": s.status,
                 // Why it's waiting, when status is waiting-for-input — e.g. "permission
@@ -2296,15 +2517,43 @@ async fn handle_list_sessions<H: BrokerHost>(req: &BrokerReq) -> String {
 
 /// `read_session`: read another session's recent conversation (read-only) so an agent can
 /// answer "what is that session up to?" without messaging it.
-async fn handle_read_session<H: BrokerHost>(req: &BrokerReq) -> String {
+/// Most a shell read hands back, from the end: a terminal can hold megabytes of scrollback.
+const MAX_SHELL_READ_BYTES: usize = 32 * 1024;
+const MAX_SHELL_READ_LINES: usize = 500;
+
+/// The last `lines` lines of `text` that contain `query` (when given), at most [`MAX_SHELL_READ_BYTES`] from the
+/// end. Returns the text and whether something was left out.
+fn tail_text(text: &str, lines: usize, query: Option<&str>) -> (String, bool) {
+    let q = query.map(str::to_lowercase).filter(|q| !q.is_empty());
+    let all: Vec<&str> = text
+        .lines()
+        .filter(|l| q.as_ref().is_none_or(|q| l.to_lowercase().contains(q)))
+        .collect();
+    let mut cut = all.len() > lines;
+    let mut out = all[all.len().saturating_sub(lines)..].join("\n");
+    if out.len() > MAX_SHELL_READ_BYTES {
+        let mut from = out.len() - MAX_SHELL_READ_BYTES;
+        while !out.is_char_boundary(from) {
+            from += 1;
+        }
+        out = out[from..].to_string();
+        cut = true;
+    }
+    (out, cut)
+}
+
+async fn handle_read_session<H: BrokerHost>(host: &H, req: &BrokerReq) -> String {
     let target = match req.target.as_deref() {
         Some(t) if !t.trim().is_empty() => t.to_string(),
         _ => return err_resp("`read_session` requires a `target` (session name or id)"),
     };
+    let is_shell_default = req.limit.is_none();
     let limit = req.limit.unwrap_or(20).clamp(1, 200) as usize;
     let query = req.query.clone();
-    let result = tokio::task::spawn_blocking(move || -> Result<String, String> {
-        let sessions = running_sessions::<H>()?;
+    let terms = blocking(|| host.terminal_list()).unwrap_or_default();
+    let shells = shell_sessions(&terms);
+    let resolved = tokio::task::spawn_blocking(move || -> Result<AgentSession, String> {
+        let sessions = merge_sessions(running_sessions::<H>(), shells)?;
         let pairs = session_pairs(&sessions);
         match resolve_target(&target, &pairs) {
             TargetMatch::None => Err(format!("no running session matches '{target}'")),
@@ -2316,26 +2565,51 @@ async fn handle_read_session<H: BrokerHost>(req: &BrokerReq) -> String {
                     .collect::<Vec<_>>()
                     .join(", ")
             )),
-            TargetMatch::One(i) => {
-                let s = &sessions[i];
-                let body = H::read_transcript_tail(
-                    &s.worktree,
-                    &s.id,
-                    limit,
-                    query.as_deref(),
-                )?;
-                Ok(json!({
-                    "ok": true,
-                    "session": { "id": s.id, "name": s.name, "cwd": s.worktree, "status": s.status },
-                    "content": body,
-                })
-                .to_string())
-            }
+            TargetMatch::One(i) => Ok(sessions[i].clone()),
         }
     })
     .await;
-    match result {
+    let s = match resolved {
         Ok(Ok(s)) => s,
+        Ok(Err(e)) => return err_resp(e),
+        Err(e) => return err_resp(format!("read task failed: {e}")),
+    };
+    if let Some(tid) = shell_terminal_id(&s.id) {
+        // A plain shell has no transcript: hand back what its terminal shows, scrollback included.
+        let Some(text) = blocking(|| host.terminal_text(tid)) else {
+            return err_resp(format!(
+                "'{}' is a shell tab and this Muya cannot read its terminal output right now",
+                s.name
+            ));
+        };
+        // `limit` counts lines here; the transcript default of 20 is too little for a shell.
+        let lines = if is_shell_default { 100 } else { (limit * 5).min(MAX_SHELL_READ_LINES) };
+        let (content, truncated) = tail_text(&text, lines, query.as_deref());
+        return json!({
+            "ok": true,
+            "session": { "id": s.id, "name": s.name, "cwd": s.worktree, "status": s.status, "kind": "shell" },
+            "content": content,
+            "lines": lines,
+            "truncated": truncated,
+        })
+        .to_string();
+    }
+    let sess = s.clone();
+    let read = tokio::task::spawn_blocking(move || {
+        H::read_transcript_tail(&sess.worktree, &sess.id, limit, query.as_deref())
+    })
+    .await;
+    match read {
+        Ok(Ok(body)) => json!({
+            "ok": true,
+            "session": { "id": s.id, "name": s.name, "cwd": s.worktree, "status": s.status, "kind": "claude" },
+            "content": body,
+        })
+        .to_string(),
+        Ok(Err(e)) if e.contains("no transcript") => err_resp(format!(
+            "'{}' is a running Claude session but has no transcript file yet (nothing has been said in it, or Claude has not written it to disk). Nothing is broken: read it again after its first message",
+            s.name
+        )),
         Ok(Err(e)) => err_resp(e),
         Err(e) => err_resp(format!("read task failed: {e}")),
     }
@@ -2618,11 +2892,22 @@ async fn handle_send_to_session<H: BrokerHost>(host: &H, req: &BrokerReq) -> Str
         _ => return err_resp("`send_to_session` requires non-empty `text`"),
     };
     let deliver = req.deliver.clone().unwrap_or_else(|| "auto".to_string());
-    // The sender is the VERIFIED peer, never a name from the request body.
-    let from = req.caller.clone();
+    // The default used to only hand back a target and leave the delivery to the caller, so a message could
+    // silently never arrive. Now `auto` delivers: it is a chat message typed by Muya, exactly like "muya".
+    let deliver = match deliver.as_str() {
+        "auto" | "muya" => "muya".to_string(),
+        "keys" => deliver,
+        other => {
+            return err_resp(format!(
+                "unknown deliver '{other}' — expected \"auto\", \"muya\" or \"keys\""
+            ))
+        }
+    };
+    let terms = blocking(|| host.terminal_list()).unwrap_or_default();
+    let shells = shell_sessions(&terms);
 
     let resolved = tokio::task::spawn_blocking(move || -> Result<(String, String, String, String), String> {
-        let sessions = running_sessions::<H>()?;
+        let sessions = merge_sessions(running_sessions::<H>(), shells)?;
         let pairs = session_pairs(&sessions);
         match resolve_target(&target, &pairs) {
             TargetMatch::None => Err(format!("no running session matches '{target}'")),
@@ -2643,6 +2928,11 @@ async fn handle_send_to_session<H: BrokerHost>(host: &H, req: &BrokerReq) -> Str
         Ok(Err(e)) => return err_resp(e),
         Err(e) => return err_resp(format!("resolve task failed: {e}")),
     };
+
+    // A plain shell tab: only raw keystrokes make sense there.
+    if let Some(tid) = shell_terminal_id(&id) {
+        return send_to_shell(host, req, &terms, tid, &name, &cwd, &deliver, &text);
+    }
 
     // M8: an unverified caller may only type into sessions it opened itself.
     if (deliver == "muya" || deliver == "keys")
@@ -2747,7 +3037,7 @@ async fn handle_send_to_session<H: BrokerHost>(host: &H, req: &BrokerReq) -> Str
                 .and_then(|tid| prompt_state_of(host, tid))
         };
         let text = match substitute_for(host, &text, !is_unverified(req), prompt.as_ref(), None) {
-            Ok(t) => t,
+            Ok(t) => keys_enter(&t),
             Err(e) => {
                 release(host);
                 return err_resp(e);
@@ -2776,12 +3066,58 @@ async fn handle_send_to_session<H: BrokerHost>(host: &H, req: &BrokerReq) -> Str
         .to_string();
     }
 
+    err_resp("unreachable deliver mode")
+}
+
+/// In raw keystrokes a line feed is not Enter: a terminal program (Claude's prompt, a shell in raw mode) takes
+/// `\r` as Enter, and Claude's prompt takes `\n` as "new line in the message", so a command typed as
+/// `...\n` was only ever typed, never run. Both spellings of a line end become `\r`.
+fn keys_enter(text: &str) -> String {
+    text.replace("\r\n", "\r").replace('\n', "\r")
+}
+
+/// `send_to_session` to a shell tab (`open_session kind:"shell"`, `open_terminal`).
+#[allow(clippy::too_many_arguments)]
+fn send_to_shell<H: BrokerHost>(
+    host: &H,
+    req: &BrokerReq,
+    terms: &[TerminalInfo],
+    tid: u64,
+    name: &str,
+    cwd: &str,
+    deliver: &str,
+    text: &str,
+) -> String {
+    let Some(t) = terms.iter().find(|t| t.id == tid) else {
+        return err_resp(format!("shell '{name}' is gone"));
+    };
+    if deliver != "keys" {
+        return err_resp(format!(
+            "'{name}' is a plain shell, not a Claude session: a chat message makes no sense there. Send the command with deliver:\"keys\" and end it with \"\\n\" to run it (or use send_terminal)"
+        ));
+    }
+    if is_unverified(req) && !owns_terminal(t, &caller_key(req)) {
+        return err_resp(format!(
+            "this caller could not be tied to a Claude session, so it may only send to sessions it opened with open_session ('{name}' was not)"
+        ));
+    }
+    let prompt = if crate::secret_refs::names_in(text).is_empty() {
+        None
+    } else {
+        prompt_state_of(host, tid)
+    };
+    let text = match substitute_for(host, text, !is_unverified(req), prompt.as_ref(), None) {
+        Ok(t) => keys_enter(&t),
+        Err(e) => return err_resp(e),
+    };
+    if let Err(e) = blocking(|| host.terminal_raw(tid, &text)) {
+        return err_resp(format!("failed to deliver: {e}"));
+    }
+    audit_typed(host, req, "keys", &format!("{SHELL_ID_PREFIX}{tid}"), name, text.len());
     json!({
         "ok": true,
-        "deliverWith": "SendMessage",
-        "target": { "id": id, "name": name, "cwd": cwd },
-        "text": text,
-        "from": from,
+        "delivered": "keys",
+        "target": { "id": format!("{SHELL_ID_PREFIX}{tid}"), "name": name, "cwd": cwd, "kind": "shell" },
     })
     .to_string()
 }
@@ -3100,10 +3436,11 @@ async fn handle_close_session<H: BrokerHost>(host: &H, req: &BrokerReq) -> Strin
         _ => return err_resp("`close_session` requires a `target` (session name or id)"),
     };
 
+    let shells = shell_sessions(&blocking(|| host.terminal_list()).unwrap_or_default());
     let resolved = tokio::task::spawn_blocking({
         let target = target.clone();
         move || -> Result<(String, String), String> {
-            let sessions = running_sessions::<H>()?;
+            let sessions = merge_sessions(running_sessions::<H>(), shells)?;
             let pairs = session_pairs(&sessions);
             match resolve_target(&target, &pairs) {
                 TargetMatch::None => Err(format!("no running session matches '{target}'")),
@@ -3129,9 +3466,23 @@ async fn handle_close_session<H: BrokerHost>(host: &H, req: &BrokerReq) -> Strin
         ));
     }
 
-    let payload = json!({ "sessionId": id });
+    // The app's tab is addressed by the PTY id, not by the Claude session id the registry knows: send both.
+    let tid = shell_terminal_id(&id).or_else(|| terminal_of_session(host, &id).ok());
+    if tid.is_none() && host.tracking().is_some() {
+        return err_resp(format!(
+            "'{name}' does not run in a Muya terminal, so there is no tab to close"
+        ));
+    }
+    let mut payload = json!({ "sessionId": id });
+    if let Some(t) = tid {
+        payload["terminalId"] = json!(t);
+    }
     if let Err(e) = host.emit("muya://close-agent-session", payload) {
         return err_resp(format!("failed to signal close: {e}"));
+    }
+    // The app removes the tab; end the process here too, so it is gone with no app attached as well.
+    if let Some(t) = tid {
+        let _ = blocking(|| host.terminal_close(t));
     }
     release_agent_session(&name);
     json!({"ok": true, "name": name}).to_string()
@@ -4869,6 +5220,10 @@ mod tests {
         /// cwd of the terminal an Enter submits for.
         enter_cwd: String,
         claimed: M<HashSet<String>>,
+        /// What the terminals show (scrollback + screen) and which ones were closed.
+        shown: String,
+        closed: M<Vec<u64>>,
+        emitted: M<Vec<(String, serde_json::Value)>>,
     }
     /// Sessions `list_agent_sessions_fresh` reports (tests use distinct ids).
     static FAKE_SESSIONS: LazyLock<M<Vec<AgentSession>>> = LazyLock::new(Default::default);
@@ -4936,6 +5291,9 @@ mod tests {
             echo: None,
             enter_cwd: String::new(),
             claimed: M::new(HashSet::new()),
+            shown: String::new(),
+            closed: M::new(vec![]),
+            emitted: M::new(vec![]),
         }
     }
 
@@ -4962,6 +5320,13 @@ mod tests {
         fn terminal_lines(&self, _: u64) -> Option<Vec<String>> {
             self.lines.clone()
         }
+        fn terminal_text(&self, _: u64) -> Option<String> {
+            Some(self.shown.clone())
+        }
+        fn terminal_close(&self, id: u64) -> Result<(), String> {
+            self.closed.lock().unwrap().push(id);
+            Ok(())
+        }
         fn terminal_echo(&self, _: u64) -> Option<bool> {
             self.echo
         }
@@ -4971,8 +5336,9 @@ mod tests {
         fn agent_ssh(&self) -> &crate::agent_ssh::AgentSshStore {
             &self.ssh
         }
-        fn emit(&self, event: &str, _: serde_json::Value) -> Result<(), String> {
+        fn emit(&self, event: &str, payload: serde_json::Value) -> Result<(), String> {
             self.events.lock().unwrap().push(event.into());
+            self.emitted.lock().unwrap().push((event.into(), payload));
             let added = self.on_emit.lock().unwrap().clone();
             self.appeared.lock().unwrap().extend(added);
             Ok(())
@@ -6335,6 +6701,153 @@ mod tests {
         assert_eq!(usage_from_status(&files, Some("a"), now).unwrap()["sessionId"], "a");
         assert!(usage_from_status(&files, Some("zzz"), now).unwrap_err().contains("that session"));
         assert!(usage_from_status(&[], None, now).unwrap_err().contains("no usage data"));
+    }
+
+    // ---- shell sessions, kind, auto delivery, persisted ownership (MCP defects 1-6) ----
+
+    async fn broker_call(h: &TermHost, v: serde_json::Value, caller: &str) -> serde_json::Value {
+        let mut req: BrokerReq = serde_json::from_value(v).unwrap();
+        req.caller = caller.to_string();
+        let out = match req.op.as_str() {
+            "open_session" => handle_open_session(h, &req).await,
+            "send_to_session" => handle_send_to_session(h, &req).await,
+            "read_session" => handle_read_session(h, &req).await,
+            "close_session" => handle_close_session(h, &req).await,
+            "list_sessions" => handle_list_sessions(h, &req).await,
+            other => panic!("{other}"),
+        };
+        serde_json::from_str(&out).unwrap()
+    }
+
+    #[test]
+    fn open_session_kind_is_declared_values_only() {
+        assert_eq!(normalize_kind(None), Ok("claude"));
+        assert_eq!(normalize_kind(Some(" Shell ")), Ok("shell"));
+        assert_eq!(normalize_kind(Some("claude")), Ok("claude"));
+        let e = normalize_kind(Some("bash")).unwrap_err();
+        assert!(e.contains("unknown kind 'bash'"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn an_unknown_kind_is_refused_instead_of_opening_claude() {
+        let h = term_host(vec![]);
+        let v = broker_call(&h, json!({"op":"open_session","name":"k-bad","kind":"terminal"}), "boss").await;
+        assert_eq!(v["ok"], false, "{v}");
+        assert!(h.events.lock().unwrap().is_empty(), "nothing may be opened");
+        assert!(h.opened.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn open_session_shell_opens_a_shell_not_claude_and_keys_run_in_it() {
+        let mut h = term_host(vec![]);
+        h.track = Some(Tracking::default());
+        // The shell exists once muyad opened it.
+        let v = broker_call(&h, json!({"op":"open_session","name":"k-shell","kind":"shell","cwd":"/tmp"}), "boss").await;
+        assert_eq!(v["ok"], true, "{v}");
+        assert_eq!(v["kind"], "shell");
+        assert_eq!(h.opened.lock().unwrap()[0].0, "k-shell");
+        assert!(h.events.lock().unwrap().iter().all(|e| e != "muya://open-agent-session"), "no Claude tab");
+        // Now it is listed and addressable.
+        h.terms = vec![term(99, "k-shell", "shell", None, None)];
+        let l = broker_call(&h, json!({"op":"list_sessions"}), "boss").await;
+        assert!(l["sessions"].as_array().unwrap().iter().any(|s| s["name"] == "k-shell" && s["kind"] == "shell"), "{l}");
+        let v = broker_call(&h, json!({"op":"send_to_session","target":"k-shell","text":"echo hi\n","deliver":"keys"}), "boss").await;
+        assert_eq!(v["ok"], true, "{v}");
+        assert_eq!(v["delivered"], "keys");
+        // A line feed is sent as Enter: that is what makes the shell run the line.
+        assert_eq!(h.typed.lock().unwrap().last().unwrap(), &(99, "echo hi\r".to_string(), false, false));
+        // A chat message to a shell is refused, not reported as delivered.
+        let v = broker_call(&h, json!({"op":"send_to_session","target":"k-shell","text":"hello"}), "boss").await;
+        assert_eq!(v["ok"], false, "{v}");
+        assert!(v["error"].as_str().unwrap().contains("plain shell"), "{v}");
+    }
+
+    #[tokio::test]
+    async fn read_session_returns_a_shells_recent_output_capped() {
+        let mut h = term_host(vec![term(7, "k-read", "shell", None, None)]);
+        h.track = Some(Tracking::default());
+        h.shown = (1..=300).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let v = broker_call(&h, json!({"op":"read_session","target":"k-read"}), "boss").await;
+        assert_eq!(v["ok"], true, "{v}");
+        let c = v["content"].as_str().unwrap();
+        assert!(c.ends_with("line 300"), "{c}");
+        assert!(!c.contains("line 150\n"), "capped to the recent lines");
+        assert_eq!(v["truncated"], true);
+        let v = broker_call(&h, json!({"op":"read_session","target":"k-read","query":"line 29"}), "boss").await;
+        assert!(v["content"].as_str().unwrap().contains("line 29"), "{v}");
+    }
+
+    #[test]
+    fn tail_text_caps_bytes_and_lines() {
+        let big = "x".repeat(100) + "\n";
+        let (t, cut) = tail_text(&big.repeat(2000), 500, None);
+        assert!(t.len() <= MAX_SHELL_READ_BYTES && cut);
+        let (t, cut) = tail_text("a\nb", 5, None);
+        assert_eq!((t.as_str(), cut), ("a\nb", false));
+    }
+
+    #[test]
+    fn keys_enter_turns_line_feeds_into_enter() {
+        assert_eq!(keys_enter("ls\n"), "ls\r");
+        assert_eq!(keys_enter("a\r\nb\n"), "a\rb\r");
+        assert_eq!(keys_enter("1"), "1");
+    }
+
+    #[tokio::test]
+    async fn the_default_deliver_mode_types_the_message_and_says_so() {
+        FAKE_SESSIONS.lock().unwrap().push(fake_session("sid-auto", "auto-target", "/t/auto"));
+        let mut h = tracked("/t/auto", false, true);
+        h.terms = vec![mkterm(21, "auto-target", "/t/auto", "sid-auto")];
+        let v = broker_call(&h, json!({"op":"send_to_session","target":"auto-target","text":"ping"}), "boss").await;
+        assert_eq!(v["ok"], true, "{v}");
+        assert_eq!(v["delivered"], "muya", "the default must deliver, not hand the job back: {v}");
+        assert!(v.get("deliverWith").is_none());
+        let v = broker_call(&h, json!({"op":"send_to_session","target":"auto-target","text":"x","deliver":"carrier-pigeon"}), "boss").await;
+        assert_eq!(v["ok"], false, "{v}");
+    }
+
+    #[tokio::test]
+    async fn close_session_names_the_tab_and_ends_the_process() {
+        FAKE_SESSIONS.lock().unwrap().push(fake_session("sid-cl", "cl-target", "/t/cl"));
+        let mut h = tracked("/t/cl", false, true);
+        h.terms = vec![mkterm(31, "cl-target", "/t/cl", "sid-cl")];
+        register_agent_session("cl-target", "boss");
+        let v = broker_call(&h, json!({"op":"close_session","target":"cl-target"}), "boss").await;
+        assert_eq!(v["ok"], true, "{v}");
+        let ev = h.emitted.lock().unwrap().iter().find(|(e, _)| e == "muya://close-agent-session").cloned().unwrap();
+        assert_eq!(ev.1, json!({"sessionId":"sid-cl","terminalId":31}));
+        assert_eq!(*h.closed.lock().unwrap(), vec![31]);
+        // Not opened by the caller: refused, nothing closed.
+        h.closed.lock().unwrap().clear();
+        let v = broker_call(&h, json!({"op":"close_session","target":"cl-target"}), "intruder").await;
+        assert_eq!(v["ok"], false, "{v}");
+        assert!(h.closed.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn owned_sessions_survive_a_restart_and_stale_ones_are_pruned() {
+        let dir = std::env::temp_dir().join(format!("muya-owned-{}", std::process::id()));
+        let path = dir.join("n/owned.json");
+        let mut m = HashMap::new();
+        m.insert("alive".to_string(), OwnedEntry { opener: "sess-1".into(), at: 1_000 });
+        m.insert("gone".to_string(), OwnedEntry { opener: "sess-1".into(), at: 1_000 });
+        m.insert("unverified".to_string(), OwnedEntry { opener: "pid:42".into(), at: 1_000 });
+        write_owned(&path, &m);
+        // A new process reads it back: only verified openers were written.
+        let mut back = read_owned(&path);
+        assert_eq!(back.len(), 2);
+        assert_eq!(back["alive"].opener, "sess-1");
+        assert!(!back.contains_key("unverified"));
+        // Pruning keeps what lives (also under a `name (hint)` suffix) and what is brand new.
+        back.insert("fresh".into(), OwnedEntry { opener: "sess-1".into(), at: 1_000 + OWNED_GRACE_MS - 1 });
+        assert!(prune_owned(&mut back, &["alive (x)".to_string()], 1_000 + OWNED_GRACE_MS));
+        assert!(back.contains_key("alive") && back.contains_key("fresh") && !back.contains_key("gone"));
+        // The file is private.
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        // A tab the operator opened by hand was never written, so it stays unclosable.
+        assert!(!read_owned(&path).contains_key("by-hand"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
 }

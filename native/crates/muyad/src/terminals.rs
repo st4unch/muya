@@ -104,6 +104,20 @@ impl Muyad {
         self.ask(id, |reply| Cmd::Lines { reply })
     }
 
+    /// Ends session `id`: the same as the app's close. An unknown id is not an error.
+    pub fn close_terminal(self: &Arc<Self>, id: u64) -> Result<(), String> {
+        if let Some(e) = self.sessions.lock().unwrap().remove(&id) {
+            let _ = e.tx.send(Cmd::Stop);
+            self.request(muya_proto::Control::Close { id }).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// Scrollback + screen of session `id` as plain text.
+    pub fn screen_text(&self, id: u64) -> Option<String> {
+        self.ask(id, |reply| Cmd::Text { reply })
+    }
+
     /// Whether the PTY of session `id` echoes typed characters (read from its termios, not the screen).
     pub fn pty_echo(&self, id: u64) -> Option<bool> {
         let pid = self.sessions.lock().unwrap().get(&id).filter(|e| e.info.exited.is_none()).map(|e| e.info.pid)?;

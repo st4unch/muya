@@ -5,6 +5,7 @@
 //   split-close <id>       × on a pane            split-zoom <id>           a pane's focus / restore button
 //   split-collapse <gid>   the group row chevron  split-divider <i> <dx>    drag column divider i by dx points
 //   split-open [anchor=<id>] <json>   a `muya://open-agent-session` payload (agent open_session)
+//   agent-close <json>     a `muya://close-agent-session` payload (agent close_session): ok when a tab left the store
 
 import AppKit
 
@@ -69,6 +70,8 @@ extension DebugServer {
             if arg.hasPrefix("anchor="), let sp = arg.firstIndex(of: " ") { anchor = session(arg[arg.index(arg.startIndex, offsetBy: 7) ..< sp]); rest = arg[arg.index(after: sp)...] }
             guard let req = OpenAgentSession(payload: String(rest)) else { return "error: bad payload" }
             c.openAgentSession(req, anchor: anchor); return "ok"
+        case "agent-close":
+            return c.closeAgentSession(payload: arg) ? "ok" : "error: no such tab"
         default: return nil
         }
     }

@@ -4,6 +4,17 @@ All notable changes to Muya are documented here, newest first.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.3] - 2026-11-26
+
+### Fixed
+- **Muya's own tools reach Claude again.** The helper Claude talks to Muya through was copied once, the first time Muya ran, and never replaced — so every improvement to those tools since mid-November never arrived, however many times you updated. On this Mac it was two weeks old. Muya now replaces it whenever it differs from the one inside the app, and the helper reports its own version so a stale copy can be spotted. This is why scheduled tasks ignored the model and effort you chose, and why newer tools were missing.
+- **Asking for a plain terminal gives you a plain terminal.** An agent could ask Muya to open a shell; the request was accepted and a Claude session opened instead, because the "kind" of session was quietly ignored. It is honoured now, and an unknown value is refused instead of silently doing something else. Anything a tool does not understand is now refused rather than dropped.
+- **A message sent to another session actually arrives.** The default way of sending returned instructions for sending instead of delivering anything. It delivers now, and tells you what it did.
+- **Closing a session closes it.** "Closed session" was reported while the tab stayed open: Muya asked for a close in a way nothing was listening to. The tab now closes, and the background service closes the terminal itself as a backstop.
+- **Typing into a terminal runs the command.** Text sent to a session ended with a newline, which a Claude prompt treats as a line break rather than as Enter, so the command sat there unsent.
+- **An agent can read a terminal's output.** Reading a plain terminal used to fail with "no transcript found". It now returns the recent output, and a session with nothing to read says so in plain words.
+- **Sessions an agent opened stay closable after a restart.** The record of which sessions an agent opened was kept in memory, so updating Muya lost it and the agent could no longer close its own tabs. It is kept on disk now. A tab you opened yourself still cannot be closed by an agent.
+
 ## [5.0.2] - 2026-11-20
 
 ### Added
