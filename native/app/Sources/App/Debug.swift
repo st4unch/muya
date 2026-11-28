@@ -100,6 +100,10 @@ final class DebugServer {
         case "fullscreen": controller.window.toggleFullScreen(nil); return "ok"
         case "zoom": controller.window.zoom(nil); return "ok"
         case "windowid": return "\(controller.window.windowNumber)"
+        // The update takeover: is this copy the visible Muya yet? "<policy> <window on screen>" (regular|accessory, 1|0).
+        case "takeover-state":
+            let p = NSApp.activationPolicy() == .regular ? "regular" : (NSApp.activationPolicy() == .accessory ? "accessory" : "prohibited")
+            return "\(p) \(controller.window.isVisible ? 1 : 0)"
         case "sessions":
             return store.sessions.map { "\($0.id)\t\($0.name)\t\($0.cwd.abbreviatingHome(store.home))\t\($0.state.text)\(store.selected === $0 ? "\t*" : "")" }.joined(separator: "\n")
         case "select":

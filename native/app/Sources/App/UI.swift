@@ -369,7 +369,8 @@ final class MainController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         window.contentView = frameView
         wireTile(tileView.tiles[0])
         window.center()
-        window.makeKeyAndOrderFront(nil)
+        // A copy started by an update stays invisible until the copy it replaces has quit (SwitchTakeover).
+        if !SwitchTakeover.startsHidden(args: Array(CommandLine.arguments.dropFirst())) { window.makeKeyAndOrderFront(nil) }
         window.makeFirstResponder(terminal)
         DispatchQueue.main.async { [rootSplit] in rootSplit?.setPosition(CGFloat(AgentsWidth.restore(saved: nil, window: Double(rootSplit?.bounds.width ?? 1120))), ofDividerAt: 0) /* agents.width default: 296, 264 at ≤1360 wide (usePanelLayout.ts); the app opens at 1120 */ }
         // Working directories are not reported by the daemon; look at the shells now and then.
@@ -466,6 +467,12 @@ final class MainController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     }
 
     /// Quit: asks once for all unsaved documents. true = go ahead and quit.
+    /// The update's second half: this copy becomes the visible Muya now that the old one is gone.
+    func showAfterTakeover() {
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(terminal)
+    }
+
     func confirmQuit() -> Bool {
         let dirty = viewer.dirtyPaths
         guard !dirty.isEmpty else { return true }
@@ -950,6 +957,9 @@ final class MainController: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     func storeDidChangeSessions(_ store: Store) {
         splitAdoptPending()
+        // The daemon's list is the truth about what is open: a group whose terminals are gone (the daemons were
+        // restarted, a tab was closed elsewhere) leaves the saved groups instead of waiting for a key to be reused.
+        if store.connected, splitModel.resolve(existing: Set(store.sessions.map(SplitModel.key))) { splitModel.save(store.legacy) }
         table.reloadData()
         syncSelection()
         refreshTiles()

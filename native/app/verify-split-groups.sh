@@ -27,6 +27,8 @@ bad() { echo "FAIL $1"; fails=$((fails + 1)); }
 check() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1: got [$2] want [$3]"; fi; }
 has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1: [$2] lacks [$3]" ;; esac; }
 st() { dbg split-state | tr ' ' '\n' | sed -n "s/^$1=//p"; }
+# The groups with their keys cut back to session ids (a key is `<id>:<pid>`), for comparing with the ids here.
+gids() { st groups | sed 's/:[0-9]*//g'; }
 npanes() { dbg split-state | sed -n 's/.*panes=\[\([^]]*\)\].*/\1/p' | tr ';' '\n' | grep -c .; }
 order() { dbg sessions | awk '{print $1}' | tr '\n' ',' | sed 's/,$//'; }
 pos() { order | tr ',' '\n' | grep -n -x -E "$1|$2" | cut -d: -f2 | tr '\n' ' '; }
@@ -47,7 +49,7 @@ G=$(st groups | sed -n 's/^\[\([^=]*\)=.*/\1/p')
 shot 1-split
 D=$(dbg "new $DEV/home/d" | awk '{print $2}'); sleep 0.8
 dbg "split-group $D $A" >/dev/null; sleep 1   # dropped on the middle of A's row
-has "drag a session onto another joins A's group (shows at once)" "$(st groups)" "$A,$B,$D"
+has "drag a session onto another joins A's group (shows at once)" "$(gids)" "$A,$B,$D"
 check "three panes side by side" "$(npanes)" "3"
 check "the dropped-on session is focused" "$(st selected)" "$A"
 shot 2-dropped-on-row
@@ -55,7 +57,7 @@ shot 2-dropped-on-row
 echo "== 2 add to an existing group"
 E=$(dbg "new $DEV/home/e" | awk '{print $2}'); sleep 0.8
 dbg "split-into $E $G" >/dev/null; sleep 1   # dropped on the SPLITS row of the group
-has "a session dropped on the group's header row joins it" "$(st groups)" "$E"
+has "a session dropped on the group's header row joins it" "$(gids)" ",$E"
 check "four panes: 2 columns x 2 rows" "$(dbg split-state | sed -n 's/.*panes=\[\([^]]*\)\].*/\1/p' | tr ';' '\n' | awk -F'[:,]' '{print $3}' | sort -u | wc -l | tr -d ' ')" "2"
 shot 3-four-panes
 dbg "select $A" >/dev/null; sleep 0.4
@@ -65,7 +67,7 @@ C=$(st selected)
 
 echo "== 3 remove from a group"
 dbg "split-ungroup $C" >/dev/null; sleep 1   # dragged to the empty space of the list
-check "a member dropped on empty space leaves the split" "$(st groups | grep -c "[=,]$C[,;]\|[=,]$C\$\|[=,]$C\]")" "0"
+check "a member dropped on empty space leaves the split" "$(gids | grep -c "[=,]$C[,;]\|[=,]$C\$\|[=,]$C\]")" "0"
 check "...the group keeps the others" "$(st groups | tr ',' '\n' | grep -c .)" "4"
 check "...and its session keeps running" "$(dbg sessions | awk -v c="$C" '$1==c' | wc -l | tr -d ' ')" "1"
 dbg "select $C" >/dev/null; sleep 0.6

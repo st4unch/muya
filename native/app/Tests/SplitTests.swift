@@ -30,6 +30,18 @@ func runSplitTests() {
         let raw = try? JSONSerialization.jsonObject(with: JSONSerialization.data(withJSONObject: SplitLogic.encode(g)))
         check(SplitLogic.decode(raw) == g && SplitLogic.decode("x") == nil && SplitLogic.decode([["id": 1]])!.isEmpty, "round trip, garbage ignored")
     }
+    test("split: a group saved under bare session ids is dropped, so ⌘T cannot land in an old split") {
+        // muya-ptyd hands out session ids from 1 again whenever it starts, so "1" names a different terminal in
+        // every run. Only `id:pid` keys survive being read back; the old form is thrown away, not reused.
+        let old = [SplitGroup(id: "g", keys: ["1", "2"])]
+        check(SplitLogic.dropLegacyKeys(old).isEmpty, "a group of bare ids is gone: \(SplitLogic.dropLegacyKeys(old))")
+        let now = [SplitGroup(id: "g", keys: ["1:4711", "2:4712"])]
+        check(SplitLogic.dropLegacyKeys(now) == now, "today's keys are kept")
+        let mixed = [SplitGroup(id: "g", keys: ["1", "7:4711", "8:4712"]), SplitGroup(id: "h", keys: ["3", "9:4713"])]
+        check(SplitLogic.dropLegacyKeys(mixed) == [SplitGroup(id: "g", keys: ["7:4711", "8:4712"])], "half-old group loses the old key; one left alone dissolves: \(SplitLogic.dropLegacyKeys(mixed))")
+        // And the live list still rules: a group whose terminals are gone leaves the saved groups.
+        check(SplitLogic.resolve(now, existing: ["1:9999", "2:9998"]).isEmpty, "the same ids under new processes do not revive the group")
+    }
     test("split: open_session split joins the caller's terminal, else a plain tab") {
         let ids = ["sess-1": "k1"]
         check(SplitLogic.splitForOpenSession([], splitWith: "sess-1", sessionIdToKey: ids, openKeys: ["k1"], newKey: "k2", newId: "g") == [SplitGroup(id: "g", keys: ["k1", "k2"])], "joins")

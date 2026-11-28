@@ -3,6 +3,17 @@
 import Foundation
 
 func runBetaTests() {
+    test("an update launch starts hidden and takes over only when the old copy is gone") {
+        check(SwitchTakeover.startsHidden(args: ["--switched-from=update"]), "an update launch starts without a Dock tile")
+        check(SwitchTakeover.startsHidden(args: ["--switched-from=native"]), "so does a switch launch")
+        check(!SwitchTakeover.startsHidden(args: []) && !SwitchTakeover.startsHidden(args: ["--open", "/tmp/x"]), "an ordinary launch is unchanged")
+        check(!SwitchTakeover.shouldTakeOver(otherInstances: 1, waited: 0), "the old copy is still there: stay invisible")
+        check(!SwitchTakeover.shouldTakeOver(otherInstances: 2, waited: 5), "two old copies: still waits")
+        check(SwitchTakeover.shouldTakeOver(otherInstances: 0, waited: 0.25), "the old copy quit: become the visible Muya")
+        check(!SwitchTakeover.shouldTakeOver(otherInstances: 1, waited: 19.9), "waits up to the limit")
+        check(SwitchTakeover.shouldTakeOver(otherInstances: 1, waited: SwitchTakeover.waitLimit), "a copy that will not quit never leaves the user without a window")
+        check(SwitchTakeover.stepAsideAfter > 0 && SwitchTakeover.stepAsideAfter < 1.5, "the old copy steps aside faster than 5.0.6's 1.5 s")
+    }
     test("switchover event: download progress, result and rejects") {
         let d = SwitchoverEvent(payload: "{\"kind\":\"switch_back\",\"phase\":\"downloading\",\"downloaded\":5242880,\"total\":10485760,\"version\":\"4.1.20\"}")
         check(d?.kind == .switchBack && d?.phase == "downloading" && d?.downloaded == 5_242_880 && d?.total == 10_485_760, "fields")

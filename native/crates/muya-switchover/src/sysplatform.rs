@@ -71,6 +71,31 @@ pub fn harden(cmd: &mut Command) -> &mut Command {
 /// `-q` must come first: it tells curl to ignore `~/.curlrc` before anything else is read.
 pub const QUIET_RC: &str = "-q";
 
+/// curl's whole command line for a download, built in one place so its ORDER can be asserted.
+///
+/// `-q` only disables `~/.curlrc` when it is the **first** parameter. 5.0.6 put the two `--proto` guards in front of
+/// it, so the rc file was read after all: a `cacert = …/some-project.pem` line in it pointed curl at a PEM that was no
+/// longer there and every download died with `curl: (77)`, while the update check — where `-q` really was first —
+/// worked. Both guards still apply; they just come second.
+pub fn download_args(url: &str, dest: &Path) -> Vec<String> {
+    let mut args: Vec<String> = vec![QUIET_RC.to_string()];
+    // https only, redirects only to https (GitHub -> objects.githubusercontent.com).
+    if url.starts_with("https://") {
+        args.extend(["--proto".to_string(), "=https".into(), "--proto-redir".into(), "=https".into()]);
+    }
+    args.extend([
+        "-fsSL".to_string(),
+        "--connect-timeout".into(),
+        "15".into(),
+        "--max-time".into(),
+        "900".into(),
+        "-o".into(),
+        dest.to_string_lossy().into_owned(),
+        url.to_string(),
+    ]);
+    args
+}
+
 /// A clearer line than curl's own for the failures an operator can actually do something about.
 pub fn explain(code: Option<i32>, stderr: &str) -> String {
     match code {
@@ -89,13 +114,7 @@ impl Platform for SysPlatform {
             std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
         }
         let _ = std::fs::remove_file(dest);
-        // https only, redirects only to https (GitHub -> objects.githubusercontent.com).
-        let mut args: Vec<String> = vec![QUIET_RC.into(), "-fsSL".into(), "--connect-timeout".into(), "15".into(), "--max-time".into(), "900".into(), "-o".into(), dest.to_string_lossy().into(), url.into()];
-        if url.starts_with("https://") {
-            let mut p = vec!["--proto".to_string(), "=https".into(), "--proto-redir".into(), "=https".into()];
-            p.append(&mut args);
-            args = p;
-        }
+        let args = download_args(url, dest);
         let mut child = harden(&mut Command::new("curl")).args(&args).stderr(std::process::Stdio::piped()).spawn().map_err(|e| format!("curl: {e}"))?;
         loop {
             match child.try_wait().map_err(|e| e.to_string())? {
@@ -374,6 +393,61 @@ mod curl_env_tests {
             assert!(removed.iter().any(|r| r == v), "{v} must be cleared, got {removed:?}");
         }
         assert_eq!(QUIET_RC, "-q", "curl must be told to ignore ~/.curlrc");
+    }
+
+    /// 5.0.6's bug in one line: the flag was in the list, just not first. Assert the INDEX, not the membership.
+    #[test]
+    fn the_rc_file_switch_is_the_first_argument_for_every_kind_of_url() {
+        for url in ["https://github.com/st4unch/muya/releases/download/v9/Muya.tar.gz", "http://127.0.0.1:8080/Muya.tar.gz"] {
+            let a = download_args(url, Path::new("/tmp/muya-dl"));
+            assert_eq!(a[0], QUIET_RC, "curl applies -q only as the first parameter: {a:?}");
+            assert_eq!(a.last().map(String::as_str), Some(url), "{a:?}");
+            assert!(a.windows(2).any(|w| w[0] == "-o" && w[1] == "/tmp/muya-dl"), "{a:?}");
+        }
+        let https = download_args("https://x/y.tar.gz", Path::new("/tmp/o"));
+        assert!(https.windows(2).any(|w| w[0] == "--proto" && w[1] == "=https"), "https stays guarded: {https:?}");
+        assert!(https.windows(2).any(|w| w[0] == "--proto-redir" && w[1] == "=https"), "{https:?}");
+        assert!(!download_args("http://127.0.0.1:1/y", Path::new("/tmp/o")).iter().any(|x| x == "--proto"));
+    }
+
+    /// The real curl, with a real rc file in a HOME of its own: Muya's download must not read a line from it.
+    /// Without the fix curl prints "'<option>' is unknown" from that file — which is exactly how the operator's
+    /// `cacert` line came back.
+    #[test]
+    fn muyas_download_does_not_read_a_curlrc_in_the_home_it_runs_under() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(home.path().join(".curlrc"), "muya-marker-option\n").unwrap();
+        let run = |args: &[String]| -> String {
+            let out = harden(&mut Command::new("curl")).args(args).env("HOME", home.path()).output().unwrap();
+            String::from_utf8_lossy(&out.stderr).into_owned()
+        };
+        // A refused port: nothing leaves this machine, and the only interesting output is the rc complaint.
+        let good = download_args("http://127.0.0.1:1/none.tar.gz", &home.path().join("out"));
+        assert!(!run(&good).contains("muya-marker-option"), "the rc file was read: {}", run(&good));
+        // The 5.0.6 order (something in front of -q) does read it — the guard is this test, not the constant.
+        let mut bad = good.clone();
+        bad.remove(0);
+        bad.insert(1, QUIET_RC.to_string());
+        assert!(run(&bad).contains("muya-marker-option"), "this order is supposed to be the broken one");
+    }
+
+    /// The shipped path, end to end, on a HOME whose `~/.curlrc` points curl at a certificate file that is not there
+    /// — the operator's machine. Needs the network, so it is opt-in:
+    /// `cargo test -p muya-switchover -- --ignored the_real_download`.
+    #[test]
+    #[ignore]
+    fn the_real_download_works_under_a_home_whose_curlrc_names_a_missing_certificate() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(home.path().join(".curlrc"), "cacert = /gone/skyhigh.pem\n").unwrap();
+        // HOME is process-global; this test runs alone (it is ignored by default).
+        std::env::set_var("HOME", home.path());
+        std::env::set_var("CURL_CA_BUNDLE", "/gone/skyhigh.pem");
+        let dest = home.path().join("latest.json");
+        let mut p = SysPlatform { state_file: home.path().join("s.json"), healthy_marker: home.path().join("h"), trash_fn: None };
+        p.download("https://github.com/st4unch/muya/releases/latest/download/latest.json", &dest, &mut |_, _| {})
+            .expect("Muya's own download must not use this Mac's curl certificate settings");
+        let body = std::fs::read_to_string(&dest).unwrap();
+        assert!(body.contains("\"version\""), "got: {body:.120}");
     }
 
     #[test]

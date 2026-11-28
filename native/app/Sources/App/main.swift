@@ -16,6 +16,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ThemeFonts.register() // bundled IBM Plex Sans + JetBrains Mono, process-scoped; before any view or the renderer asks for them
         let env = ProcessInfo.processInfo.environment
         let home = env["HOME"] ?? NSHomeDirectory()
+        // Started by an update: no Dock tile and no window until the copy being replaced has quit, so the user sees one
+        // Muya close and come back, not two side by side (SwitchTakeover).
+        let hiddenStart = SwitchTakeover.startsHidden(args: Array(CommandLine.arguments.dropFirst()))
+        if hiddenStart { NSApp.setActivationPolicy(.accessory) }
         LaunchHandshake.acknowledge(args: Array(CommandLine.arguments.dropFirst()), home: home) // classic waits for this file after a switch
         let fixedSocket = home + "/Library/Application Support/Muya/muyad.sock"
         #if MUYA_TEST_HOOKS
@@ -40,10 +44,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #else
         store.connect()
         #endif
-        NSApp.activate()
+        if hiddenStart { takeOverWhenTheOldCopyIsGone() } else { NSApp.activate() }
         shortcuts.windowReady()
         panelPrefs = PanelPrefs(controller: controller)
         installSignalFlush()
+    }
+
+    private func takeOverWhenTheOldCopyIsGone() {
+        let id = Bundle.main.bundleIdentifier ?? ""
+        let started = Date()
+        let others = { NSRunningApplication.runningApplications(withBundleIdentifier: id).filter { $0.processIdentifier != getpid() }.count }
+        let t = Timer.scheduledTimer(withTimeInterval: SwitchTakeover.pollEvery, repeats: true) { [weak self] tm in
+            guard let self else { tm.invalidate(); return }
+            guard SwitchTakeover.shouldTakeOver(otherInstances: others(), waited: Date().timeIntervalSince(started)) else { return }
+            tm.invalidate()
+            NSApp.setActivationPolicy(.regular)
+            self.controller?.showAfterTakeover()
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        RunLoop.main.add(t, forMode: .common)
     }
 
     /// A kill (SIGTERM/SIGINT/SIGHUP) must not lose the last second of preference changes: flush on a private queue (the main

@@ -157,7 +157,7 @@ final class BetaSection: NSObject {
             if e.isError { busy = false; initiatedHere = false; return }
             busy = true
             // The other app is up (muyad waited for its handshake): this one steps aside.
-            if e.stepsAside(initiatedHere: initiatedHere) { DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { NSApp.terminate(nil) } }
+            if e.stepsAside(initiatedHere: initiatedHere) { DispatchQueue.main.asyncAfter(deadline: .now() + SwitchTakeover.stepAsideAfter) { NSApp.terminate(nil) } }
         case "muya://update-available":
             if let v = (try? JSONSerialization.jsonObject(with: Data(payload.utf8))) as? [String: Any], let ver = v["version"] as? String {
                 available = ver; UpdateCenter.set(ver); refresh()

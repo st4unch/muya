@@ -4,6 +4,13 @@ All notable changes to Muya are documented here, newest first.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.7] - 2026-11-26
+
+### Fixed
+- **An update is one Muya again, not two.** The new version used to open beside the one you were using: two icons in the Dock, two windows, and the old one closing under your hands. It now comes up out of sight and takes the old copy's place the moment it quits — the app closes and comes back as the new version, the way Muya 4 did. Your terminals and their output come through it unchanged.
+- **⌘T opens a terminal of its own, not one inside an old split.** A split you made in an earlier run was remembered by the terminal's number alone, and numbering starts over every time Muya's terminal service restarts. So the next terminal you opened inherited that split and appeared next to another one you never asked for. Splits are now remembered per terminal and per process, and a split whose terminals are gone is forgotten.
+- **Updates download again on a Mac whose curl was pointed at a project's own certificate.** 5.0.5 made Muya's update check ignore that setting, but the download itself still read `~/.curlrc`, so "Install & Restart" ended with `curl: (77) error setting certificate verify locations`. Muya's own downloads now ignore it everywhere, and use the certificates macOS trusts.
+
 ## [5.0.6] - 2026-11-26
 
 ### Fixed

@@ -179,7 +179,7 @@ public enum PrefKeys {
     public static let resumeOnLaunch = "muya.resumeOnLaunch" // src/lib/startup.ts:3
     public static let terminalPrefs = "muya.terminalPrefs" // src/lib/terminalPrefs.ts:29
     public static let viewMode = "apex.viewMode"           // src/App.tsx:390 ("grid" | "tabs")
-    public static let splitGroups = "muya.splitGroups"                 // src/App.tsx:2067 (native: keys are muyad session ids)
+    public static let splitGroups = "muya.splitGroups"                 // src/App.tsx:2067 (native: keys are "<session id>:<pid>", SplitLogic.dropLegacyKeys)
     public static let splitCollapsed = "muya.splitGroupsCollapsed"      // src/App.tsx:2068
     public static let agentsOpen = "muya.panels.agentsOpen"       // src/redesign/usePanelLayout.ts:16
     public static let inspectorOpen = "muya.panels.inspectorOpen" // :17

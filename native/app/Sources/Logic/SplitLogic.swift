@@ -82,6 +82,15 @@ public enum SplitLogic {
         return out
     }
 
+    /// A key names the terminal as `<session id>:<pid>` — the same key the session order and the session names are
+    /// saved under. Builds up to 5.0.7 saved the session id alone, and muya-ptyd hands out ids from 1 again every
+    /// time it starts, so a group saved in one run matched the NEXT run's terminals: ⌘T opened inside a split, next
+    /// to a terminal nobody asked for. Groups in the old form are dropped when they are read; one left with a
+    /// single pane dissolves.
+    public static func dropLegacyKeys(_ groups: [SplitGroup]) -> [SplitGroup] {
+        groups.map { SplitGroup(id: $0.id, keys: $0.keys.filter { $0.contains(":") }) }.filter { $0.keys.count > 1 }
+    }
+
     /// The persisted form (`muya.splitGroups`: `[{"id":…,"keys":[…]}]`), tolerant like asSplitGroups.
     public static func decode(_ raw: Any?) -> [SplitGroup]? {
         guard let arr = raw as? [Any] else { return nil }

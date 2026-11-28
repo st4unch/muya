@@ -17,14 +17,17 @@ final class SplitModel {
     var pendingAnchor: String?
     var pendingKnownIds: Set<UInt64> = []
 
-    nonisolated static func key(_ s: SessionModel) -> String { "\(s.id)" }
-    nonisolated static func key(id: UInt64) -> String { "\(id)" }
+    /// A terminal's key in a group: the session id AND the process, like the saved order and the saved names
+    /// (Store.sessionKey). The id alone is not enough — muya-ptyd starts counting from 1 again (SplitLogic.dropLegacyKeys).
+    nonisolated static func key(_ s: SessionModel) -> String { "\(s.id):\(s.pid)" }
 
     func group(of s: SessionModel?) -> SplitGroup? { s.flatMap { SplitLogic.groupOf(groups, Self.key($0)) } }
 
     func load(_ l: LegacyStore) {
-        groups = (l.get(PrefKeys.splitGroups)).flatMap { $0.data(using: .utf8) }.flatMap { try? JSONSerialization.jsonObject(with: $0) }.flatMap(SplitLogic.decode) ?? []
+        let saved = (l.get(PrefKeys.splitGroups)).flatMap { $0.data(using: .utf8) }.flatMap { try? JSONSerialization.jsonObject(with: $0) }.flatMap(SplitLogic.decode) ?? []
+        groups = SplitLogic.dropLegacyKeys(saved)
         collapsed = Set(PrefCodec.stringList(l.get(PrefKeys.splitCollapsed)) ?? [])
+        if groups != saved { save(l) }   // the old form is gone for good, not read again on the next launch
     }
 
     func save(_ l: LegacyStore) {

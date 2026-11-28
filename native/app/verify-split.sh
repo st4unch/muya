@@ -26,6 +26,8 @@ bad() { echo "FAIL $1"; fails=$((fails + 1)); }
 check() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1: got [$2] want [$3]"; fi; }
 has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1: [$2] lacks [$3]" ;; esac; }
 st() { dbg split-state | tr ' ' '\n' | sed -n "s/^$1=//p"; }
+# The groups with their keys cut back to session ids (a key is `<id>:<pid>`), for comparing with the ids here.
+gids() { st groups | sed 's/:[0-9]*//g'; }
 npanes() { dbg split-state | sed -n 's/.*panes=\[\([^]]*\)\].*/\1/p' | tr ';' '\n' | grep -c .; }
 shot() { screencapture -x -o -l "$(dbg windowid)" "screenshots/split-$1.png" 2>/dev/null; }
 mkdir -p "$DEV/home/a" "$DEV/home/b"
@@ -38,7 +40,7 @@ dbg "select $A" >/dev/null; sleep 0.6
 echo "== 1 split"
 check "no group at the start" "$(st groups)" "[]"
 dbg split-add >/dev/null; sleep 1.5
-has "Split made a group of two" "$(st groups)" "=$A,"
+has "Split made a group of two" "$(gids)" "=$A,"
 check "two panes are shown" "$(npanes)" "2"
 check "a clone is selected" "$([ "$(st selected)" != "$A" ] && echo yes)" "yes"
 shot two
@@ -53,7 +55,7 @@ for i in 1 2 3 4 5 6; do n=$(newsess b); [ -n "$n" ] && sleep 0.4; done
 all=$(dbg sessions | awk '{print $1}')
 cnt=0
 for s in $all; do
-  in=$(st groups | grep -c "[=,]$s[,\]]\|[=,]$s\$"); [ "$in" = 0 ] && { dbg "split-group $s $A" >/dev/null; sleep 0.3; }
+  in=$(gids | grep -c "[=,]$s[,\]]\|[=,]$s\$"); [ "$in" = 0 ] && { dbg "split-group $s $A" >/dev/null; sleep 0.3; }
 done
 check "the group is capped at 8 panes" "$(npanes)" "8"
 check "ninth session was refused (still outside)" "$([ "$(dbg sessions | wc -l | tr -d ' ')" -ge 9 ] && echo yes)" "yes"
@@ -70,7 +72,8 @@ check "the closed session keeps running" "$(dbg sessions | awk -v o="$other" '$1
 dbg split-state | grep -q "fractions=" && {
   f0=$(st fractions); dbg "split-divider 0 60" >/dev/null; sleep 0.3; f1=$(st fractions)
   [ "$f0" != "$f1" ] && ok "dragging a divider changes the widths ($f0 -> $f1)" || bad "divider drag changed nothing ($f0)"
-  check "widths still sum to 1" "$(echo "$f1" | tr ',' '\n' | awk '{s+=$1} END {printf "%.2f", s}')" "1.00"
+  # LC_ALL=C: awk under a comma-decimal locale (tr_TR) reads "0.33" as 0 and the sum comes out 0,00.
+  check "widths still sum to 1" "$(echo "$f1" | tr ',' '\n' | LC_ALL=C awk '{s+=$1} END {printf "%.2f", s}')" "1.00"
 }
 
 echo "== 4 collapse and restart"
@@ -93,7 +96,7 @@ sleep 0.5
 b4=$(dbg sessions | wc -l | tr -d ' ')
 dbg "split-open anchor=$A {\"name\":\"agentw\",\"cwd\":\"$DEV/home/b\",\"agent\":\"claude\",\"splitWith\":\"x\",\"unattended\":false}" >/dev/null; sleep 1.8
 check "open_session made a session" "$(dbg sessions | wc -l | tr -d ' ')" "$((b4 + 1))"
-has "the new session joined the caller's group" "$(st groups)" "$A"
+has "the new session joined the caller's group" "$(gids)" "=$A,"
 check "two panes shown" "$(npanes)" "2"
 dbg "split-open {\"name\":\"plain\",\"cwd\":\"$DEV/home/b\",\"splitWith\":\"unknown\"}" >/dev/null; sleep 1.8
 check "an unresolved splitWith opens a plain session" "$(dbg sessions | wc -l | tr -d ' ')" "$((b4 + 2))"
